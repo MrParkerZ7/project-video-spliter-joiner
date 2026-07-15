@@ -13,6 +13,8 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{550D59D1
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "VideoSplitJoiner.Core.Tests", "tests\Core.Tests\VideoSplitJoiner.Core.Tests.csproj", "{B8254496-9EC0-42E8-8F2A-FB3E8DAB0C67}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "VideoSplitJoiner.App.Tests", "tests\App.Tests\VideoSplitJoiner.App.Tests.csproj", "{2A60BDFF-7DBA-470F-B67F-51102B569890}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -34,10 +36,15 @@ Global
 		{B8254496-9EC0-42E8-8F2A-FB3E8DAB0C67}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{B8254496-9EC0-42E8-8F2A-FB3E8DAB0C67}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{B8254496-9EC0-42E8-8F2A-FB3E8DAB0C67}.Release|Any CPU.Build.0 = Release|Any CPU
+		{2A60BDFF-7DBA-470F-B67F-51102B569890}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{2A60BDFF-7DBA-470F-B67F-51102B569890}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{2A60BDFF-7DBA-470F-B67F-51102B569890}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{2A60BDFF-7DBA-470F-B67F-51102B569890}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
 		{70CEDCED-52F5-44BB-9871-A567565BB83F} = {1D452863-C30D-483E-B03B-663088C625FF}
 		{70070BDB-DFD7-45EE-9912-ACE0649E8544} = {1D452863-C30D-483E-B03B-663088C625FF}
 		{B8254496-9EC0-42E8-8F2A-FB3E8DAB0C67} = {550D59D1-4BC1-4A31-92A7-C42E9E4EF252}
+		{2A60BDFF-7DBA-470F-B67F-51102B569890} = {550D59D1-4BC1-4A31-92A7-C42E9E4EF252}
 	EndGlobalSection
 EndGlobal
