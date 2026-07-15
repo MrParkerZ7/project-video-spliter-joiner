@@ -1,0 +1,43 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{1D452863-C30D-483E-B03B-663088C625FF}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "VideoSplitJoiner.Core", "src\Core\VideoSplitJoiner.Core.csproj", "{70CEDCED-52F5-44BB-9871-A567565BB83F}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "VideoSplitJoiner.App", "src\App\VideoSplitJoiner.App.csproj", "{70070BDB-DFD7-45EE-9912-ACE0649E8544}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{550D59D1-4BC1-4A31-92A7-C42E9E4EF252}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "VideoSplitJoiner.Core.Tests", "tests\Core.Tests\VideoSplitJoiner.Core.Tests.csproj", "{B8254496-9EC0-42E8-8F2A-FB3E8DAB0C67}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{70CEDCED-52F5-44BB-9871-A567565BB83F}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{70CEDCED-52F5-44BB-9871-A567565BB83F}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{70CEDCED-52F5-44BB-9871-A567565BB83F}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{70CEDCED-52F5-44BB-9871-A567565BB83F}.Release|Any CPU.Build.0 = Release|Any CPU
+		{70070BDB-DFD7-45EE-9912-ACE0649E8544}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{70070BDB-DFD7-45EE-9912-ACE0649E8544}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{70070BDB-DFD7-45EE-9912-ACE0649E8544}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{70070BDB-DFD7-45EE-9912-ACE0649E8544}.Release|Any CPU.Build.0 = Release|Any CPU
+		{B8254496-9EC0-42E8-8F2A-FB3E8DAB0C67}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{B8254496-9EC0-42E8-8F2A-FB3E8DAB0C67}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{B8254496-9EC0-42E8-8F2A-FB3E8DAB0C67}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{B8254496-9EC0-42E8-8F2A-FB3E8DAB0C67}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{70CEDCED-52F5-44BB-9871-A567565BB83F} = {1D452863-C30D-483E-B03B-663088C625FF}
+		{70070BDB-DFD7-45EE-9912-ACE0649E8544} = {1D452863-C30D-483E-B03B-663088C625FF}
+		{B8254496-9EC0-42E8-8F2A-FB3E8DAB0C67} = {550D59D1-4BC1-4A31-92A7-C42E9E4EF252}
+	EndGlobalSection
+EndGlobal
