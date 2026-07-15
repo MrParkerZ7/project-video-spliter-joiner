@@ -26,7 +26,11 @@ public interface IFfmpegRunner
 /// </summary>
 public sealed class FfmpegRunner : IFfmpegRunner
 {
-    private const int TailSize = 40;
+    // Large enough to retain the FULL stderr of a detection pass (blackdetect/scdet/
+    // metadata=print emit one-or-more lines per event; a busy real video can produce
+    // thousands). Still bounded so a pathological stream cannot grow memory without limit.
+    // Split/convert runs only ever need the last few lines, so the extra capacity is unused there.
+    private const int TailSize = 100_000;
 
     private readonly IFfmpegBinaryLocator _locator;
 
