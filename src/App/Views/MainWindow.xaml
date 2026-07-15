@@ -1,6 +1,7 @@
 <Window x:Class="VideoSplitJoiner.App.Views.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:views="clr-namespace:VideoSplitJoiner.App.Views"
         Title="Video Split / Join"
         Height="600"
         Width="900"
@@ -9,12 +10,7 @@
     <Grid>
         <TabControl Margin="8">
             <TabItem Header="Split">
-                <Grid>
-                    <TextBlock Text="Split (coming soon)"
-                               HorizontalAlignment="Center"
-                               VerticalAlignment="Center"
-                               Foreground="Gray" />
-                </Grid>
+                <views:SplitView DataContext="{Binding Split}" />
             </TabItem>
             <TabItem Header="Join">
                 <Grid>
