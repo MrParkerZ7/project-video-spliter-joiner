@@ -1,0 +1,312 @@
+using System.Collections.Concurrent;
+using System.Globalization;
+using System.Text.Json;
+using VideoSplitJoiner.Core.Ffmpeg;
+
+namespace VideoSplitJoiner.Core.Media;
+
+/// <summary>
+/// Probes media files for duration, streams, codecs, and keyframe positions, and snaps
+/// arbitrary times to the nearest keyframe (so a cut lands on a copyable boundary).
+/// Built on the T-002 <see cref="IFfprobeRunner"/>.
+/// </summary>
+public interface IMediaProbe
+{
+    /// <summary>
+    /// Probe <paramref name="path"/> for its container, duration, and streams. A corrupt or
+    /// non-media file returns <see cref="ProbeResult.ProbeFailed"/> — never throws for a bad
+    /// file. Cancellation still surfaces as <see cref="OperationCanceledException"/>.
+    /// </summary>
+    Task<ProbeResult> ProbeAsync(string path, CancellationToken ct = default);
+
+    /// <summary>
+    /// Return the video keyframe timestamps of <paramref name="path"/>, sorted ascending and
+    /// distinct. The result is cached keyed by (path, file mtime, file length) so repeat calls
+    /// on an unchanged file are cheap.
+    /// </summary>
+    Task<IReadOnlyList<TimeSpan>> GetKeyframesAsync(string path, CancellationToken ct = default);
+
+    /// <summary>
+    /// Snap <paramref name="requested"/> to the nearest entry in <paramref name="keyframes"/>.
+    /// Ties resolve to the EARLIER keyframe. A request past the last keyframe clamps to the
+    /// last; before the first clamps to the first.
+    /// </summary>
+    KeyframeSnap SnapToNearestKeyframe(IReadOnlyList<TimeSpan> keyframes, TimeSpan requested);
+
+    /// <summary>
+    /// Average spacing between consecutive keyframes (the mean GOP length). Useful for warning
+    /// the user when snapping will be coarse. Returns <see cref="TimeSpan.Zero"/> for fewer
+    /// than two keyframes.
+    /// </summary>
+    TimeSpan AverageGop(IReadOnlyList<TimeSpan> keyframes);
+}
+
+/// <inheritdoc cref="IMediaProbe" />
+public sealed class MediaProbe : IMediaProbe
+{
+    private static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        PropertyNameCaseInsensitive = true,
+    };
+
+    private readonly IFfprobeRunner _ffprobe;
+    private readonly ConcurrentDictionary<string, IReadOnlyList<TimeSpan>> _keyframeCache = new();
+
+    /// <summary>Create a probe over an existing ffprobe runner.</summary>
+    public MediaProbe(IFfprobeRunner ffprobe)
+    {
+        _ffprobe = ffprobe ?? throw new ArgumentNullException(nameof(ffprobe));
+    }
+
+    /// <inheritdoc />
+    public async Task<ProbeResult> ProbeAsync(string path, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return ProbeResult.Failure("Path is empty.");
+        }
+
+        if (!File.Exists(path))
+        {
+            return ProbeResult.Failure($"File does not exist: '{path}'.");
+        }
+
+        var args = FfmpegArgs.ForFfprobe()
+            .Raw("-show_streams", "-show_format", "-print_format", "json")
+            .Input(path);
+
+        string json;
+        try
+        {
+            json = await _ffprobe.RunJsonAsync(args, ct).ConfigureAwait(false);
+        }
+        catch (FfprobeException ex)
+        {
+            // A non-media / corrupt file makes ffprobe exit non-zero — convert to a typed failure.
+            return ProbeResult.Failure($"ffprobe could not read '{path}': {ex.Message}");
+        }
+
+        FfprobeShowRoot? root;
+        try
+        {
+            root = JsonDeserialize<FfprobeShowRoot>(json);
+        }
+        catch (JsonException ex)
+        {
+            return ProbeResult.Failure($"ffprobe output for '{path}' was not valid JSON: {ex.Message}");
+        }
+
+        if (root?.Streams is null || root.Streams.Count == 0)
+        {
+            return ProbeResult.Failure($"No media streams found in '{path}'.");
+        }
+
+        var video = new List<StreamInfo>();
+        var audio = new List<StreamInfo>();
+        var streamDurations = new List<TimeSpan>();
+
+        foreach (var s in root.Streams)
+        {
+            var info = MapStream(s);
+            if (info.IsVideo)
+            {
+                video.Add(info);
+            }
+            else if (info.IsAudio)
+            {
+                audio.Add(info);
+            }
+
+            if (TryParseSeconds(s.Duration, out var sd))
+            {
+                streamDurations.Add(sd);
+            }
+        }
+
+        var duration = ResolveDuration(root.Format?.Duration, streamDurations);
+        var container = root.Format?.FormatName ?? "unknown";
+
+        var info2 = new MediaInfo(duration, container, video.AsReadOnly(), audio.AsReadOnly());
+        return ProbeResult.Success(info2);
+    }
+
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<TimeSpan>> GetKeyframesAsync(string path, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            throw new ArgumentException("Path is empty.", nameof(path));
+        }
+
+        if (!File.Exists(path))
+        {
+            throw new FileNotFoundException("Cannot read keyframes; file does not exist.", path);
+        }
+
+        var cacheKey = BuildCacheKey(path);
+        if (_keyframeCache.TryGetValue(cacheKey, out var cached))
+        {
+            return cached;
+        }
+
+        // Read only keyframes of the first video stream: -skip_frame nokey drops non-keyframes.
+        var args = FfmpegArgs.ForFfprobe()
+            .Raw(
+                "-select_streams", "v:0",
+                "-skip_frame", "nokey",
+                "-show_entries", "frame=pts_time,best_effort_timestamp_time,key_frame,media_type",
+                "-print_format", "json")
+            .Input(path);
+
+        var json = await _ffprobe.RunJsonAsync(args, ct).ConfigureAwait(false);
+        var root = JsonDeserialize<FfprobeFramesRoot>(json);
+
+        var times = new SortedSet<TimeSpan>();
+        if (root?.Frames is not null)
+        {
+            foreach (var f in root.Frames)
+            {
+                // With -skip_frame nokey every returned frame is a keyframe, but be defensive.
+                if (f.KeyFrame is 0)
+                {
+                    continue;
+                }
+
+                var raw = f.PtsTime ?? f.PktPtsTime ?? f.BestEffortTimestampTime;
+                if (TryParseSeconds(raw, out var t))
+                {
+                    times.Add(t);
+                }
+            }
+        }
+
+        IReadOnlyList<TimeSpan> result = times.ToList().AsReadOnly();
+        _keyframeCache[cacheKey] = result;
+        return result;
+    }
+
+    /// <inheritdoc />
+    public KeyframeSnap SnapToNearestKeyframe(IReadOnlyList<TimeSpan> keyframes, TimeSpan requested)
+    {
+        ArgumentNullException.ThrowIfNull(keyframes);
+        if (keyframes.Count == 0)
+        {
+            throw new ArgumentException("Keyframe list is empty; nothing to snap to.", nameof(keyframes));
+        }
+
+        // Keyframes are expected sorted (GetKeyframesAsync returns sorted distinct), but do not
+        // trust the caller — evaluate every candidate and keep the nearest, ties → earlier.
+        var best = keyframes[0];
+        var bestDist = Abs(best - requested);
+
+        for (var i = 1; i < keyframes.Count; i++)
+        {
+            var candidate = keyframes[i];
+            var dist = Abs(candidate - requested);
+
+            // Strictly-less keeps the earliest candidate on a tie (we iterate ascending, but
+            // guard against unsorted input by also preferring the earlier time on exact ties).
+            if (dist < bestDist || (dist == bestDist && candidate < best))
+            {
+                best = candidate;
+                bestDist = dist;
+            }
+        }
+
+        return new KeyframeSnap(best, best - requested);
+    }
+
+    /// <inheritdoc />
+    public TimeSpan AverageGop(IReadOnlyList<TimeSpan> keyframes)
+    {
+        ArgumentNullException.ThrowIfNull(keyframes);
+        if (keyframes.Count < 2)
+        {
+            return TimeSpan.Zero;
+        }
+
+        // Sort defensively so an unsorted caller still gets a sensible span-based average.
+        var ordered = keyframes.OrderBy(k => k).ToList();
+        var totalTicks = ordered[^1].Ticks - ordered[0].Ticks;
+        var gaps = ordered.Count - 1;
+        return TimeSpan.FromTicks(totalTicks / gaps);
+    }
+
+    private static StreamInfo MapStream(FfprobeStream s)
+    {
+        int? sampleRate = TryParseInt(s.SampleRate, out var sr) ? sr : null;
+        return new StreamInfo(
+            Index: s.Index,
+            CodecName: s.CodecName ?? "unknown",
+            Type: s.CodecType ?? "unknown",
+            Width: s.Width,
+            Height: s.Height,
+            PixFmt: s.PixFmt,
+            SampleRate: sampleRate,
+            Channels: s.Channels,
+            TimeBase: s.TimeBase);
+    }
+
+    private static TimeSpan ResolveDuration(string? formatDuration, IReadOnlyList<TimeSpan> streamDurations)
+    {
+        if (TryParseSeconds(formatDuration, out var fmt))
+        {
+            return fmt;
+        }
+
+        // Fall back to the longest stream duration when the container lacks a format-level one.
+        var longest = TimeSpan.Zero;
+        foreach (var d in streamDurations)
+        {
+            if (d > longest)
+            {
+                longest = d;
+            }
+        }
+
+        return longest;
+    }
+
+    private static string BuildCacheKey(string path)
+    {
+        var full = Path.GetFullPath(path);
+        var info = new FileInfo(full);
+        var mtime = info.LastWriteTimeUtc.Ticks;
+        var length = info.Length;
+        return string.Create(CultureInfo.InvariantCulture, $"{full}|{mtime}|{length}");
+    }
+
+    private static bool TryParseSeconds(string? raw, out TimeSpan value)
+    {
+        value = TimeSpan.Zero;
+        if (string.IsNullOrWhiteSpace(raw) || raw == "N/A")
+        {
+            return false;
+        }
+
+        if (double.TryParse(raw, NumberStyles.Float, CultureInfo.InvariantCulture, out var seconds)
+            && !double.IsNaN(seconds)
+            && !double.IsInfinity(seconds))
+        {
+            value = TimeSpan.FromSeconds(seconds);
+            return true;
+        }
+
+        return false;
+    }
+
+    private static bool TryParseInt(string? raw, out int value)
+    {
+        value = 0;
+        if (string.IsNullOrWhiteSpace(raw) || raw == "N/A")
+        {
+            return false;
+        }
+
+        return int.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out value);
+    }
+
+    private static TimeSpan Abs(TimeSpan t) => t < TimeSpan.Zero ? t.Negate() : t;
+
+    private static T? JsonDeserialize<T>(string json) => JsonSerializer.Deserialize<T>(json, JsonOptions);
+}

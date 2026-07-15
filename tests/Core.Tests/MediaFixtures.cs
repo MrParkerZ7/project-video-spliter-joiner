@@ -1,0 +1,136 @@
+using System.Diagnostics;
+using System.IO;
+using Xunit;
+
+namespace VideoSplitJoiner.Core.Tests;
+
+/// <summary>
+/// Generates deterministic synthetic mp4 fixtures with KNOWN keyframe positions using the real
+/// ffmpeg override, lazily and once per test run. Guarded by <see cref="FfmpegAvailable"/> so
+/// tests skip cleanly when ffmpeg is absent. Files land in a temp dir and are cleaned up on
+/// process exit. NOT copied into the repo.
+/// </summary>
+public sealed class MediaFixtures : IDisposable
+{
+    /// <summary>Fixed GOP length in seconds (see the ffmpeg -g/-keyint_min flags below).</summary>
+    public const double GopSeconds = 1.0;
+
+    /// <summary>Fixture duration in seconds.</summary>
+    public const double DurationSeconds = 10.0;
+
+    private readonly string _dir;
+    private readonly Lazy<string> _videoOnly;
+    private readonly Lazy<string> _videoWithAudio;
+
+    public MediaFixtures()
+    {
+        _dir = Path.Combine(Path.GetTempPath(), "vsj-fixtures-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(_dir);
+
+        _videoOnly = new Lazy<string>(() => GenerateVideoOnly(Path.Combine(_dir, "video_only.mp4")));
+        _videoWithAudio = new Lazy<string>(() => GenerateVideoWithAudio(Path.Combine(_dir, "video_audio.mp4")));
+    }
+
+    /// <summary>True when the real ffmpeg override exists — gate for fixture generation.</summary>
+    public static bool FfmpegAvailable => FfmpegTestBinaries.FfmpegExists;
+
+    /// <summary>Path to a 10s H.264 320x240 mp4 at 30fps with a fixed 1s GOP (video only).</summary>
+    public string VideoOnlyPath => _videoOnly.Value;
+
+    /// <summary>Path to the same clip plus a 440Hz AAC audio track (video + audio).</summary>
+    public string VideoWithAudioPath => _videoWithAudio.Value;
+
+    public void Dispose()
+    {
+        try
+        {
+            if (Directory.Exists(_dir))
+            {
+                Directory.Delete(_dir, recursive: true);
+            }
+        }
+        catch
+        {
+            // Best-effort cleanup; a locked temp file is not a test failure.
+        }
+    }
+
+    private static string GenerateVideoOnly(string outPath)
+    {
+        // testsrc 10s @ 30fps, libx264 with GOP fixed to 30 frames (= 1.0s) so keyframes land at
+        // ~0,1,2,…,10. -sc_threshold 0 disables scene-cut keyframes so spacing stays exactly GOP.
+        RunFfmpeg(
+            "-y",
+            "-f", "lavfi",
+            "-i", "testsrc=duration=10:size=320x240:rate=30",
+            "-c:v", "libx264",
+            "-g", "30",
+            "-keyint_min", "30",
+            "-sc_threshold", "0",
+            "-pix_fmt", "yuv420p",
+            outPath);
+        return outPath;
+    }
+
+    private static string GenerateVideoWithAudio(string outPath)
+    {
+        RunFfmpeg(
+            "-y",
+            "-f", "lavfi",
+            "-i", "testsrc=duration=10:size=320x240:rate=30",
+            "-f", "lavfi",
+            "-i", "sine=frequency=440:duration=10",
+            "-c:v", "libx264",
+            "-g", "30",
+            "-keyint_min", "30",
+            "-sc_threshold", "0",
+            "-pix_fmt", "yuv420p",
+            "-c:a", "aac",
+            outPath);
+        return outPath;
+    }
+
+    private static void RunFfmpeg(params string[] args)
+    {
+        var psi = new ProcessStartInfo
+        {
+            FileName = FfmpegTestBinaries.Ffmpeg,
+            RedirectStandardError = true,
+            RedirectStandardOutput = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+        };
+
+        foreach (var a in args)
+        {
+            psi.ArgumentList.Add(a);
+        }
+
+        using var p = new Process { StartInfo = psi };
+        p.Start();
+        var stderr = p.StandardError.ReadToEnd();
+        p.StandardOutput.ReadToEnd();
+        p.WaitForExit();
+
+        if (p.ExitCode != 0)
+        {
+            throw new InvalidOperationException(
+                $"ffmpeg fixture generation failed (exit {p.ExitCode}):{Environment.NewLine}{stderr}");
+        }
+
+        if (!File.Exists(args[^1]))
+        {
+            throw new InvalidOperationException($"ffmpeg reported success but '{args[^1]}' was not written.");
+        }
+    }
+}
+
+/// <summary>
+/// xUnit collection so the (expensive) fixture generation happens once and is shared across the
+/// integration test classes.
+/// </summary>
+[CollectionDefinition(MediaFixturesCollection.Name)]
+public sealed class MediaFixturesCollection : ICollectionFixture<MediaFixtures>
+{
+    public const string Name = "media-fixtures";
+}
