@@ -6,6 +6,33 @@
     <UseWPF>true</UseWPF>
     <RootNamespace>VideoSplitJoiner.App</RootNamespace>
     <AssemblyName>VideoSplitJoiner.App</AssemblyName>
+
+    <!-- Product / version metadata (Version comes from Directory.Build.props) -->
+    <AssemblyTitle>VideoSplitJoiner</AssemblyTitle>
+    <Product>VideoSplitJoiner</Product>
+    <Company>VideoSplitJoiner</Company>
+    <Description>Split and join video files with a bundled ffmpeg.</Description>
+
+    <!-- App icon (placeholder — see T-010 / THIRD-PARTY-NOTICES notes) -->
+    <ApplicationIcon>app.ico</ApplicationIcon>
+  </PropertyGroup>
+
+  <!--
+    Packaging / publish configuration (T-010).
+    Self-contained single-file win-x64. These props apply ONLY when publishing single-file
+    (i.e. `dotnet publish -p:PublishSingleFile=true`), so a normal `dotnet build` / `dotnet test`
+    stays a framework-dependent, multi-file build and is unaffected.
+    Trimming (PublishTrimmed) is deliberately NOT enabled — trimming is unsupported and unsafe
+    for WPF (reflection / XAML resource loading breaks). Do not add it.
+  -->
+  <PropertyGroup Condition="'$(PublishSingleFile)' == 'true'">
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>true</SelfContained>
+    <!-- WPF ships native libs; they must self-extract from the single-file bundle. -->
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <!-- Faster cold start; safe for WPF (unlike trimming). -->
+    <PublishReadyToRun>true</PublishReadyToRun>
   </PropertyGroup>
 
   <ItemGroup>

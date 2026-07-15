@@ -1,3 +1,6 @@
+# Packaging / distribution output (T-010) — never commit build artifacts or bundled ffmpeg
+dist/
+
 # .NET build output
 bin/
 obj/
