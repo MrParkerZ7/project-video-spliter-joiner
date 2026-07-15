@@ -13,12 +13,7 @@
                 <views:SplitView DataContext="{Binding Split}" />
             </TabItem>
             <TabItem Header="Join">
-                <Grid>
-                    <TextBlock Text="Join (coming soon)"
-                               HorizontalAlignment="Center"
-                               VerticalAlignment="Center"
-                               Foreground="Gray" />
-                </Grid>
+                <views:JoinView DataContext="{Binding Join}" />
             </TabItem>
         </TabControl>
     </Grid>

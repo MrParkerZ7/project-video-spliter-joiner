@@ -2,6 +2,7 @@ using System;
 using System.Globalization;
 using System.Windows;
 using System.Windows.Data;
+using System.Windows.Media;
 
 namespace VideoSplitJoiner.App.Views;
 
@@ -39,4 +40,41 @@ public sealed class FractionToPercentConverter : IValueConverter
 
     public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
         => value is double d ? d / 100d : 0d;
+}
+
+/// <summary>
+/// Maps a compatibility bool to a banner background/foreground brush pair via the converter
+/// parameter: <c>bg</c> → green when true, red when false; <c>fg</c> → the matching text colour.
+/// Used by the Join screen's compat banner so a compatible verdict reads green and a refusal red.
+/// </summary>
+public sealed class BoolToCompatBrushConverter : IValueConverter
+{
+    private static readonly SolidColorBrush GreenBackground = Freeze("#E6F4EA");
+    private static readonly SolidColorBrush GreenForeground = Freeze("#1E7E34");
+    private static readonly SolidColorBrush GreenBorder = Freeze("#7CC28A");
+    private static readonly SolidColorBrush RedBackground = Freeze("#FDECEA");
+    private static readonly SolidColorBrush RedForeground = Freeze("#B71C1C");
+    private static readonly SolidColorBrush RedBorder = Freeze("#E57373");
+
+    public object Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
+    {
+        var compatible = value is true;
+        var role = (parameter as string)?.ToLowerInvariant() ?? "bg";
+        return role switch
+        {
+            "fg" => compatible ? GreenForeground : RedForeground,
+            "border" => compatible ? GreenBorder : RedBorder,
+            _ => compatible ? GreenBackground : RedBackground,
+        };
+    }
+
+    public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
+        => throw new NotSupportedException();
+
+    private static SolidColorBrush Freeze(string hex)
+    {
+        var brush = new SolidColorBrush((Color)ColorConverter.ConvertFromString(hex));
+        brush.Freeze();
+        return brush;
+    }
 }
