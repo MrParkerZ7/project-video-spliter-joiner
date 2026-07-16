@@ -5,6 +5,34 @@ All notable changes to VideoSplitJoiner are documented here. The format is based
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). The `1.0.0` release is the target
 goal; `0.1.0` is the first end-to-end, shippable cut.
 
+## [0.2.0] - Unreleased
+
+Goal G-002: an **in-app video preview player** with **visual cut selection** on the Split screen.
+Still no re-encode — the player only previews; every cut continues to keyframe-snap through the same
+path as before.
+
+### Added
+
+- **In-app preview player** on the Split screen — the loaded file plays right there with
+  play / pause / stop and a scrubbable timeline slider, and a `mm:ss.f / mm:ss.f` position/duration
+  readout. Built behind an `IMediaPlayer` abstraction (`MediaElementPlayer` over a WPF `MediaElement`
+  in production; `NullMediaPlayer` no-op default) with a WPF-free `PlayerViewModel`.
+- **Set cut point at playhead** — park the player and drop a cut marker at the current position.
+- **Visual timeline strip** under the player showing the **playhead**, a tick per **cut marker**, and
+  a tick per **detected candidate** coloured by kind (**black** / **white** / **scene**), with a
+  legend. **Click the strip** to drop a cut at that position; **click a marker tick** to seek to its
+  snapped cut; **click a candidate tick** to preview its detected time. Built from pure
+  `TimelineMath` (normalized ↔ time) + a `TimelineViewModel` projection.
+- Every visually placed cut (playhead-capture or timeline-click) funnels through the existing
+  `AddCutAt` → **keyframe-snap + dedupe** path — one snap implementation, no new cut logic.
+
+### Notes
+
+- The preview uses **Windows Media Foundation** codecs, whose coverage is narrower than the bundled
+  FFmpeg. A file the player cannot open shows a **"Preview unavailable — you can still cut this
+  file"** banner and remains fully cuttable — preview failure is not a load failure. (FFME is parked
+  as the upgrade behind `IMediaPlayer` if coverage proves too narrow.)
+
 ## [0.1.0] - 2026-07-15
 
 First end-to-end release (goal G-001): a working Windows split/join app with a bundled FFmpeg and
@@ -45,4 +73,5 @@ a packaged distributable. Every operation is lossless stream-copy (`-c copy`) �
 - Cuts are keyframe-accurate, not frame-exact — the deliberate trade-off for zero re-encode.
 - Join refuses incompatible clip sets rather than re-encoding to reconcile them (no re-encode in v1).
 
+[0.2.0]: https://keepachangelog.com/
 [0.1.0]: https://keepachangelog.com/

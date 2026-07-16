@@ -11,6 +11,12 @@ Built as a .NET 8 WPF app with a UI-free Core library that shells out to a bundl
 
 - **Split** a video at one or more cut points. Each cut snaps to the nearest keyframe (so the
   copy is clean), and the app shows you exactly how far each cut moved: `requested → snapped (±delta)`.
+- **In-app video preview player + visual cut selection** — the loaded file plays right on the Split
+  screen (play / pause / stop / **scrub**). Park the playhead and click **"Set cut point at
+  playhead"**, or **click the timeline strip** under the player, to drop a cut visually; clicking a
+  marker or candidate tick seeks the player there. Every visually placed cut keyframe-snaps like any
+  other. (Playback uses Windows Media Foundation codecs — if a file can't preview you get a "preview
+  unavailable, cut still works" banner and can still cut it.)
 - **Auto-detect** natural split points — **black** intervals, **white** intervals, and hard
   **scene cuts** — as ranked candidates you can accept or adjust. Detection is decode-only (it
   writes no files and never re-encodes).

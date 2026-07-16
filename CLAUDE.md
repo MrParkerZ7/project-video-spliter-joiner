@@ -29,6 +29,16 @@ A .NET 8 WPF app that splits and joins video **without re-encoding**. See [READM
   frame-exact.
 - **Compatibility is refused, not fixed.** An incompatible join reports named mismatches and writes
   no output. Do not silently re-encode to reconcile mismatched clips.
+- **The preview player is behind `IMediaPlayer`.** The Split-screen preview transport goes through
+  the `IMediaPlayer` abstraction (`App/Media/`). View models (`PlayerViewModel`, `TimelineViewModel`)
+  stay **WPF-free** and are tested against a fake player; the only WPF-bound impl, `MediaElementPlayer`
+  (over a WPF `MediaElement`), is thin plumbing that just has to compile — its **live playback is
+  verified only via `app-run`**, never in the unit suite. `NullMediaPlayer` is the no-op default so
+  non-UI constructions/tests keep working. Don't leak WPF types into the player/timeline VMs.
+- **All cuts funnel through `AddCutAt` — one snap path.** Every way of placing a cut (manual add,
+  "set cut at playhead", clicking the timeline strip, accepting a candidate) routes through
+  `SplitViewModel.AddCutAt`, which keyframe-snaps and dedupes. Do not add a second snap/dedupe
+  implementation for a new cut-entry surface — wire it through `AddCutAt`.
 
 ## Build / test / package
 

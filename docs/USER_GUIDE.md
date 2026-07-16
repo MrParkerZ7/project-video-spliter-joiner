@@ -6,6 +6,7 @@ degrade quality. This guide walks through each feature.
 
 - [Getting started](#getting-started)
 - [Split a video](#split-a-video)
+- [Preview & pick cuts from the player](#preview--pick-cuts-from-the-player)
 - [Auto-detect split points](#auto-detect-split-points)
 - [Join clips](#join-clips)
 - [Progress, cancel, and errors](#progress-cancel-and-errors)
@@ -53,6 +54,43 @@ GOP** (keyframes seconds apart), a cut can move by seconds. The app does not hid
 - Every marker shows its own `±delta`, so you always see the exact snapped result before running.
 
 This is the deliberate trade-off for zero re-encode — it is not frame-exact editing.
+
+## Preview & pick cuts from the player
+
+Loading a file on the Split screen also opens it in an **in-app preview player** right there, so you
+can watch the video and pick cut points visually instead of typing times by hand.
+
+1. **Load a video** (as above). The first frame appears in the player and the transport enables once
+   the duration is known.
+2. **Play, pause, stop, and scrub.** Use the **Play / Pause** and **Stop** buttons, or drag the
+   slider to **scrub** to any position. A `mm:ss.f / mm:ss.f` readout shows the current playhead
+   and total duration. (Stop rewinds to the start; Play resumes from where you paused.)
+3. **Set a cut at the playhead.** With the video parked where you want to cut, click
+   **"Set cut point at playhead"** to drop a cut marker at the current position. That cut
+   **keyframe-snaps exactly like any other marker** — the new marker shows its `requested → snapped
+   (±delta)` just like a hand-placed one. Dropping a second cut that snaps to the same keyframe is a
+   no-op (it de-dupes), so double-tapping the button won't create duplicate cuts.
+4. **Read the timeline strip.** Under the player is a **timeline strip** spanning the whole clip. It
+   shows:
+   - the **playhead** (moves as the video plays / scrubs),
+   - a **tick per cut marker**, and
+   - a **tick per detected candidate**, coloured by kind — **black**, **white**, and **scene** (see
+     [Auto-detect](#auto-detect-split-points)). A small legend beneath the strip names each colour.
+5. **Click the strip to cut; click a tick to seek.**
+   - **Click anywhere on the strip** to drop a cut at that position — it routes through the same
+     snap-and-dedupe path as every other cut.
+   - **Click a marker tick** to seek the player to that cut's snapped time (so you can see exactly
+     where it lands).
+   - **Click a candidate tick** to preview it — the player seeks to the candidate's detected time so
+     you can judge it before adding it as a marker.
+
+### When the preview can't play (but the cut still works)
+
+The player uses Windows' built-in Media Foundation codecs, whose coverage is narrower than FFmpeg's.
+Some exotic containers or codecs may **fail to preview** even though the file is perfectly cuttable.
+When that happens you get a banner — **"Preview unavailable — you can still cut this file."** — with
+the underlying reason beneath it. This is **not** a load failure: all the cutting features still work.
+You just won't get in-app playback for that file, so place your cuts by time / auto-detect instead.
 
 ## Auto-detect split points
 

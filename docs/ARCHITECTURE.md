@@ -128,6 +128,68 @@ asserted by unit tests on the produced token lists.
 - **Output:** a ranked candidate list. An empty list is a valid result (no events found), never an
   exception.
 
+## In-app preview player + timeline (`App/Media/`, `App/ViewModels/`)
+
+The Split screen embeds a live video preview and a visual cut-selection strip. This layer lives
+**entirely in the `App` assembly** — Core stays UI-free — and is built so all its *logic* is
+testable without a GUI or real playback.
+
+### The player abstraction — `IMediaPlayer` (`App/Media/`)
+
+`IMediaPlayer` is a small, testable transport contract: `Position` (get/set — the setter seeks),
+`Duration`, `IsPlaying`, `Open` / `Play` / `Pause` / `Stop` / `Seek`, plus the events
+`PositionChanged`, `DurationAvailable`, `Ended`, and `Failed` (carrying a human-readable reason).
+Two implementations:
+
+- **`MediaElementPlayer`** — the production impl. It wraps a WPF `MediaElement` handed in from the
+  view (`LoadedBehavior=Manual`, `ScrubbingEnabled=true`, so it fully drives transport). A ~200ms
+  `DispatcherTimer` polls position and pumps `PositionChanged` while playing; the element's own
+  `MediaOpened` / `MediaEnded` / `MediaFailed` map to `DurationAvailable` / `Ended` / `Failed`. It is
+  thin WPF plumbing — **not unit-tested, only compiled** — and verified live via `app-run`.
+- **`NullMediaPlayer`** — a no-op null object (shared singleton). It is the **default** player when a
+  `SplitViewModel` is constructed without one, so pre-player constructions and tests keep working; it
+  records nothing, plays nothing, and raises no events.
+
+### The player view model — `PlayerViewModel`
+
+`PlayerViewModel` sits over an `IMediaPlayer` and exposes a **WPF-free** transport surface:
+observable `Position` / `Duration` / `IsPlaying` / `IsReady`, formatted `PositionText` /
+`DurationText` (`mm:ss.f`), a slider-friendly `PositionSeconds` / `DurationSeconds`, the
+`PlayPauseCommand` / `StopCommand`, and a `PreviewFailed` + `PreviewFailedReason` pair that drives
+the "preview unavailable" banner. The `Position` setter is the **scrub seam**: a user-driven set
+(bound slider) calls `Seek`, while a player-driven `PositionChanged` echo is applied under a
+`_suppressSeek` guard so a playback tick can never loop back into a re-seek. `IsReady` gates play and
+scrubbing until the duration is known. Because it holds no WPF types, it is fully unit-tested with a
+fake `IMediaPlayer`.
+
+### The timeline strip — `TimelineMath` / `TimelineViewModel` / `TimelineTick`
+
+- **`TimelineMath`** — a pure, WPF-free pair of inverse mappings: `ToNormalized(time, duration)` →
+  `[0,1]` (for rendering: tick X = normalized × width) and `FromNormalized(x, duration)` → time (for
+  a track click). Both clamp their inputs, so a click past either edge or a zero/unknown duration can
+  never divide by zero or escape the box.
+- **`TimelineViewModel`** — a projection over the owning `SplitViewModel`. It observes the player's
+  Position/Duration and the `Markers` / `Candidates` collections and re-projects a `PlayheadNormalized`
+  plus two flat, bindable tick lists (marker ticks + candidate ticks) whenever anything moves.
+- **`TimelineTick`** — one projected tick: its normalized X, source time, candidate `Kind` (null for
+  marker ticks, so the view colours candidates by Black/White/Scene), and a `Ref` back to the
+  originating marker/candidate view model for click routing.
+
+### How visual cuts reuse the existing snap path (no new snap logic)
+
+The two new ways to place a cut — **"Set cut point at playhead"** (`SplitViewModel.SetCutAtPlayhead`
+→ `SetCutAtPlayheadCommand`) and **clicking the timeline** (`TimelineViewModel.ClickAt` →
+`FromNormalized` → the owner) — both funnel into `SplitViewModel.AddCutAt(TimeSpan)`, the **single**
+entry point that manual add already used. `AddCutAt` builds a snapping `CutMarkerViewModel` and
+**dedupes on the snapped keyframe**, so every cut — typed, playhead-captured, timeline-clicked, or
+from an accepted candidate — snaps and de-dupes identically. There is deliberately **no second snap
+implementation**. Clicking a marker tick routes to `SeekToMarkerCommand` (seek to the marker's
+*snapped* time); clicking a candidate tick routes to `PreviewCandidateCommand` (seek to the
+candidate's *raw detected* time) — both reuse commands that already existed on `SplitViewModel`.
+
+`SetCutAtPlayhead` is guarded by `CanSetCutAtPlayhead` (`HasFile && Player.IsReady`), so it only
+enables once the preview has a real playhead to capture.
+
 ## Media probe (`Core/Media/`)
 
 `MediaProbe` (over `FfprobeRunner`) provides:
@@ -165,3 +227,30 @@ The UI uses **hand-rolled MVVM**: `ObservableObject` (INotifyPropertyChanged bas
   `UserFacingError`s.
 - The view models themselves are **WPF-free and constructor-injected** — the WPF dependency lives
   only in the `App` assembly's views and `App.xaml`, never in Core.
+- **`MainViewModel` composes the real player** by passing a `new MediaElementPlayer()` into
+  `SplitViewModel`. The player starts unattached; `PlayerView`'s code-behind calls `Attach(Media)` on
+  load to bind it to the view's `MediaElement` (the one place WPF and the player meet). A
+  `SplitViewModel` built without a player falls back to `NullMediaPlayer`, keeping tests and non-UI
+  constructions working.
+
+## Design decisions (preview player)
+
+### D1 — WPF `MediaElement` for playback (FFME parked)
+
+The preview uses WPF's built-in **`MediaElement`** (Windows Media Foundation) rather than a
+richer player. It ships in-box, needs no extra dependency, and is enough for a *preview* — the app
+never decodes frames for cutting itself (that is FFmpeg's job). The trade-off is **codec coverage**:
+Media Foundation handles fewer exotic containers/codecs than the bundled FFmpeg does, so some files
+that cut perfectly may fail to *preview*. That path is handled gracefully (see below).
+**FFME** (`FFmpegMediaElement`) is the **parked upgrade**: if Media Foundation's coverage proves too
+narrow in practice, swapping the `MediaElementPlayer` impl behind `IMediaPlayer` for an FFME-backed
+one is a contained change — no view-model or timeline code moves.
+
+### D2 — `IMediaPlayer` abstraction so the VMs stay testable
+
+Playback is behind the `IMediaPlayer` seam specifically so `PlayerViewModel` and `TimelineViewModel`
+carry **no WPF types** and can be exercised headlessly with a fake player (position/duration/
+events driven by the test). The only piece that touches WPF — `MediaElementPlayer` — is thin plumbing
+that "just has to compile"; its **live playback is verified only via `app-run`** on a real desktop,
+not in the unit suite. This keeps the testable logic (scrub-seam suppression, ready-gating,
+tick projection, click routing) fully covered while confining the untestable WPF surface to one class.
