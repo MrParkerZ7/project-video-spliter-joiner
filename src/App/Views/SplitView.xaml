@@ -80,6 +80,11 @@
                             Margin="6,0,0,0"
                             Padding="8,2"
                             Command="{Binding AddMarkerCommand}" />
+                    <Button Content="Set cut point at playhead"
+                            Margin="6,0,0,0"
+                            Padding="8,2"
+                            ToolTip="Drop a cut at the preview player's current position (snaps to the nearest keyframe)"
+                            Command="{Binding SetCutAtPlayheadCommand}" />
                 </StackPanel>
                 <TextBlock Text="Cut markers (snapped to keyframe):" FontWeight="Bold" Margin="0,4,0,2" />
             </StackPanel>
@@ -92,12 +97,21 @@
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*" />
                                 <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
                             <TextBlock Grid.Column="0"
                                        VerticalAlignment="Center"
                                        Text="{Binding Display}"
                                        FontFamily="Consolas" />
                             <Button Grid.Column="1"
+                                    Content="▶ seek"
+                                    Padding="6,1"
+                                    Margin="0,0,4,0"
+                                    ToolTip="Seek the preview player to this cut's snapped time"
+                                    Command="{Binding DataContext.SeekToMarkerCommand,
+                                              RelativeSource={RelativeSource AncestorType=ListBox}}"
+                                    CommandParameter="{Binding}" />
+                            <Button Grid.Column="2"
                                     Content="Remove"
                                     Padding="6,1"
                                     Command="{Binding DataContext.RemoveMarkerCommand,
@@ -231,6 +245,13 @@
                     <DataTemplate DataType="{x:Type vm:CandidateViewModel}">
                         <StackPanel Orientation="Horizontal">
                             <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay}" VerticalAlignment="Center" />
+                            <Button Content="▶ preview"
+                                    Margin="6,0,0,0"
+                                    Padding="6,1"
+                                    ToolTip="Seek the preview player to this candidate's detected time"
+                                    Command="{Binding DataContext.PreviewCandidateCommand,
+                                              RelativeSource={RelativeSource AncestorType=ListBox}}"
+                                    CommandParameter="{Binding}" />
                             <TextBlock Margin="6,0,0,0"
                                        VerticalAlignment="Center"
                                        Text="{Binding Display}"

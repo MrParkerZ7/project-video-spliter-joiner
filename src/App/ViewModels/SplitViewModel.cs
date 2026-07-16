@@ -68,8 +68,16 @@ public sealed class SplitViewModel : ObservableObject
         // CanRunSplit depends on the marker count → recompute when the collection changes.
         Markers.CollectionChanged += OnMarkersChanged;
 
+        // "Set cut at playhead" enables once the player reports IsReady (DurationAvailable) →
+        // recompute the command guard whenever the preview player's readiness changes.
+        Player.PropertyChanged += OnPlayerChanged;
+
         LoadCommand = new RelayCommand(p => _ = LoadAsync(p as string));
         AddMarkerCommand = new RelayCommand(_ => AddMarker(NewMarkerPosition), _ => CanAddMarker);
+        AddCutAtCommand = new RelayCommand(p => { if (p is TimeSpan t) AddCutAt(t); }, _ => CanAddMarker);
+        SetCutAtPlayheadCommand = new RelayCommand(_ => SetCutAtPlayhead(), _ => CanSetCutAtPlayhead);
+        SeekToMarkerCommand = new RelayCommand(SeekToMarker);
+        PreviewCandidateCommand = new RelayCommand(PreviewCandidate);
         RemoveMarkerCommand = new RelayCommand(RemoveMarker);
         AutoDetectCommand = new RelayCommand(_ => _ = AutoDetectAsync(), _ => HasFile);
         AddSelectedCandidatesCommand = new RelayCommand(_ => AddSelectedCandidates(), _ => Candidates.Count > 0);
@@ -90,6 +98,7 @@ public sealed class SplitViewModel : ObservableObject
             {
                 OnPropertyChanged(nameof(HasFile));
                 OnPropertyChanged(nameof(CanRunSplit));
+                OnPropertyChanged(nameof(CanSetCutAtPlayhead));
                 RaiseCommandStates();
             }
         }
@@ -182,6 +191,12 @@ public sealed class SplitViewModel : ObservableObject
 
     private bool CanAddMarker => HasFile;
 
+    /// <summary>
+    /// "Set cut at playhead" is enabled only when a file is loaded AND the preview player is ready
+    /// (its duration is known) — i.e. there is a real playhead position to capture.
+    /// </summary>
+    public bool CanSetCutAtPlayhead => HasFile && Player.IsReady;
+
     /// <summary>Run is enabled only with a file, at least one marker, and an output dir set.</summary>
     public bool CanRunSplit =>
         !string.IsNullOrWhiteSpace(InputPath)
@@ -195,6 +210,25 @@ public sealed class SplitViewModel : ObservableObject
 
     /// <summary>Add a cut marker at <see cref="NewMarkerPosition"/>. Blocked with no file.</summary>
     public RelayCommand AddMarkerCommand { get; }
+
+    /// <summary>
+    /// Add a cut marker at an explicit time (parameter is a <see cref="TimeSpan"/>). The single
+    /// entry point both the playhead-capture (T-013) and the timeline-click (T-014) route through,
+    /// so every added cut snaps + dedupes identically. Blocked with no file.
+    /// </summary>
+    public RelayCommand AddCutAtCommand { get; }
+
+    /// <summary>
+    /// Drop a cut marker at the preview player's current playhead position, via
+    /// <see cref="AddCutAt"/>. Enabled only when a file is loaded AND the player is ready.
+    /// </summary>
+    public RelayCommand SetCutAtPlayheadCommand { get; }
+
+    /// <summary>Seek the preview player to a marker's snapped time. Parameter is the <see cref="CutMarkerViewModel"/>.</summary>
+    public RelayCommand SeekToMarkerCommand { get; }
+
+    /// <summary>Preview a candidate: seek the player to its raw detected time. Parameter is the <see cref="CandidateViewModel"/>.</summary>
+    public RelayCommand PreviewCandidateCommand { get; }
 
     /// <summary>Remove a marker. Parameter is the <see cref="CutMarkerViewModel"/>.</summary>
     public RelayCommand RemoveMarkerCommand { get; }
@@ -310,14 +344,61 @@ public sealed class SplitViewModel : ObservableObject
     // ---- Markers ----------------------------------------------------------------------------
 
     /// <summary>Add a cut marker at <paramref name="position"/> (snap computed). No-op without a file.</summary>
-    public void AddMarker(TimeSpan position)
+    public void AddMarker(TimeSpan position) => AddCutAt(position);
+
+    /// <summary>
+    /// THE single entry point for adding a cut marker at an explicit time — used by manual add,
+    /// playhead-capture (T-013), and the timeline click (T-014). Builds a snapping
+    /// <see cref="CutMarkerViewModel"/> and dedupes on the snapped keyframe: if a marker already
+    /// lands on the same keyframe, the add is skipped (two playhead captures on the same GOP → one
+    /// cut). No-op without a file.
+    /// </summary>
+    public void AddCutAt(TimeSpan position)
     {
         if (!HasFile)
         {
             return;
         }
 
-        Markers.Add(new CutMarkerViewModel(_probe, () => Keyframes, position));
+        var marker = new CutMarkerViewModel(_probe, () => Keyframes, position);
+
+        // Dedupe on the snapped time — the cut actually lands on the keyframe, so two requests that
+        // snap to the same keyframe are one cut. Guards double-capture of the same playhead.
+        if (Markers.Any(m => m.Snapped == marker.Snapped))
+        {
+            return;
+        }
+
+        Markers.Add(marker);
+    }
+
+    /// <summary>Capture a cut at the preview player's current playhead position (T-013).</summary>
+    public void SetCutAtPlayhead()
+    {
+        if (!CanSetCutAtPlayhead)
+        {
+            return;
+        }
+
+        AddCutAt(Player.Position);
+    }
+
+    /// <summary>Seek the preview player to <paramref name="marker"/>'s SNAPPED time so the user sees where the cut lands.</summary>
+    public void SeekToMarker(object? parameter)
+    {
+        if (parameter is CutMarkerViewModel marker)
+        {
+            Player.Scrub(marker.Snapped);
+        }
+    }
+
+    /// <summary>Seek the preview player to <paramref name="candidate"/>'s RAW detected time for a preview before selecting.</summary>
+    public void PreviewCandidate(object? parameter)
+    {
+        if (parameter is CandidateViewModel candidate)
+        {
+            Player.Scrub(candidate.Candidate.Time);
+        }
     }
 
     private void RemoveMarker(object? parameter)
@@ -463,10 +544,22 @@ public sealed class SplitViewModel : ObservableObject
         RaiseCommandStates();
     }
 
+    private void OnPlayerChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        // The player's readiness (or a load) gates SetCutAtPlayhead; refresh its guard.
+        if (e.PropertyName is nameof(PlayerViewModel.IsReady) or nameof(PlayerViewModel.Duration))
+        {
+            OnPropertyChanged(nameof(CanSetCutAtPlayhead));
+            SetCutAtPlayheadCommand.RaiseCanExecuteChanged();
+        }
+    }
+
     private void RaiseCommandStates()
     {
         RunSplitCommand.RaiseCanExecuteChanged();
         AddMarkerCommand.RaiseCanExecuteChanged();
+        AddCutAtCommand.RaiseCanExecuteChanged();
+        SetCutAtPlayheadCommand.RaiseCanExecuteChanged();
         AutoDetectCommand.RaiseCanExecuteChanged();
         AddSelectedCandidatesCommand.RaiseCanExecuteChanged();
         OpenFolderCommand.RaiseCanExecuteChanged();
