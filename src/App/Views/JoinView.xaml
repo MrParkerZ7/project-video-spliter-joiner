@@ -10,6 +10,11 @@
         <conv:BoolToCompatBrushConverter x:Key="BoolToCompatBrush" />
     </UserControl.Resources>
 
+    <Grid x:Name="RootGrid"
+          AllowDrop="True"
+          PreviewDragOver="OnDragOver"
+          DragLeave="OnDragLeave"
+          Drop="OnDrop">
     <DockPanel Margin="8">
 
         <!-- ================= TOP: add files + compat banner ================= -->
@@ -157,4 +162,15 @@
             </ListBox.ItemTemplate>
         </ListBox>
     </DockPanel>
+
+        <!-- ================= Drag-drop highlight overlay (T-016) ================= -->
+        <Border x:Name="DropHighlight"
+                IsHitTestVisible="False"
+                Visibility="Collapsed"
+                Margin="8"
+                BorderBrush="#3399FF"
+                BorderThickness="3"
+                Background="#223399FF"
+                CornerRadius="4" />
+    </Grid>
 </UserControl>

@@ -10,7 +10,12 @@
         <conv:FractionToPercentConverter x:Key="FractionToPercent" />
     </UserControl.Resources>
 
-    <Grid Margin="8">
+    <Grid x:Name="RootGrid"
+          Margin="8"
+          AllowDrop="True"
+          PreviewDragOver="OnDragOver"
+          DragLeave="OnDragLeave"
+          Drop="OnDrop">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
@@ -271,5 +276,16 @@
             </ListBox>
         </DockPanel>
         </Grid>
+
+        <!-- ================= Drag-drop highlight overlay (T-016) ================= -->
+        <Border x:Name="DropHighlight"
+                Grid.Row="0"
+                Grid.RowSpan="3"
+                IsHitTestVisible="False"
+                Visibility="Collapsed"
+                BorderBrush="#3399FF"
+                BorderThickness="3"
+                Background="#223399FF"
+                CornerRadius="4" />
     </Grid>
 </UserControl>
