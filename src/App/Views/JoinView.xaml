@@ -121,7 +121,13 @@
         </StackPanel>
 
         <!-- ================= MIDDLE: ordered clip list ================= -->
-        <ListBox ItemsSource="{Binding Items}" MinHeight="140">
+        <ListBox x:Name="ClipList"
+                 ItemsSource="{Binding Items}"
+                 MinHeight="140"
+                 AllowDrop="True"
+                 PreviewMouseLeftButtonDown="OnClipListPreviewMouseLeftButtonDown"
+                 PreviewMouseMove="OnClipListPreviewMouseMove"
+                 Drop="OnClipListDrop">
             <ListBox.ItemTemplate>
                 <DataTemplate DataType="{x:Type vm:JoinItemViewModel}">
                     <Grid>

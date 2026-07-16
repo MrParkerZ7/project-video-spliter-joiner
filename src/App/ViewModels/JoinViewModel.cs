@@ -205,38 +205,69 @@ public sealed class JoinViewModel : ObservableObject
         await RefreshCompatAsync().ConfigureAwait(true);
     }
 
-    private async Task MoveUpAsync(JoinItemViewModel? item)
+    /// <summary>
+    /// The single reorder path: move the item at <paramref name="fromIndex"/> to
+    /// <paramref name="toIndex"/> and re-run the SAME compat check the Up/Down buttons and the
+    /// drag-reorder gesture (T-017) all funnel through. Invalid or equal indices are a no-op — a
+    /// bad/out-of-range index never throws (guarded here so callers, including the drag hit-test,
+    /// can pass a raw computed index safely). <see cref="MoveUpAsync"/> / <see cref="MoveDownAsync"/>
+    /// delegate here so there is no duplicated reorder logic.
+    /// </summary>
+    public async Task MoveAsync(int fromIndex, int toIndex)
     {
-        if (item is null)
+        var count = Items.Count;
+        if (count < 2)
+        {
+            return; // nothing to reorder
+        }
+
+        // Clamp the destination into range; ignore an out-of-range source outright (nothing to move).
+        if (fromIndex < 0 || fromIndex >= count)
         {
             return;
         }
 
-        var index = Items.IndexOf(item);
-        if (index <= 0)
+        if (toIndex < 0)
         {
-            return;
+            toIndex = 0;
+        }
+        else if (toIndex >= count)
+        {
+            toIndex = count - 1;
         }
 
-        Items.Move(index, index - 1);
+        if (fromIndex == toIndex)
+        {
+            return; // same slot → no reorder, no needless recheck
+        }
+
+        Items.Move(fromIndex, toIndex);
         await RefreshCompatAsync().ConfigureAwait(true);
     }
 
-    private async Task MoveDownAsync(JoinItemViewModel? item)
+    /// <summary>Synchronous convenience wrapper over <see cref="MoveAsync"/> for the drag-reorder code-behind.</summary>
+    public void Move(int fromIndex, int toIndex) => _ = MoveAsync(fromIndex, toIndex);
+
+    private Task MoveUpAsync(JoinItemViewModel? item)
     {
         if (item is null)
         {
-            return;
+            return Task.CompletedTask;
         }
 
         var index = Items.IndexOf(item);
-        if (index < 0 || index >= Items.Count - 1)
+        return MoveAsync(index, index - 1);
+    }
+
+    private Task MoveDownAsync(JoinItemViewModel? item)
+    {
+        if (item is null)
         {
-            return;
+            return Task.CompletedTask;
         }
 
-        Items.Move(index, index + 1);
-        await RefreshCompatAsync().ConfigureAwait(true);
+        var index = Items.IndexOf(item);
+        return MoveAsync(index, index + 1);
     }
 
     private bool CanMoveUp(object? parameter) => parameter is JoinItemViewModel item && Items.IndexOf(item) > 0;

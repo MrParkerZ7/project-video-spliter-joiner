@@ -171,6 +171,112 @@ public sealed class JoinViewModelTests
     }
 
     [Fact]
+    public async Task Move_ReordersItems_ThirdToFirst_AndReChecksCompat()
+    {
+        var (vm, engine, _) = Build();
+        await vm.AddFilesAsync(new[] { Clip1, Clip2, Clip3 });
+        var checksBefore = engine.CompatCheckCount;
+
+        await vm.MoveAsync(2, 0); // c moves to the front
+
+        vm.Items.Select(i => i.Path).Should().ContainInOrder(Clip3, Clip1, Clip2);
+        engine.CompatCheckCount.Should().BeGreaterThan(checksBefore, "reorder re-checks compat");
+        engine.LastCheckedPaths.Should().ContainInOrder(Clip3, Clip1, Clip2);
+    }
+
+    [Fact]
+    public async Task MoveUp_DelegatesToMove_SameAsMove1To0()
+    {
+        // MoveUp on index 1 must produce the identical order + one recheck as Move(1,0) —
+        // proving Up/Down share the single Move path (no duplicate reorder logic).
+        var (viaUp, upEngine, _) = Build();
+        await viaUp.AddFilesAsync(new[] { Clip1, Clip2, Clip3 });
+        var upChecksBefore = upEngine.CompatCheckCount;
+        viaUp.MoveUpCommand.Execute(viaUp.Items[1]); // b (index 1) up
+
+        var (viaMove, moveEngine, _) = Build();
+        await viaMove.AddFilesAsync(new[] { Clip1, Clip2, Clip3 });
+        var moveChecksBefore = moveEngine.CompatCheckCount;
+        await viaMove.MoveAsync(1, 0);
+
+        viaUp.Items.Select(i => i.Path).Should()
+            .ContainInOrder(Clip2, Clip1, Clip3)
+            .And.Equal(viaMove.Items.Select(i => i.Path));
+        (upEngine.CompatCheckCount - upChecksBefore).Should()
+            .Be(moveEngine.CompatCheckCount - moveChecksBefore, "one reorder path → same number of rechecks");
+    }
+
+    [Fact]
+    public async Task MoveDown_DelegatesToMove_SameAsMoveIndexPlusOne()
+    {
+        var (vm, engine, _) = Build();
+        await vm.AddFilesAsync(new[] { Clip1, Clip2, Clip3 });
+        var checksBefore = engine.CompatCheckCount;
+
+        vm.MoveDownCommand.Execute(vm.Items[0]); // a (index 0) down == Move(0,1)
+
+        vm.Items.Select(i => i.Path).Should().ContainInOrder(Clip2, Clip1, Clip3);
+        engine.CompatCheckCount.Should().BeGreaterThan(checksBefore);
+    }
+
+    [Fact]
+    public async Task Move_ToSameIndex_IsNoOp_NoReorder_NoRecheck()
+    {
+        var (vm, engine, _) = Build();
+        await vm.AddFilesAsync(new[] { Clip1, Clip2, Clip3 });
+        var checksBefore = engine.CompatCheckCount;
+
+        await vm.MoveAsync(1, 1);
+
+        vm.Items.Select(i => i.Path).Should().ContainInOrder(Clip1, Clip2, Clip3);
+        engine.CompatCheckCount.Should().Be(checksBefore, "moving to the same slot does no reorder + no recheck");
+    }
+
+    [Fact]
+    public async Task Move_OutOfRangeIndices_AreClampedOrIgnored_NoThrow_NoCrash()
+    {
+        var (vm, engine, _) = Build();
+        await vm.AddFilesAsync(new[] { Clip1, Clip2, Clip3 });
+        var checksBefore = engine.CompatCheckCount;
+
+        // Out-of-range SOURCE → ignored (nothing to move), order untouched, no recheck.
+        await vm.MoveAsync(99, 0);
+        vm.Items.Select(i => i.Path).Should().ContainInOrder(Clip1, Clip2, Clip3);
+        engine.CompatCheckCount.Should().Be(checksBefore, "an out-of-range source is a no-op");
+
+        // Over-range DESTINATION → clamped to last slot (move item 0 to the end).
+        await vm.MoveAsync(0, 99);
+        vm.Items.Select(i => i.Path).Should().ContainInOrder(Clip2, Clip3, Clip1);
+
+        // Negative DESTINATION → clamped to the front.
+        await vm.MoveAsync(2, -5); // item now at index 2 is Clip1 → to front
+        vm.Items.Select(i => i.Path).Should().ContainInOrder(Clip1, Clip2, Clip3);
+    }
+
+    [Fact]
+    public async Task Move_WithFewerThanTwoItems_IsNoOp()
+    {
+        var (vm, engine, _) = Build();
+        await vm.AddFilesAsync(new[] { Clip1 });
+        var checksBefore = engine.CompatCheckCount;
+
+        await vm.MoveAsync(0, 0);
+
+        vm.Items.Should().HaveCount(1);
+        engine.CompatCheckCount.Should().Be(checksBefore, "single item → nothing to reorder");
+    }
+
+    [Fact]
+    public async Task SingleItem_UpDownCommands_Disabled()
+    {
+        var (vm, _, _) = Build();
+        await vm.AddFilesAsync(new[] { Clip1 });
+
+        vm.MoveUpCommand.CanExecute(vm.Items[0]).Should().BeFalse("first (and only) item cannot move up");
+        vm.MoveDownCommand.CanExecute(vm.Items[0]).Should().BeFalse("last (and only) item cannot move down");
+    }
+
+    [Fact]
     public async Task Remove_DropsItem_AndReChecksCompat()
     {
         var (vm, engine, _) = Build();
