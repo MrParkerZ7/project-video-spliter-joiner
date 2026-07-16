@@ -2,6 +2,30 @@
 
 <!-- latest on top; entries are never deleted -->
 
+## 2026-07-16 — ✅ G-003 DONE — drag-and-drop converged (3/3)
+
+- **T-018 ✅** docs — drag-and-drop woven into README · USER_GUIDE · ARCHITECTURE · CHANGELOG (0.2.0) · CLAUDE. Commit `599da2d`.
+- **G-003 sealed `status: done`** (todo-goal-next plan+build). Chain: T-016 `721afc8` → T-017 `638aac4` → T-018 `599da2d`.
+- Tests: **237 passing** (127 Core + 110 App), 0-warning.
+- Feature: drop videos onto Split (load) / Join (add, in order); drag to reorder Join clips (shared `Move` path); non-video ignored; pure `VideoFileFilter` tested; live gesture verified via app-run relaunch.
+
+## 2026-07-16 — T-017 done → T-018 started (G-003 drive)
+
+- **T-017 ✅** drag-reorder — single `MoveAsync(from,to)` (ObservableCollection.Move + RefreshCompatAsync); Up/Down delegate to it; ListBox item-drag distinguished from external FileDrop by payload type (file drop bubbles to T-016 handler). 237 tests (110 App, 7 new). Commit `638aac4`. Live gesture NOT verified (headless).
+- **T-018 🔵** perfect-docs (drag-and-drop) dispatched — terminal node.
+
+## 2026-07-16 — T-016 done → T-017 started (G-003 drive)
+
+- **T-016 ✅** file drag-drop — pure `VideoFileFilter` (AcceptVideoFiles/HasAnyVideo, 25 tests) + AllowDrop/Drop on Split (→ LoadCommand, first file) + Join (→ AddFilesCommand, all, FileDrop-only guard) + highlight overlay. 230 tests (103 App). Commit `721afc8`. Live drop NOT verified (headless).
+- **T-017 🔵** drag-to-reorder Join list dispatched.
+
+## 2026-07-16 — todo-goal-next: G-003 (drag-and-drop) planned → building
+
+- **G-003** "Drag-and-drop support" created; T-016 (file-drop → Split load / Join add + pure `VideoFileFilter`) · T-017 (drag-reorder Join list) · T-018 (docs). All `spec: reviewed`.
+- Decisions: **D1** standard WPF AllowDrop/Drop code-behind → existing Load/Add commands (no new load logic) · **D2** pure tested filter, event wiring app-run-verified · **D3** reorder-drag auto-included under --auto-approve (isolated in T-017).
+- Fills a gap: T-007 speced drop-to-load but only wired the picker.
+- **T-016 🔵** external file drag-drop dispatched.
+
 ## 2026-07-16 — ✅ G-002 DONE — in-app video player converged (4/4)
 
 - **T-015 ✅** docs — README · USER_GUIDE · ARCHITECTURE · CHANGELOG (0.2.0-Unreleased) · CLAUDE updated for the player. Commit `d97a405`.
