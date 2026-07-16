@@ -2,6 +2,37 @@
 
 <!-- latest on top; entries are never deleted -->
 
+## 2026-07-16 — ✅ G-002 DONE — in-app video player converged (4/4)
+
+- **T-015 ✅** docs — README · USER_GUIDE · ARCHITECTURE · CHANGELOG (0.2.0-Unreleased) · CLAUDE updated for the player. Commit `d97a405`.
+- **G-002 sealed `status: done`** — all 4 tasks done (todo-goal-next plan+build converged).
+- Chain: T-012 `8bd4afd` → T-013 `a053b70` → T-014 `e98871b` → T-015 `d97a405`.
+- Tests: **205 passing** (127 Core + 78 App), 0-warning build.
+- Feature: load → in-app play/scrub → "Set cut at playhead" (snaps) → timeline strip (playhead + marker/candidate ticks) → click-to-cut / click-to-seek. All visual cuts reuse the one `AddCutAt`→snap path.
+- ⚠ Live playback/render unverified in headless workers → verified via `app-run` relaunch on the real desktop.
+
+## 2026-07-16 — T-014 done → T-015 started (G-002 drive)
+
+- **T-014 ✅** timeline overlay — pure `TimelineMath` (ToNormalized/FromNormalized) + `TimelineViewModel` projection (playhead + marker/candidate ticks) + `TimelineView` (click-to-cut via `AddCutAt`, click-tick → existing seek/preview commands). 205/205 (21 new). Commit `e98871b`. Live render/click NOT verified (headless).
+- **T-015 🔵** perfect-docs (player feature) dispatched — terminal node.
+
+## 2026-07-16 — T-013 done → T-014 started (G-002 drive)
+
+- **T-013 ✅** set-cut-from-playhead — `AddCutAt(t)` single entry (snap+dedup; old `AddMarker` refactored onto it) + `SetCutAtPlayhead` (guarded on HasFile+IsReady) + `SeekToMarker`/`PreviewCandidate` (`Player.Scrub`). 184/184 (8 new). Commit `a053b70`. Live seek NOT verified (headless).
+- **T-014 🔵** timeline overlay (markers/candidates ticks + playhead, click-to-cut / click-to-seek) dispatched — last feature node.
+
+## 2026-07-16 — T-012 done → T-013 started (G-002 drive)
+
+- **T-012 ✅** player control — `IMediaPlayer` + `MediaElementPlayer` (DispatcherTimer poll, Open/Play/Pause/Stop/Seek) + `PlayerViewModel` (seek-feedback guarded via `_suppressSeek`) + `PlayerView`; `NullMediaPlayer` default keeps SplitViewModel ctor back-compat. 176/176 (14 new). Commit `8bd4afd`. Live playback NOT verified (headless).
+- **T-013 🔵** set-cut-from-playhead + seek-to-marker + preview-candidate dispatched.
+
+## 2026-07-16 — todo-goal-next: G-002 (in-app video player) planned → building
+
+- **G-002** "In-app video player — preview playback + scrub + pick cut points from the playhead" created; decomposed into T-012→T-015 (all `spec: reviewed`).
+- Locked decisions: **D1** player = WPF MediaElement (auto-picked under --auto-approve; FFME parked as D1-alt upgrade) · **D2** `IMediaPlayer` abstraction (fake-testable, live playback via app-run only) · **D3** reuse existing keyframe-snap for playhead-captured cuts.
+- Plan→build fusion (todo-goal-next): proceeding immediately. **T-012 🔵** player control dispatched.
+- (G-001 remains ✅ done + pushed to origin/main @ 00b8b9d.)
+
 ## 2026-07-15 — ✅ G-001 DONE — todo-next-flow drain converged (11/11)
 
 - **T-011 ✅** perfect-docs — README · docs/USER_GUIDE · docs/ARCHITECTURE · CHANGELOG (0.1.0) · CLAUDE, all from real code. Commit `4fd4f87`.
