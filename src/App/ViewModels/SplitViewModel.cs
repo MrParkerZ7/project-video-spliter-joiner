@@ -65,6 +65,10 @@ public sealed class SplitViewModel : ObservableObject
         Markers = new ObservableCollection<CutMarkerViewModel>();
         Candidates = new ObservableCollection<CandidateViewModel>();
 
+        // The timeline overlay (T-014) projects Player/Markers/Candidates onto a normalized strip.
+        // Constructed last so it can subscribe to the fully-built collections + player.
+        Timeline = new TimelineViewModel(this);
+
         // CanRunSplit depends on the marker count → recompute when the collection changes.
         Markers.CollectionChanged += OnMarkersChanged;
 
@@ -185,6 +189,13 @@ public sealed class SplitViewModel : ObservableObject
 
     /// <summary>The auto-detected candidates, ranked.</summary>
     public ObservableCollection<CandidateViewModel> Candidates { get; }
+
+    /// <summary>
+    /// The timeline overlay projection (T-014): markers + candidates + playhead on a normalized
+    /// strip under the player, with click-to-cut / click-to-seek routed back through this VM's
+    /// existing <see cref="AddCutAt"/> / seek commands.
+    /// </summary>
+    public TimelineViewModel Timeline { get; }
 
     /// <summary>True once a file is loaded (gates marker/detect actions).</summary>
     public bool HasFile => InputPath is not null;

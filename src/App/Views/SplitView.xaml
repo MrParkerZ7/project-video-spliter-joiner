@@ -13,19 +13,28 @@
     <Grid Margin="8">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
         <!-- ================= TOP: in-app video preview (T-012) ================= -->
         <views:PlayerView Grid.Row="0"
-                          Margin="0,0,0,10"
+                          Margin="0,0,0,6"
                           MaxHeight="320"
                           DataContext="{Binding Player}"
                           Visibility="{Binding DataContext.HasFile,
                                        RelativeSource={RelativeSource AncestorType=UserControl},
                                        Converter={StaticResource BoolToVisibility}}" />
 
-        <Grid Grid.Row="1">
+        <!-- ============ Timeline overlay: markers + candidates (T-014) ============ -->
+        <views:TimelineView Grid.Row="1"
+                            Margin="0,0,0,10"
+                            DataContext="{Binding Timeline}"
+                            Visibility="{Binding DataContext.HasFile,
+                                         RelativeSource={RelativeSource AncestorType=UserControl},
+                                         Converter={StaticResource BoolToVisibility}}" />
+
+        <Grid Grid.Row="2">
         <Grid.ColumnDefinitions>
             <ColumnDefinition Width="*" />
             <ColumnDefinition Width="8" />
