@@ -18,9 +18,14 @@ public sealed class MediaFixtures : IDisposable
     /// <summary>Fixture duration in seconds.</summary>
     public const double DurationSeconds = 10.0;
 
+    /// <summary>Length of the 4K / matched-1080p perf fixtures in seconds (T-024).</summary>
+    public const double PerfDurationSeconds = 15.0;
+
     private readonly string _dir;
     private readonly Lazy<string> _videoOnly;
     private readonly Lazy<string> _videoWithAudio;
+    private readonly Lazy<string> _uhd4k;
+    private readonly Lazy<string> _fullHd1080;
 
     public MediaFixtures()
     {
@@ -29,6 +34,8 @@ public sealed class MediaFixtures : IDisposable
 
         _videoOnly = new Lazy<string>(() => GenerateVideoOnly(Path.Combine(_dir, "video_only.mp4")));
         _videoWithAudio = new Lazy<string>(() => GenerateVideoWithAudio(Path.Combine(_dir, "video_audio.mp4")));
+        _uhd4k = new Lazy<string>(() => GeneratePerfClip(Path.Combine(_dir, "uhd_4k.mp4"), 3840, 2160));
+        _fullHd1080 = new Lazy<string>(() => GeneratePerfClip(Path.Combine(_dir, "fhd_1080.mp4"), 1920, 1080));
     }
 
     /// <summary>True when the real ffmpeg override exists — gate for fixture generation.</summary>
@@ -39,6 +46,12 @@ public sealed class MediaFixtures : IDisposable
 
     /// <summary>Path to the same clip plus a 440Hz AAC audio track (video + audio).</summary>
     public string VideoWithAudioPath => _videoWithAudio.Value;
+
+    /// <summary>Path to a 15s 3840×2160 H.264 clip at 30fps with a 2s GOP (T-024 perf fixture).</summary>
+    public string Uhd4kPath => _uhd4k.Value;
+
+    /// <summary>Path to a length-matched 1920×1080 clip — the 1080p baseline for split timing.</summary>
+    public string FullHd1080Path => _fullHd1080.Value;
 
     public void Dispose()
     {
@@ -86,6 +99,25 @@ public sealed class MediaFixtures : IDisposable
             "-sc_threshold", "0",
             "-pix_fmt", "yuv420p",
             "-c:a", "aac",
+            outPath);
+        return outPath;
+    }
+
+    /// <summary>
+    /// Generate a 15s testsrc2 clip at the given resolution, 30fps, GOP 60 (2s), veryfast x264 —
+    /// the T-024 perf fixtures. Used to confirm 4K split/scan correctness and to record 4K-vs-1080p
+    /// timings; the two resolutions share length + GOP so their split times are comparable.
+    /// </summary>
+    private static string GeneratePerfClip(string outPath, int width, int height)
+    {
+        RunFfmpeg(
+            "-y",
+            "-f", "lavfi",
+            "-i", $"testsrc2=size={width}x{height}:rate=30:d={(int)PerfDurationSeconds}",
+            "-c:v", "libx264",
+            "-preset", "veryfast",
+            "-g", "60",
+            "-pix_fmt", "yuv420p",
             outPath);
         return outPath;
     }

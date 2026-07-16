@@ -1,4 +1,6 @@
 using System;
+using System.Diagnostics;
+using System.Linq;
 using System.Runtime.CompilerServices;
 using Unosquare.FFME;
 using Unosquare.FFME.Common;
@@ -23,6 +25,13 @@ namespace VideoSplitJoiner.App.Media;
 /// </remarks>
 public sealed class FfmeMediaPlayer : IMediaPlayer
 {
+    /// <summary>
+    /// Cap the on-screen preview to ~1080p tall (T-024). A 4K source is decoded/rendered at this
+    /// height so the WPF UI thread is not saturated pushing 3840×2160 BGRA frames every tick; the
+    /// split still runs at full source resolution (it is <c>-c copy</c>, never decoded).
+    /// </summary>
+    private const int MaxPreviewHeight = 1080;
+
     private MediaElement? _element;
     private TimeSpan? _duration;
     private bool _isPlaying;
@@ -55,6 +64,10 @@ public sealed class FfmeMediaPlayer : IMediaPlayer
         _element.UnloadedBehavior = MediaPlaybackState.Manual;
         _element.ScrubbingEnabled = true;
 
+        // Pre-open hook (T-024): configure hardware decoding + a downscaled preview filter before
+        // FFME opens the stream. MediaOpening carries e.Options (a MediaOptions) and e.Info (the
+        // probed MediaInfo with per-stream pixel dimensions).
+        _element.MediaOpening += OnMediaOpening;
         _element.MediaOpened += OnMediaOpened;
         _element.MediaEnded += OnMediaEnded;
         _element.MediaFailed += OnMediaFailed;
@@ -65,6 +78,7 @@ public sealed class FfmeMediaPlayer : IMediaPlayer
     {
         if (_element is not null)
         {
+            _element.MediaOpening -= OnMediaOpening;
             _element.MediaOpened -= OnMediaOpened;
             _element.MediaEnded -= OnMediaEnded;
             _element.MediaFailed -= OnMediaFailed;
@@ -196,6 +210,70 @@ public sealed class FfmeMediaPlayer : IMediaPlayer
 
     private void OnPositionChanged(object? sender, PositionChangedEventArgs e) =>
         PositionChanged?.Invoke(this, EventArgs.Empty);
+
+    /// <summary>
+    /// Pre-open configuration hook (T-024). Runs before FFME decodes anything:
+    /// <list type="number">
+    /// <item>enables hardware-accelerated decoding (D3D11VA / DXVA2 / any device ffmpeg reports
+    /// compatible with the video stream) by handing the probed device list to
+    /// <see cref="MediaOptions.VideoHardwareDevices"/>; and</item>
+    /// <item>installs a <c>scale=W:H</c> preview filter (<see cref="MediaOptions.VideoFilter"/>)
+    /// capping the preview at <see cref="MaxPreviewHeight"/> so a 4K source renders at ~1080p.</item>
+    /// </list>
+    /// Both steps are best-effort and independently wrapped: a HW-init failure or a filter-build
+    /// failure falls back silently to software / native-resolution decode — never a crash. The
+    /// source and the eventual cut are untouched (split is <c>-c copy</c>).
+    /// </summary>
+    private void OnMediaOpening(object? sender, MediaOpeningEventArgs e)
+    {
+        var video = FindVideoStream(e);
+
+        // --- (1) Hardware decoding -----------------------------------------------------------
+        try
+        {
+            // The video stream carries the list of hardware devices ffmpeg found compatible with
+            // its codec (D3D11VA / DXVA2 / CUDA / ...). Handing this array to VideoHardwareDevices
+            // lets FFME pick the first that initializes; an empty array = software decode.
+            var devices = video?.HardwareDevices;
+            if (devices is { Count: > 0 })
+            {
+                e.Options.VideoHardwareDevices = devices.ToArray();
+            }
+        }
+        catch (Exception ex)
+        {
+            // HW accel is a best-effort optimization — never fail the open over it.
+            Debug.WriteLine($"[FFME] Hardware-decode setup skipped: {ex.Message}");
+        }
+
+        // --- (2) Downscaled preview filter ---------------------------------------------------
+        try
+        {
+            if (video is not null && string.IsNullOrWhiteSpace(e.Options.VideoFilter))
+            {
+                var filter = PreviewScale.BuildScaleFilter(video.PixelWidth, video.PixelHeight, MaxPreviewHeight);
+                if (filter is not null)
+                {
+                    // scale runs on CPU frames; FFME downloads hardware frames before this filter,
+                    // so HW-decode + software-scale compose cleanly. Preview-only — cut is full-res.
+                    e.Options.VideoFilter = filter;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"[FFME] Preview downscale filter skipped: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Find the first video stream in the probed <see cref="MediaInfo"/>, matching on the
+    /// string <c>CodecTypeName</c> ("video") so this class does not take a compile-time dependency
+    /// on the FFmpeg.AutoGen <c>AVMediaType</c> enum. Returns <c>null</c> if there is none.
+    /// </summary>
+    private static StreamInfo? FindVideoStream(MediaOpeningEventArgs e) =>
+        e.Info?.Streams?.Values.FirstOrDefault(
+            s => string.Equals(s.CodecTypeName, "video", StringComparison.OrdinalIgnoreCase));
 
     private void OnMediaOpened(object? sender, MediaOpenedEventArgs e)
     {
