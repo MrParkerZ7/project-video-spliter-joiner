@@ -3,8 +3,8 @@ using System;
 namespace VideoSplitJoiner.App.Media;
 
 /// <summary>
-/// A testable abstraction over a video preview player (transport + timeline). The WPF-bound
-/// <see cref="MediaElementPlayer"/> is the production implementation; unit tests supply a fake so
+/// A testable abstraction over a video preview player (transport + timeline). The FFME-backed
+/// <see cref="FfmeMediaPlayer"/> is the production implementation; unit tests supply a fake so
 /// <see cref="VideoSplitJoiner.App.ViewModels.PlayerViewModel"/> logic can be exercised with no
 /// GUI and no real playback.
 /// </summary>

@@ -43,7 +43,7 @@ public sealed class SplitViewModel : ObservableObject
 
     /// <summary>
     /// Create the split VM over the three Core services (real or fake). <paramref name="player"/> is
-    /// the in-app preview player (T-012): the composition root passes a <see cref="MediaElementPlayer"/>,
+    /// the in-app preview player (T-012): the composition root passes a <see cref="FfmeMediaPlayer"/>,
     /// tests pass a fake; when omitted it defaults to a no-op <see cref="NullMediaPlayer"/> so existing
     /// constructions keep working. On a successful <see cref="LoadAsync"/> the loaded file is also
     /// opened in the preview.

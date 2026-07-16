@@ -6,7 +6,7 @@ namespace VideoSplitJoiner.App.ViewModels;
 
 /// <summary>
 /// View model for the in-app video preview player (T-012). Sits over an <see cref="IMediaPlayer"/>
-/// (the WPF <see cref="MediaElementPlayer"/> in production, a fake in tests) and exposes a
+/// (the FFME-backed <see cref="FfmeMediaPlayer"/> in production, a fake in tests) and exposes a
 /// WPF-free transport surface: observable <see cref="Position"/> / <see cref="Duration"/> /
 /// <see cref="IsPlaying"/> / <see cref="IsReady"/>, formatted <see cref="PositionText"/> /
 /// <see cref="DurationText"/>, a <see cref="PreviewFailed"/> banner flag, and
@@ -84,8 +84,8 @@ public sealed class PlayerViewModel : ObservableObject
     }
 
     /// <summary>
-    /// The underlying player, exposed so the view's code-behind can attach the WPF
-    /// <c>MediaElement</c> when the concrete player is a <see cref="MediaElementPlayer"/>. VM logic
+    /// The underlying player, exposed so the view's code-behind can attach the FFME
+    /// <c>MediaElement</c> when the concrete player is a <see cref="FfmeMediaPlayer"/>. VM logic
     /// never touches WPF types — this is only the attach seam.
     /// </summary>
     public IMediaPlayer PlayerControl => _player;

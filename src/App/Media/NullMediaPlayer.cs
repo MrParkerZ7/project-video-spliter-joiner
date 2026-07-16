@@ -6,7 +6,7 @@ namespace VideoSplitJoiner.App.Media;
 /// A do-nothing <see cref="IMediaPlayer"/> (null object). Used as the default player for
 /// <see cref="VideoSplitJoiner.App.ViewModels.SplitViewModel"/> so existing constructions (and
 /// tests) that don't supply a player keep working — it records nothing, plays nothing, and never
-/// raises events. The production composition root replaces it with a <see cref="MediaElementPlayer"/>.
+/// raises events. The production composition root replaces it with a <see cref="FfmeMediaPlayer"/>.
 /// </summary>
 public sealed class NullMediaPlayer : IMediaPlayer
 {

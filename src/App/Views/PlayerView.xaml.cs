@@ -7,10 +7,10 @@ namespace VideoSplitJoiner.App.Views;
 
 /// <summary>
 /// Code-behind for the video preview player. Keeps only the WPF seam: on <c>Loaded</c> it hands the
-/// view's <see cref="MediaElement"/> to the <see cref="MediaElementPlayer"/> that backs the bound
-/// <see cref="PlayerViewModel"/>. All transport/timeline logic lives WPF-free in the VM. If the VM's
-/// player is not a <see cref="MediaElementPlayer"/> (e.g. a design-time or test stand-in) the attach
-/// is skipped silently.
+/// view's FFME <see cref="Unosquare.FFME.MediaElement"/> to the <see cref="FfmeMediaPlayer"/> that
+/// backs the bound <see cref="PlayerViewModel"/>. All transport/timeline logic lives WPF-free in the
+/// VM. If the VM's player is not a <see cref="FfmeMediaPlayer"/> (e.g. a design-time or test
+/// stand-in) the attach is skipped silently.
 /// </summary>
 public partial class PlayerView : UserControl
 {
@@ -28,9 +28,9 @@ public partial class PlayerView : UserControl
             return;
         }
 
-        if (vm.PlayerControl is MediaElementPlayer mediaPlayer)
+        if (vm.PlayerControl is FfmeMediaPlayer ffmePlayer)
         {
-            mediaPlayer.Attach(Media);
+            ffmePlayer.Attach(Media);
             _attached = true;
         }
     }

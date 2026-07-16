@@ -33,9 +33,9 @@ public sealed class MainViewModel : ObservableObject
         var detector = new SplitPointDetector(ffmpegRunner, probe, locator);
         var joinEngine = new JoinEngine(ffmpegRunner, probe);
 
-        // The in-app preview player is WPF-bound (MediaElementPlayer); PlayerView attaches its
-        // MediaElement on Loaded. Unattached here, so construction stays render-free.
-        Split = new SplitViewModel(probe, splitEngine, detector, new MediaElementPlayer());
+        // The in-app preview player is FFME-backed (FfmeMediaPlayer, decodes via ffmpeg); PlayerView
+        // attaches its FFME MediaElement on Loaded. Unattached here, so construction stays render-free.
+        Split = new SplitViewModel(probe, splitEngine, detector, new FfmeMediaPlayer());
         Join = new JoinViewModel(joinEngine, probe);
     }
 
