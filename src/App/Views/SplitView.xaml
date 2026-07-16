@@ -137,22 +137,8 @@
             </ListBox>
         </DockPanel>
 
-        <!-- ================= RIGHT: detect + output + run ================= -->
+        <!-- ================= RIGHT: output + run ================= -->
         <DockPanel Grid.Column="2">
-
-            <!-- Auto-detect -->
-            <StackPanel DockPanel.Dock="Top">
-                <StackPanel Orientation="Horizontal">
-                    <Button Content="Auto-detect"
-                            Padding="8,2"
-                            Command="{Binding AutoDetectCommand}" />
-                    <Button Content="Add selected"
-                            Margin="6,0,0,0"
-                            Padding="8,2"
-                            Command="{Binding AddSelectedCandidatesCommand}" />
-                </StackPanel>
-                <TextBlock Text="Detected candidates:" FontWeight="Bold" Margin="0,6,0,2" />
-            </StackPanel>
 
             <!-- Output + run controls anchored at the bottom -->
             <StackPanel DockPanel.Dock="Bottom" Margin="0,8,0,0">
@@ -252,28 +238,6 @@
                     </ItemsControl>
                 </StackPanel>
             </StackPanel>
-
-            <!-- Candidates list (fills the remaining middle space) -->
-            <ListBox ItemsSource="{Binding Candidates}" MinHeight="100">
-                <ListBox.ItemTemplate>
-                    <DataTemplate DataType="{x:Type vm:CandidateViewModel}">
-                        <StackPanel Orientation="Horizontal">
-                            <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay}" VerticalAlignment="Center" />
-                            <Button Content="▶ preview"
-                                    Margin="6,0,0,0"
-                                    Padding="6,1"
-                                    ToolTip="Seek the preview player to this candidate's detected time"
-                                    Command="{Binding DataContext.PreviewCandidateCommand,
-                                              RelativeSource={RelativeSource AncestorType=ListBox}}"
-                                    CommandParameter="{Binding}" />
-                            <TextBlock Margin="6,0,0,0"
-                                       VerticalAlignment="Center"
-                                       Text="{Binding Display}"
-                                       FontFamily="Consolas" />
-                        </StackPanel>
-                    </DataTemplate>
-                </ListBox.ItemTemplate>
-            </ListBox>
         </DockPanel>
         </Grid>
 

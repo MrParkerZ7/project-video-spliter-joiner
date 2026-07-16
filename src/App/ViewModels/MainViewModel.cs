@@ -1,6 +1,5 @@
 using VideoSplitJoiner.App.Media;
 using VideoSplitJoiner.Core;
-using VideoSplitJoiner.Core.Detect;
 using VideoSplitJoiner.Core.Ffmpeg;
 using VideoSplitJoiner.Core.Join;
 using VideoSplitJoiner.Core.Media;
@@ -10,9 +9,9 @@ namespace VideoSplitJoiner.App.ViewModels;
 
 /// <summary>
 /// Root view model for the main window. Doubles as the app's composition root: it wires the real
-/// Core services (locator → ffmpeg/ffprobe runners → probe → split/join engines + detector) into the
-/// screen view models. The parameterless ctor builds the production graph; the DI-style ctor lets
-/// tests inject fakes.
+/// Core services (locator → ffmpeg/ffprobe runners → probe → split/join engines) into the screen
+/// view models. The parameterless ctor builds the production graph; the DI-style ctor lets tests
+/// inject fakes.
 /// </summary>
 public sealed class MainViewModel : ObservableObject
 {
@@ -23,19 +22,18 @@ public sealed class MainViewModel : ObservableObject
     {
         // Hand-wire the concrete Core services once, then share the probe across both screens.
         // FfmpegBinaryLocator resolves ffmpeg/ffprobe (app-local ffmpeg/ folder, then PATH); the
-        // runners, probe, engines, and detector are layered on top exactly as the Core tests compose.
+        // runners, probe, and engines are layered on top exactly as the Core tests compose.
         var locator = new FfmpegBinaryLocator();
         var ffprobeRunner = new FfprobeRunner(locator);
         var ffmpegRunner = new FfmpegRunner(locator);
 
         var probe = new MediaProbe(ffprobeRunner);
         var splitEngine = new SplitEngine(ffmpegRunner, probe);
-        var detector = new SplitPointDetector(ffmpegRunner, probe, locator);
         var joinEngine = new JoinEngine(ffmpegRunner, probe);
 
         // The in-app preview player is FFME-backed (FfmeMediaPlayer, decodes via ffmpeg); PlayerView
         // attaches its FFME MediaElement on Loaded. Unattached here, so construction stays render-free.
-        Split = new SplitViewModel(probe, splitEngine, detector, new FfmeMediaPlayer());
+        Split = new SplitViewModel(probe, splitEngine, new FfmeMediaPlayer());
         Join = new JoinViewModel(joinEngine, probe);
     }
 

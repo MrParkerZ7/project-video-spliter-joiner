@@ -3,7 +3,7 @@ namespace VideoSplitJoiner.Core;
 /// <summary>
 /// Basic identity constants for the application core.
 /// Placeholder type so the Core assembly is non-empty and compiles.
-/// Real services (Media, Split, Join, Detect, Ffmpeg) arrive in later tickets.
+/// Real services (Media, Split, Join, Ffmpeg) arrive in later tickets.
 /// </summary>
 public static class AppInfo
 {

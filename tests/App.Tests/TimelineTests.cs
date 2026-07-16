@@ -6,7 +6,6 @@ using System.Threading.Tasks;
 using FluentAssertions;
 using VideoSplitJoiner.App.Media;
 using VideoSplitJoiner.App.ViewModels;
-using VideoSplitJoiner.Core.Detect;
 using VideoSplitJoiner.Core.Media;
 using VideoSplitJoiner.Core.Split;
 using Xunit;
@@ -88,7 +87,7 @@ public sealed class TimelineTests
     // =========================================================================================
 
     [Fact]
-    public async Task Projection_MarkerAndCandidateTicks_HaveCorrectNormalizedAndKind()
+    public async Task Projection_MarkerTicks_HaveCorrectNormalized()
     {
         var (vm, _, player) = await BuildLoadedReadyAsync(); // duration = 60s, keyframes at every second
         var timeline = vm.Timeline;
@@ -97,20 +96,10 @@ public sealed class TimelineTests
         player.RaisePositionChanged(TimeSpan.FromSeconds(30.4));
         vm.SetCutAtPlayhead();
 
-        // Candidate at 15s → normalized 0.25, Scene.
-        vm.Candidates.Add(new CandidateViewModel(
-            new Candidate(TimeSpan.FromSeconds(15), TimeSpan.FromSeconds(15), CandidateKind.Scene, 0.9, 1)));
-
         timeline.MarkerTicks.Should().ContainSingle();
         timeline.MarkerTicks[0].Normalized.Should().BeApproximately(0.5, 1e-9);
         timeline.MarkerTicks[0].Time.Should().Be(TimeSpan.FromSeconds(30));
-        timeline.MarkerTicks[0].Kind.Should().BeNull();
         timeline.MarkerTicks[0].Ref.Should().BeSameAs(vm.Markers[0]);
-
-        timeline.CandidateTicks.Should().ContainSingle();
-        timeline.CandidateTicks[0].Normalized.Should().BeApproximately(0.25, 1e-9);
-        timeline.CandidateTicks[0].Kind.Should().Be(CandidateKind.Scene);
-        timeline.CandidateTicks[0].Ref.Should().BeSameAs(vm.Candidates[0]);
     }
 
     [Fact]
@@ -123,20 +112,6 @@ public sealed class TimelineTests
         vm.SetCutAtPlayhead();
 
         vm.Timeline.MarkerTicks.Should().ContainSingle("adding a marker re-projects via CollectionChanged");
-    }
-
-    [Fact]
-    public async Task Projection_Reprojects_WhenCandidateAdded()
-    {
-        var (vm, _, _) = await BuildLoadedReadyAsync();
-        vm.Timeline.CandidateTicks.Should().BeEmpty();
-
-        vm.Candidates.Add(new CandidateViewModel(
-            new Candidate(TimeSpan.FromSeconds(48), TimeSpan.FromSeconds(48), CandidateKind.Black, 0.7, 1)));
-
-        vm.Timeline.CandidateTicks.Should().ContainSingle();
-        vm.Timeline.CandidateTicks[0].Normalized.Should().BeApproximately(0.8, 1e-9);
-        vm.Timeline.CandidateTicks[0].Kind.Should().Be(CandidateKind.Black);
     }
 
     [Fact]
@@ -216,13 +191,11 @@ public sealed class TimelineTests
     {
         var (vm, _, _) = Build();
 
-        // Add a candidate before any file/duration — projection must not throw and normalized = 0.
-        FluentActions.Invoking(() => vm.Candidates.Add(new CandidateViewModel(
-            new Candidate(TimeSpan.FromSeconds(3), TimeSpan.FromSeconds(3), CandidateKind.White, 0.5, 1))))
+        // Before any file/duration — projection must not throw and the playhead clamps to 0.
+        FluentActions.Invoking(() => vm.Timeline.PlayheadNormalized.Should().Be(0d))
             .Should().NotThrow();
 
-        vm.Timeline.CandidateTicks.Should().ContainSingle();
-        vm.Timeline.CandidateTicks[0].Normalized.Should().Be(0d, "unknown duration → normalized clamps to 0");
+        vm.Timeline.MarkerTicks.Should().BeEmpty();
         vm.Timeline.PlayheadNormalized.Should().Be(0d);
     }
 
@@ -243,21 +216,6 @@ public sealed class TimelineTests
 
         player.Seeks.Should().ContainSingle().Which.Should().Be(TimeSpan.FromSeconds(30),
             "marker tick routes to SeekToMarkerCommand → the snapped time");
-    }
-
-    [Fact]
-    public async Task PreviewCandidateTick_SeeksToRawDetectedTime_ViaExistingCommand()
-    {
-        var (vm, _, player) = await BuildLoadedReadyAsync();
-        vm.Candidates.Add(new CandidateViewModel(
-            new Candidate(TimeSpan.FromSeconds(12.7), TimeSpan.FromSeconds(13), CandidateKind.Scene, 0.8, 1)));
-        var tick = vm.Timeline.CandidateTicks[0];
-        player.Seeks.Clear();
-
-        vm.Timeline.PreviewCandidateTick(tick);
-
-        player.Seeks.Should().ContainSingle().Which.Should().Be(TimeSpan.FromSeconds(12.7),
-            "candidate tick routes to PreviewCandidateCommand → the RAW detected time");
     }
 
     // =========================================================================================
@@ -310,13 +268,6 @@ public sealed class TimelineTests
     {
         public Task<SplitResult> SplitAsync(SplitRequest req, IProgress<double>? progress = null, CancellationToken ct = default)
             => Task.FromResult(new SplitResult(Array.Empty<SplitSegment>(), Array.Empty<string>()));
-    }
-
-    private sealed class NoOpDetector : ISplitPointDetector
-    {
-        public Task<IReadOnlyList<Candidate>> DetectAsync(
-            string path, DetectOptions options, IProgress<double>? progress = null, CancellationToken ct = default)
-            => Task.FromResult<IReadOnlyList<Candidate>>(Array.Empty<Candidate>());
     }
 
     private sealed class RecordingPlayer : IMediaPlayer
@@ -372,7 +323,7 @@ public sealed class TimelineTests
     {
         var probe = new FakeProbe();
         var player = new RecordingPlayer();
-        var vm = new SplitViewModel(probe, new NoOpSplitEngine(), new NoOpDetector(), player);
+        var vm = new SplitViewModel(probe, new NoOpSplitEngine(), player);
         return (vm, probe, player);
     }
 

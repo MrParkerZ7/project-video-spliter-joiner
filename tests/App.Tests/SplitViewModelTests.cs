@@ -5,7 +5,6 @@ using System.Threading;
 using System.Threading.Tasks;
 using FluentAssertions;
 using VideoSplitJoiner.App.ViewModels;
-using VideoSplitJoiner.Core.Detect;
 using VideoSplitJoiner.Core.Media;
 using VideoSplitJoiner.Core.Split;
 using Xunit;
@@ -14,9 +13,8 @@ namespace VideoSplitJoiner.App.Tests;
 
 /// <summary>
 /// Unit tests for <see cref="SplitViewModel"/> using fake <see cref="IMediaProbe"/> /
-/// <see cref="ISplitEngine"/> / <see cref="ISplitPointDetector"/> — no ffmpeg, no GUI, no
-/// rendering. The fakes are TaskCompletionSource-free where ordering does not matter and
-/// deterministic where it does.
+/// <see cref="ISplitEngine"/> — no ffmpeg, no GUI, no rendering. The fakes are
+/// TaskCompletionSource-free where ordering does not matter and deterministic where it does.
 /// </summary>
 public sealed class SplitViewModelTests
 {
@@ -88,24 +86,11 @@ public sealed class SplitViewModelTests
         }
     }
 
-    private sealed class FakeDetector : ISplitPointDetector
-    {
-        public IReadOnlyList<Candidate> CandidatesToReturn { get; set; } = Array.Empty<Candidate>();
-
-        public Task<IReadOnlyList<Candidate>> DetectAsync(
-            string path, DetectOptions options, IProgress<double>? progress = null, CancellationToken ct = default)
-        {
-            progress?.Report(0.5);
-            return Task.FromResult(CandidatesToReturn);
-        }
-    }
-
-    private static (SplitViewModel Vm, FakeProbe Probe, FakeSplitEngine Engine, FakeDetector Detector) Build()
+    private static (SplitViewModel Vm, FakeProbe Probe, FakeSplitEngine Engine) Build()
     {
         var probe = new FakeProbe();
         var engine = new FakeSplitEngine();
-        var detector = new FakeDetector();
-        return (new SplitViewModel(probe, engine, detector), probe, engine, detector);
+        return (new SplitViewModel(probe, engine), probe, engine);
     }
 
     // ---- Load -------------------------------------------------------------------------------
@@ -113,7 +98,7 @@ public sealed class SplitViewModelTests
     [Fact]
     public async Task Load_Success_SetsInfoAndKeyframes()
     {
-        var (vm, probe, _, _) = Build();
+        var (vm, probe, _) = Build();
         var info = new MediaInfo(TimeSpan.FromSeconds(90), "mov,mp4", Array.Empty<StreamInfo>(), Array.Empty<StreamInfo>());
         probe.ProbeResultToReturn = ProbeResult.Success(info);
         probe.KeyframesToReturn = new[] { TimeSpan.Zero, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(4) };
@@ -131,7 +116,7 @@ public sealed class SplitViewModelTests
     [Fact]
     public async Task Load_CoarseGop_SetsKeyframeWarning()
     {
-        var (vm, probe, _, _) = Build();
+        var (vm, probe, _) = Build();
         // Keyframes 6s apart → mean GOP 6s > 4s threshold → warning.
         probe.KeyframesToReturn = new[] { TimeSpan.Zero, TimeSpan.FromSeconds(6), TimeSpan.FromSeconds(12) };
 
@@ -144,7 +129,7 @@ public sealed class SplitViewModelTests
     [Fact]
     public async Task Load_ProbeFailed_SurfacesFriendlyError_NoThrow()
     {
-        var (vm, probe, _, _) = Build();
+        var (vm, probe, _) = Build();
         probe.ProbeResultToReturn = ProbeResult.Failure("not a media file");
 
         var act = async () => await vm.LoadAsync(FakePath);
@@ -162,7 +147,7 @@ public sealed class SplitViewModelTests
     [Fact]
     public async Task AddMarker_ComputesSnapAndDeltaFromKeyframes()
     {
-        var (vm, probe, _, _) = Build();
+        var (vm, probe, _) = Build();
         probe.KeyframesToReturn = Enumerable.Range(0, 11).Select(i => TimeSpan.FromSeconds(i)).ToArray();
         await vm.LoadAsync(FakePath);
 
@@ -178,7 +163,7 @@ public sealed class SplitViewModelTests
     [Fact]
     public async Task AddMarker_ChangingRequested_ResnapsMarker()
     {
-        var (vm, probe, _, _) = Build();
+        var (vm, probe, _) = Build();
         probe.KeyframesToReturn = Enumerable.Range(0, 11).Select(i => TimeSpan.FromSeconds(i)).ToArray();
         await vm.LoadAsync(FakePath);
         vm.AddMarker(TimeSpan.FromSeconds(3.4));
@@ -191,7 +176,7 @@ public sealed class SplitViewModelTests
     [Fact]
     public void AddMarker_WithNoFile_IsIgnored()
     {
-        var (vm, _, _, _) = Build();
+        var (vm, _, _) = Build();
 
         vm.AddMarker(TimeSpan.FromSeconds(5));
 
@@ -201,7 +186,7 @@ public sealed class SplitViewModelTests
     [Fact]
     public async Task RemoveMarker_RemovesFromCollection()
     {
-        var (vm, probe, _, _) = Build();
+        var (vm, probe, _) = Build();
         probe.KeyframesToReturn = new[] { TimeSpan.Zero, TimeSpan.FromSeconds(5) };
         await vm.LoadAsync(FakePath);
         vm.AddMarker(TimeSpan.FromSeconds(3));
@@ -212,70 +197,12 @@ public sealed class SplitViewModelTests
         vm.Markers.Should().BeEmpty();
     }
 
-    // ---- Auto-detect ------------------------------------------------------------------------
-
-    [Fact]
-    public async Task AutoDetect_PopulatesRankedCandidates()
-    {
-        var (vm, probe, _, detector) = Build();
-        probe.KeyframesToReturn = new[] { TimeSpan.Zero, TimeSpan.FromSeconds(10) };
-        await vm.LoadAsync(FakePath);
-        detector.CandidatesToReturn = new[]
-        {
-            new Candidate(TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30), CandidateKind.Scene, 0.7, 2),
-            new Candidate(TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(10), CandidateKind.Black, 0.9, 1),
-        };
-
-        await vm.AutoDetectAsync();
-
-        vm.Candidates.Should().HaveCount(2);
-        vm.Candidates.Select(c => c.Rank).Should().ContainInOrder(1, 2);
-        vm.Operation.Error.Should().BeNull();
-    }
-
-    [Fact]
-    public async Task AutoDetect_EmptyResult_FriendlyStatus_NoError()
-    {
-        var (vm, probe, _, detector) = Build();
-        probe.KeyframesToReturn = new[] { TimeSpan.Zero, TimeSpan.FromSeconds(10) };
-        await vm.LoadAsync(FakePath);
-        detector.CandidatesToReturn = Array.Empty<Candidate>();
-
-        await vm.AutoDetectAsync();
-
-        vm.Candidates.Should().BeEmpty();
-        vm.Operation.State.Should().Be(OperationState.Completed);
-        vm.Operation.Error.Should().BeNull("an empty detection is not a failure");
-        vm.StatusText.Should().Contain("No candidates");
-    }
-
-    [Fact]
-    public async Task AddSelectedCandidates_TurnsSelectedIntoMarkers()
-    {
-        var (vm, probe, _, detector) = Build();
-        probe.KeyframesToReturn = Enumerable.Range(0, 61).Select(i => TimeSpan.FromSeconds(i)).ToArray();
-        await vm.LoadAsync(FakePath);
-        detector.CandidatesToReturn = new[]
-        {
-            new Candidate(TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(10), CandidateKind.Black, 0.9, 1),
-            new Candidate(TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30), CandidateKind.Scene, 0.7, 2),
-        };
-        await vm.AutoDetectAsync();
-        vm.Candidates[0].IsSelected = true; // only the first
-
-        vm.AddSelectedCandidates();
-
-        vm.Markers.Should().HaveCount(1);
-        vm.Markers[0].Requested.Should().Be(TimeSpan.FromSeconds(10));
-        vm.Markers[0].Snapped.Should().Be(TimeSpan.FromSeconds(10));
-    }
-
     // ---- CanRunSplit ------------------------------------------------------------------------
 
     [Fact]
     public void CanRunSplit_False_WithNoFile()
     {
-        var (vm, _, _, _) = Build();
+        var (vm, _, _) = Build();
 
         vm.CanRunSplit.Should().BeFalse();
         vm.RunSplitCommand.CanExecute(null).Should().BeFalse();
@@ -284,7 +211,7 @@ public sealed class SplitViewModelTests
     [Fact]
     public async Task CanRunSplit_False_WithFileButNoMarkers()
     {
-        var (vm, probe, _, _) = Build();
+        var (vm, probe, _) = Build();
         probe.KeyframesToReturn = new[] { TimeSpan.Zero, TimeSpan.FromSeconds(5) };
         await vm.LoadAsync(FakePath);
 
@@ -296,7 +223,7 @@ public sealed class SplitViewModelTests
     [Fact]
     public async Task CanRunSplit_True_WithFileAndMarkerAndOutputDir()
     {
-        var (vm, probe, _, _) = Build();
+        var (vm, probe, _) = Build();
         probe.KeyframesToReturn = new[] { TimeSpan.Zero, TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(10) };
         await vm.LoadAsync(FakePath);
         vm.OutputDir = @"C:\out";
@@ -312,7 +239,7 @@ public sealed class SplitViewModelTests
     [Fact]
     public async Task RunSplit_BuildsExpectedRequest_SortedCutPoints_SetsLastResult()
     {
-        var (vm, probe, engine, _) = Build();
+        var (vm, probe, engine) = Build();
         probe.KeyframesToReturn = Enumerable.Range(0, 61).Select(i => TimeSpan.FromSeconds(i)).ToArray();
         await vm.LoadAsync(FakePath);
         vm.OutputDir = @"C:\out";
@@ -348,7 +275,7 @@ public sealed class SplitViewModelTests
     [Fact]
     public async Task RunSplit_EngineThrows_OperationFailed_ErrorSet()
     {
-        var (vm, probe, engine, _) = Build();
+        var (vm, probe, engine) = Build();
         probe.KeyframesToReturn = new[] { TimeSpan.Zero, TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(10) };
         await vm.LoadAsync(FakePath);
         vm.OutputDir = @"C:\out";
@@ -401,7 +328,7 @@ public sealed class SplitViewModelTests
     public void Ctor_WithoutPlayer_StillConstructs_AndExposesPlayer()
     {
         // The pre-existing 3-arg construction (player omitted → NullMediaPlayer default) must work.
-        var (vm, _, _, _) = Build();
+        var (vm, _, _) = Build();
 
         vm.Player.Should().NotBeNull();
     }
@@ -411,7 +338,7 @@ public sealed class SplitViewModelTests
     {
         var probe = new FakeProbe();
         var player = new RecordingMediaPlayer();
-        var vm = new SplitViewModel(probe, new FakeSplitEngine(), new FakeDetector(), player);
+        var vm = new SplitViewModel(probe, new FakeSplitEngine(), player);
         probe.KeyframesToReturn = new[] { TimeSpan.Zero, TimeSpan.FromSeconds(5) };
 
         await vm.LoadAsync(FakePath);

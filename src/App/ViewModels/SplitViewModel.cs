@@ -7,7 +7,6 @@ using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using VideoSplitJoiner.App.Media;
-using VideoSplitJoiner.Core.Detect;
 using VideoSplitJoiner.Core.Errors;
 using VideoSplitJoiner.Core.Media;
 using VideoSplitJoiner.Core.Split;
@@ -16,8 +15,8 @@ namespace VideoSplitJoiner.App.ViewModels;
 
 /// <summary>
 /// View model for the Split screen (T-007). Loads a media file (probe + keyframes), lets the user
-/// place cut markers — each showing its keyframe snap — or auto-detect candidate boundaries, then
-/// runs a lossless split through <see cref="ISplitEngine"/>. All engine work is funnelled through a
+/// place cut markers — each showing its keyframe snap — then runs a lossless split through
+/// <see cref="ISplitEngine"/>. All engine work is funnelled through a
 /// composed <see cref="OperationViewModel"/> so progress / cancel / friendly-error handling is
 /// shared. Deliberately WPF-free and constructor-injected so it is fully unit-testable with fakes.
 /// </summary>
@@ -28,7 +27,6 @@ public sealed class SplitViewModel : ObservableObject
 
     private readonly IMediaProbe _probe;
     private readonly ISplitEngine _splitEngine;
-    private readonly ISplitPointDetector _detector;
 
     private string? _inputPath;
     private MediaInfo? _info;
@@ -42,7 +40,7 @@ public sealed class SplitViewModel : ObservableObject
     private SplitResult? _lastResult;
 
     /// <summary>
-    /// Create the split VM over the three Core services (real or fake). <paramref name="player"/> is
+    /// Create the split VM over the two Core services (real or fake). <paramref name="player"/> is
     /// the in-app preview player (T-012): the composition root passes a <see cref="FfmeMediaPlayer"/>,
     /// tests pass a fake; when omitted it defaults to a no-op <see cref="NullMediaPlayer"/> so existing
     /// constructions keep working. On a successful <see cref="LoadAsync"/> the loaded file is also
@@ -51,21 +49,18 @@ public sealed class SplitViewModel : ObservableObject
     public SplitViewModel(
         IMediaProbe probe,
         ISplitEngine splitEngine,
-        ISplitPointDetector detector,
         IMediaPlayer? player = null)
     {
         _probe = probe ?? throw new ArgumentNullException(nameof(probe));
         _splitEngine = splitEngine ?? throw new ArgumentNullException(nameof(splitEngine));
-        _detector = detector ?? throw new ArgumentNullException(nameof(detector));
 
         Player = new PlayerViewModel(player ?? NullMediaPlayer.Instance);
 
         Operation = new OperationViewModel();
 
         Markers = new ObservableCollection<CutMarkerViewModel>();
-        Candidates = new ObservableCollection<CandidateViewModel>();
 
-        // The timeline overlay (T-014) projects Player/Markers/Candidates onto a normalized strip.
+        // The timeline overlay (T-014) projects Player/Markers onto a normalized strip.
         // Constructed last so it can subscribe to the fully-built collections + player.
         Timeline = new TimelineViewModel(this);
 
@@ -81,10 +76,7 @@ public sealed class SplitViewModel : ObservableObject
         AddCutAtCommand = new RelayCommand(p => { if (p is TimeSpan t) AddCutAt(t); }, _ => CanAddMarker);
         SetCutAtPlayheadCommand = new RelayCommand(_ => SetCutAtPlayhead(), _ => CanSetCutAtPlayhead);
         SeekToMarkerCommand = new RelayCommand(SeekToMarker);
-        PreviewCandidateCommand = new RelayCommand(PreviewCandidate);
         RemoveMarkerCommand = new RelayCommand(RemoveMarker);
-        AutoDetectCommand = new RelayCommand(_ => _ = AutoDetectAsync(), _ => HasFile);
-        AddSelectedCandidatesCommand = new RelayCommand(_ => AddSelectedCandidates(), _ => Candidates.Count > 0);
         RunSplitCommand = new RelayCommand(_ => _ = RunSplitAsync(), _ => CanRunSplit);
         OpenFolderCommand = new RelayCommand(_ => OpenFolder(), _ => !string.IsNullOrWhiteSpace(OutputDir));
         CancelCommand = Operation.CancelCommand;
@@ -187,17 +179,14 @@ public sealed class SplitViewModel : ObservableObject
     /// <summary>The cut markers, in add order (sorted at run time).</summary>
     public ObservableCollection<CutMarkerViewModel> Markers { get; }
 
-    /// <summary>The auto-detected candidates, ranked.</summary>
-    public ObservableCollection<CandidateViewModel> Candidates { get; }
-
     /// <summary>
-    /// The timeline overlay projection (T-014): markers + candidates + playhead on a normalized
-    /// strip under the player, with click-to-cut / click-to-seek routed back through this VM's
-    /// existing <see cref="AddCutAt"/> / seek commands.
+    /// The timeline overlay projection (T-014): markers + playhead on a normalized strip under the
+    /// player, with click-to-cut / click-to-seek routed back through this VM's existing
+    /// <see cref="AddCutAt"/> / seek commands.
     /// </summary>
     public TimelineViewModel Timeline { get; }
 
-    /// <summary>True once a file is loaded (gates marker/detect actions).</summary>
+    /// <summary>True once a file is loaded (gates marker actions).</summary>
     public bool HasFile => InputPath is not null;
 
     private bool CanAddMarker => HasFile;
@@ -238,17 +227,8 @@ public sealed class SplitViewModel : ObservableObject
     /// <summary>Seek the preview player to a marker's snapped time. Parameter is the <see cref="CutMarkerViewModel"/>.</summary>
     public RelayCommand SeekToMarkerCommand { get; }
 
-    /// <summary>Preview a candidate: seek the player to its raw detected time. Parameter is the <see cref="CandidateViewModel"/>.</summary>
-    public RelayCommand PreviewCandidateCommand { get; }
-
     /// <summary>Remove a marker. Parameter is the <see cref="CutMarkerViewModel"/>.</summary>
     public RelayCommand RemoveMarkerCommand { get; }
-
-    /// <summary>Auto-detect candidate split points and populate <see cref="Candidates"/>.</summary>
-    public RelayCommand AutoDetectCommand { get; }
-
-    /// <summary>Turn every ticked candidate into a marker.</summary>
-    public RelayCommand AddSelectedCandidatesCommand { get; }
 
     /// <summary>Run the split through the engine (guarded by <see cref="CanRunSplit"/>).</summary>
     public RelayCommand RunSplitCommand { get; }
@@ -264,7 +244,7 @@ public sealed class SplitViewModel : ObservableObject
     /// <summary>
     /// Probe <paramref name="path"/> and read its keyframes. On a <see cref="ProbeResult.ProbeFailed"/>
     /// (bad/non-media file), surfaces a friendly error via <see cref="Operation"/> and leaves the VM
-    /// unloaded — never throws. Clears any existing markers/candidates on a successful load.
+    /// unloaded — never throws. Clears any existing markers on a successful load.
     /// </summary>
     public async Task LoadAsync(string? path)
     {
@@ -312,7 +292,7 @@ public sealed class SplitViewModel : ObservableObject
             return;
         }
 
-        // Success — commit the loaded state and clear prior markers/candidates.
+        // Success — commit the loaded state and clear prior markers.
         Info = loadedInfo;
         Keyframes = loadedKeyframes;
         InputPath = path;
@@ -320,7 +300,6 @@ public sealed class SplitViewModel : ObservableObject
         // NullMediaPlayer default; the fake records the Open in tests.
         Player.Open(path);
         Markers.Clear();
-        Candidates.Clear();
         LastResult = null;
         UpdateKeyframeWarning();
 
@@ -403,78 +382,11 @@ public sealed class SplitViewModel : ObservableObject
         }
     }
 
-    /// <summary>Seek the preview player to <paramref name="candidate"/>'s RAW detected time for a preview before selecting.</summary>
-    public void PreviewCandidate(object? parameter)
-    {
-        if (parameter is CandidateViewModel candidate)
-        {
-            Player.Scrub(candidate.Candidate.Time);
-        }
-    }
-
     private void RemoveMarker(object? parameter)
     {
         if (parameter is CutMarkerViewModel marker)
         {
             Markers.Remove(marker);
-        }
-    }
-
-    // ---- Auto-detect ------------------------------------------------------------------------
-
-    /// <summary>
-    /// Run the detector over the loaded file and populate <see cref="Candidates"/> (ranked). An
-    /// empty result is a friendly "no candidates found" status — NOT an error. No file → no-op.
-    /// </summary>
-    public async Task AutoDetectAsync()
-    {
-        if (InputPath is null)
-        {
-            return;
-        }
-
-        var path = InputPath;
-        StatusText = null;
-        IReadOnlyList<Candidate>? detected = null;
-
-        await Operation.RunAsync(
-            async (progress, ct) =>
-            {
-                detected = await _detector.DetectAsync(path, new DetectOptions(), progress, ct).ConfigureAwait(true);
-            },
-            "Detecting split points…").ConfigureAwait(true);
-
-        if (Operation.State != OperationState.Completed || detected is null)
-        {
-            // Failure/cancel already reflected in Operation; leave candidates as-is.
-            return;
-        }
-
-        Candidates.Clear();
-        foreach (var candidate in detected.OrderBy(c => c.Rank))
-        {
-            Candidates.Add(new CandidateViewModel(candidate));
-        }
-
-        RaiseCommandStates();
-        StatusText = Candidates.Count == 0
-            ? "No candidates found — try adding cut markers manually."
-            : $"Found {Candidates.Count} candidate split point(s).";
-    }
-
-    /// <summary>For each ticked candidate, add a marker at its detected time (snaps to its keyframe).</summary>
-    public void AddSelectedCandidates()
-    {
-        if (!HasFile)
-        {
-            return;
-        }
-
-        foreach (var candidate in Candidates.Where(c => c.IsSelected).ToList())
-        {
-            // Add at the detected Time; the marker re-snaps against Keyframes (lands on SnappedTime).
-            Markers.Add(new CutMarkerViewModel(_probe, () => Keyframes, candidate.Candidate.Time));
-            candidate.IsSelected = false;
         }
     }
 
@@ -571,8 +483,6 @@ public sealed class SplitViewModel : ObservableObject
         AddMarkerCommand.RaiseCanExecuteChanged();
         AddCutAtCommand.RaiseCanExecuteChanged();
         SetCutAtPlayheadCommand.RaiseCanExecuteChanged();
-        AutoDetectCommand.RaiseCanExecuteChanged();
-        AddSelectedCandidatesCommand.RaiseCanExecuteChanged();
         OpenFolderCommand.RaiseCanExecuteChanged();
     }
 

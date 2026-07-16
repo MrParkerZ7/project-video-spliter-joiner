@@ -3,7 +3,6 @@ using System.Globalization;
 using System.Windows;
 using System.Windows.Data;
 using System.Windows.Media;
-using VideoSplitJoiner.Core.Detect;
 
 namespace VideoSplitJoiner.App.Views;
 
@@ -92,18 +91,4 @@ public sealed class BoolToCompatBrushConverter : IValueConverter
         brush.Freeze();
         return brush;
     }
-}
-
-/// <summary>
-/// Maps a detected candidate <see cref="CandidateKind"/> to its timeline tick colour (T-014):
-/// Black → grey, White → light blue, Scene → orange. Used by the timeline legend; the track ticks
-/// themselves are drawn in code-behind against the same palette (<c>TimelineView.BrushFor</c>).
-/// </summary>
-public sealed class CandidateKindToBrushConverter : IValueConverter
-{
-    public object Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
-        => value is CandidateKind kind ? Views.TimelineView.BrushFor(kind) : Brushes.Transparent;
-
-    public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
-        => throw new NotSupportedException();
 }

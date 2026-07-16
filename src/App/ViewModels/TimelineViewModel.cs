@@ -8,24 +8,22 @@ namespace VideoSplitJoiner.App.ViewModels;
 
 /// <summary>
 /// Projection view model for the timeline overlay strip (T-014). Sits over an owning
-/// <see cref="SplitViewModel"/> and turns its <see cref="SplitViewModel.Player"/> position/duration,
-/// <see cref="SplitViewModel.Markers"/> and <see cref="SplitViewModel.Candidates"/> into a flat,
-/// bindable set of normalized ticks + a playhead position for the track view. All logic is WPF-free
-/// so it is fully unit-testable with fakes.
+/// <see cref="SplitViewModel"/> and turns its <see cref="SplitViewModel.Player"/> position/duration
+/// and <see cref="SplitViewModel.Markers"/> into a flat, bindable set of normalized ticks + a
+/// playhead position for the track view. All logic is WPF-free so it is fully unit-testable with
+/// fakes.
 ///
-/// <para>Re-projection is event-driven: it observes the marker/candidate collections'
+/// <para>Re-projection is event-driven: it observes the marker collection's
 /// <see cref="INotifyCollectionChanged"/> and the player's Position/Duration changes, refreshing the
-/// tick lists + playhead whenever anything moves. Clicking a track position routes through the owner's
+/// tick list + playhead whenever anything moves. Clicking a track position routes through the owner's
 /// existing <see cref="SplitViewModel.AddCutAt"/> (no new snap logic); clicking a tick routes to the
-/// owner's existing <see cref="SplitViewModel.SeekToMarkerCommand"/> /
-/// <see cref="SplitViewModel.PreviewCandidateCommand"/> (no new seek logic).</para>
+/// owner's existing <see cref="SplitViewModel.SeekToMarkerCommand"/> (no new seek logic).</para>
 /// </summary>
 public sealed class TimelineViewModel : ObservableObject
 {
     private readonly SplitViewModel _owner;
 
     private IReadOnlyList<TimelineTick> _markerTicks = Array.Empty<TimelineTick>();
-    private IReadOnlyList<TimelineTick> _candidateTicks = Array.Empty<TimelineTick>();
     private double _playheadNormalized;
 
     /// <summary>Wrap <paramref name="owner"/> and subscribe to the sources that drive re-projection.</summary>
@@ -34,12 +32,10 @@ public sealed class TimelineViewModel : ObservableObject
         _owner = owner ?? throw new ArgumentNullException(nameof(owner));
 
         _owner.Markers.CollectionChanged += OnCollectionChanged;
-        _owner.Candidates.CollectionChanged += OnCollectionChanged;
         _owner.Player.PropertyChanged += OnPlayerChanged;
 
         ClickAtCommand = new RelayCommand(p => { if (p is double x) ClickAt(x); });
         SeekMarkerTickCommand = new RelayCommand(p => { if (p is TimelineTick tick) SeekMarkerTick(tick); });
-        PreviewCandidateTickCommand = new RelayCommand(p => { if (p is TimelineTick tick) PreviewCandidateTick(tick); });
 
         Reproject();
     }
@@ -60,13 +56,6 @@ public sealed class TimelineViewModel : ObservableObject
         private set => SetProperty(ref _markerTicks, value);
     }
 
-    /// <summary>One tick per detected candidate, positioned by its (raw) detected time and carrying its kind.</summary>
-    public IReadOnlyList<TimelineTick> CandidateTicks
-    {
-        get => _candidateTicks;
-        private set => SetProperty(ref _candidateTicks, value);
-    }
-
     /// <summary>True once a file is loaded and the player duration is known — gates track clicks.</summary>
     public bool HasFile => _owner.HasFile;
 
@@ -77,9 +66,6 @@ public sealed class TimelineViewModel : ObservableObject
 
     /// <summary>Seek to a marker tick's cut (parameter is the <see cref="TimelineTick"/>).</summary>
     public RelayCommand SeekMarkerTickCommand { get; }
-
-    /// <summary>Preview a candidate tick (parameter is the <see cref="TimelineTick"/>).</summary>
-    public RelayCommand PreviewCandidateTickCommand { get; }
 
     // ---- Actions ----------------------------------------------------------------------------
 
@@ -109,15 +95,6 @@ public sealed class TimelineViewModel : ObservableObject
         }
     }
 
-    /// <summary>Route a candidate tick's click to the owner's existing preview-candidate command.</summary>
-    public void PreviewCandidateTick(TimelineTick tick)
-    {
-        if (tick?.Ref is CandidateViewModel candidate && _owner.PreviewCandidateCommand.CanExecute(candidate))
-        {
-            _owner.PreviewCandidateCommand.Execute(candidate);
-        }
-    }
-
     // ---- Projection -------------------------------------------------------------------------
 
     private void OnCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e) => Reproject();
@@ -133,7 +110,7 @@ public sealed class TimelineViewModel : ObservableObject
         }
     }
 
-    /// <summary>Recompute the playhead + both tick lists from the current owner state.</summary>
+    /// <summary>Recompute the playhead + marker tick list from the current owner state.</summary>
     private void Reproject()
     {
         var duration = _owner.Player.Duration ?? TimeSpan.Zero;
@@ -144,16 +121,7 @@ public sealed class TimelineViewModel : ObservableObject
             .Select(m => new TimelineTick(
                 TimelineMath.ToNormalized(m.Snapped, duration),
                 m.Snapped,
-                Kind: null,
                 Ref: m))
-            .ToList();
-
-        CandidateTicks = _owner.Candidates
-            .Select(c => new TimelineTick(
-                TimelineMath.ToNormalized(c.Candidate.Time, duration),
-                c.Candidate.Time,
-                c.Candidate.Kind,
-                Ref: c))
             .ToList();
 
         OnPropertyChanged(nameof(HasFile));

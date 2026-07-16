@@ -6,7 +6,6 @@ using System.Threading.Tasks;
 using FluentAssertions;
 using VideoSplitJoiner.App.Media;
 using VideoSplitJoiner.App.ViewModels;
-using VideoSplitJoiner.Core.Detect;
 using VideoSplitJoiner.Core.Media;
 using VideoSplitJoiner.Core.Split;
 using Xunit;
@@ -14,10 +13,10 @@ using Xunit;
 namespace VideoSplitJoiner.App.Tests;
 
 /// <summary>
-/// Unit tests for the T-013 playhead-capture / seek-to-marker / preview-candidate wiring on
+/// Unit tests for the T-013 playhead-capture / seek-to-marker wiring on
 /// <see cref="SplitViewModel"/>. All fakes — no ffmpeg, no WPF, no real playback. The
 /// <see cref="RecordingPlayer"/> lets us set a playhead position, raise DurationAvailable to flip
-/// the player to <c>IsReady</c>, and record every <c>Open</c> / <c>Seek</c> so the seek/preview
+/// the player to <c>IsReady</c>, and record every <c>Open</c> / <c>Seek</c> so the seek
 /// destinations can be asserted deterministically.
 /// </summary>
 public sealed class SplitViewModelPlayheadTests
@@ -73,13 +72,6 @@ public sealed class SplitViewModelPlayheadTests
     {
         public Task<SplitResult> SplitAsync(SplitRequest req, IProgress<double>? progress = null, CancellationToken ct = default)
             => Task.FromResult(new SplitResult(Array.Empty<SplitSegment>(), Array.Empty<string>()));
-    }
-
-    private sealed class NoOpDetector : ISplitPointDetector
-    {
-        public Task<IReadOnlyList<Candidate>> DetectAsync(
-            string path, DetectOptions options, IProgress<double>? progress = null, CancellationToken ct = default)
-            => Task.FromResult<IReadOnlyList<Candidate>>(Array.Empty<Candidate>());
     }
 
     /// <summary>Records Open/Seek, exposes a settable playhead, and raises DurationAvailable.</summary>
@@ -138,7 +130,7 @@ public sealed class SplitViewModelPlayheadTests
     {
         var probe = new FakeProbe();
         var player = new RecordingPlayer();
-        var vm = new SplitViewModel(probe, new NoOpSplitEngine(), new NoOpDetector(), player);
+        var vm = new SplitViewModel(probe, new NoOpSplitEngine(), player);
         return (vm, probe, player);
     }
 
@@ -236,21 +228,5 @@ public sealed class SplitViewModelPlayheadTests
 
         player.Seeks.Should().ContainSingle().Which.Should().Be(marker.Snapped);
         marker.Snapped.Should().Be(TimeSpan.FromSeconds(3));
-    }
-
-    // ---- Preview candidate ------------------------------------------------------------------
-
-    [Fact]
-    public async Task PreviewCandidate_SeeksThePlayerToTheRawDetectedTime()
-    {
-        var (vm, _, player) = await BuildLoadedReadyAsync();
-        var candidate = new CandidateViewModel(
-            new Candidate(TimeSpan.FromSeconds(12.7), TimeSpan.FromSeconds(13), CandidateKind.Scene, 0.8, 1));
-        player.Seeks.Clear();
-
-        vm.PreviewCandidate(candidate);
-
-        player.Seeks.Should().ContainSingle().Which.Should().Be(TimeSpan.FromSeconds(12.7),
-            "preview seeks to the RAW detected time, not the snapped time");
     }
 }
