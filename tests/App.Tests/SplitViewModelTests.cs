@@ -362,4 +362,60 @@ public sealed class SplitViewModelTests
         vm.Operation.Error.Should().NotBeNull();
         vm.LastResult.Should().BeNull();
     }
+
+    // ---- Player wiring (T-012) --------------------------------------------------------------
+
+    /// <summary>Minimal recording fake for the preview-player seam.</summary>
+    private sealed class RecordingMediaPlayer : VideoSplitJoiner.App.Media.IMediaPlayer
+    {
+        public List<string> Opened { get; } = new();
+
+        public TimeSpan Position { get; set; }
+
+        public TimeSpan? Duration => null;
+
+        public bool IsPlaying => false;
+
+        public void Open(string path) => Opened.Add(path);
+
+        public void Play() { }
+
+        public void Pause() { }
+
+        public void Stop() { }
+
+        public void Seek(TimeSpan t) { }
+
+#pragma warning disable CS0067
+        public event EventHandler? PositionChanged;
+
+        public event EventHandler? DurationAvailable;
+
+        public event EventHandler? Ended;
+
+        public event EventHandler<string>? Failed;
+#pragma warning restore CS0067
+    }
+
+    [Fact]
+    public void Ctor_WithoutPlayer_StillConstructs_AndExposesPlayer()
+    {
+        // The pre-existing 3-arg construction (player omitted → NullMediaPlayer default) must work.
+        var (vm, _, _, _) = Build();
+
+        vm.Player.Should().NotBeNull();
+    }
+
+    [Fact]
+    public async Task Load_Success_OpensThePreviewPlayer()
+    {
+        var probe = new FakeProbe();
+        var player = new RecordingMediaPlayer();
+        var vm = new SplitViewModel(probe, new FakeSplitEngine(), new FakeDetector(), player);
+        probe.KeyframesToReturn = new[] { TimeSpan.Zero, TimeSpan.FromSeconds(5) };
+
+        await vm.LoadAsync(FakePath);
+
+        player.Opened.Should().ContainSingle().Which.Should().Be(FakePath);
+    }
 }

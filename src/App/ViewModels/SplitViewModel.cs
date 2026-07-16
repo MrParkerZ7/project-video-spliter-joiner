@@ -6,6 +6,7 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
+using VideoSplitJoiner.App.Media;
 using VideoSplitJoiner.Core.Detect;
 using VideoSplitJoiner.Core.Errors;
 using VideoSplitJoiner.Core.Media;
@@ -40,12 +41,24 @@ public sealed class SplitViewModel : ObservableObject
     private bool _overwrite;
     private SplitResult? _lastResult;
 
-    /// <summary>Create the split VM over the three Core services (real or fake).</summary>
-    public SplitViewModel(IMediaProbe probe, ISplitEngine splitEngine, ISplitPointDetector detector)
+    /// <summary>
+    /// Create the split VM over the three Core services (real or fake). <paramref name="player"/> is
+    /// the in-app preview player (T-012): the composition root passes a <see cref="MediaElementPlayer"/>,
+    /// tests pass a fake; when omitted it defaults to a no-op <see cref="NullMediaPlayer"/> so existing
+    /// constructions keep working. On a successful <see cref="LoadAsync"/> the loaded file is also
+    /// opened in the preview.
+    /// </summary>
+    public SplitViewModel(
+        IMediaProbe probe,
+        ISplitEngine splitEngine,
+        ISplitPointDetector detector,
+        IMediaPlayer? player = null)
     {
         _probe = probe ?? throw new ArgumentNullException(nameof(probe));
         _splitEngine = splitEngine ?? throw new ArgumentNullException(nameof(splitEngine));
         _detector = detector ?? throw new ArgumentNullException(nameof(detector));
+
+        Player = new PlayerViewModel(player ?? NullMediaPlayer.Instance);
 
         Operation = new OperationViewModel();
 
@@ -155,6 +168,9 @@ public sealed class SplitViewModel : ObservableObject
     /// <summary>The shared progress / cancel / error operation state for the run.</summary>
     public OperationViewModel Operation { get; }
 
+    /// <summary>The in-app video preview player (T-012). Fed the loaded file on a successful load.</summary>
+    public PlayerViewModel Player { get; }
+
     /// <summary>The cut markers, in add order (sorted at run time).</summary>
     public ObservableCollection<CutMarkerViewModel> Markers { get; }
 
@@ -255,6 +271,9 @@ public sealed class SplitViewModel : ObservableObject
         Info = loadedInfo;
         Keyframes = loadedKeyframes;
         InputPath = path;
+        // Feed the freshly-loaded file to the in-app preview player (T-012). No-op under the
+        // NullMediaPlayer default; the fake records the Open in tests.
+        Player.Open(path);
         Markers.Clear();
         Candidates.Clear();
         LastResult = null;

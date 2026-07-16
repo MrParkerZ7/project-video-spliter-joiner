@@ -1,3 +1,4 @@
+using VideoSplitJoiner.App.Media;
 using VideoSplitJoiner.Core;
 using VideoSplitJoiner.Core.Detect;
 using VideoSplitJoiner.Core.Ffmpeg;
@@ -32,7 +33,9 @@ public sealed class MainViewModel : ObservableObject
         var detector = new SplitPointDetector(ffmpegRunner, probe, locator);
         var joinEngine = new JoinEngine(ffmpegRunner, probe);
 
-        Split = new SplitViewModel(probe, splitEngine, detector);
+        // The in-app preview player is WPF-bound (MediaElementPlayer); PlayerView attaches its
+        // MediaElement on Loaded. Unattached here, so construction stays render-free.
+        Split = new SplitViewModel(probe, splitEngine, detector, new MediaElementPlayer());
         Join = new JoinViewModel(joinEngine, probe);
     }
 

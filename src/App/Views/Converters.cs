@@ -32,6 +32,20 @@ public sealed class BoolToVisibilityConverter : IValueConverter
         => value is Visibility.Visible;
 }
 
+/// <summary>
+/// Two-way maps a <see cref="TimeSpan"/> to its total seconds (double) — used so a
+/// <c>Slider</c> whose Value is a double can bind against the player's TimeSpan
+/// <c>Position</c>/<c>Duration</c> directly.
+/// </summary>
+public sealed class TimeSpanToSecondsConverter : IValueConverter
+{
+    public object Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
+        => value is TimeSpan t ? t.TotalSeconds : 0d;
+
+    public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
+        => value is double d ? TimeSpan.FromSeconds(d) : TimeSpan.Zero;
+}
+
 /// <summary>Scales a 0..1 progress fraction to a 0..100 percentage for a <c>ProgressBar</c>.</summary>
 public sealed class FractionToPercentConverter : IValueConverter
 {
