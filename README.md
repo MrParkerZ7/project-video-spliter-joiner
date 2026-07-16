@@ -23,6 +23,9 @@ Built as a .NET 8 WPF app with a UI-free Core library that shells out to a bundl
 - **Join** compatible clips head-to-tail. A compatibility pre-flight compares codec, resolution,
   pixel format, time base, and audio layout; an incompatible set is **refused with a named reason**
   rather than producing a broken file. v1 never re-encodes to force a fit.
+- **Drag and drop** — drag video files from Explorer onto the **Split** screen to load (the first
+  file) or onto the **Join** screen to add them all in drop order, and **drag Join clips to reorder**
+  them (same effect as the Up/Down buttons). Non-video files are ignored.
 - Live **progress**, **cancel**, and friendly **error** messages with a details expander showing
   the raw FFmpeg output.
 

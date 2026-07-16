@@ -25,6 +25,13 @@ path as before.
   `TimelineMath` (normalized ↔ time) + a `TimelineViewModel` projection.
 - Every visually placed cut (playhead-capture or timeline-click) funnels through the existing
   `AddCutAt` → **keyframe-snap + dedupe** path — one snap implementation, no new cut logic.
+- **Drag and drop** — drag video files from Explorer onto the **Split** screen to load the first file
+  (via the existing `SplitViewModel.LoadCommand`) or onto the **Join** screen to add them all in drop
+  order (via `JoinViewModel.AddFilesCommand`, compat re-check follows), plus **drag-to-reorder** the
+  Join clip list (same `MoveAsync` path as the Up/Down buttons). Drop plumbing is thin code-behind
+  over the existing VM commands; the accept-filter is a pure, tested `VideoFileFilter` helper. An
+  internal reorder drag is distinguished from an external file drop by its clipboard payload type
+  (`JoinItemViewModel` = reorder, `FileDrop` = add). Non-video files are ignored.
 
 ### Notes
 

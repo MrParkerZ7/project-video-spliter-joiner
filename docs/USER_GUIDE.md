@@ -5,6 +5,7 @@ VideoSplitJoiner has two screens, reached from the tabs at the top of the window
 degrade quality. This guide walks through each feature.
 
 - [Getting started](#getting-started)
+- [Drag and drop](#drag-and-drop)
 - [Split a video](#split-a-video)
 - [Preview & pick cuts from the player](#preview--pick-cuts-from-the-player)
 - [Auto-detect split points](#auto-detect-split-points)
@@ -17,13 +18,30 @@ Launch `VideoSplitJoiner.App.exe`. FFmpeg ships bundled in the `ffmpeg/` folder 
 there is nothing to install. The window opens on the **Split** tab; switch to **Join** with the tab
 header.
 
+## Drag and drop
+
+Besides the **Load…** / **Add files…** buttons, you can drag video files straight from File Explorer
+onto either screen:
+
+- **Onto the Split screen** — drop one or more video files; the app **loads the first one** (Split
+  works on a single file). Dropping is the same as using **Load…**.
+- **Onto the Join screen** — drop one or more video files and **all of them are added**, in the order
+  they were dropped, then the compatibility verdict re-checks. Dropping is the same as **Add files…**.
+- **Reorder Join clips by dragging** — drag a clip row up or down within the list to reorder it. This
+  has the **same effect as the Up / Down buttons** (order is significant for the join). Dragging a row
+  onto empty space below the list moves it to the end.
+
+A drop zone highlights while you drag a valid file over a screen. **Non-video files are ignored** —
+only recognised video extensions (`.mp4`, `.mkv`, `.mov`, `.avi`, `.m4v`, `.webm`, `.ts`, `.mpg`,
+`.mpeg`, `.wmv`, `.flv`) are accepted; anything else in the drop is silently dropped.
+
 ## Split a video
 
 The Split screen cuts one video into several contiguous segments at the cut points you choose.
 
-1. **Load a video.** Choose your input file. The app probes it for duration, streams, and its
-   keyframe positions. If the file cannot be read, you get a friendly error and the screen stays
-   unloaded.
+1. **Load a video.** Choose your input file, or **drag a video onto the screen** (see
+   [Drag and drop](#drag-and-drop)). The app probes it for duration, streams, and its keyframe
+   positions. If the file cannot be read, you get a friendly error and the screen stays unloaded.
 2. **Add cut markers.** Add a marker at a time position, or use **Auto-detect** (below) to place
    candidates automatically. Each marker row shows the snap: `requested → snapped (±delta)` — for
    example `01:23.4 → 01:22.0 (−1.4s)`. That tells you exactly how far the cut moved to land on a
@@ -118,9 +136,11 @@ Notes:
 The Join screen glues several clips head-to-tail into one file — but only when they are truly
 concat-compatible, because v1 never re-encodes.
 
-1. **Add clips.** Add the files you want to join. Each gets an info chip (codec · resolution) from a
-   quick probe. Duplicates are allowed.
-2. **Reorder.** Move clips up/down — **order is significant**; the output plays them in list order.
+1. **Add clips.** Add the files you want to join, or **drag videos onto the screen** — all dropped
+   videos are added in drop order (see [Drag and drop](#drag-and-drop)). Each gets an info chip
+   (codec · resolution) from a quick probe. Duplicates are allowed.
+2. **Reorder.** Move clips up/down with the buttons **or drag a clip row** to a new position —
+   **order is significant**; the output plays them in list order.
 3. **Read the compatibility verdict.** The banner re-checks on every change:
    - **Green** — "*N* clips ready to join" — the set is compatible.
    - **Red** — "Cannot join — …" — naming each mismatch (e.g. *clip 2 is 1280x720, reference

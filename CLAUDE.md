@@ -39,6 +39,15 @@ A .NET 8 WPF app that splits and joins video **without re-encoding**. See [READM
   "set cut at playhead", clicking the timeline strip, accepting a candidate) routes through
   `SplitViewModel.AddCutAt`, which keyframe-snaps and dedupes. Do not add a second snap/dedupe
   implementation for a new cut-entry surface — wire it through `AddCutAt`.
+- **Drag/drop plumbing is code-behind that routes to existing VM commands.** Drop and drag handlers
+  live in the view code-behind (`SplitView`/`JoinView`) and add **no** load/add/reorder logic — a
+  file drop routes to `LoadCommand` (Split, first file) / `AddFilesCommand` (Join, all files); a
+  clip-row drag routes to `JoinViewModel.Move` → the same `MoveAsync` the Up/Down buttons use (one
+  reorder path). The **accept-filter is a pure, tested helper** (`VideoFileFilter.AcceptVideoFiles` /
+  `HasAnyVideo`) — keep it WPF-free and unit-tested; don't inline extension checks in code-behind.
+  **Internal vs external drags are distinguished by payload type** (`typeof(JoinItemViewModel)` =
+  reorder, `DataFormats.FileDrop` = external add), never by guessing — preserve that when touching the
+  Join drop handler. Do not add new drop-side business logic; wire it through the existing commands.
 
 ## Build / test / package
 

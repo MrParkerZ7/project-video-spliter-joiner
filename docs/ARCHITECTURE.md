@@ -190,6 +190,32 @@ candidate's *raw detected* time) — both reuse commands that already existed on
 `SetCutAtPlayhead` is guarded by `CanSetCutAtPlayhead` (`HasFile && Player.IsReady`), so it only
 enables once the preview has a real playhead to capture.
 
+## Drag and drop (`App/Views/`, `App/VideoFileFilter.cs`)
+
+Drag-and-drop adds **no new load / add / reorder logic** — it is thin WPF **code-behind** wiring that
+routes drop and drag events to the view-model commands that already existed.
+
+- **The accept filter is a pure helper.** `VideoFileFilter` (in `App`, WPF-free so it is directly
+  unit-testable) exposes `AcceptVideoFiles(paths)` — keep only known video extensions
+  (`.mp4 .mkv .mov .avi .m4v .webm .ts .mpg .mpeg .wmv .flv`, case-insensitive), dedupe on the full
+  path, preserve first-seen order — and `HasAnyVideo(paths)`, used by the `DragOver` accept check to
+  decide whether to show the copy effect + drop highlight. Non-video paths are dropped.
+- **External file drop → existing VM commands.** `SplitView` code-behind filters the dropped paths
+  and loads the **first** video via `SplitViewModel.LoadCommand` (Split is single-file). `JoinView`
+  code-behind adds **all** dropped videos (order preserved) via `JoinViewModel.AddFilesCommand`, whose
+  compatibility re-check then runs. The drop-routing methods (`HandleDroppedFiles`) are extracted as
+  `internal static` so they are testable without a live drag.
+- **Internal reorder vs external file-drop are distinguished by clipboard data format.** On the Join
+  clip list, dragging a row starts a `DragDrop.DoDragDrop` carrying a `JoinItemViewModel` payload
+  (the `typeof(JoinItemViewModel)` format — deliberately **not** `DataFormats.FileDrop`). The list's
+  drop handler treats a `JoinItemViewModel` payload as a **reorder** and marks the event handled; any
+  other payload is left to bubble up to the root grid's `FileDrop` handler, which treats it as an
+  **external add**. So the same surface accepts both gestures without ambiguity.
+- **One reorder path shared by drag and Up/Down.** A reorder drop computes `from`/`to` list indices
+  and calls `JoinViewModel.Move(from, to)` — the synchronous wrapper over `MoveAsync(from, to)`. The
+  **Up/Down buttons delegate to the same `MoveAsync`** (`MoveUpAsync`/`MoveDownAsync` compute the
+  neighbouring index and call it), so drag-reorder and button-reorder run through one implementation.
+
 ## Media probe (`Core/Media/`)
 
 `MediaProbe` (over `FfprobeRunner`) provides:
