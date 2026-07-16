@@ -39,4 +39,8 @@
     <ProjectReference Include="..\Core\VideoSplitJoiner.Core.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <PackageReference Include="FFME.Windows" Version="7.0.361-beta.1" />
+  </ItemGroup>
+
 </Project>

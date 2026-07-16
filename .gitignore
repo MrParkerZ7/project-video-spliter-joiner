@@ -1,6 +1,10 @@
 # Packaging / distribution output (T-010) — never commit build artifacts or bundled ffmpeg
 dist/
 
+# ffmpeg SHARED build for the FFME preview (T-019) — native libs, NOT committed.
+# Fetch reproducibly via packaging/fetch-ffmpeg-shared.ps1 (or .sh).
+ffmpeg-shared/
+
 # .NET build output
 bin/
 obj/
