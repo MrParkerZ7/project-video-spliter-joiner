@@ -334,6 +334,9 @@ public sealed class SplitViewModelTests
     {
         public List<string> Opened { get; } = new();
 
+        /// <summary>Count of <see cref="Unload"/> calls — asserted by the Split Clear test (T-047).</summary>
+        public int UnloadCount { get; private set; }
+
         public TimeSpan Position { get; set; }
 
         public TimeSpan? Duration => null;
@@ -355,6 +358,8 @@ public sealed class SplitViewModelTests
         public void Stop() { }
 
         public void Seek(TimeSpan t) { }
+
+        public void Unload() => UnloadCount++;
 
         public void StepFrame(int direction) { }
 
@@ -391,5 +396,86 @@ public sealed class SplitViewModelTests
         await vm.LoadAsync(FakePath);
 
         player.Opened.Should().ContainSingle().Which.Should().Be(FakePath);
+    }
+
+    // ---- Clear / reset (T-047) --------------------------------------------------------------
+
+    [Fact]
+    public async Task Clear_ResetsToEmpty_UnloadsPlayer_AndDisablesRun()
+    {
+        var probe = new FakeProbe();
+        var player = new RecordingMediaPlayer();
+        var vm = new SplitViewModel(probe, new FakeSplitEngine(), player);
+        probe.KeyframesToReturn = new[] { TimeSpan.Zero, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(4) };
+
+        await vm.LoadAsync(FakePath);
+        vm.OutputDir = @"C:\out";
+        vm.AddMarker(TimeSpan.FromSeconds(2));
+        vm.AddMarker(TimeSpan.FromSeconds(4));
+
+        // Pre-conditions: loaded + markers + can run.
+        vm.HasFile.Should().BeTrue();
+        vm.Markers.Should().HaveCountGreaterThan(0);
+        vm.CanRunSplit.Should().BeTrue();
+
+        vm.ClearCommand.Execute(null);
+
+        vm.HasFile.Should().BeFalse();
+        vm.InputPath.Should().BeNull();
+        vm.Info.Should().BeNull();
+        vm.Markers.Should().BeEmpty();
+        vm.Keyframes.Should().BeEmpty();
+        vm.KeyframeWarning.Should().BeNull();
+        vm.LastResult.Should().BeNull();
+        vm.CanRunSplit.Should().BeFalse();
+        vm.IsIndexingKeyframes.Should().BeFalse();
+        player.UnloadCount.Should().BeGreaterThan(0, "the preview player is unloaded on clear");
+    }
+
+    [Fact]
+    public void Clear_CanExecute_False_WhenNoFile()
+    {
+        var (vm, _, _) = Build();
+
+        vm.CanClear.Should().BeFalse();
+        vm.ClearCommand.CanExecute(null).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task Clear_CanExecute_True_WhenFileLoaded()
+    {
+        var (vm, probe, _) = Build();
+        probe.KeyframesToReturn = new[] { TimeSpan.Zero, TimeSpan.FromSeconds(2) };
+
+        await vm.LoadAsync(FakePath);
+
+        vm.CanClear.Should().BeTrue();
+        vm.ClearCommand.CanExecute(null).Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task Clear_CanExecute_False_WhileOperationRunning()
+    {
+        var probe = new FakeProbe();
+        var engine = new FakeSplitEngine();
+        var vm = new SplitViewModel(probe, engine);
+        probe.KeyframesToReturn = new[] { TimeSpan.Zero, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(4) };
+        await vm.LoadAsync(FakePath);
+        vm.OutputDir = @"C:\out";
+        vm.AddMarker(TimeSpan.FromSeconds(2));
+
+        // Gate the split so it stays "running" while we assert CanClear.
+        var gate = new TaskCompletionSource<SplitResult>();
+        engine.Handler = _ => gate.Task;
+
+        var run = vm.RunSplitAsync();
+        vm.Operation.IsRunning.Should().BeTrue();
+        vm.CanClear.Should().BeFalse("a running split must not be cleared mid-op");
+        vm.ClearCommand.CanExecute(null).Should().BeFalse();
+
+        // Let the run finish → clear becomes available again.
+        gate.SetResult(new SplitResult(Array.Empty<SplitSegment>(), Array.Empty<string>()));
+        await run;
+        vm.CanClear.Should().BeTrue();
     }
 }

@@ -32,6 +32,9 @@ public sealed class JoinViewModelTests
 
         public Func<JoinRequest, JoinResult>? JoinHandler { get; set; }
 
+        /// <summary>Async hook returning an (optionally still-pending) Task — lets a test hold a join "running".</summary>
+        public Func<JoinRequest, Task<JoinResult>>? JoinTaskHandler { get; set; }
+
         public JoinRequest? LastRequest { get; private set; }
 
         public int CompatCheckCount { get; private set; }
@@ -49,6 +52,11 @@ public sealed class JoinViewModelTests
         {
             LastRequest = req;
             progress?.Report(0.5);
+            if (JoinTaskHandler is not null)
+            {
+                return JoinTaskHandler(req);
+            }
+
             var result = JoinHandler is not null ? JoinHandler(req) : JoinResult.Ok(req.OutputPath);
             return Task.FromResult(result);
         }
@@ -414,5 +422,75 @@ public sealed class JoinViewModelTests
         vm.Operation.State.Should().Be(OperationState.Completed);
         vm.Operation.Error.Should().BeNull("a successful run clears the prior failure");
         vm.LastResult.Should().NotBeNull();
+    }
+
+    // ---- Clear all (T-047) ------------------------------------------------------------------
+
+    [Fact]
+    public async Task ClearAll_EmptiesItems_ResetsCompat_AndLastResult()
+    {
+        var (vm, engine, _) = Build();
+        engine.CompatToReturn = CompatReport.Ok();
+        await vm.AddFilesAsync(new[] { Clip1, Clip2, Clip3 });
+        vm.OutputPath = Output;
+        engine.JoinHandler = req => JoinResult.Ok(req.OutputPath);
+        await vm.RunJoinAsync();
+
+        // Pre-conditions: items present, compatible, a result exists.
+        vm.Items.Should().HaveCount(3);
+        vm.IsCompatible.Should().BeTrue();
+        vm.LastResult.Should().NotBeNull();
+
+        vm.ClearCommand.Execute(null);
+
+        vm.Items.Should().BeEmpty();
+        vm.Compat.Should().BeNull();
+        vm.IsCompatible.Should().BeFalse();
+        vm.CompatSummary.Should().Contain("at least 2");
+        vm.LastResult.Should().BeNull();
+        vm.CanRunJoin.Should().BeFalse();
+    }
+
+    [Fact]
+    public void ClearAll_CanExecute_False_WhenEmpty()
+    {
+        var (vm, _, _) = Build();
+
+        vm.CanClear.Should().BeFalse();
+        vm.ClearCommand.CanExecute(null).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task ClearAll_CanExecute_True_WhenItemsPresent()
+    {
+        var (vm, _, _) = Build();
+        await vm.AddFilesAsync(new[] { Clip1 });
+
+        vm.CanClear.Should().BeTrue();
+        vm.ClearCommand.CanExecute(null).Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task ClearAll_CanExecute_False_WhileOperationRunning()
+    {
+        var (vm, engine, _) = Build();
+        engine.CompatToReturn = CompatReport.Ok();
+        await vm.AddFilesAsync(new[] { Clip1, Clip2 });
+        vm.OutputPath = Output;
+
+        // Gate the join so it stays "running" while we assert CanClear (returns a still-pending Task).
+        var gate = new TaskCompletionSource<JoinResult>();
+        engine.JoinTaskHandler = _ => gate.Task;
+
+        var run = vm.RunJoinAsync();
+        vm.Operation.IsRunning.Should().BeTrue("the join is in flight");
+
+        vm.CanClear.Should().BeFalse("a running join must not be cleared mid-op");
+        vm.ClearCommand.CanExecute(null).Should().BeFalse();
+
+        // Let the run finish → clear becomes available again.
+        gate.SetResult(JoinResult.Ok(Output));
+        await run;
+        vm.CanClear.Should().BeTrue();
     }
 }

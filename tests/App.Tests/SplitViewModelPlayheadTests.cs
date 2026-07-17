@@ -107,6 +107,16 @@ public sealed class SplitViewModelPlayheadTests
             Position = t;
         }
 
+        /// <summary>Count of <see cref="Unload"/> calls (T-047).</summary>
+        public int UnloadCount { get; private set; }
+
+        public void Unload()
+        {
+            UnloadCount++;
+            Duration = null;
+            Position = TimeSpan.Zero;
+        }
+
         public void StepFrame(int direction) { }
 
         /// <summary>Flip the player to a known duration (→ PlayerViewModel.IsReady == true).</summary>

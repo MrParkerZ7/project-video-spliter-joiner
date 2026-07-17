@@ -302,6 +302,12 @@ public sealed class TimelineTests
             Position = t;
         }
 
+        public void Unload()
+        {
+            Duration = null;
+            Position = TimeSpan.Zero;
+        }
+
         public void StepFrame(int direction) { }
 
         public void RaiseDurationAvailable(TimeSpan duration)

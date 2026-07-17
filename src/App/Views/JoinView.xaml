@@ -24,6 +24,12 @@
                         Content="Add files…"
                         Padding="12,4"
                         Click="OnAddFilesClicked" />
+                <Button x:Name="ClearAllButton"
+                        Content="Clear all"
+                        Margin="6,0,0,0"
+                        Padding="12,4"
+                        ToolTip="Remove all queued clips and reset the Join screen"
+                        Command="{Binding ClearCommand}" />
                 <TextBlock Margin="8,0,0,0"
                            VerticalAlignment="Center"
                            Foreground="#666"

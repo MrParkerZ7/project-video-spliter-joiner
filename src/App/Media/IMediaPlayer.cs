@@ -49,6 +49,13 @@ public interface IMediaPlayer
     void Seek(TimeSpan t);
 
     /// <summary>
+    /// Unload the current source and blank the preview surface (T-047). Closes/clears the media so
+    /// the video view goes blank and resets the implementation's duration/playing state; a subsequent
+    /// <see cref="Open"/> loads a fresh source. No-op if nothing is loaded.
+    /// </summary>
+    void Unload();
+
+    /// <summary>
     /// Step the playhead exactly one frame in <paramref name="direction"/> (+1 forward, −1 back).
     /// A paused operation — the implementation pauses playback first if it is running. Values other
     /// than ±1 are treated by sign; <c>0</c> is a no-op.

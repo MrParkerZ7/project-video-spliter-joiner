@@ -217,6 +217,23 @@ public sealed class FfmeMediaPlayer : IMediaPlayer
             });
     }
 
+    public void Unload()
+    {
+        if (_element is null)
+        {
+            return;
+        }
+
+        // Reset our own transport state first so IsPlaying/Duration read blank immediately.
+        _isPlaying = false;
+        _duration = null;
+
+        // Close the media (async, like the other transport calls) so the decode stops and the
+        // preview surface goes blank. FFME's Source DP is read-only (driven by Open/Close), so Close
+        // is the surface-blanking path; on completion surface a PositionChanged so listeners refresh.
+        Run(() => _element.Close(), () => PositionChanged?.Invoke(this, EventArgs.Empty));
+    }
+
     public void StepFrame(int direction)
     {
         if (_element is null || direction == 0)

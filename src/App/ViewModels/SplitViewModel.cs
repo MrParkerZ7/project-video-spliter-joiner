@@ -97,6 +97,10 @@ public sealed class SplitViewModel : ObservableObject
         // recompute the command guard whenever the preview player's readiness changes.
         Player.PropertyChanged += OnPlayerChanged;
 
+        // Clear is disabled while a split is running (don't reset mid-op) → re-raise its guard when
+        // the operation's running state flips.
+        Operation.PropertyChanged += OnOperationChanged;
+
         LoadCommand = new RelayCommand(p => _ = LoadAsync(p as string));
         AddMarkerCommand = new RelayCommand(_ => AddMarker(NewMarkerPosition), _ => CanAddMarker);
         AddCutAtCommand = new RelayCommand(p => { if (p is TimeSpan t) AddCutAt(t); }, _ => CanAddMarker);
@@ -105,6 +109,7 @@ public sealed class SplitViewModel : ObservableObject
         RemoveMarkerCommand = new RelayCommand(RemoveMarker);
         RunSplitCommand = new RelayCommand(_ => _ = RunSplitAsync(), _ => CanRunSplit);
         OpenFolderCommand = new RelayCommand(_ => OpenFolder(), _ => !string.IsNullOrWhiteSpace(OutputDir));
+        ClearCommand = new RelayCommand(_ => Clear(), _ => CanClear);
         CancelCommand = Operation.CancelCommand;
     }
 
@@ -252,6 +257,12 @@ public sealed class SplitViewModel : ObservableObject
     /// </summary>
     public bool CanSetCutAtPlayhead => HasFile && Player.IsReady;
 
+    /// <summary>
+    /// Clear/reset is enabled only when a file is loaded AND no split is running (T-047) — don't wipe
+    /// the workspace mid-operation.
+    /// </summary>
+    public bool CanClear => HasFile && !Operation.IsRunning;
+
     /// <summary>Run is enabled only with a file, at least one marker, and an output dir set.</summary>
     public bool CanRunSplit =>
         !string.IsNullOrWhiteSpace(InputPath)
@@ -290,6 +301,12 @@ public sealed class SplitViewModel : ObservableObject
 
     /// <summary>Open the output directory in Explorer.</summary>
     public RelayCommand OpenFolderCommand { get; }
+
+    /// <summary>
+    /// Clear/reset the Split screen back to empty (unload the file) — guarded by <see cref="CanClear"/>
+    /// (a file loaded and no split running). See <see cref="Clear"/> (T-047).
+    /// </summary>
+    public RelayCommand ClearCommand { get; }
 
     /// <summary>Cancel the in-flight run — delegates to <see cref="OperationViewModel.CancelCommand"/>.</summary>
     public RelayCommand CancelCommand { get; }
@@ -705,6 +722,58 @@ public sealed class SplitViewModel : ObservableObject
         }
     }
 
+    // ---- Clear ------------------------------------------------------------------------------
+
+    /// <summary>
+    /// Reset the Split screen to its empty state (T-047): unload the loaded file, drop all markers,
+    /// keyframes, info, and results, cancel the in-flight background keyframe index, reset the shared
+    /// operation, and blank the preview player. No-op with no file or while a split is running
+    /// (guarded by <see cref="CanClear"/>). The <see cref="Timeline"/> re-projects itself to empty via
+    /// the marker-collection-cleared and player Duration/Position resets — no explicit timeline reset
+    /// is needed.
+    /// </summary>
+    public void Clear()
+    {
+        if (!CanClear)
+        {
+            return;
+        }
+
+        // Cancel the current file's background keyframe scan so a late completion can't repopulate
+        // Keyframes after the reset. Swapping the CTS to null also trips the pending-marker /
+        // background-continuation staleness guards (they compare against _keyframeIndexCts).
+        _keyframeIndexCts?.Cancel();
+        _keyframeIndexCts?.Dispose();
+        _keyframeIndexCts = null;
+        _keyframeIndexTask = null;
+        IsIndexingKeyframes = false;
+
+        // Wipe the loaded-file state. Clear markers/results BEFORE nulling InputPath so no derived
+        // guard observes a half-cleared state; InputPath last flips HasFile → false and re-raises the
+        // command guards (CanRunSplit / CanSetCutAtPlayhead / CanClear via RaiseCommandStates).
+        Markers.Clear();
+        Keyframes = Array.Empty<TimeSpan>();
+        Info = null;
+        LastResult = null;
+        KeyframeWarning = null;
+        StatusText = null;
+
+        // Reset the shared operation (clears any error/progress; no-op run is not in flight per CanClear).
+        Operation.Reset();
+
+        // Blank the preview surface + reset the player VM (Duration → null → IsReady false).
+        Player.Unload();
+
+        InputPath = null;
+
+        // Re-raise every derived command guard (RaiseCommandStates covers Run/Add/Cut/OpenFolder/Clear;
+        // the InputPath setter already re-raised, but Operation.Reset above may also have changed state).
+        OnPropertyChanged(nameof(CanRunSplit));
+        OnPropertyChanged(nameof(CanSetCutAtPlayhead));
+        OnPropertyChanged(nameof(CanClear));
+        RaiseCommandStates();
+    }
+
     // ---- Open folder ------------------------------------------------------------------------
 
     private void OpenFolder()
@@ -742,6 +811,17 @@ public sealed class SplitViewModel : ObservableObject
         }
     }
 
+    private void OnOperationChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        // A running split disables Clear (CanClear = HasFile && !Operation.IsRunning) → re-raise its
+        // guard whenever the operation's running/state changes.
+        if (e.PropertyName is nameof(OperationViewModel.IsRunning) or nameof(OperationViewModel.State))
+        {
+            OnPropertyChanged(nameof(CanClear));
+            ClearCommand.RaiseCanExecuteChanged();
+        }
+    }
+
     private void RaiseCommandStates()
     {
         RunSplitCommand.RaiseCanExecuteChanged();
@@ -749,6 +829,7 @@ public sealed class SplitViewModel : ObservableObject
         AddCutAtCommand.RaiseCanExecuteChanged();
         SetCutAtPlayheadCommand.RaiseCanExecuteChanged();
         OpenFolderCommand.RaiseCanExecuteChanged();
+        ClearCommand.RaiseCanExecuteChanged();
     }
 
     /// <summary>True when <paramref name="dir"/> is a non-blank path that exists on disk (guards a stale

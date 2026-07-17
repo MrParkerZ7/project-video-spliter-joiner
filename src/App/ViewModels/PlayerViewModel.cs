@@ -301,6 +301,30 @@ public sealed class PlayerViewModel : ObservableObject
         _player.Open(path);
     }
 
+    /// <summary>
+    /// Unload the current source and reset the preview back to empty (T-047). Blanks the player
+    /// surface via <see cref="IMediaPlayer.Unload"/> and clears all preview state: duration (→ not
+    /// ready), position, playing flag, and the preview-failed banner, plus any in-flight seek/scrub
+    /// hold. The command guards that depend on <see cref="IsReady"/> re-raise via the
+    /// <see cref="Duration"/> setter. Restores audio/speed to their defaults for the next load.
+    /// </summary>
+    public void Unload()
+    {
+        _player.Unload();
+
+        PreviewFailed = false;
+        PreviewFailedReason = null;
+        IsPlaying = false;
+        Duration = null; // → IsReady false; raises the play/scrub command guards
+        // Reset audio/speed to defaults (writes through to the player too), mirroring Open.
+        Volume = 1.0;
+        IsMuted = false;
+        SpeedRatio = 1.0;
+        ClearSeekHold();
+        _isUserScrubbing = false;
+        SetPositionFromPlayer(TimeSpan.Zero);
+    }
+
     /// <summary>Toggle transport: play when paused, pause when playing. No-op until ready.</summary>
     public void PlayPause()
     {

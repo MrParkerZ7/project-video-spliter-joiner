@@ -54,12 +54,16 @@ public sealed class JoinViewModel : ObservableObject
         // CanRunJoin depends on the item count → recompute when the collection changes.
         Items.CollectionChanged += OnItemsChanged;
 
+        // Clear all is disabled while a join is running → re-raise its guard when the op state flips.
+        Operation.PropertyChanged += OnOperationChanged;
+
         AddFilesCommand = new RelayCommand(p => _ = AddFilesAsync(AsPaths(p)));
         RemoveCommand = new RelayCommand(p => _ = RemoveAsync(p as JoinItemViewModel), _ => true);
         MoveUpCommand = new RelayCommand(p => _ = MoveUpAsync(p as JoinItemViewModel), CanMoveUp);
         MoveDownCommand = new RelayCommand(p => _ = MoveDownAsync(p as JoinItemViewModel), CanMoveDown);
         RunJoinCommand = new RelayCommand(_ => _ = RunJoinAsync(), _ => CanRunJoin);
         OpenFolderCommand = new RelayCommand(_ => OpenFolder(), _ => !string.IsNullOrWhiteSpace(OutputPath));
+        ClearCommand = new RelayCommand(_ => Clear(), _ => CanClear);
         CancelCommand = Operation.CancelCommand;
     }
 
@@ -147,6 +151,12 @@ public sealed class JoinViewModel : ObservableObject
         && IsCompatible
         && !string.IsNullOrWhiteSpace(OutputPath);
 
+    /// <summary>
+    /// Clear all is enabled only with at least one item AND no join running (T-047) — don't wipe the
+    /// list mid-operation.
+    /// </summary>
+    public bool CanClear => Items.Count > 0 && !Operation.IsRunning;
+
     // ---- Commands ---------------------------------------------------------------------------
 
     /// <summary>Append clips (parameter = paths); each is probed for its chip, then compat re-checks.</summary>
@@ -166,6 +176,12 @@ public sealed class JoinViewModel : ObservableObject
 
     /// <summary>Open the folder containing the output file.</summary>
     public RelayCommand OpenFolderCommand { get; }
+
+    /// <summary>
+    /// Clear all queued clips + reset the compat/result state (unload) — guarded by
+    /// <see cref="CanClear"/> (items present and no join running). See <see cref="Clear"/> (T-047).
+    /// </summary>
+    public RelayCommand ClearCommand { get; }
 
     /// <summary>Cancel the in-flight run — delegates to <see cref="OperationViewModel.CancelCommand"/>.</summary>
     public RelayCommand CancelCommand { get; }
@@ -412,6 +428,40 @@ public sealed class JoinViewModel : ObservableObject
         }
     }
 
+    // ---- Clear ------------------------------------------------------------------------------
+
+    /// <summary>
+    /// Clear all queued clips and reset the Join screen back to empty (T-047): drop every item, reset
+    /// the compat report/verdict to the "add at least 2 files" baseline (exactly as the &lt;2-items
+    /// branch of <see cref="RefreshCompatAsync"/> does), drop the last result, and reset the shared
+    /// operation. <see cref="OutputPath"/> is deliberately LEFT intact — the chosen destination is
+    /// usually still where the user wants the next join written, so clearing the input list should not
+    /// discard it. No-op with no items or while a join is running (guarded by <see cref="CanClear"/>).
+    /// </summary>
+    public void Clear()
+    {
+        if (!CanClear)
+        {
+            return;
+        }
+
+        Items.Clear();
+
+        // Reset compat verdict to the empty-list baseline (mirrors RefreshCompatAsync's <2 branch).
+        Compat = null;
+        IsCompatible = false;
+        CompatSummary = "Add at least 2 files to join.";
+
+        LastResult = null;
+
+        // Reset the shared operation (clears any prior error/progress; not running per CanClear).
+        Operation.Reset();
+
+        // OutputPath intentionally preserved (see summary). Re-raise the derived guards.
+        OnPropertyChanged(nameof(CanClear));
+        RaiseCommandStates();
+    }
+
     /// <summary>The containing folder of <paramref name="path"/>, or null if it can't be resolved. Never throws.</summary>
     private static string? SafeGetDirectory(string? path)
     {
@@ -506,7 +556,19 @@ public sealed class JoinViewModel : ObservableObject
     private void OnItemsChanged(object? sender, NotifyCollectionChangedEventArgs e)
     {
         OnPropertyChanged(nameof(CanRunJoin));
+        OnPropertyChanged(nameof(CanClear));
         RaiseCommandStates();
+    }
+
+    private void OnOperationChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        // A running join disables Clear all (CanClear = Items.Count > 0 && !Operation.IsRunning) →
+        // re-raise its guard whenever the operation's running/state changes.
+        if (e.PropertyName is nameof(OperationViewModel.IsRunning) or nameof(OperationViewModel.State))
+        {
+            OnPropertyChanged(nameof(CanClear));
+            ClearCommand.RaiseCanExecuteChanged();
+        }
     }
 
     private void RaiseCommandStates()
@@ -515,6 +577,7 @@ public sealed class JoinViewModel : ObservableObject
         MoveUpCommand.RaiseCanExecuteChanged();
         MoveDownCommand.RaiseCanExecuteChanged();
         OpenFolderCommand.RaiseCanExecuteChanged();
+        ClearCommand.RaiseCanExecuteChanged();
     }
 
     private static IEnumerable<string>? AsPaths(object? parameter) => parameter switch

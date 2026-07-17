@@ -76,6 +76,12 @@
                             Content="Load…"
                             Padding="12,4"
                             Click="OnLoadClicked" />
+                    <Button x:Name="ClearButton"
+                            Content="Clear"
+                            Margin="6,0,0,0"
+                            Padding="12,4"
+                            ToolTip="Unload the current file and reset the Split screen"
+                            Command="{Binding ClearCommand}" />
                     <TextBlock Margin="8,0,0,0"
                                VerticalAlignment="Center"
                                Text="{Binding InputPath}"

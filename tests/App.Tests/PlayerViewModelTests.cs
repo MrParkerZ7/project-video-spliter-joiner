@@ -83,6 +83,14 @@ public sealed class PlayerViewModelTests
             LastStepDirection = direction;
         }
 
+        public void Unload()
+        {
+            Calls.Add("Unload");
+            Duration = null;
+            IsPlaying = false;
+            Position = TimeSpan.Zero;
+        }
+
         // ---- Event raisers (test-driven) ----
         public void RaiseDurationAvailable(TimeSpan duration)
         {

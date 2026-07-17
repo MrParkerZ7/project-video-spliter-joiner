@@ -137,6 +137,11 @@ public sealed class SplitViewModelNonBlockingLoadTests
 
         public void Seek(TimeSpan t) { }
 
+        /// <summary>Count of <see cref="Unload"/> calls (T-047).</summary>
+        public int UnloadCount { get; private set; }
+
+        public void Unload() => UnloadCount++;
+
         public void StepFrame(int direction) { }
 
 #pragma warning disable CS0067
@@ -512,6 +517,38 @@ public sealed class SplitViewModelNonBlockingLoadTests
             vm.StatusText.Should().NotBeNullOrEmpty();
             vm.IsIndexingKeyframes.Should().BeFalse("no background scan is started on a failed probe");
             probe.KeyframeRequests.Should().BeEmpty();
+        });
+    }
+
+    // ---- Clear cancels the in-flight background index (T-047) -------------------------------
+
+    [Fact]
+    public void Clear_WhileIndexing_CancelsScan_LateCompletion_DoesNotRepopulateKeyframes()
+    {
+        WithPump(pump =>
+        {
+            var (vm, probe, player) = Build();
+
+            // Load A — its keyframe scan is gated (still in flight).
+            var load = vm.LoadAsync(PathA);
+            pump.RunUntil(() => load.IsCompleted);
+            vm.IsIndexingKeyframes.Should().BeTrue();
+            vm.HasFile.Should().BeTrue();
+
+            // Clear while the scan is running → file unloads, indexing flag drops, player unloaded.
+            vm.ClearCommand.Execute(null);
+
+            vm.HasFile.Should().BeFalse();
+            vm.IsIndexingKeyframes.Should().BeFalse("clear cancels the in-flight scan");
+            vm.Keyframes.Should().BeEmpty();
+            player.UnloadCount.Should().BeGreaterThan(0);
+
+            // The gated scan completes LATE — its stale result must NOT repopulate Keyframes.
+            probe.Release(PathA, new[] { TimeSpan.Zero, TimeSpan.FromSeconds(3), TimeSpan.FromSeconds(6) });
+            pump.RunUntil(() => true, TimeSpan.FromMilliseconds(200));
+
+            vm.Keyframes.Should().BeEmpty("a scan superseded by Clear can never repopulate keyframes");
+            vm.IsIndexingKeyframes.Should().BeFalse();
         });
     }
 }
