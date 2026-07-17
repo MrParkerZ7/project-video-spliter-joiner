@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text;
 
 namespace VideoSplitJoiner.Core.Ffmpeg;
 
@@ -43,6 +44,11 @@ public sealed class FfprobeRunner : IFfprobeRunner
             RedirectStandardError = true,
             RedirectStandardOutput = true,
             RedirectStandardInput = true,
+            // ffprobe emits UTF-8 (its JSON payload on stdout, diagnostics on stderr) regardless
+            // of the Windows console codepage. Decode both as UTF-8 so unicode paths in the JSON
+            // and in error output survive intact instead of becoming mojibake (T-036).
+            StandardErrorEncoding = Encoding.UTF8,
+            StandardOutputEncoding = Encoding.UTF8,
             UseShellExecute = false,
             CreateNoWindow = true,
         };

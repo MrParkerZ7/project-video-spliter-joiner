@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text;
 
 namespace VideoSplitJoiner.Core.Ffmpeg;
 
@@ -58,6 +59,12 @@ public sealed class FfmpegRunner : IFfmpegRunner
             RedirectStandardError = true,
             RedirectStandardOutput = true,
             RedirectStandardInput = true,
+            // ffmpeg/ffprobe emit UTF-8 regardless of the Windows console codepage. Decode
+            // both streams as UTF-8 so unicode (non-ASCII) paths surface correctly in the
+            // stderr tail instead of mojibake (T-036). Without this the reader falls back to
+            // the console's default codepage (e.g. cp1252/cp932) and garbles the bytes.
+            StandardErrorEncoding = Encoding.UTF8,
+            StandardOutputEncoding = Encoding.UTF8,
             UseShellExecute = false,
             CreateNoWindow = true,
         };
