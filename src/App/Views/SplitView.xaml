@@ -17,29 +17,49 @@
           DragLeave="OnDragLeave"
           Drop="OnDrop">
         <Grid.RowDefinitions>
+            <!-- Row 0: resizable video preview pane (T-027) -->
+            <RowDefinition Height="300" MinHeight="140" />
+            <!-- Row 1: drag handle to resize the preview vs the content below -->
             <RowDefinition Height="Auto" />
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="*" />
+            <!-- Row 2: timeline + markers + output/run — star-sized, never clipped -->
+            <RowDefinition Height="*" MinHeight="200" />
         </Grid.RowDefinitions>
 
-        <!-- ================= TOP: in-app video preview (T-012) ================= -->
+        <!-- ================= TOP: in-app video preview (T-012), user-resizable (T-027) ================= -->
         <views:PlayerView Grid.Row="0"
                           Margin="0,0,0,6"
-                          MaxHeight="320"
                           DataContext="{Binding Player}"
                           Visibility="{Binding DataContext.HasFile,
                                        RelativeSource={RelativeSource AncestorType=UserControl},
                                        Converter={StaticResource BoolToVisibility}}" />
 
+        <!-- ============ Drag handle: resize the preview against the content below (T-027) ============ -->
+        <GridSplitter Grid.Row="1"
+                      Height="6"
+                      Margin="0,0,0,6"
+                      HorizontalAlignment="Stretch"
+                      VerticalAlignment="Center"
+                      ResizeBehavior="PreviousAndNext"
+                      ResizeDirection="Rows"
+                      Background="#D0D0D0"
+                      ToolTip="Drag to resize the video preview" />
+
+        <!-- ================= Content: timeline + markers + output/run ================= -->
+        <Grid Grid.Row="2">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
         <!-- ============ Timeline overlay: markers + candidates (T-014) ============ -->
-        <views:TimelineView Grid.Row="1"
+        <views:TimelineView Grid.Row="0"
                             Margin="0,0,0,10"
                             DataContext="{Binding Timeline}"
                             Visibility="{Binding DataContext.HasFile,
                                          RelativeSource={RelativeSource AncestorType=UserControl},
                                          Converter={StaticResource BoolToVisibility}}" />
 
-        <Grid Grid.Row="2">
+        <Grid Grid.Row="1">
         <Grid.ColumnDefinitions>
             <ColumnDefinition Width="*" />
             <ColumnDefinition Width="8" />
@@ -239,6 +259,7 @@
                 </StackPanel>
             </StackPanel>
         </DockPanel>
+        </Grid>
         </Grid>
 
         <!-- ================= Drag-drop highlight overlay (T-016) ================= -->
