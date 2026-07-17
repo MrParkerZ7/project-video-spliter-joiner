@@ -2,6 +2,27 @@
 
 <!-- latest on top; entries are never deleted -->
 
+## 2026-07-17 — ✅ G-008 DONE — fast load converged (todo-next-all, 3/3)
+
+- **T-032 ✅** docs `2018c22` — USER_GUIDE/ARCHITECTURE/CHANGELOG/CLAUDE/README updated for non-blocking load + demux keyframe scan.
+- **G-008 sealed done.** Chain: T-030 `76f60e6` → T-031 `d1cba99` → T-032 `2018c22`. 269 tests, 0-warning.
+- Fixes the reported slow drag-drop load: preview opens on probe (before indexing) + keyframe scan 3.86× faster (demux packet-flags). G-008 commits local (unpushed).
+
+## 2026-07-17 — T-031 done → T-032 (G-008 drain)
+
+- **T-031 ✅** faster keyframe scan — demux packet-flag query (`-show_packets ... flags` K-filter, pts→dts fallback) replacing frame-decode scan; frame-scan fallback on empty/throw; `LastScanPath` for testability. Measured **3.86× faster** (4K: 216ms→56ms, 10=10 keyframes). 269 tests (15 new). Commit `d1cba99`.
+- **T-032 🔵** docs (fast load) dispatched — last G-008 node.
+
+## 2026-07-17 — T-030 done → T-031 (G-008 drain)
+
+- **T-030 ✅** non-blocking load — LoadAsync gates only on ProbeAsync; keyframes index in a cancellable background task (`IsIndexingKeyframes`, per-load CTS + stale-guard); cut-during-index awaits the in-flight scan (no snap-to-empty); ProbeFailed path unchanged. 254 tests (7 new). Commit `76f60e6`.
+- **T-031 🔵** faster keyframe scan (demux packet-flag query + fallback) dispatched.
+
+## 2026-07-17 — todo-next-all: draining G-008 (fast load)
+
+- Driving G-008 to convergence: T-030 (non-blocking load) → T-031 (faster keyframe scan) → T-032 (docs). Serialized (shared load/probe path).
+- **T-030 🔵** non-blocking load dispatched.
+
 ## 2026-07-17 — ✅ finalization complete — G-004/5/6/7 sealed
 
 - **T-026 ✅** docs `fadecf7` — README·USER_GUIDE·ARCHITECTURE·CHANGELOG·CLAUDE updated for FFME + no-detect + 4K + resizable pane + player controls; grep-clean of auto-detect/MediaElement refs.
