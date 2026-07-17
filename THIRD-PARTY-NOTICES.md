@@ -3,25 +3,49 @@
 VideoSplitJoiner bundles third-party software. This file records attribution and license
 obligations for the components shipped inside a packaged distribution.
 
+## FFME (Unosquare.FFME.Windows)
+
+This product bundles **FFME** (`FFME.Windows`, version `7.0.361-beta.1`) — the WPF media
+element used for the in-app **video preview**. FFME P/Invoke-loads the bundled ffmpeg
+**shared** libraries (see the FFmpeg entry below) from the `ffmpeg/` folder at runtime.
+
+- Project: https://github.com/unosquare/ffmediaelement
+- Package: `FFME.Windows` (NuGet), which binds to `FFmpeg.AutoGen 7.0.0` (the ffmpeg 7.x ABI).
+- License: **Ms-PL** (Microsoft Public License), per the package. FFME itself is a managed
+  library; the accompanying native decoding is provided by FFmpeg (below).
+
 ## FFmpeg
 
-This product bundles **FFmpeg** (`ffmpeg.exe` and `ffprobe.exe`) in the `ffmpeg/` folder next
-to the application executable.
+This product bundles the **FFmpeg SHARED build** in the `ffmpeg/` folder next to the
+application executable. The folder contains BOTH:
+
+- the shared libraries (`avcodec-61.dll`, `avformat-61.dll`, `avutil-59.dll`,
+  `avfilter-10.dll`, `avdevice-61.dll`, `swscale-8.dll`, `swresample-5.dll`,
+  `postproc-58.dll`) — P/Invoke-loaded by **FFME** for the preview, and
+- the tools (`ffmpeg.exe`, `ffprobe.exe`) — shelled out to by the split/join **engine**.
+
+One `ffmpeg/` folder therefore serves both the preview and the engine.
 
 - Project: https://ffmpeg.org
-- Bundled build: **gyan.dev "essentials" static build, FFmpeg 7.1.1** (win64).
-  - Source of binaries: https://www.gyan.dev/ffmpeg/builds/
-- The full FFmpeg license text as shipped by that build is included alongside the application
-  as `LICENSE` (copied from the ffmpeg build at package time).
+- Bundled build: **BtbN `win64-gpl-shared` build, FFmpeg 7.1** (win64).
+  - Source of binaries: https://github.com/BtbN/FFmpeg-Builds/releases
+    (`ffmpeg-n7.1-latest-win64-gpl-shared-7.1.zip`), fetched via
+    `packaging/fetch-ffmpeg-shared.ps1` / `.sh`.
+- The full FFmpeg license text (when shipped by the build) is included alongside the
+  application as `LICENSE`, copied from the ffmpeg build at package time.
 
 FFmpeg is free software. The copyright and license notices of FFmpeg and its dependencies are
-retained in the accompanying `LICENSE` file.
+retained in the accompanying `LICENSE` file (where present) and in this notice.
+
+> **Packaged size note:** switching from the prior exe-only bundle to the shared build adds
+> the shared `*.dll` set (~+40 MB) to the distributable, because the DLLs the FFME preview
+> P/Invokes now ship alongside the tool exes.
 
 ## Licensing
 
 > **IMPORTANT — read before public distribution.**
 
-The bundled gyan.dev **"essentials" static build is licensed under the GNU General Public
+The bundled BtbN **`win64-gpl-shared` build is licensed under the GNU General Public
 License (GPL), version 3.** It is compiled with GPL-only components enabled and is therefore a
 **GPL** distribution, not LGPL.
 
@@ -31,12 +55,14 @@ What this means for VideoSplitJoiner:
   personal / internal / development use this is fine. For **public redistribution**, the GPL's
   obligations (including making corresponding source available and licensing the combined work
   under GPL-compatible terms) apply.
-- **To distribute under permissive terms**, swap the bundled binaries for an **LGPL** FFmpeg
-  **shared** build and invoke it as a separately-shipped executable / dynamically-linked library
-  (the app already shells out to `ffmpeg.exe` / `ffprobe.exe` as external processes, which keeps
-  the coupling loose and LGPL-friendly). Replace the `-FfmpegSource` used by
-  `packaging/package.ps1` with the LGPL build's `bin` folder and update this notice accordingly.
+- **To distribute under permissive terms**, fetch an **LGPL** FFmpeg **shared** build instead
+  (e.g. a BtbN `win64-lgpl-shared` release — pass its URL to `fetch-ffmpeg-shared.ps1` via the
+  `-Url` parameter) and point `packaging/package.ps1`'s `-FfmpegSource` at that folder. The
+  shared libraries are dynamically loaded (FFME P/Invoke) and the tool exes are invoked as
+  external processes, which keeps the coupling loose and LGPL-friendly. Update this notice
+  accordingly when you switch builds.
 
-**Decision required before public release:** ship the GPL "essentials" build as-is (and comply
-with the GPL), **or** switch to an LGPL FFmpeg build. This packaging bundles the GPL build for
-the developer/personal distributable; the choice above is deferred to the maintainer.
+**Decision required before public release:** ship the GPL `win64-gpl-shared` build as-is (and
+comply with the GPL), **or** switch to an LGPL FFmpeg shared build. This packaging bundles the
+GPL shared build for the developer/personal distributable; the choice above is deferred to the
+maintainer.
