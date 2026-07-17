@@ -2,6 +2,43 @@
 
 <!-- latest on top; entries are never deleted -->
 
+## 2026-07-17 — ✅ G-010 + G-011 DONE — todo-next-all converged (6/6)
+
+- **T-039 ✅** docs `4e55301` — CHANGELOG/USER_GUIDE/README/ARCHITECTURE/CLAUDE updated for unicode paths, .ts fix, exit-28→DiskFull, copyable log, remembered folders, ±10m/20m skips.
+- **G-010 sealed done** (T-035/036/037/038/039) + **G-011 done** (T-040). 313 tests, 0-warning.
+- **User's .ts blocker RESOLVED** (root = UTF-8 path encoding). Plus copyable error log, remembered folders, ±10m/20m skips.
+- Drain commits local (unpushed): 4eef2d0·c8618c0·7f7ce35·dc9f314·ee64702·4e55301.
+
+## 2026-07-17 — T-040 done (G-011 ✅) → T-039 docs (last drain task)
+
+- **T-040 ✅** ±10m/±20m skip buttons on the jog row (CommandParameter ±600/±1200, no VM change). 313 tests. Commit `ee64702`. **G-011 sealed done.** (Minor: new buttons use − U+2212 vs old ASCII `-` — cosmetic, flagged.)
+- **T-039 🔵** docs dispatched — covers G-010 (.ts/encoding/copyable-log/settings) + G-011 (±10m/20m). Last task of the drain.
+
+## 2026-07-17 — T-038 done → T-040 (drain: last feature task)
+
+- **T-038 ✅** remember location — `IAppSettings`/`AppSettings` → `%APPDATA%/VideoSplitJoiner/settings.json` (lastInputDir/lastOutputDir, robust); picker InitialDirectory + output-dir default read/write; VM optional-dep ctor. 311 tests (14 new). Commit `dc9f314`.
+- **T-040 🔵** ±10m/±20m skip buttons (G-011) dispatched.
+
+## 2026-07-17 — T-037 done → T-038 (G-010 drain)
+
+- **T-037 ✅** copyable error — selectable read-only TextBox + Copy button + Open-log; full stderr (+command+exit+timestamp) written to `%LOCALAPPDATA%/VideoSplitJoiner/logs/` via `ErrorLogWriter`; `UserFacingError` gained `LogFilePath`/`FullText`/`CopyText`. 297 tests (12 new). Commit `7f7ce35`.
+- **T-038 🔵** remember last input/output location dispatched.
+
+## 2026-07-17 — T-035 done → T-037 (G-010 drain)
+
+- **T-035 ✅** — FINDING: **.ts split succeeds after T-036** (exit -28 was the mangled-path symptom, fixed by UTF-8). Verified mpegts fixture + unicode-path split → playable segments. Hardened: exit -28/ENOSPC → DiskFull message + pre-flight free-space check; `-c copy` preserved. 285 tests (5 new). Commit `c8618c0`. **User's blocker resolved.**
+- **T-037 🔵** copyable + full error log dispatched.
+
+## 2026-07-17 — T-036 done → T-035 (G-010 drain)
+
+- **T-036 ✅** UTF-8 encoding — `StandardError/OutputEncoding = UTF8` on both runners; ArgumentList path-in confirmed intact (no lossy round-trip). Unicode-path fixture: probe + split-to-unicode-output work; captured error un-garbled (proven by fix-removal → test fails). 280 tests (3 new). Commit `4eef2d0`. Likely resolves the .ts write failure root.
+- **T-035 🔵** investigate + fix .ts/mpegts split (exit -28) dispatched.
+
+## 2026-07-17 — todo-next-all: draining G-010 + G-011 (6 tasks)
+
+- Order: T-036 (UTF-8, foundational) → T-035 (.ts fix) → T-037 (copyable log) → T-038 (settings) → T-040 (±10m/20m skips) → T-039 (docs). Serialized (shared app tree).
+- **T-036 🔵** UTF-8 process encoding + non-ASCII paths dispatched.
+
 ## 2026-07-17 — ✅ G-009 DONE — scrub pop-back fixed
 
 - **T-033 ✅** `3e2ad4e` — seek-target hold + new `IMediaPlayer.Seeked` completion event + drag gating + bounded-tick anti-freeze; core regression test (stale 12s echo doesn't pop a 40s target) green. 277 tests.
