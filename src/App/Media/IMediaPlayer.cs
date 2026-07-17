@@ -39,6 +39,13 @@ public interface IMediaPlayer
     /// <summary>Seek to <paramref name="t"/> (clamped to 0..Duration by the implementation).</summary>
     void Seek(TimeSpan t);
 
+    /// <summary>
+    /// Step the playhead exactly one frame in <paramref name="direction"/> (+1 forward, −1 back).
+    /// A paused operation — the implementation pauses playback first if it is running. Values other
+    /// than ±1 are treated by sign; <c>0</c> is a no-op.
+    /// </summary>
+    void StepFrame(int direction);
+
     /// <summary>Raised as the playhead advances during playback (roughly every ~200ms).</summary>
     event EventHandler PositionChanged;
 

@@ -313,6 +313,8 @@ public sealed class SplitViewModelTests
 
         public void Seek(TimeSpan t) { }
 
+        public void StepFrame(int direction) { }
+
 #pragma warning disable CS0067
         public event EventHandler? PositionChanged;
 

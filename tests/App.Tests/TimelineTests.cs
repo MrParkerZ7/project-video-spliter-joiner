@@ -296,6 +296,8 @@ public sealed class TimelineTests
             Position = t;
         }
 
+        public void StepFrame(int direction) { }
+
         public void RaiseDurationAvailable(TimeSpan duration)
         {
             Duration = duration;

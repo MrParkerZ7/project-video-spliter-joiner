@@ -40,6 +40,14 @@ public sealed class PlayerViewModel : ObservableObject
 
         PlayPauseCommand = new RelayCommand(_ => PlayPause(), _ => IsReady);
         StopCommand = new RelayCommand(_ => Stop());
+
+        // Relative jog: the command parameter is a number of SECONDS (a double, or a string XAML
+        // supplies as CommandParameter="10" / "-5"). All jog/step/jump commands are gated on IsReady.
+        SkipCommand = new RelayCommand(p => SkipBy(TimeSpan.FromSeconds(ParseSeconds(p))), _ => IsReady);
+        JumpToStartCommand = new RelayCommand(_ => Scrub(TimeSpan.Zero), _ => IsReady);
+        JumpToEndCommand = new RelayCommand(_ => JumpToEnd(), _ => IsReady);
+        StepForwardCommand = new RelayCommand(_ => StepFrame(+1), _ => IsReady);
+        StepBackCommand = new RelayCommand(_ => StepFrame(-1), _ => IsReady);
     }
 
     // ---- State ------------------------------------------------------------------------------
@@ -79,6 +87,11 @@ public sealed class PlayerViewModel : ObservableObject
                 OnPropertyChanged(nameof(DurationSeconds));
                 OnPropertyChanged(nameof(IsReady));
                 PlayPauseCommand.RaiseCanExecuteChanged();
+                SkipCommand.RaiseCanExecuteChanged();
+                JumpToStartCommand.RaiseCanExecuteChanged();
+                JumpToEndCommand.RaiseCanExecuteChanged();
+                StepForwardCommand.RaiseCanExecuteChanged();
+                StepBackCommand.RaiseCanExecuteChanged();
             }
         }
     }
@@ -147,6 +160,25 @@ public sealed class PlayerViewModel : ObservableObject
     /// <summary>Stop playback and rewind to the start.</summary>
     public RelayCommand StopCommand { get; }
 
+    /// <summary>
+    /// Jog the playhead by a relative number of seconds. The command parameter is the delta in
+    /// seconds (a <see cref="double"/>, or a string XAML binds via <c>CommandParameter</c> such as
+    /// <c>"10"</c> / <c>"-5"</c>); positive = forward, negative = back. Guarded by <see cref="IsReady"/>.
+    /// </summary>
+    public RelayCommand SkipCommand { get; }
+
+    /// <summary>Jump the playhead to the very start (00:00). Guarded by <see cref="IsReady"/>.</summary>
+    public RelayCommand JumpToStartCommand { get; }
+
+    /// <summary>Jump the playhead to the very end (the full duration). Guarded by <see cref="IsReady"/>.</summary>
+    public RelayCommand JumpToEndCommand { get; }
+
+    /// <summary>Step one frame forward (paused operation). Guarded by <see cref="IsReady"/>.</summary>
+    public RelayCommand StepForwardCommand { get; }
+
+    /// <summary>Step one frame backward (paused operation). Guarded by <see cref="IsReady"/>.</summary>
+    public RelayCommand StepBackCommand { get; }
+
     // ---- Actions ----------------------------------------------------------------------------
 
     /// <summary>
@@ -193,6 +225,47 @@ public sealed class PlayerViewModel : ObservableObject
 
     /// <summary>Seek the player to <paramref name="t"/> (used by the timeline / T-013 capture).</summary>
     public void Scrub(TimeSpan t) => _player.Seek(Clamp(t));
+
+    /// <summary>
+    /// Jog the playhead by <paramref name="delta"/> relative to the current position, clamped to
+    /// <c>0..Duration</c>, then seek there (via <see cref="Scrub"/>). No-op until <see cref="IsReady"/>.
+    /// Used to nudge the playhead onto the exact split point before "Set cut at playhead".
+    /// </summary>
+    public void SkipBy(TimeSpan delta)
+    {
+        if (!IsReady)
+        {
+            return;
+        }
+
+        var upper = _duration ?? _position;
+        Scrub(ClampTo(_position + delta, TimeSpan.Zero, upper));
+    }
+
+    /// <summary>Jump the playhead to the media's end (full duration). No-op until ready.</summary>
+    public void JumpToEnd()
+    {
+        if (!IsReady || _duration is not { } d)
+        {
+            return;
+        }
+
+        Scrub(d);
+    }
+
+    /// <summary>
+    /// Step the underlying player exactly one frame in <paramref name="direction"/> (+1 / −1).
+    /// No-op until <see cref="IsReady"/>. FFME reports the resulting position via PositionChanged.
+    /// </summary>
+    public void StepFrame(int direction)
+    {
+        if (!IsReady)
+        {
+            return;
+        }
+
+        _player.StepFrame(direction);
+    }
 
     // ---- Player events ----------------------------------------------------------------------
 
@@ -241,6 +314,29 @@ public sealed class PlayerViewModel : ObservableObject
 
         return _duration is { } d && t > d ? d : t;
     }
+
+    /// <summary>Clamp <paramref name="t"/> into the inclusive <paramref name="lo"/>..<paramref name="hi"/> range.</summary>
+    private static TimeSpan ClampTo(TimeSpan t, TimeSpan lo, TimeSpan hi)
+    {
+        if (t < lo)
+        {
+            return lo;
+        }
+
+        return t > hi ? hi : t;
+    }
+
+    /// <summary>
+    /// Parse a <see cref="SkipCommand"/> parameter (a <see cref="double"/>, an <see cref="int"/>,
+    /// or a string such as <c>"10"</c> / <c>"-5"</c>) into a seconds value. Unparseable = 0 (no-op).
+    /// </summary>
+    private static double ParseSeconds(object? parameter) => parameter switch
+    {
+        double d => d,
+        int i => i,
+        string s when double.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out var v) => v,
+        _ => 0d,
+    };
 
     /// <summary>Format a time as <c>mm:ss.f</c> (or <c>h:mm:ss.f</c> past an hour).</summary>
     private static string FormatClock(TimeSpan t)

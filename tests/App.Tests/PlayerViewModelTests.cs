@@ -26,6 +26,12 @@ public sealed class PlayerViewModelTests
 
         public List<TimeSpan> Seeks { get; } = new();
 
+        /// <summary>Every StepFrame direction, in call order (+1 forward, −1 back).</summary>
+        public List<int> Steps { get; } = new();
+
+        /// <summary>The last StepFrame direction, or 0 if never stepped.</summary>
+        public int LastStepDirection { get; private set; }
+
         public TimeSpan Position { get; set; }
 
         public TimeSpan? Duration { get; private set; }
@@ -62,6 +68,13 @@ public sealed class PlayerViewModelTests
             Calls.Add("Seek");
             Seeks.Add(t);
             Position = t;
+        }
+
+        public void StepFrame(int direction)
+        {
+            Calls.Add("StepFrame");
+            Steps.Add(direction);
+            LastStepDirection = direction;
         }
 
         // ---- Event raisers (test-driven) ----
@@ -278,5 +291,147 @@ public sealed class PlayerViewModelTests
         vm.Position = TimeSpan.FromSeconds(999);
         vm.Position.Should().Be(TimeSpan.FromSeconds(30));
         player.Seeks[^1].Should().Be(TimeSpan.FromSeconds(30));
+    }
+
+    // ---- Skip / jog (T-028) -----------------------------------------------------------------
+
+    [Fact]
+    public void SkipBy_Forward_SeeksToPositionPlusDelta()
+    {
+        var (vm, player) = BuildReady(60);
+        player.RaisePositionChanged(TimeSpan.FromSeconds(5));
+
+        vm.SkipBy(TimeSpan.FromSeconds(10));
+
+        player.Seeks[^1].Should().Be(TimeSpan.FromSeconds(15));
+    }
+
+    [Fact]
+    public void SkipBy_Backward_ClampsToZero()
+    {
+        var (vm, player) = BuildReady(60);
+        player.RaisePositionChanged(TimeSpan.FromSeconds(5));
+
+        vm.SkipBy(TimeSpan.FromSeconds(-10));
+
+        player.Seeks[^1].Should().Be(TimeSpan.Zero);
+    }
+
+    [Fact]
+    public void SkipBy_PastDuration_ClampsToDuration()
+    {
+        var (vm, player) = BuildReady(60);
+        player.RaisePositionChanged(TimeSpan.FromSeconds(5));
+
+        vm.SkipBy(TimeSpan.FromSeconds(300));
+
+        player.Seeks[^1].Should().Be(TimeSpan.FromSeconds(60));
+    }
+
+    [Fact]
+    public void SkipBy_NoOp_WhenNotReady()
+    {
+        var (vm, player) = Build();
+
+        vm.SkipBy(TimeSpan.FromSeconds(10));
+
+        player.Calls.Should().NotContain("Seek");
+    }
+
+    [Fact]
+    public void SkipCommand_ParsesSecondsParameter_AndSeeks()
+    {
+        var (vm, player) = BuildReady(60);
+        player.RaisePositionChanged(TimeSpan.FromSeconds(5));
+
+        vm.SkipCommand.Execute("10");   // string parameter, as XAML supplies it
+        player.Seeks[^1].Should().Be(TimeSpan.FromSeconds(15));
+
+        // The player echoes its new position back through PositionChanged (as FFME does), which the
+        // VM mirrors into its Position — so the next relative jog is measured from 15s.
+        player.RaisePositionChanged(TimeSpan.FromSeconds(15));
+
+        vm.SkipCommand.Execute("-5");
+        player.Seeks[^1].Should().Be(TimeSpan.FromSeconds(10));
+    }
+
+    // ---- Jump to ends (T-028) ---------------------------------------------------------------
+
+    [Fact]
+    public void JumpToStart_SeeksToZero()
+    {
+        var (vm, player) = BuildReady(60);
+        player.RaisePositionChanged(TimeSpan.FromSeconds(30));
+
+        vm.JumpToStartCommand.Execute(null);
+
+        player.Seeks[^1].Should().Be(TimeSpan.Zero);
+    }
+
+    [Fact]
+    public void JumpToEnd_SeeksToDuration()
+    {
+        var (vm, player) = BuildReady(45);
+
+        vm.JumpToEndCommand.Execute(null);
+
+        player.Seeks[^1].Should().Be(TimeSpan.FromSeconds(45));
+    }
+
+    // ---- Frame step (T-028) -----------------------------------------------------------------
+
+    [Fact]
+    public void StepForwardCommand_StepsPlayerPlusOne()
+    {
+        var (vm, player) = BuildReady();
+
+        vm.StepForwardCommand.Execute(null);
+
+        player.LastStepDirection.Should().Be(+1);
+        player.Steps.Should().ContainSingle().Which.Should().Be(+1);
+    }
+
+    [Fact]
+    public void StepBackCommand_StepsPlayerMinusOne()
+    {
+        var (vm, player) = BuildReady();
+
+        vm.StepBackCommand.Execute(null);
+
+        player.LastStepDirection.Should().Be(-1);
+        player.Steps.Should().ContainSingle().Which.Should().Be(-1);
+    }
+
+    [Fact]
+    public void StepFrame_NoOp_WhenNotReady()
+    {
+        var (vm, player) = Build();
+
+        vm.StepFrame(+1);
+
+        player.Calls.Should().NotContain("StepFrame");
+        player.Steps.Should().BeEmpty();
+    }
+
+    // ---- Command guards: all jog/step/jump gated on IsReady ---------------------------------
+
+    [Fact]
+    public void JogStepJumpCommands_CanExecuteFalse_WhenNotReady_TrueAfter()
+    {
+        var (vm, player) = Build();
+
+        vm.SkipCommand.CanExecute("10").Should().BeFalse();
+        vm.JumpToStartCommand.CanExecute(null).Should().BeFalse();
+        vm.JumpToEndCommand.CanExecute(null).Should().BeFalse();
+        vm.StepForwardCommand.CanExecute(null).Should().BeFalse();
+        vm.StepBackCommand.CanExecute(null).Should().BeFalse();
+
+        player.RaiseDurationAvailable(TimeSpan.FromSeconds(60));
+
+        vm.SkipCommand.CanExecute("10").Should().BeTrue();
+        vm.JumpToStartCommand.CanExecute(null).Should().BeTrue();
+        vm.JumpToEndCommand.CanExecute(null).Should().BeTrue();
+        vm.StepForwardCommand.CanExecute(null).Should().BeTrue();
+        vm.StepBackCommand.CanExecute(null).Should().BeTrue();
     }
 }

@@ -6,11 +6,20 @@
              Loaded="OnLoaded">
     <UserControl.Resources>
         <conv:BoolToVisibilityConverter x:Key="BoolToVisibility" />
+
+        <!-- Compact square-ish jog button: small, tooltip-labelled, wraps at pane min width. -->
+        <Style x:Key="JogButton" TargetType="Button">
+            <Setter Property="MinWidth" Value="34" />
+            <Setter Property="Padding" Value="4,2" />
+            <Setter Property="Margin" Value="2,0" />
+            <Setter Property="FontSize" Value="11" />
+        </Style>
     </UserControl.Resources>
 
     <Grid>
         <Grid.RowDefinitions>
             <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
@@ -33,27 +42,84 @@
                 Value="{Binding PositionSeconds, Mode=TwoWay}"
                 IsEnabled="{Binding IsReady}" />
 
+        <!-- Skip / jog / frame-step / jump-to-ends (T-028) — wraps so it stays readable at min width.
+             Layout: |◄start  −5m −1m −20s −10s −5s −1s  ⏴frame  ▶/⏸  frame⏵  +1s +5s +10s +20s +1m +5m  end►| -->
+        <WrapPanel Grid.Row="2" Margin="0,4,0,0" HorizontalAlignment="Center">
+            <Button Style="{StaticResource JogButton}" Content="&#x25C4;&#x2759;"
+                    ToolTip="Jump to start"
+                    Command="{Binding JumpToStartCommand}" />
+
+            <Button Style="{StaticResource JogButton}" Content="-5m"
+                    ToolTip="Back 5 minutes"
+                    Command="{Binding SkipCommand}" CommandParameter="-300" />
+            <Button Style="{StaticResource JogButton}" Content="-1m"
+                    ToolTip="Back 1 minute"
+                    Command="{Binding SkipCommand}" CommandParameter="-60" />
+            <Button Style="{StaticResource JogButton}" Content="-20s"
+                    ToolTip="Back 20 seconds"
+                    Command="{Binding SkipCommand}" CommandParameter="-20" />
+            <Button Style="{StaticResource JogButton}" Content="-10s"
+                    ToolTip="Back 10 seconds"
+                    Command="{Binding SkipCommand}" CommandParameter="-10" />
+            <Button Style="{StaticResource JogButton}" Content="-5s"
+                    ToolTip="Back 5 seconds"
+                    Command="{Binding SkipCommand}" CommandParameter="-5" />
+            <Button Style="{StaticResource JogButton}" Content="-1s"
+                    ToolTip="Back 1 second"
+                    Command="{Binding SkipCommand}" CommandParameter="-1" />
+
+            <Button Style="{StaticResource JogButton}" Content="&#x23F4;|"
+                    ToolTip="Step back one frame"
+                    Command="{Binding StepBackCommand}" />
+
+            <!-- Reused play/pause -->
+            <Button MinWidth="60" Padding="8,2" Margin="4,0"
+                    Content="{Binding PlayPauseLabel}"
+                    Command="{Binding PlayPauseCommand}" />
+
+            <Button Style="{StaticResource JogButton}" Content="|&#x23F5;"
+                    ToolTip="Step forward one frame"
+                    Command="{Binding StepForwardCommand}" />
+
+            <Button Style="{StaticResource JogButton}" Content="+1s"
+                    ToolTip="Forward 1 second"
+                    Command="{Binding SkipCommand}" CommandParameter="1" />
+            <Button Style="{StaticResource JogButton}" Content="+5s"
+                    ToolTip="Forward 5 seconds"
+                    Command="{Binding SkipCommand}" CommandParameter="5" />
+            <Button Style="{StaticResource JogButton}" Content="+10s"
+                    ToolTip="Forward 10 seconds"
+                    Command="{Binding SkipCommand}" CommandParameter="10" />
+            <Button Style="{StaticResource JogButton}" Content="+20s"
+                    ToolTip="Forward 20 seconds"
+                    Command="{Binding SkipCommand}" CommandParameter="20" />
+            <Button Style="{StaticResource JogButton}" Content="+1m"
+                    ToolTip="Forward 1 minute"
+                    Command="{Binding SkipCommand}" CommandParameter="60" />
+            <Button Style="{StaticResource JogButton}" Content="+5m"
+                    ToolTip="Forward 5 minutes"
+                    Command="{Binding SkipCommand}" CommandParameter="300" />
+
+            <Button Style="{StaticResource JogButton}" Content="&#x2759;&#x25BA;"
+                    ToolTip="Jump to end"
+                    Command="{Binding JumpToEndCommand}" />
+        </WrapPanel>
+
         <!-- Transport + time readout -->
-        <Grid Grid.Row="2" Margin="0,4,0,0">
+        <Grid Grid.Row="3" Margin="0,4,0,0">
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="*" />
                 <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
 
+            <!-- Play/pause now lives in the jog row above; Stop stays on the transport row. -->
             <Button Grid.Column="0"
-                    MinWidth="70"
-                    Padding="10,3"
-                    Content="{Binding PlayPauseLabel}"
-                    Command="{Binding PlayPauseCommand}" />
-            <Button Grid.Column="1"
-                    Margin="6,0,0,0"
                     Padding="10,3"
                     Content="Stop"
                     Command="{Binding StopCommand}" />
 
-            <TextBlock Grid.Column="3"
+            <TextBlock Grid.Column="2"
                        VerticalAlignment="Center"
                        FontFamily="Consolas">
                 <Run Text="{Binding PositionText, Mode=OneWay}" />
@@ -63,7 +129,7 @@
         </Grid>
 
         <!-- Preview-unavailable banner -->
-        <Border Grid.Row="3"
+        <Border Grid.Row="4"
                 Margin="0,6,0,0"
                 Padding="6"
                 Background="#FFF7E6"

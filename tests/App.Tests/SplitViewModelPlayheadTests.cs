@@ -101,6 +101,8 @@ public sealed class SplitViewModelPlayheadTests
             Position = t;
         }
 
+        public void StepFrame(int direction) { }
+
         /// <summary>Flip the player to a known duration (→ PlayerViewModel.IsReady == true).</summary>
         public void RaiseDurationAvailable(TimeSpan duration)
         {

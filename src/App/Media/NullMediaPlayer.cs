@@ -29,6 +29,8 @@ public sealed class NullMediaPlayer : IMediaPlayer
 
     public void Seek(TimeSpan t) { }
 
+    public void StepFrame(int direction) { }
+
 #pragma warning disable CS0067 // Events are part of the interface contract but never raised by the null object.
     public event EventHandler? PositionChanged;
 

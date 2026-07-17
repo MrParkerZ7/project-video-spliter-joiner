@@ -163,6 +163,29 @@ public sealed class FfmeMediaPlayer : IMediaPlayer
         Run(() => _element.Seek(clamped), () => PositionChanged?.Invoke(this, EventArgs.Empty));
     }
 
+    public void StepFrame(int direction)
+    {
+        if (_element is null || direction == 0)
+        {
+            return;
+        }
+
+        // Frame-step is a paused operation: if we were playing, pause first so the single-frame
+        // seek lands on a stable frame rather than fighting the play loop.
+        if (_isPlaying)
+        {
+            _isPlaying = false;
+            Run(() => _element.Pause());
+        }
+
+        // StepForward()/StepBackward() are FFME's single-frame seeks; both return the same
+        // ConfiguredTaskAwaitable<bool> as Play()/Seek()/Pause(), so they adapt through the same
+        // fire-and-forget Run() (faults routed to Failed). Surface the position change to listeners.
+        Run(
+            () => direction > 0 ? _element.StepForward() : _element.StepBackward(),
+            () => PositionChanged?.Invoke(this, EventArgs.Empty));
+    }
+
     private TimeSpan Clamp(TimeSpan t)
     {
         if (t < TimeSpan.Zero)
