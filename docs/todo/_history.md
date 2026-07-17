@@ -2,6 +2,68 @@
 
 <!-- latest on top; entries are never deleted -->
 
+## 2026-07-18 — ✅ G-012→G-015 DONE — todo-next-all backlog converged (10/10)
+
+- **T-049 ✅** selectable segments `d1659f3` — `SplitSegmentViewModel` + `SelectedSegmentIndices` (full→muxer, subset→per-segment `-c copy`, only selected written); real-ffmpeg verified; fixed a latent per-segment `-to` bug. 372 tests.
+- **Docs ✅** `d40fef3` — combined pass (README/USER_GUIDE/ARCHITECTURE/CHANGELOG/CLAUDE) closing T-043/046/048/050.
+- **Sealed done:** G-012 (instant cut + visible progress) · G-013 (staged status + ETA) · G-014 (clear) · G-015 (selectable segments).
+- Drain commits local: 1b85a32·6721337·50cbfc1·112a87a·e18176a·d1659f3·d40fef3.
+
+## 2026-07-18 — T-047 done → T-049 (backlog drain; last build task)
+
+- **T-047 ✅** clearable file — `IMediaPlayer.Unload()` (FFME `Close()`), Split ClearCommand (reset+bg-index-cancel), Join Clear-all; buttons wired. 360 tests (9 new). Commit `e18176a`.
+- **T-049 🔵** selectable segments (export only chosen parts) dispatched — the L task.
+
+## 2026-07-18 — T-045 done → T-047 (backlog drain; progress cluster complete)
+
+- **T-045 ✅** ETA — `EtaEstimator` (EMA-smoothed, "~Nm Ss left"/"estimating…") + `OperationViewModel.EtaText` via Stopwatch; SplitView/JoinView show it beside StatusText. 351 tests (20 new). Commit `112a87a`.
+- G-012 + G-013 progress/feedback cluster done (T-041/042/044/045).
+- **T-047 🔵** clearable file (Clear / Clear all + `IMediaPlayer.Unload`) dispatched.
+
+## 2026-07-18 — T-044 done → T-045 (backlog drain)
+
+- **T-044 ✅** staged status — `OperationStatus` record + optional `IProgress<OperationStatus>` on engines; split/join emit real stages → `StatusText`; segment N/M = "M parts" fallback. 331 tests (4 new). Commit `50cbfc1`.
+- **T-045 🔵** ETA (estimated time remaining) dispatched.
+
+## 2026-07-18 — T-042 done → T-044 (backlog drain)
+
+- **T-042 ✅** visible progress — `OperationViewModel.IsIndeterminate` (running && progress≤0) + `StatusText` public; SplitView/JoinView bind IsIndeterminate + status label. Root cause was UI-side. 327 tests (9 new). Commit `6721337`.
+- **T-044 🔵** staged status synced to each process action dispatched (engine stage callback → StatusText).
+
+## 2026-07-18 — T-041 done → T-042 (backlog drain)
+
+- **T-041 ✅** instant cut — optimistic pending marker + async `ResolveSnap` on index-arrival + dedupe-on-resolve + stale-load guard; `CutMarkerViewModel.IsSnapPending`/"snapping…". 318 tests (7 new). Commit `1b85a32`.
+- **T-042 🔵** visible split/join progress dispatched (also lays StatusText/IsIndeterminate groundwork for T-044/T-045).
+
+## 2026-07-18 — todo-next-all: draining the backlog G-012→G-015 (10 tasks)
+
+- Order: T-041 (instant cut) → T-042 (visible progress) → T-044 (stage text) → T-045 (ETA) → T-047 (clear) → T-049 (selectable segments) → one docs pass (T-043/046/048/050). Serialized (shared app tree).
+- **T-041 🔵** responsive Set-cut-at-playhead dispatched.
+
+## 2026-07-18 — todo-goal PLANNED: G-015 selectable segments
+
+- User Q: does split let you pick only some parts? ANSWER: no — it writes ALL parts (segment muxer). Not current behavior. Good feature (save time+disk); engine already has a per-segment `-ss/-to -c copy` path to build on.
+- **G-015** "Selectable segments" — segment list (from markers) with checkboxes; export only selected parts via per-segment copy (full set → segment muxer as today); still `-c copy`. Tasks: T-049 selectable segments · T-050 docs. Plan-only.
+- Planned queue: G-012 · G-013 · G-014 · G-015 (10 tasks, all unbuilt). 13 commits unpushed.
+
+## 2026-07-18 — todo-goal PLANNED: G-014 clearable file
+
+- **G-014** "Clearable file" — Split "Clear" unloads the current video + resets the screen (player unload, markers/timeline/output cleared, cancel bg index); Join "Clear all" empties the clip list. New `IMediaPlayer.Unload()`. Tasks: T-047 clear/reset · T-048 docs. Plan-only; `proceed G-014`.
+- Planned queue now: G-012 (responsive cut + progress) · G-013 (staged progress + ETA) · G-014 (clear). 13 commits still unpushed.
+
+## 2026-07-18 — todo-goal PLANNED: G-013 staged progress + ETA
+
+- **G-013** "Staged progress synced to each process action + ETA" — user wants the operation to show the current STAGE (synced to real work: Preparing → Splitting segment N/M → Finalizing → Done) + an estimated time remaining. Tasks: T-044 staged status (engine stage callback → OperationViewModel.StatusText) · T-045 ETA (`EtaEstimator` from real elapsed vs progress, smoothed, "~1m 20s left") · T-046 docs.
+- **Closely tied to G-012** (visible progress) — both touch OperationViewModel/progress surface; recommend building together (T-042 + T-044/T-045). Plan-only; `proceed G-012 + G-013` together ideal.
+
+## 2026-07-17 — todo-goal PLANNED: G-012 responsive cut + visible split progress
+
+- Two user-reported "seems broken but actually slow/silent" issues, both diagnosed in code:
+  - **Set-cut slow** — `AddCutAt` (SplitViewModel.cs:535) DEFERS the visible marker-add until the background keyframe index finishes (`AddCutAtWhenIndexedAsync` awaits `EnsureKeyframesAsync`). On a big file the marker doesn't appear until the scan completes → feels broken. (Side effect of T-030 non-blocking load.)
+  - **Split no feedback** — a ProgressBar exists (SplitView.xaml:196, bound Operation.Progress) but `-c copy` progress can be sparse/instant → bar doesn't visibly move → looks stuck.
+- Tasks: T-041 optimistic marker + async snap-resolve (instant add, "snapping…" → final) · T-042 visible split/join progress (moving bar / indeterminate + "Splitting…" status) · T-043 docs.
+- Plan-only; `proceed G-012`.
+
 ## 2026-07-17 — ✅ G-010 + G-011 DONE — todo-next-all converged (6/6)
 
 - **T-039 ✅** docs `4e55301` — CHANGELOG/USER_GUIDE/README/ARCHITECTURE/CLAUDE updated for unicode paths, .ts fix, exit-28→DiskFull, copyable log, remembered folders, ±10m/20m skips.
