@@ -7,22 +7,37 @@ goal; `0.1.0` is the first end-to-end, shippable cut.
 
 ## [0.2.0] - Unreleased
 
-Goal G-002: an **in-app video preview player** with **visual cut selection** on the Split screen.
-Still no re-encode — the player only previews; every cut continues to keyframe-snap through the same
-path as before.
+Goal G-002: an **in-app video preview player** with **visual cut selection** on the Split screen,
+then hardened over G-004→G-007 — the preview now decodes through **FFmpeg** (so it plays what the app
+can cut, including HEVC / MKV / 4K), the black/white/scene **auto-detect feature was removed**, and
+the player gained a full navigation-control surface plus a drag-resizable video pane. Still no
+re-encode — the player only previews; every cut continues to keyframe-snap through the same path.
 
 ### Added
 
 - **In-app preview player** on the Split screen — the loaded file plays right there with
   play / pause / stop and a scrubbable timeline slider, and a `mm:ss.f / mm:ss.f` position/duration
-  readout. Built behind an `IMediaPlayer` abstraction (`MediaElementPlayer` over a WPF `MediaElement`
-  in production; `NullMediaPlayer` no-op default) with a WPF-free `PlayerViewModel`.
+  readout. Built behind an `IMediaPlayer` abstraction (`FfmeMediaPlayer` in production;
+  `NullMediaPlayer` no-op default) with a WPF-free `PlayerViewModel`.
+- **FFmpeg-decoded preview (G-004)** — the preview now decodes via **FFME/FFmpeg**
+  (`src/App/Media/FfmeMediaPlayer.cs`, package `FFME.Windows`, behind the unchanged `IMediaPlayer`
+  seam), **replacing the WPF `MediaElement`**. Because it decodes through the same bundled FFmpeg as
+  the split/join engine, it plays formats Windows Media Foundation could not — **HEVC, MKV, 4K, and
+  other exotic container/codec combos** — so the "preview unavailable" banner is now rare.
+  `App.OnStartup` sets `Unosquare.FFME.Library.FFmpegDirectory` before any FFME control loads. **One
+  bundled ffmpeg *shared* build** (`ffmpeg/` folder) now serves **both** the preview (shared DLLs)
+  and the engine (`ffmpeg.exe` / `ffprobe.exe`); dev setup fetches it via
+  `packaging/fetch-ffmpeg-shared.ps1`, packaging bundles it, and `THIRD-PARTY-NOTICES.md` covers FFME
+  + the GPL ffmpeg build.
+- **Player controls to find the exact split point (G-007)** — skip buttons (**±1s / ±5s / ±10s /
+  ±20s / ±1m / ±5m**), **frame-step** (±1 frame), **jump to start / end**, plus a **volume slider +
+  mute** and a **playback-speed** selector (**0.25×–2×**), all on `PlayerViewModel` / `PlayerView`.
+- **Resizable video pane (G-006)** — the Split screen's preview area is drag-resizable via a
+  `GridSplitter` in `SplitView.xaml`.
 - **Set cut point at playhead** — park the player and drop a cut marker at the current position.
-- **Visual timeline strip** under the player showing the **playhead**, a tick per **cut marker**, and
-  a tick per **detected candidate** coloured by kind (**black** / **white** / **scene**), with a
-  legend. **Click the strip** to drop a cut at that position; **click a marker tick** to seek to its
-  snapped cut; **click a candidate tick** to preview its detected time. Built from pure
-  `TimelineMath` (normalized ↔ time) + a `TimelineViewModel` projection.
+- **Visual timeline strip** under the player showing the **playhead** and a tick per **cut marker**.
+  **Click the strip** to drop a cut at that position; **click a marker tick** to seek to its snapped
+  cut. Built from pure `TimelineMath` (normalized ↔ time) + a `TimelineViewModel` projection.
 - Every visually placed cut (playhead-capture or timeline-click) funnels through the existing
   `AddCutAt` → **keyframe-snap + dedupe** path — one snap implementation, no new cut logic.
 - **Drag and drop** — drag video files from Explorer onto the **Split** screen to load the first file
@@ -33,12 +48,27 @@ path as before.
   internal reorder drag is distinguished from an external file drop by its clipboard payload type
   (`JoinItemViewModel` = reorder, `FileDrop` = add). Non-video files are ignored.
 
+### Changed
+
+- **4K preview performance (G-005)** — the FFME preview now uses **hardware-accelerated decoding**
+  (D3D11VA / DXVA2 / …) plus a **downscaled preview surface** (`src/App/Media/PreviewScale.cs`, capped
+  at ~1080p, aspect-preserving, even dimensions) so large 4K sources play back smoothly without
+  saturating the WPF UI thread. The **cut is unaffected** — it stays `-c copy` and is never decoded,
+  so it always runs at the source's full resolution.
+
+### Removed
+
+- **Auto-detect (G-005)** — the black/white/scene **auto-detect** feature has been **removed**: no
+  more `Core/Detect` layer, `SplitPointDetector`, detect passes, or candidate UI (candidate ticks /
+  ranked candidate list). Manual cut markers, playhead-capture, and timeline-click cuts remain the
+  ways to place cuts.
+
 ### Notes
 
-- The preview uses **Windows Media Foundation** codecs, whose coverage is narrower than the bundled
-  FFmpeg. A file the player cannot open shows a **"Preview unavailable — you can still cut this
-  file"** banner and remains fully cuttable — preview failure is not a load failure. (FFME is parked
-  as the upgrade behind `IMediaPlayer` if coverage proves too narrow.)
+- The preview decodes through **FFmpeg** (via FFME) — the same bundled build the engine uses — so it
+  plays what the app can cut. A file the player still cannot open shows a **"Preview unavailable —
+  you can still cut this file"** banner and remains fully cuttable — preview failure is not a load
+  failure.
 
 ## [0.1.0] - 2026-07-15
 

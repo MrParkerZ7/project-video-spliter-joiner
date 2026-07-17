@@ -5,7 +5,7 @@ A .NET 8 WPF app that splits and joins video **without re-encoding**. See [READM
 
 ## Layout
 
-- `src/Core/` — `VideoSplitJoiner.Core`, UI-free media logic (Ffmpeg, Media, Split, Join, Detect, Errors).
+- `src/Core/` — `VideoSplitJoiner.Core`, UI-free media logic (Ffmpeg, Media, Split, Join, Errors).
 - `src/App/` — `VideoSplitJoiner.App`, WPF UI + hand-rolled MVVM view models.
 - `tests/Core.Tests/`, `tests/App.Tests/` — xUnit + FluentAssertions.
 - `packaging/package.ps1` — single-file self-contained win-x64 publish + bundled ffmpeg + zip.
@@ -22,23 +22,38 @@ A .NET 8 WPF app that splits and joins video **without re-encoding**. See [READM
   an encoder flag. The args-builders forbid encoder tokens and require a bare `copy`; the invariant
   is re-asserted at runtime before launch and by unit tests on the token list. Do not add a
   re-encode path in v1.
-- **Detection is decode-only.** Every detect pass targets the null muxer (`-f null -`), parses stderr,
-  writes no file, re-encodes nothing. The decode-only invariant is asserted before each run and by tests.
+- **No auto-detect.** The black/white/scene auto-detect feature was removed (no `Core/Detect`,
+  no `SplitPointDetector`, no candidate UI). Do not reintroduce a detect layer or candidate ticks;
+  cuts are placed manually (typed marker, "set cut at playhead", or timeline click).
+- **One bundled ffmpeg SHARED build serves preview + engine.** A single app-local `ffmpeg/` folder
+  holds BOTH the shared `*.dll` (avcodec-*/avformat-*/… — P/Invoke-loaded by FFME for the preview)
+  AND `ffmpeg.exe` / `ffprobe.exe` (shelled out to by the split/join engine). Don't split these into
+  two bundles. Fetch it with `packaging/fetch-ffmpeg-shared.ps1`; `package.ps1` bundles the whole
+  shared build. Binaries are not committed.
+- **`Library.FFmpegDirectory` is set at startup.** `App.OnStartup` points
+  `Unosquare.FFME.Library.FFmpegDirectory` at the ffmpeg shared DLLs **before any FFME control
+  loads**, best-effort (no shared build → preview unavailable, never a crash). Keep that ordering.
+- **The preview is downscaled + hardware-accelerated — never the cut.** The FFME preview enables
+  HW decode and installs a `scale=W:H` downscale filter (`PreviewScale`, capped ~1080p) for smooth
+  4K playback. This is preview-only: the split stays `-c copy` and is never decoded, so the cut is
+  always full source resolution. Keep 4K/decode changes on the preview side of the seam.
 - **Keyframe-snap is intentional.** Cuts snap to the nearest keyframe (ties → earlier, clamps at
   ends). This is a design guarantee, not a bug — surface deltas/warnings, don't try to make cuts
   frame-exact.
 - **Compatibility is refused, not fixed.** An incompatible join reports named mismatches and writes
   no output. Do not silently re-encode to reconcile mismatched clips.
-- **The preview player is behind `IMediaPlayer`.** The Split-screen preview transport goes through
-  the `IMediaPlayer` abstraction (`App/Media/`). View models (`PlayerViewModel`, `TimelineViewModel`)
-  stay **WPF-free** and are tested against a fake player; the only WPF-bound impl, `MediaElementPlayer`
-  (over a WPF `MediaElement`), is thin plumbing that just has to compile — its **live playback is
-  verified only via `app-run`**, never in the unit suite. `NullMediaPlayer` is the no-op default so
-  non-UI constructions/tests keep working. Don't leak WPF types into the player/timeline VMs.
+- **The preview player is behind `IMediaPlayer` (FFME impl).** The Split-screen preview transport
+  goes through the `IMediaPlayer` abstraction (`App/Media/`). View models (`PlayerViewModel`,
+  `TimelineViewModel`) stay **WPF-free** and are tested against a fake player; the only WPF-bound
+  impl, `FfmeMediaPlayer` (over an FFME `Unosquare.FFME.MediaElement`, which decodes through
+  ffmpeg), is thin plumbing that just has to compile — its **live playback is verified only via
+  `app-run`**, never in the unit suite. `NullMediaPlayer` is the no-op default so non-UI
+  constructions/tests keep working. Don't leak WPF types into the player/timeline VMs; keep new
+  transport (skip/frame-step/jump/volume/mute/speed) behind `IMediaPlayer` too.
 - **All cuts funnel through `AddCutAt` — one snap path.** Every way of placing a cut (manual add,
-  "set cut at playhead", clicking the timeline strip, accepting a candidate) routes through
-  `SplitViewModel.AddCutAt`, which keyframe-snaps and dedupes. Do not add a second snap/dedupe
-  implementation for a new cut-entry surface — wire it through `AddCutAt`.
+  "set cut at playhead", clicking the timeline strip) routes through `SplitViewModel.AddCutAt`, which
+  keyframe-snaps and dedupes. Do not add a second snap/dedupe implementation for a new cut-entry
+  surface — wire it through `AddCutAt`.
 - **Drag/drop plumbing is code-behind that routes to existing VM commands.** Drop and drag handlers
   live in the view code-behind (`SplitView`/`JoinView`) and add **no** load/add/reorder logic — a
   file drop routes to `LoadCommand` (Split, first file) / `AddFilesCommand` (Join, all files); a

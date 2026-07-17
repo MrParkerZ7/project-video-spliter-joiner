@@ -6,8 +6,9 @@ VideoSplitJoiner is a .NET 8 WPF desktop app split into two assemblies:
 - **`VideoSplitJoiner.Core`** — a **UI-free** class library holding all media logic. It shells out
   to a bundled FFmpeg through a single runner choke-point.
 
-Every operation is a lossless stream copy (`ffmpeg -c copy`) or a decode-only probe/detect pass —
-the app never re-encodes.
+Every split/join operation is a lossless stream copy (`ffmpeg -c copy`) or a decode-only probe pass
+— the engine never re-encodes. The in-app preview *does* decode (through FFME/FFmpeg), but only to
+display frames on screen; it never touches the file that is cut.
 
 ## Layering
 
@@ -24,24 +25,26 @@ the app never re-encodes.
  │  ObservableObject · RelayCommand  (hand-rolled MVVM)           │
  └───────────────┬───────────────────────────────────────────────┘
                  │  interfaces (ISplitEngine, IJoinEngine,
-                 │  ISplitPointDetector, IMediaProbe)
+                 │  IMediaProbe)
  ┌───────────────▼───────────────────────────────────────────────┐
  │  VideoSplitJoiner.Core  (UI-free)                             │
  │                                                               │
- │   Split/     Join/      Detect/        Media/                  │
- │   SplitEngine JoinEngine SplitPoint-   MediaProbe              │
- │              +Compat-    Detector      (probe, keyframes,      │
- │              Checker                    snap, GOP)             │
- │        │        │           │             │                   │
- │        └────────┴─────┬─────┴─────────────┘                   │
- │                       ▼                                        │
+ │   Split/     Join/            Media/                           │
+ │   SplitEngine JoinEngine      MediaProbe                       │
+ │              +Compat-         (probe, keyframes,               │
+ │              Checker           snap, GOP)                      │
+ │        │        │                 │                           │
+ │        └────────┴─────────┬───────┘                           │
+ │                           ▼                                    │
  │            Ffmpeg/  FfmpegRunner · FfprobeRunner               │
  │                     (the SINGLE exec choke-point)             │
  │                     FfmpegBinaryLocator · FfmpegArgs           │
  │            Errors/  FfmpegErrorMapper · UserFacingError        │
  └───────────────────────┬───────────────────────────────────────┘
                          ▼
-             bundled ffmpeg.exe / ffprobe.exe  (app-local ffmpeg/ folder)
+        one bundled ffmpeg SHARED build  (app-local ffmpeg/ folder)
+        ├─ shared *.dll  → P/Invoke-loaded by FFME for the preview
+        └─ ffmpeg.exe / ffprobe.exe → shelled out to by the engine
 ```
 
 **Core is UI-free by construction and by test.** `CoreIsUiFreeTests` asserts the Core assembly
@@ -67,19 +70,35 @@ concatenation), so paths with spaces/quotes are safe.
 
 ## Binary resolution
 
-**`FfmpegBinaryLocator`** resolves `ffmpeg` / `ffprobe` in this order, per tool:
+One bundled ffmpeg **shared build** feeds two consumers, resolved by two independent mechanisms that
+both point at the same app-local `ffmpeg/` folder:
+
+**Engine exes — `FfmpegBinaryLocator`.** All split/join/probe execution resolves `ffmpeg` / `ffprobe`
+in this order, per tool:
 
 1. **Explicit override** path passed to the constructor (used by integration tests).
 2. **App-local `ffmpeg/` folder** next to the running assembly (`AppContext.BaseDirectory`) — this
-   is how the packaged distributable finds its bundled binaries.
+   is how the packaged distributable finds its bundled exes.
 3. **PATH** — the bare name, letting the OS resolve it (only if actually discoverable, so a helpful
    error is thrown otherwise).
 
 If nothing resolves, it throws `FfmpegNotFoundException` with guidance.
 
+**Preview DLLs — `Library.FFmpegDirectory`.** The FFME preview P/Invoke-loads the native ffmpeg
+**shared libraries** (`avcodec-*`, `avformat-*`, `avutil-*`, …, ffmpeg 7.x ABI). `App.OnStartup`
+sets `Unosquare.FFME.Library.FFmpegDirectory` **before any FFME control loads**, pointing it at the
+folder holding those DLLs. It probes, in order: the packaged app-local `ffmpeg/` folder, a repo-local
+`ffmpeg-shared/` found by walking up from `BaseDirectory` (dev tree), then an absolute dev fallback —
+selecting the first that actually contains an `avcodec-*.dll`. This step is **best-effort**: if no
+shared build is found the preview is simply unavailable (the "preview unavailable" banner), and
+startup never crashes over it.
+
+Because the packaged `ffmpeg/` folder carries **both** the shared DLLs and the exes, one folder
+satisfies both mechanisms.
+
 ## Engine contracts
 
-All three engines share the same guarantees: they build their command through a dedicated
+Both engines share the same guarantees: they build their command through a dedicated
 args-builder that **structurally cannot** emit an encoder flag, and they **re-assert the invariant
 at runtime** before launching (so a mis-built command is refused, not run). The invariants are also
 asserted by unit tests on the produced token lists.
@@ -115,19 +134,6 @@ asserted by unit tests on the produced token lists.
   cancellation removes the partial output.
 - **Output:** a `JoinResult` — success (with the written path) or refusal (with the report).
 
-### Detect — `SplitPointDetector` (`Core/Detect/`)
-
-- **Input:** a file path + `DetectOptions` (which passes to run, thresholds, max candidates).
-- **Decode-only invariant:** every pass outputs to the **null muxer** (`-vf <filter> -an -f null -`)
-  — it writes no file and never re-encodes. `DetectArgsBuilder.SatisfiesDecodeOnlyInvariant` requires
-  `-f null`, a trailing `-` sink, and no encoder token; the detector asserts it before each run.
-- **Behavior:** up to three decode-only passes — **black** (`blackdetect`), **white**
-  (`negate,blackdetect`), **scene** (`select='gt(scene,thr)',metadata=print`). Detection data is
-  parsed from **stderr** only. Hits are merged within a window, snapped to the nearest keyframe, and
-  returned as **ranked** `Candidate`s (rank 1 = best), capped at `MaxCandidates`.
-- **Output:** a ranked candidate list. An empty list is a valid result (no events found), never an
-  exception.
-
 ## In-app preview player + timeline (`App/Media/`, `App/ViewModels/`)
 
 The Split screen embeds a live video preview and a visual cut-selection strip. This layer lives
@@ -137,18 +143,41 @@ testable without a GUI or real playback.
 ### The player abstraction — `IMediaPlayer` (`App/Media/`)
 
 `IMediaPlayer` is a small, testable transport contract: `Position` (get/set — the setter seeks),
-`Duration`, `IsPlaying`, `Open` / `Play` / `Pause` / `Stop` / `Seek`, plus the events
-`PositionChanged`, `DurationAvailable`, `Ended`, and `Failed` (carrying a human-readable reason).
-Two implementations:
+`Duration`, `IsPlaying`, `Open` / `Play` / `Pause` / `Stop` / `Seek` / `StepFrame`, the audio/speed
+knobs `Volume` / `IsMuted` / `SpeedRatio`, plus the events `PositionChanged`, `DurationAvailable`,
+`Ended`, and `Failed` (carrying a human-readable reason). Two implementations:
 
-- **`MediaElementPlayer`** — the production impl. It wraps a WPF `MediaElement` handed in from the
-  view (`LoadedBehavior=Manual`, `ScrubbingEnabled=true`, so it fully drives transport). A ~200ms
-  `DispatcherTimer` polls position and pumps `PositionChanged` while playing; the element's own
-  `MediaOpened` / `MediaEnded` / `MediaFailed` map to `DurationAvailable` / `Ended` / `Failed`. It is
-  thin WPF plumbing — **not unit-tested, only compiled** — and verified live via `app-run`.
+- **`FfmeMediaPlayer`** — the production impl. It wraps an **FFME** `Unosquare.FFME.MediaElement`
+  (`ffme.win`) handed in from the view (`LoadedBehavior=Manual`, `ScrubbingEnabled=true`, so it fully
+  drives transport). Because FFME decodes through **FFmpeg**, the preview plays formats WPF's native
+  `MediaElement` could not (HEVC, MKV, many container/codec combos) — it now plays what the app can
+  cut. FFME's transport methods are asynchronous, so each is adapted fire-and-forget with faults
+  routed to `Failed`; FFME raises `PositionChanged` natively, so there is **no `DispatcherTimer`** (a
+  change from the retired WPF `MediaElementPlayer`). The element's `MediaOpened` / `MediaEnded` /
+  `MediaFailed` map to `DurationAvailable` / `Ended` / `Failed`. `Volume` / `IsMuted` / `SpeedRatio`
+  map straight to the FFME control's properties. It is thin WPF plumbing — **not unit-tested, only
+  compiled** — and verified live via `app-run`.
 - **`NullMediaPlayer`** — a no-op null object (shared singleton). It is the **default** player when a
   `SplitViewModel` is constructed without one, so pre-player constructions and tests keep working; it
   records nothing, plays nothing, and raises no events.
+
+### 4K preview strategy — HW-decode + downscale (never the cut)
+
+Smooth 4K playback is handled entirely inside the preview path, on FFME's pre-open hook
+(`MediaOpening`), and never touches the cut:
+
+- **Hardware decoding** — the probed video stream's compatible hardware devices (D3D11VA / DXVA2 /
+  …) are handed to `MediaOptions.VideoHardwareDevices`, letting FFME decode on the GPU; an empty
+  list falls back to software decode.
+- **Downscaled preview surface** — `PreviewScale` (a pure, unit-tested geometry helper in
+  `App/Media/`) computes an even-dimensioned target height (capped at ~1080p, aspect-preserving,
+  never upscaling) and builds an ffmpeg `scale=W:H` `VideoFilter`, so a 3840×2160 source renders at
+  ~1080p and the WPF UI thread isn't saturated pushing full 4K BGRA frames every tick.
+
+Both steps are best-effort and independently guarded — a HW-init or filter-build failure falls back
+silently to software / native-resolution decode, never a crash. Crucially this affects **only** the
+on-screen preview: the split is `-c copy` and never decodes, so **the cut always runs at the source's
+full resolution** regardless of the preview scale.
 
 ### The player view model — `PlayerViewModel`
 
@@ -162,6 +191,22 @@ the "preview unavailable" banner. The `Position` setter is the **scrub seam**: a
 scrubbing until the duration is known. Because it holds no WPF types, it is fully unit-tested with a
 fake `IMediaPlayer`.
 
+**Player-control surface (find the exact split point).** On top of play/pause/stop/scrub the VM
+exposes the fine-navigation controls the Split screen surfaces so the user can land the precise
+frame before "Set cut at playhead":
+
+- **`SkipCommand`** — relative jog by a signed seconds delta (the bound buttons pass ±1 / ±5 / ±10 /
+  ±20 / ±60 / ±300), clamped to `0..Duration`.
+- **`StepForwardCommand` / `StepBackCommand`** — single-frame `StepFrame(±1)` (a paused operation on
+  the underlying FFME player).
+- **`JumpToStartCommand` / `JumpToEndCommand`** — seek to `00:00` / the full duration.
+- **`Volume`** (0..1, clamped) + **`MuteCommand`** / `IsMuted` — muting toggles the player's
+  `IsMuted` without disturbing the `Volume` slider, so unmute restores the prior level.
+- **`SpeedRatio`** against a `SpeedPresets` list (**0.25× … 2×**), written straight to the player.
+
+All jog/step/jump commands are gated on `IsReady`. Every control remains WPF-free and unit-tested via
+the fake player.
+
 ### The timeline strip — `TimelineMath` / `TimelineViewModel` / `TimelineTick`
 
 - **`TimelineMath`** — a pure, WPF-free pair of inverse mappings: `ToNormalized(time, duration)` →
@@ -169,23 +214,21 @@ fake `IMediaPlayer`.
   a track click). Both clamp their inputs, so a click past either edge or a zero/unknown duration can
   never divide by zero or escape the box.
 - **`TimelineViewModel`** — a projection over the owning `SplitViewModel`. It observes the player's
-  Position/Duration and the `Markers` / `Candidates` collections and re-projects a `PlayheadNormalized`
-  plus two flat, bindable tick lists (marker ticks + candidate ticks) whenever anything moves.
-- **`TimelineTick`** — one projected tick: its normalized X, source time, candidate `Kind` (null for
-  marker ticks, so the view colours candidates by Black/White/Scene), and a `Ref` back to the
-  originating marker/candidate view model for click routing.
+  Position/Duration and the `Markers` collection and re-projects a `PlayheadNormalized` plus a flat,
+  bindable `MarkerTicks` list whenever anything moves.
+- **`TimelineTick`** — one projected tick: its normalized X, source time, and a `Ref` back to the
+  originating `CutMarkerViewModel` for click routing.
 
 ### How visual cuts reuse the existing snap path (no new snap logic)
 
-The two new ways to place a cut — **"Set cut point at playhead"** (`SplitViewModel.SetCutAtPlayhead`
+The two visual ways to place a cut — **"Set cut point at playhead"** (`SplitViewModel.SetCutAtPlayhead`
 → `SetCutAtPlayheadCommand`) and **clicking the timeline** (`TimelineViewModel.ClickAt` →
 `FromNormalized` → the owner) — both funnel into `SplitViewModel.AddCutAt(TimeSpan)`, the **single**
 entry point that manual add already used. `AddCutAt` builds a snapping `CutMarkerViewModel` and
-**dedupes on the snapped keyframe**, so every cut — typed, playhead-captured, timeline-clicked, or
-from an accepted candidate — snaps and de-dupes identically. There is deliberately **no second snap
-implementation**. Clicking a marker tick routes to `SeekToMarkerCommand` (seek to the marker's
-*snapped* time); clicking a candidate tick routes to `PreviewCandidateCommand` (seek to the
-candidate's *raw detected* time) — both reuse commands that already existed on `SplitViewModel`.
+**dedupes on the snapped keyframe**, so every cut — typed, playhead-captured, or timeline-clicked —
+snaps and de-dupes identically. There is deliberately **no second snap implementation**. Clicking a
+marker tick routes to `SeekToMarkerCommand` (seek to the marker's *snapped* time), reusing a command
+that already existed on `SplitViewModel`.
 
 `SetCutAtPlayhead` is guarded by `CanSetCutAtPlayhead` (`HasFile && Player.IsReady`), so it only
 enables once the preview has a real playhead to capture.
@@ -243,40 +286,43 @@ The UI uses **hand-rolled MVVM**: `ObservableObject` (INotifyPropertyChanged bas
 
 - **`MainViewModel`** is the **composition root**. Its parameterless ctor builds the real Core graph
   once — `FfmpegBinaryLocator` → `FfprobeRunner`/`FfmpegRunner` → `MediaProbe` → `SplitEngine`,
-  `JoinEngine`, `SplitPointDetector` — and shares the probe across both screens. A second,
-  DI-style ctor lets tests inject already-composed screen view models with fakes.
+  `JoinEngine` — and shares the probe across both screens. A second, DI-style ctor lets tests inject
+  already-composed screen view models with fakes.
 - **`SplitViewModel`** / **`JoinViewModel`** are the two screens, each constructor-injected with Core
   interfaces (so they are fully unit-testable without FFmpeg).
-- **`OperationViewModel`** is composed into both screens to give split/join/detect a shared
+- **`OperationViewModel`** is composed into both screens to give split/join a shared
   progress + cancel + friendly-error lifecycle. It is WPF-free (marshals via `Progress<T>`), so it
   runs off the UI thread under test. It maps engine failures (typed results *and* exceptions) into
   `UserFacingError`s.
 - The view models themselves are **WPF-free and constructor-injected** — the WPF dependency lives
   only in the `App` assembly's views and `App.xaml`, never in Core.
-- **`MainViewModel` composes the real player** by passing a `new MediaElementPlayer()` into
+- **`MainViewModel` composes the real player** by passing a `new FfmeMediaPlayer()` into
   `SplitViewModel`. The player starts unattached; `PlayerView`'s code-behind calls `Attach(Media)` on
-  load to bind it to the view's `MediaElement` (the one place WPF and the player meet). A
+  load to bind it to the view's FFME `MediaElement` (the one place WPF and the player meet). A
   `SplitViewModel` built without a player falls back to `NullMediaPlayer`, keeping tests and non-UI
   constructions working.
 
 ## Design decisions (preview player)
 
-### D1 — WPF `MediaElement` for playback (FFME parked)
+### D1 — FFME/FFmpeg for playback (replaces WPF `MediaElement`)
 
-The preview uses WPF's built-in **`MediaElement`** (Windows Media Foundation) rather than a
-richer player. It ships in-box, needs no extra dependency, and is enough for a *preview* — the app
-never decodes frames for cutting itself (that is FFmpeg's job). The trade-off is **codec coverage**:
-Media Foundation handles fewer exotic containers/codecs than the bundled FFmpeg does, so some files
-that cut perfectly may fail to *preview*. That path is handled gracefully (see below).
-**FFME** (`FFmpegMediaElement`) is the **parked upgrade**: if Media Foundation's coverage proves too
-narrow in practice, swapping the `MediaElementPlayer` impl behind `IMediaPlayer` for an FFME-backed
-one is a contained change — no view-model or timeline code moves.
+The preview decodes through **FFME** (`Unosquare.FFME.MediaElement`, package `FFME.Windows`), which
+P/Invoke-loads the bundled ffmpeg **shared** libraries. This replaces the earlier WPF built-in
+`MediaElement` (Windows Media Foundation). The reason is **codec coverage**: Media Foundation handled
+fewer exotic containers/codecs than the bundled FFmpeg, so files that cut perfectly could fail to
+*preview*. Decoding the preview through the same FFmpeg the engine uses means **the preview plays
+exactly what the app can cut** (HEVC, MKV, 4K, …), so the "preview unavailable" path is now rare. The
+app still never decodes frames for the *cut* itself — that stays `-c copy`; FFME's decoding is
+preview-only. Startup points FFME at the shared DLLs via `Library.FFmpegDirectory` before any FFME
+control loads; a still-unplayable file is handled gracefully via the `Failed` → banner path.
 
 ### D2 — `IMediaPlayer` abstraction so the VMs stay testable
 
 Playback is behind the `IMediaPlayer` seam specifically so `PlayerViewModel` and `TimelineViewModel`
 carry **no WPF types** and can be exercised headlessly with a fake player (position/duration/
-events driven by the test). The only piece that touches WPF — `MediaElementPlayer` — is thin plumbing
+events driven by the test). The only piece that touches WPF — `FfmeMediaPlayer` — is thin plumbing
 that "just has to compile"; its **live playback is verified only via `app-run`** on a real desktop,
-not in the unit suite. This keeps the testable logic (scrub-seam suppression, ready-gating,
-tick projection, click routing) fully covered while confining the untestable WPF surface to one class.
+not in the unit suite. This keeps the testable logic (scrub-seam suppression, ready-gating, jog/step/
+speed/volume control, tick projection, click routing) fully covered while confining the untestable
+WPF surface to one class. The seam is exactly what let the player swap from `MediaElementPlayer` to
+`FfmeMediaPlayer` without any view-model or timeline change.
