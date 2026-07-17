@@ -15,6 +15,26 @@ re-encode — the player only previews; every cut continues to keyframe-snap thr
 
 ### Added
 
+- **Selectable split parts (G-015)** — after you set cut points, the Split screen lists the resulting
+  parts as a checklist (`Part 2 · 05:00–10:00 · 5:00`) with **All / None** toggles, and **only the
+  parts you check are written** (`SplitSegmentViewModel` + `SplitRequest.SelectedSegmentIndices`).
+  Unselected parts cost no time or disk — a strict subset extracts via a per-segment `-ss/-to -c copy`
+  path (one ffmpeg run per chosen part), while a full selection keeps the fast single-pass segment-muxer
+  path. Still lossless, and each selected part keeps its **original** part index in the filename (a
+  chosen middle part stays `…_part02`). The Run button reflects the selection ("Split 2 of 3 parts").
+- **Clear / Clear all (G-014)** — a **Clear** button on the Split screen unloads the current video and
+  resets the whole screen (blank preview via `IMediaPlayer.Unload()`, markers / timeline / output /
+  results cleared, the background keyframe index cancelled); a **Clear all** button on the Join screen
+  empties the clip list and resets the compatibility verdict. Both are disabled while an operation is
+  running so you can't wipe the workspace mid-op.
+- **Staged operation status (G-013)** — a running split/join shows the current **stage** synced to the
+  real work rather than a timer (`OperationStatus` reported through an `IProgress<OperationStatus>`):
+  split runs **Preparing → Splitting (N parts) → Finalizing → Done**; join runs **Checking
+  compatibility → Joining → Finalizing → Done**.
+- **Estimated time remaining (G-013)** — while a split/join runs, a friendly ETA shows beside the
+  status ("~1m 20s left", or "estimating…" until there's enough signal). It's smoothed (EMA over
+  elapsed-vs-progress in `EtaEstimator`) so it trends down without lurching on ffmpeg's bursty
+  `time=` reports, and it clears when the run ends.
 - **In-app preview player** on the Split screen — the loaded file plays right there with
   play / pause / stop and a scrubbable timeline slider, and a `mm:ss.f / mm:ss.f` position/duration
   readout. Built behind an `IMediaPlayer` abstraction (`FfmeMediaPlayer` in production;
@@ -64,6 +84,11 @@ re-encode — the player only previews; every cut continues to keyframe-snap thr
 
 ### Changed
 
+- **Split/join always show visible progress (G-012)** — a running operation now always shows a progress
+  bar plus a status label, never a silent window. When granular progress hasn't arrived yet the bar
+  animates as an **indeterminate busy indicator** (`OperationViewModel.IsIndeterminate`) instead of
+  sitting frozen at 0% — the cure for the "-c copy split looks stuck" problem, since ffmpeg's `time=`
+  can be sparse. It flips to a determinate bar the instant a real fraction arrives.
 - **Faster, non-blocking video load (G-008)** — loading a file on the Split screen no longer waits on
   the full keyframe scan. `SplitViewModel.LoadAsync` now gates only on the fast metadata probe: it
   shows the file info and **opens the preview immediately**, then indexes keyframes in a
@@ -90,6 +115,15 @@ re-encode — the player only previews; every cut continues to keyframe-snap thr
 
 ### Fixed
 
+- **Cut markers appear instantly (G-012)** — placing a cut (Set-cut-at-playhead, manual add, or a
+  timeline click) now drops the marker **immediately**, even while the background keyframe index is
+  still running, instead of waiting for the scan. The optimistic marker shows a **"snapping…"** hint
+  (`CutMarkerViewModel.IsSnapPending`) and resolves in place to its nearest keyframe once the index
+  arrives (re-deduping on the final snapped time). When keyframes are already present the cut still
+  snaps synchronously as before.
+- **Per-segment cut end boundary (G-015)** — the subset export path extracts each selected part with an
+  explicit `-to == snapped end`, while the plan's final part omits `-to` to run to end of file — so a
+  selected middle part gets the same boundary the segment muxer would have produced.
 - **Non-ASCII / unicode paths (G-010)** — files with non-ASCII paths (e.g. Japanese characters) now
   work end-to-end. Both `FfmpegRunner` and `FfprobeRunner` decode the child process' stdout/stderr as
   **UTF-8** (`StandardOutputEncoding` / `StandardErrorEncoding = UTF8`) regardless of the Windows

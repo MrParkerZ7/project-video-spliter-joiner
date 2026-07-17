@@ -114,11 +114,22 @@ asserted by unit tests on the produced token lists.
 ### Split — `SplitEngine` (`Core/Split/`)
 
 - **Input:** a `SplitRequest` (input path, requested cut points, output dir, naming pattern,
-  overwrite flag).
+  overwrite flag, and an optional `SelectedSegmentIndices`).
 - **Behavior:** probe for duration + keyframes; `SplitPlanner` (pure, unit-tested) validates cuts
   (sort, dedupe within epsilon, drop out-of-bounds), **snaps each cut to the nearest keyframe**, and
-  builds contiguous segments `[0..s1],[s1..s2],…,[sN..end]`. Extraction is a **single stream-copy
-  pass** through FFmpeg's **segment muxer** (`-map 0 -c copy -f segment -segment_times … -reset_timestamps 1`).
+  builds contiguous segments `[0..s1],[s1..s2],…,[sN..end]`. **Selected-segment routing (T-049):** when
+  `SelectedSegmentIndices` is `null` (the default) or selects the **full** set, extraction is a
+  **single stream-copy pass** through FFmpeg's **segment muxer** (`-map 0 -c copy -f segment
+  -segment_times … -reset_timestamps 1`) — the fast path, unchanged. When a strict **subset** is
+  selected, the engine instead runs the **per-segment `-ss/-to -c copy` path** — one ffmpeg run per
+  chosen part — so only the wanted ranges are written (unselected parts cost no time/disk). Each part
+  keeps its **original 1-based index** in the filename (a selected middle part is still `_part02`); the
+  plan's final part omits `-to` (runs to EOF) while interior parts pass an explicit `-to == snapped
+  end`. An empty (non-null) selection is an invalid request; out-of-range indices are ignored.
+- **Staged status (T-044):** the engine takes an optional `IProgress<OperationStatus>` and reports each
+  real phase as it enters it — **Preparing → Splitting (N parts) → Finalizing → Done** — so the UI's
+  status line tracks the actual work, never a timer. This is separate from the numeric
+  `IProgress<double>` that drives the bar.
 - **No-re-encode invariant:** `SplitArgsBuilder` forbids every encoder-ish token (`-c:v`, `-crf`,
   `libx264`, `-vf`, …) and requires a bare `copy`. `SatisfiesCopyInvariant` is checked before the run.
 - **Output:** a `SplitResult` — one `SplitSegment` per output file recording the requested boundary,
@@ -140,6 +151,8 @@ asserted by unit tests on the produced token lists.
   absolute paths is written, then `-f concat -safe 0 -i list -map 0 -c copy out`. `JoinArgsBuilder`
   enforces the same copy invariant as split. Output is written to a temp file and moved into place;
   cancellation removes the partial output.
+- **Staged status (T-044):** like split, `JoinAsync` takes an optional `IProgress<OperationStatus>` and
+  reports **Checking compatibility → Joining → Finalizing → Done** as it enters each phase.
 - **Output:** a `JoinResult` — success (with the written path) or refusal (with the report).
 
 ## In-app preview player + timeline (`App/Media/`, `App/ViewModels/`)
@@ -151,9 +164,12 @@ testable without a GUI or real playback.
 ### The player abstraction — `IMediaPlayer` (`App/Media/`)
 
 `IMediaPlayer` is a small, testable transport contract: `Position` (get/set — the setter seeks),
-`Duration`, `IsPlaying`, `Open` / `Play` / `Pause` / `Stop` / `Seek` / `StepFrame`, the audio/speed
-knobs `Volume` / `IsMuted` / `SpeedRatio`, plus the events `PositionChanged`, `DurationAvailable`,
-`Ended`, and `Failed` (carrying a human-readable reason). Two implementations:
+`Duration`, `IsPlaying`, `Open` / `Play` / `Pause` / `Stop` / `Seek` / `Unload` / `StepFrame`, the
+audio/speed knobs `Volume` / `IsMuted` / `SpeedRatio`, plus the events `PositionChanged`, `Seeked`,
+`DurationAvailable`, `Ended`, and `Failed` (carrying a human-readable reason). `Unload` (T-047) closes
+the current source and blanks the preview surface (resetting duration/playing state) so the **Clear**
+button can reset the Split screen to empty; a subsequent `Open` loads a fresh source. Two
+implementations:
 
 - **`FfmeMediaPlayer`** — the production impl. It wraps an **FFME** `Unosquare.FFME.MediaElement`
   (`ffme.win`) handed in from the view (`LoadedBehavior=Manual`, `ScrubbingEnabled=true`, so it fully
@@ -241,6 +257,27 @@ that already existed on `SplitViewModel`.
 
 `SetCutAtPlayhead` is guarded by `CanSetCutAtPlayhead` (`HasFile && Player.IsReady`), so it only
 enables once the preview has a real playhead to capture.
+
+**Instant (optimistic) markers — `IsSnapPending` (T-041).** A cut placed while the background keyframe
+index is still running does **not** wait for the scan: `AddCutAt` sees `IsIndexingKeyframes` with no
+keyframes yet and adds the marker **immediately** via `AddPendingMarker`, constructing the
+`CutMarkerViewModel` with `snapPending: true` — an identity snap (`Snapped = Requested`, delta 0) whose
+`Display` reads `"01:23.4 → snapping…"`. A continuation awaits the **same** in-flight index
+(`EnsureKeyframesAsync`), then calls `ResolveSnap()` to recompute the real snap in place and clear
+`IsSnapPending`, re-deduping on the **final** snapped time (a resolved duplicate is dropped). The
+resolve is guarded against a stale file — a newer load / unload swaps the index CTS, so a late resolve
+never touches a different file's markers. When keyframes are already present, the marker snaps
+synchronously as before (unchanged contract).
+
+**Selectable split parts — `SplitSegmentViewModel` (T-049).** `SplitViewModel` projects the current
+markers' **snapped** times + the probed duration into an observable `Segments` collection of
+`SplitSegmentViewModel` — the ordered contiguous ranges `[0..s1],[s1..s2],…,[sN..end]`, each with a
+1-based `Index`, `Start`/`End`/`Duration`, a `Display` (`"Part 2 · 05:00–10:00 · 5:00"`), and an
+observable `IsSelected` (default true). `RebuildSegments` re-projects whenever the markers change, a
+marker resolves its snap, or the duration becomes known, **preserving each part's `IsSelected` by index**
+across a rebuild. `RunSplitAsync` passes `null` for `SelectedSegmentIndices` when all parts are selected
+(the fast muxer path) and the selected original indices otherwise (the per-segment path); `CanRunSplit`
+also requires ≥1 selected part.
 
 ### Non-blocking load — probe → preview, then background keyframe index
 
@@ -367,7 +404,21 @@ The UI uses **hand-rolled MVVM**: `ObservableObject` (INotifyPropertyChanged bas
 - **`OperationViewModel`** is composed into both screens to give split/join a shared
   progress + cancel + friendly-error lifecycle. It is WPF-free (marshals via `Progress<T>`), so it
   runs off the UI thread under test. It maps engine failures (typed results *and* exceptions) into
-  `UserFacingError`s.
+  `UserFacingError`s. It exposes three extra signals for visible progress:
+  - **`IsIndeterminate` (T-042)** — true while running with no usable fraction yet, so the bar animates
+    as a busy indicator instead of sitting frozen at 0% (ffmpeg's `time=` can be sparse); it flips to a
+    determinate bar the instant a real fraction (>0) arrives. This cures the "-c copy split looks stuck"
+    problem — a running operation is never silent.
+  - **`StatusText` fed by an `IProgress<OperationStatus>` (T-044)** — the `RunWithResultAsync` overload
+    that takes a stage channel formats each reported `OperationStatus` (a `Core/Ffmpeg` record carrying
+    a human-readable `Stage` + optional `Detail`) into the one-line status label ("Splitting… (4
+    parts)"), marshalled through the same captured sync context as the numeric progress.
+  - **`EtaText` from `EtaEstimator` (T-045)** — on each progress sample the VM feeds real elapsed
+    (a `Stopwatch`) vs the reported fraction to `EtaEstimator`, whose EMA-smoothed
+    `remaining ≈ elapsed × (1 − fraction) / fraction` becomes a friendly "~1m 20s left"
+    (or "estimating…" when too early). Both are per-run — primed at `BeginRun`, cleared at `EndRun`.
+    `EtaEstimator` is WPF- and wall-clock-free (fed explicit `TimeSpan` elapsed), so it is fully
+    unit-tested with synthetic sequences.
 - The view models themselves are **WPF-free and constructor-injected** — the WPF dependency lives
   only in the `App` assembly's views and `App.xaml`, never in Core.
 - **`MainViewModel` composes the real player** by passing a `new FfmeMediaPlayer()` into

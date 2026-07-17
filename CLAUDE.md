@@ -86,6 +86,28 @@ A .NET 8 WPF app that splits and joins video **without re-encoding**. See [READM
   "set cut at playhead", clicking the timeline strip) routes through `SplitViewModel.AddCutAt`, which
   keyframe-snaps and dedupes. Do not add a second snap/dedupe implementation for a new cut-entry
   surface — wire it through `AddCutAt`.
+- **Cuts appear instantly — optimistic markers (`IsSnapPending`).** A cut placed while the background
+  keyframe index is still running is added immediately at the requested time with `snapPending: true`
+  (shows "snapping…"), then resolves in place to its nearest keyframe once the same in-flight scan
+  finishes (`ResolveSnap`, re-dedupe on the final snapped time, stale-file guard). Don't re-block cut
+  placement on keyframes; the keyframes-ready path stays synchronous.
+- **Operations are never silent — visible progress + stage + ETA.** A running split/join must always
+  show a progress bar and a status line. `OperationViewModel.IsIndeterminate` drives a busy bar until a
+  real fraction (>0) arrives (ffmpeg `time=` is sparse); the engines report an `IProgress<OperationStatus>`
+  stage channel (split: Preparing → Splitting (N parts) → Finalizing → Done; join: Checking
+  compatibility → Joining → Finalizing → Done) synced to real work, not a timer; and `EtaEstimator`
+  turns elapsed-vs-fraction into a friendly "~Ns left". Keep `OperationStatus` distinct from the numeric
+  bar and keep `EtaEstimator` WPF/wall-clock-free (unit-tested).
+- **Selectable parts route by selection (`SelectedSegmentIndices`).** After cuts are set, the Split
+  screen projects selectable `SplitSegmentViewModel` rows; only checked parts are written. A full
+  selection passes `null` and keeps the fast segment-muxer path; a strict subset passes the selected
+  **original** 1-based indices and the engine uses the per-segment `-ss/-to -c copy` path (final part
+  omits `-to`). Preserve original part indices in filenames; keep it lossless (no re-encode on either
+  path); an empty non-null selection is an invalid request.
+- **Clear / Clear all reset the screen (`IMediaPlayer.Unload`).** Split's **Clear** unloads the file,
+  blanks the preview via `IMediaPlayer.Unload()`, cancels the background keyframe index, and clears
+  markers/segments/results; Join's **Clear all** empties the clip list. Both are guarded off while an
+  operation is running. Keep `Unload` on the player seam (blank surface + reset duration/playing state).
 - **Drag/drop plumbing is code-behind that routes to existing VM commands.** Drop and drag handlers
   live in the view code-behind (`SplitView`/`JoinView`) and add **no** load/add/reorder logic — a
   file drop routes to `LoadCommand` (Split, first file) / `AddFilesCommand` (Join, all files); a

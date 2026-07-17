@@ -42,15 +42,24 @@ The Split screen cuts one video into several contiguous segments at the cut poin
    [Drag and drop](#drag-and-drop)). Loading is **snappy**: as soon as the fast metadata probe
    succeeds, the file's info appears and the **preview opens immediately** — you don't wait on a full
    keyframe scan. The keyframe index (which cuts snap to) then builds **in the background**; while it
-   runs, an **"indexing…"** hint shows. Placing a cut is ready once indexing finishes — and if you're
-   very fast, a cut placed mid-index simply **waits briefly** for the scan to complete so it still
-   snaps correctly (never to an empty list). If the file cannot be read, you get a friendly error and
-   the screen stays unloaded.
+   runs, an **"indexing…"** hint shows. You can place cuts right away even while it runs — a cut
+   dropped mid-index appears immediately (see step 2) and snaps as soon as the scan completes, never to
+   an empty list. If the file cannot be read, you get a friendly error and the screen stays unloaded.
 2. **Add cut markers.** Add a marker at a time position, or use the
    [preview player](#preview--pick-cuts-from-the-player) to find the exact frame and drop a cut
-   there. Each marker row shows the snap: `requested → snapped (±delta)` — for example
-   `01:23.4 → 01:22.0 (−1.4s)`. That tells you exactly how far the cut moved to land on a keyframe.
-3. **Choose output.** Set the output directory and, optionally, the segment **naming pattern**. The
+   there. **The marker appears instantly** — even if the background keyframe index is still building,
+   the cut drops right away showing a transient **"snapping…"** hint, then resolves in place to its
+   nearest keyframe the moment the index finishes (no waiting). Once resolved, each marker row shows
+   the snap: `requested → snapped (±delta)` — for example `01:23.4 → 01:22.0 (−1.4s)`. That tells you
+   exactly how far the cut moved to land on a keyframe.
+3. **Pick which parts to export.** As soon as you have cut points, the screen lists the resulting
+   parts as a checklist — each row reads like `Part 2 · 05:00–10:00 · 5:00` with its own checkbox, plus
+   **All** / **None** buttons. Every part is checked by default. **Only the checked parts are written**;
+   unchecked parts are simply never produced, so skipping parts of a long recording costs no extra time
+   or disk. Selected parts keep their **original** part number in the filename (a chosen middle part
+   stays `…_part02`), and the export is still lossless either way. The Run button reflects your choice
+   — e.g. "Split 3 parts" when all are checked, "Split 2 of 3 parts" for a subset.
+4. **Choose output.** Set the output directory and, optionally, the segment **naming pattern**. The
    app **remembers your last folders**: the output directory defaults to the folder you last output
    to (and, until you've set one, to the input file's folder), and the **Load…** file picker reopens
    at your last-used input folder. These preferences persist across runs (stored in
@@ -59,10 +68,17 @@ The Split screen cuts one video into several contiguous segments at the cut poin
    extension, `{ext}` = input extension (with dot), `{index}` = 1-based segment number (supports a
    zero-pad form like `{index:00}`). Tick **Overwrite** to replace existing files; otherwise a run
    that would clobber an output is rejected before anything happens.
-4. **Run.** The split runs as a single stream-copy pass. When it finishes, the results panel lists
-   each produced segment with its actual snapped boundary and signed delta. Any non-fatal
-   adjustments (a cut dropped for being out of bounds, near-duplicate cuts merged, a large snap on a
-   coarse-GOP file) are reported as warnings.
+5. **Run.** The split writes your selected parts (a full selection runs as a single stream-copy pass;
+   a subset extracts only the chosen parts). While it runs you always see a **progress bar** (an
+   animated busy bar until granular progress arrives, so it never looks stuck), a **stage** label
+   (Preparing → Splitting → Finalizing → Done), and an **estimated time remaining** beside it. When it
+   finishes, the results panel lists each produced segment with its actual snapped boundary and signed
+   delta. Any non-fatal adjustments (a cut dropped for being out of bounds, near-duplicate cuts merged,
+   a large snap on a coarse-GOP file) are reported as warnings.
+
+You can also press **Clear** at any time (when no split is running) to unload the file and reset the
+screen — the preview goes blank and the markers, parts, and results are all cleared, ready for a new
+file.
 
 ### Why cuts snap to keyframes
 
@@ -148,6 +164,9 @@ concat-compatible, because v1 never re-encodes.
    stream-copy concat pass. Tick **Overwrite** to replace an existing output; otherwise a clobbering
    run is refused up front.
 
+Press **Clear all** (when no join is running) to empty the clip list and reset the compatibility
+verdict, ready to start a fresh set.
+
 ### Why an incompatible set is refused (not fixed)
 
 Stream-copy concat requires the inputs to share the same encoding parameters — you cannot losslessly
@@ -161,7 +180,13 @@ scope for v1.
 
 Every long-running operation (split, join) shares the same experience:
 
-- A **progress** bar tracks the run from 0 to 100%.
+- A **progress** bar tracks the run from 0 to 100%. Until granular progress arrives it shows as an
+  **animated busy bar** rather than a frozen 0%, so a fast stream-copy run never looks stuck.
+- A **stage label** shows what's happening now, synced to the real work — split: *Preparing →
+  Splitting (N parts) → Finalizing → Done*; join: *Checking compatibility → Joining → Finalizing →
+  Done*.
+- An **estimated time remaining** shows beside the status ("~1m 20s left"), reading "estimating…"
+  until there's enough progress to judge. It disappears when the run ends.
 - **Cancel** stops the in-flight operation immediately (FFmpeg's whole process tree is killed).
   Cancelling a split or join removes any partially written output — you never end up with a
   half-written final file.

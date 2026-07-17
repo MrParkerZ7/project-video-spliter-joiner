@@ -15,6 +15,13 @@ staring at a spinner before you can start.
 
 - **Split** a video at one or more cut points. Each cut snaps to the nearest keyframe (so the
   copy is clean), and the app shows you exactly how far each cut moved: `requested → snapped (±delta)`.
+  Cuts drop **instantly** (a brief "snapping…" hint resolves to the keyframe once the background index
+  arrives — no waiting).
+- **Export only the parts you want** — after setting cuts, the Split screen lists the resulting parts
+  (`Part 2 · 05:00–10:00 · 5:00`) with checkboxes and All / None. Only the checked parts are written,
+  so skipping parts of a long recording costs no time or disk, and the export stays lossless.
+- **Clear / Clear all** — reset the Split screen (unload the file, blank the preview) or empty the
+  Join clip list with one button.
 - **In-app video preview player + visual cut selection** — the loaded file plays right on the Split
   screen (play / pause / stop / **scrub**). Park the playhead and click **"Set cut point at
   playhead"**, or **click the timeline strip** under the player, to drop a cut visually; clicking a
@@ -38,7 +45,10 @@ staring at a spinner before you can start.
 - **Drag and drop** — drag video files from Explorer onto the **Split** screen to load (the first
   file) or onto the **Join** screen to add them all in drop order, and **drag Join clips to reorder**
   them (same effect as the Up/Down buttons). Non-video files are ignored.
-- Live **progress**, **cancel**, and friendly **error** messages. Errors are **selectable** with a
+- Live **progress** with a **stage label** (Preparing → Splitting → Finalizing → Done for a split;
+  Checking compatibility → Joining → Finalizing → Done for a join) and an **estimated time remaining**
+  ("~1m 20s left") — the bar animates as a busy indicator until real progress arrives, so a run never
+  looks silent or stuck. Plus **cancel** and friendly **error** messages. Errors are **selectable** with a
   **Copy error** button and an **Open log file** button; the full FFmpeg output (command, exit code,
   timestamp, and complete stderr) is also saved to a per-run log under
   `%LOCALAPPDATA%/VideoSplitJoiner/logs/`. A failed write for lack of space reports a clear
