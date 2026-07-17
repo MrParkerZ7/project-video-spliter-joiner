@@ -74,6 +74,17 @@ re-encode — the player only previews; every cut continues to keyframe-snap thr
   ranked candidate list). Manual cut markers, playhead-capture, and timeline-click cuts remain the
   ways to place cuts.
 
+### Fixed
+
+- **Scrub pop-back (G-009)** — dragging the scrub slider (or using skip / frame-step / jump) now
+  lands the playhead **at the position you chose and holds it there**, paused or playing. Previously a
+  stale `PositionChanged` echo arriving during FFME's async seek (or ongoing playback) would yank the
+  slider back to where playback actually was. `PlayerViewModel` now arms a **seek-target hold** on
+  every user seek and ignores off-target echoes until the seek settles — cleared deterministically by a
+  new `IMediaPlayer.Seeked` completion event, with a ~250ms tolerance and a bounded-tick anti-freeze
+  backstop so the slider can never get stuck. The scrub slider also suppresses echoes while the thumb
+  is being dragged (seek on release).
+
 ### Notes
 
 - The preview decodes through **FFmpeg** (via FFME) — the same bundled build the engine uses — so it

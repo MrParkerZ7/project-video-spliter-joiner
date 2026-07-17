@@ -2,6 +2,27 @@
 
 <!-- latest on top; entries are never deleted -->
 
+## 2026-07-17 — ✅ G-009 DONE — scrub pop-back fixed
+
+- **T-033 ✅** `3e2ad4e` — seek-target hold + new `IMediaPlayer.Seeked` completion event + drag gating + bounded-tick anti-freeze; core regression test (stale 12s echo doesn't pop a 40s target) green. 277 tests.
+- **T-034 ✅** CHANGELOG Fixed entry (scrub pop-back). G-009 sealed done.
+- G-009 commits local (unpushed). G-010 (.ts/log/settings) + G-011 (±10m/20m skips) still planned.
+
+## 2026-07-17 — todo-goal PLANNED: G-011 add ±10m/±20m skip buttons
+
+- **G-011** "Add ±10m/±20m skip buttons" — tiny: 4 buttons on the existing jog WrapPanel bound to the parameterized `SkipCommand` (CommandParameter −1200/−600/600/1200); `SkipBy` already clamps → no VM change. Task T-040. Plan-only; `proceed G-011` (or fold into the current wave). (T-033 scrub-fix still building.)
+
+## 2026-07-17 — proceed G-009 (scrub pop-back) → building
+
+- User: "proceed / spec to be done" → building the planned G-009 scrub pop-back fix.
+- **T-033 🔵** dispatched. (G-010 .ts/log/settings still planned — offer to continue after.)
+
+## 2026-07-17 — todo-goal ×2 PLANNED (plan-only): G-009 scrub pop-back · G-010 .ts/encoding/log/settings
+
+- **G-009** "Fix scrub pop-back" — diagnosed: `PlayerViewModel.OnPositionChanged` (L358) overwrites the slider with the stale player position during an in-flight async FFME seek; `_suppressSeek` only blocks re-seek, not the display yank. Tasks: T-033 fix (seek-target hold + drag gating + FFME seek-completion) · T-034 docs.
+- **G-010** "Fix .ts split + copyable log + remember location" — from a real user error: `ffmpeg split failed (exit -28)` on an mpegts/.ts file at a Japanese path shown as MOJIBAKE. Diagnosis: **exit -28 = AVERROR(ENOSPC)** (can't write output — disk-full OR mangled non-ASCII output path); mojibake = stderr captured with wrong (console codepage) encoding; error not copyable (non-selectable TextBlock + truncated tail); no remembered folders. Tasks: T-035 investigate+fix .ts (exit -28) · T-036 UTF-8 encoding + unicode paths (foundational) · T-037 copyable+full error log (+ log file) · T-038 remember last input/output dir (settings.json) · T-039 docs.
+- Both PLAN-ONLY (not built). `proceed G-009` / `proceed G-010`. G-010's .ts failure is the user's active blocker → T-035/T-036 priority.
+
 ## 2026-07-17 — ✅ G-008 DONE — fast load converged (todo-next-all, 3/3)
 
 - **T-032 ✅** docs `2018c22` — USER_GUIDE/ARCHITECTURE/CHANGELOG/CLAUDE/README updated for non-blocking load + demux keyframe scan.
