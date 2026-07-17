@@ -1,4 +1,5 @@
 using VideoSplitJoiner.App.Media;
+using VideoSplitJoiner.App.Settings;
 using VideoSplitJoiner.Core;
 using VideoSplitJoiner.Core.Ffmpeg;
 using VideoSplitJoiner.Core.Join;
@@ -31,10 +32,14 @@ public sealed class MainViewModel : ObservableObject
         var splitEngine = new SplitEngine(ffmpegRunner, probe);
         var joinEngine = new JoinEngine(ffmpegRunner, probe);
 
+        // Cross-session folder memory (T-038) — one shared file-backed store so both screens read/write
+        // the same %APPDATA%/VideoSplitJoiner/settings.json (last input + last output folders).
+        var settings = new AppSettings();
+
         // The in-app preview player is FFME-backed (FfmeMediaPlayer, decodes via ffmpeg); PlayerView
         // attaches its FFME MediaElement on Loaded. Unattached here, so construction stays render-free.
-        Split = new SplitViewModel(probe, splitEngine, new FfmeMediaPlayer());
-        Join = new JoinViewModel(joinEngine, probe);
+        Split = new SplitViewModel(probe, splitEngine, new FfmeMediaPlayer(), settings);
+        Join = new JoinViewModel(joinEngine, probe, settings);
     }
 
     /// <summary>Test-friendly ctor: inject already-composed screen view models (join optional).</summary>

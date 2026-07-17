@@ -48,6 +48,13 @@ public partial class SplitView : UserControl
             CheckFileExists = true,
         };
 
+        // Open the picker in the folder the user last chose an input from (T-038), when it still exists.
+        var lastInputDir = vm.Settings.LastInputDir;
+        if (!string.IsNullOrWhiteSpace(lastInputDir) && System.IO.Directory.Exists(lastInputDir))
+        {
+            dialog.InitialDirectory = lastInputDir;
+        }
+
         if (dialog.ShowDialog() == true)
         {
             vm.LoadCommand.Execute(dialog.FileName);

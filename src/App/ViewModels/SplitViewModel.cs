@@ -8,6 +8,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using VideoSplitJoiner.App.Media;
+using VideoSplitJoiner.App.Settings;
 using VideoSplitJoiner.Core.Errors;
 using VideoSplitJoiner.Core.Media;
 using VideoSplitJoiner.Core.Split;
@@ -28,6 +29,7 @@ public sealed class SplitViewModel : ObservableObject
 
     private readonly IMediaProbe _probe;
     private readonly ISplitEngine _splitEngine;
+    private readonly IAppSettings _settings;
 
     private string? _inputPath;
     private MediaInfo? _info;
@@ -54,15 +56,27 @@ public sealed class SplitViewModel : ObservableObject
     /// the in-app preview player (T-012): the composition root passes a <see cref="FfmeMediaPlayer"/>,
     /// tests pass a fake; when omitted it defaults to a no-op <see cref="NullMediaPlayer"/> so existing
     /// constructions keep working. On a successful <see cref="LoadAsync"/> the loaded file is also
-    /// opened in the preview.
+    /// opened in the preview. <paramref name="settings"/> is the cross-session folder memory (T-038):
+    /// the composition root shares the real <see cref="AppSettings"/>, tests pass a fake; when omitted
+    /// a real file-backed store is used so existing constructions keep working.
     /// </summary>
     public SplitViewModel(
         IMediaProbe probe,
         ISplitEngine splitEngine,
-        IMediaPlayer? player = null)
+        IMediaPlayer? player = null,
+        IAppSettings? settings = null)
     {
         _probe = probe ?? throw new ArgumentNullException(nameof(probe));
         _splitEngine = splitEngine ?? throw new ArgumentNullException(nameof(splitEngine));
+        _settings = settings ?? new AppSettings();
+
+        // Seed the output dir from the remembered last-output folder (T-038) — but only if it still
+        // exists on disk. A stale/missing remembered folder falls back to the per-load default
+        // (the input file's folder) applied in LoadAsync.
+        if (DirectoryExists(_settings.LastOutputDir))
+        {
+            _outputDir = _settings.LastOutputDir!;
+        }
 
         Player = new PlayerViewModel(player ?? NullMediaPlayer.Instance);
 
@@ -205,6 +219,13 @@ public sealed class SplitViewModel : ObservableObject
     /// <summary>The shared progress / cancel / error operation state for the run.</summary>
     public OperationViewModel Operation { get; }
 
+    /// <summary>
+    /// The cross-session folder memory (T-038). Exposed so the view's file-picker code-behind can seed
+    /// <c>OpenFileDialog.InitialDirectory</c> from <see cref="IAppSettings.LastInputDir"/> and share the
+    /// same instance the VM writes to.
+    /// </summary>
+    public IAppSettings Settings => _settings;
+
     /// <summary>The in-app video preview player (T-012). Fed the loaded file on a successful load.</summary>
     public PlayerViewModel Player { get; }
 
@@ -337,13 +358,25 @@ public sealed class SplitViewModel : ObservableObject
         // No keyframes yet → clear any stale warning until the background scan reports.
         KeyframeWarning = null;
 
-        // Default the output dir to the input file's folder when none is set yet.
+        // Remember the folder the input file was chosen from (T-038) so next session's picker opens
+        // there. Best-effort — a persistence failure is swallowed inside the settings store.
+        var inputDir = Path.GetDirectoryName(Path.GetFullPath(path));
+        if (!string.IsNullOrEmpty(inputDir))
+        {
+            _settings.LastInputDir = inputDir;
+        }
+
+        // Default the output dir when none is set yet: prefer the remembered last-output folder
+        // (T-038, when it still exists on disk), else fall back to the input file's folder.
         if (string.IsNullOrWhiteSpace(OutputDir))
         {
-            var dir = Path.GetDirectoryName(Path.GetFullPath(path));
-            if (!string.IsNullOrEmpty(dir))
+            if (DirectoryExists(_settings.LastOutputDir))
             {
-                OutputDir = dir;
+                OutputDir = _settings.LastOutputDir!;
+            }
+            else if (!string.IsNullOrEmpty(inputDir))
+            {
+                OutputDir = inputDir;
             }
         }
 
@@ -617,6 +650,12 @@ public sealed class SplitViewModel : ObservableObject
             StatusText = result.Warnings.Count > 0
                 ? $"Split complete with {result.Warnings.Count} warning(s)."
                 : "Split complete.";
+
+            // Remember the output folder we just wrote to (T-038) so it becomes next load's default.
+            if (!string.IsNullOrWhiteSpace(OutputDir))
+            {
+                _settings.LastOutputDir = OutputDir;
+            }
         }
     }
 
@@ -664,6 +703,25 @@ public sealed class SplitViewModel : ObservableObject
         AddCutAtCommand.RaiseCanExecuteChanged();
         SetCutAtPlayheadCommand.RaiseCanExecuteChanged();
         OpenFolderCommand.RaiseCanExecuteChanged();
+    }
+
+    /// <summary>True when <paramref name="dir"/> is a non-blank path that exists on disk (guards a stale
+    /// remembered folder so we never set a bad default / picker directory). Never throws.</summary>
+    private static bool DirectoryExists(string? dir)
+    {
+        if (string.IsNullOrWhiteSpace(dir))
+        {
+            return false;
+        }
+
+        try
+        {
+            return Directory.Exists(dir);
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private static string FormatDuration(TimeSpan d) =>

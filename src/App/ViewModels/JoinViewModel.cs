@@ -8,6 +8,7 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using VideoSplitJoiner.App.Settings;
 using VideoSplitJoiner.Core.Errors;
 using VideoSplitJoiner.Core.Join;
 using VideoSplitJoiner.Core.Media;
@@ -26,6 +27,7 @@ public sealed class JoinViewModel : ObservableObject
 {
     private readonly IJoinEngine _joinEngine;
     private readonly IMediaProbe _probe;
+    private readonly IAppSettings _settings;
 
     private CompatReport? _compat;
     private string _compatSummary = "Add at least 2 files to join.";
@@ -34,11 +36,16 @@ public sealed class JoinViewModel : ObservableObject
     private bool _overwrite;
     private JoinResult? _lastResult;
 
-    /// <summary>Create the join VM over the join engine + media probe (real or fake).</summary>
-    public JoinViewModel(IJoinEngine joinEngine, IMediaProbe probe)
+    /// <summary>
+    /// Create the join VM over the join engine + media probe (real or fake). <paramref name="settings"/>
+    /// is the cross-session folder memory (T-038); when omitted a real file-backed store is used so
+    /// existing constructions keep working.
+    /// </summary>
+    public JoinViewModel(IJoinEngine joinEngine, IMediaProbe probe, IAppSettings? settings = null)
     {
         _joinEngine = joinEngine ?? throw new ArgumentNullException(nameof(joinEngine));
         _probe = probe ?? throw new ArgumentNullException(nameof(probe));
+        _settings = settings ?? new AppSettings();
 
         Operation = new OperationViewModel();
         Items = new ObservableCollection<JoinItemViewModel>();
@@ -123,6 +130,14 @@ public sealed class JoinViewModel : ObservableObject
     public OperationViewModel Operation { get; }
 
     /// <summary>
+    /// The cross-session folder memory (T-038). Exposed so the view's file-picker code-behind can seed
+    /// <c>OpenFileDialog.InitialDirectory</c> from <see cref="IAppSettings.LastInputDir"/> (add-files
+    /// picker) and the output-save picker from <see cref="IAppSettings.LastOutputDir"/>, sharing the
+    /// same instance the VM writes to.
+    /// </summary>
+    public IAppSettings Settings => _settings;
+
+    /// <summary>
     /// Run is enabled only with ≥2 items, a compatible set, and an output path set. (Single-file
     /// passthrough is deliberately NOT offered by the UI — keep the gate at ≥2.)
     /// </summary>
@@ -184,6 +199,14 @@ public sealed class JoinViewModel : ObservableObject
         if (added.Count == 0)
         {
             return;
+        }
+
+        // Remember the folder the last added file came from (T-038) so next session's add-files picker
+        // opens there. Best-effort — persistence failures are swallowed inside the settings store.
+        var lastAddedDir = Path.GetDirectoryName(Path.GetFullPath(added[^1].Path));
+        if (!string.IsNullOrEmpty(lastAddedDir))
+        {
+            _settings.LastInputDir = lastAddedDir;
         }
 
         // Probe each newly-added item for its info chip (best-effort, order-independent).
@@ -375,6 +398,32 @@ public sealed class JoinViewModel : ObservableObject
         if (Operation.State == OperationState.Completed && result is { Success: true })
         {
             LastResult = result;
+
+            // Remember the folder we just wrote the joined file into (T-038) so it seeds next session's
+            // output-save picker. Best-effort — swallowed inside the settings store.
+            var outputDir = SafeGetDirectory(OutputPath);
+            if (!string.IsNullOrEmpty(outputDir))
+            {
+                _settings.LastOutputDir = outputDir;
+            }
+        }
+    }
+
+    /// <summary>The containing folder of <paramref name="path"/>, or null if it can't be resolved. Never throws.</summary>
+    private static string? SafeGetDirectory(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return null;
+        }
+
+        try
+        {
+            return Path.GetDirectoryName(Path.GetFullPath(path));
+        }
+        catch
+        {
+            return null;
         }
     }
 

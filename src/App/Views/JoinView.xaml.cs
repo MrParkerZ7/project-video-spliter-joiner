@@ -142,6 +142,13 @@ public partial class JoinView : UserControl
             Multiselect = true,
         };
 
+        // Open the picker in the folder the user last added files from (T-038), when it still exists.
+        var lastInputDir = vm.Settings.LastInputDir;
+        if (!string.IsNullOrWhiteSpace(lastInputDir) && System.IO.Directory.Exists(lastInputDir))
+        {
+            dialog.InitialDirectory = lastInputDir;
+        }
+
         if (dialog.ShowDialog() == true)
         {
             vm.AddFilesCommand.Execute(dialog.FileNames);
