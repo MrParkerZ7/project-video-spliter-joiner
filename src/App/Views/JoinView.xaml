@@ -75,8 +75,16 @@
                          Margin="0,8,0,0"
                          Minimum="0"
                          Maximum="100"
+                         IsIndeterminate="{Binding Operation.IsIndeterminate, Mode=OneWay}"
                          Value="{Binding Operation.Progress, Mode=OneWay, Converter={StaticResource FractionToPercent}}"
                          Visibility="{Binding Operation.IsRunning, Converter={StaticResource BoolToVisibility}}" />
+
+            <!-- Running status line ("Joining…") — always visible while the op runs (T-042) -->
+            <TextBlock Margin="0,6,0,0"
+                       TextWrapping="Wrap"
+                       Foreground="#333"
+                       Text="{Binding Operation.StatusText}"
+                       Visibility="{Binding Operation.IsRunning, Converter={StaticResource BoolToVisibility}}" />
 
             <!-- Error headline + hint + copyable, selectable full-log details (T-037) -->
             <Border Margin="0,6,0,0"

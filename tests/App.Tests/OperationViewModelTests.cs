@@ -179,4 +179,92 @@ public sealed class OperationViewModelTests
         vm.Progress.Should().Be(0d);
         vm.StatusText.Should().BeEmpty();
     }
+
+    // ---- T-042: visible progress — status text + indeterminate busy state -------------------
+
+    [Fact]
+    public async Task WhileRunningWithNoProgress_IsIndeterminateTrue_AndStatusTextSet()
+    {
+        var vm = new OperationViewModel();
+        var gate = new TaskCompletionSource();
+
+        bool indeterminateObserved = false;
+        string statusObserved = string.Empty;
+
+        var run = vm.RunAsync(async (_, _) =>
+        {
+            // No progress reported yet → the bar should animate as a busy indicator.
+            indeterminateObserved = vm.IsIndeterminate;
+            statusObserved = vm.StatusText;
+            await gate.Task;
+        }, "Splitting…");
+
+        await Task.Yield();
+        indeterminateObserved.Should().BeTrue("running with no fraction reported yet → busy/indeterminate");
+        statusObserved.Should().Be("Splitting…", "the running status is shown immediately on run");
+        vm.IsRunning.Should().BeTrue();
+
+        gate.SetResult();
+        await run;
+    }
+
+    [Fact]
+    public async Task WhenRealFractionArrives_IsIndeterminateFlipsToFalse_AndProgressReflectsIt()
+    {
+        var vm = new OperationViewModel();
+
+        double fractionSeen = -1;
+        bool indeterminateAfterReport = true;
+
+        await vm.RunAsync(async (progress, _) =>
+        {
+            vm.IsIndeterminate.Should().BeTrue("no progress reported yet");
+            progress.Report(0.42);
+            // Let the Progress<T> post drain on this thread.
+            await Task.Delay(20);
+            fractionSeen = vm.Progress;
+            indeterminateAfterReport = vm.IsIndeterminate;
+        }, "Splitting…");
+
+        fractionSeen.Should().Be(0.42, "the reported fraction reaches the bound Progress property");
+        indeterminateAfterReport.Should().BeFalse("a real fraction (>0) flips the bar to determinate");
+    }
+
+    [Fact]
+    public async Task OnComplete_IsIndeterminateFalse_ProgressOne()
+    {
+        var vm = new OperationViewModel();
+
+        await vm.RunAsync((_, _) => Task.CompletedTask, "Splitting…");
+
+        vm.State.Should().Be(OperationState.Completed);
+        vm.IsIndeterminate.Should().BeFalse("not running → never indeterminate");
+        vm.Progress.Should().Be(1d);
+    }
+
+    [Fact]
+    public async Task OnReset_IsIndeterminateFalse_AndStatusCleared()
+    {
+        var vm = new OperationViewModel();
+        await vm.RunAsync((_, _) => throw new InvalidOperationException("boom"), "Splitting…");
+
+        vm.Reset();
+
+        vm.IsIndeterminate.Should().BeFalse();
+        vm.StatusText.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void StatusText_IsPubliclySettable_ForStagedUpdates()
+    {
+        // T-044/T-045 extend StatusText per stage — verify the setter is public + notifies.
+        var vm = new OperationViewModel();
+        var raised = false;
+        vm.PropertyChanged += (_, e) => { if (e.PropertyName == nameof(vm.StatusText)) raised = true; };
+
+        vm.StatusText = "Stage 2 of 3…";
+
+        vm.StatusText.Should().Be("Stage 2 of 3…");
+        raised.Should().BeTrue("StatusText change must raise PropertyChanged so the UI updates");
+    }
 }

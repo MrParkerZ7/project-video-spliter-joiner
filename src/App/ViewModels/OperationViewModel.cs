@@ -37,6 +37,7 @@ public sealed class OperationViewModel : ObservableObject
             {
                 OnPropertyChanged(nameof(IsRunning));
                 OnPropertyChanged(nameof(CanCancel));
+                OnPropertyChanged(nameof(IsIndeterminate));
                 CancelCommand.RaiseCanExecuteChanged();
             }
         }
@@ -46,15 +47,37 @@ public sealed class OperationViewModel : ObservableObject
     public double Progress
     {
         get => _progress;
-        private set => SetProperty(ref _progress, value);
+        private set
+        {
+            if (SetProperty(ref _progress, value))
+            {
+                // A real fraction (>0) flips the busy indicator off — see IsIndeterminate.
+                OnPropertyChanged(nameof(IsIndeterminate));
+            }
+        }
     }
 
-    /// <summary>Human-readable status line (e.g. "Splitting…").</summary>
+    /// <summary>
+    /// Human-readable "what's happening" line (e.g. "Splitting…"). Set from the operation's
+    /// running status at the start of a run and cleared on Reset/complete. Public setter so
+    /// callers can update the stage text mid-run — later tickets (T-044 staged status, T-045 ETA)
+    /// extend this line per stage.
+    /// </summary>
     public string StatusText
     {
         get => _statusText;
-        private set => SetProperty(ref _statusText, value);
+        set => SetProperty(ref _statusText, value);
     }
+
+    /// <summary>
+    /// True while an operation is running but NO usable granular progress has arrived yet — so the
+    /// bar animates as a busy indicator instead of sitting stuck at 0. Heuristic: indeterminate
+    /// while running AND <see cref="Progress"/> is still 0 (nothing reported yet); it flips to
+    /// determinate the instant a real fraction (&gt;0) arrives, and is false whenever not running.
+    /// This is the cure for the "-c copy split looks stuck" problem — ffmpeg's <c>time=</c> can be
+    /// sparse/instant, so the bar shows motion immediately rather than a frozen 0%.
+    /// </summary>
+    public bool IsIndeterminate => IsRunning && _progress <= 0d;
 
     /// <summary>The friendly error when <see cref="State"/> is <see cref="OperationState.Failed"/>; otherwise null.</summary>
     public UserFacingError? Error
