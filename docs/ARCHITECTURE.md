@@ -68,6 +68,14 @@ No engine spawns a process directly. The runner:
 Arguments are built with **`FfmpegArgs`** — a typed, `ArgumentList`-based builder (no shell string
 concatenation), so paths with spaces/quotes are safe.
 
+**Process std streams are decoded as UTF-8.** Both runners set
+`StandardOutputEncoding = StandardErrorEncoding = Encoding.UTF8` on the `ProcessStartInfo`. ffmpeg /
+ffprobe emit UTF-8 (ffprobe's JSON on stdout, diagnostics on stderr) regardless of the Windows console
+codepage; without this the reader would fall back to the console's default codepage (cp1252 / cp932 /
+…) and garble the bytes. Decoding as UTF-8 is what makes **non-ASCII (unicode) file paths** survive
+intact through the probe JSON and the stderr tail instead of becoming mojibake — the fix that also
+resolved the `.ts`/mpegts split failure whose exit `-28` was a mangled-path symptom.
+
 ## Binary resolution
 
 One bundled ffmpeg **shared build** feeds two consumers, resolved by two independent mechanisms that
@@ -196,7 +204,8 @@ exposes the fine-navigation controls the Split screen surfaces so the user can l
 frame before "Set cut at playhead":
 
 - **`SkipCommand`** — relative jog by a signed seconds delta (the bound buttons pass ±1 / ±5 / ±10 /
-  ±20 / ±60 / ±300), clamped to `0..Duration`.
+  ±20 / ±60 / ±300 / ±600 / ±1200 — the ±10m / ±20m buttons are the last two), clamped to
+  `0..Duration`.
 - **`StepForwardCommand` / `StepBackCommand`** — single-frame `StepFrame(±1)` (a paused operation on
   the underlying FFME player).
 - **`JumpToStartCommand` / `JumpToEndCommand`** — seek to `00:00` / the full duration.
@@ -312,7 +321,37 @@ and `AverageGop` are unchanged. (Which path ran is tracked internally for tests 
 `FfmpegErrorMapper` turns a raw stderr tail + exit code into a `UserFacingError` (friendly category
 + headline + optional hint) via signature matching (disk full, permission denied, unsupported codec,
 incompatible join, corrupt input, cancelled, …). The **raw tail is always preserved** on the error
-so the UI's "Details" expander can show real FFmpeg output — a bare stderr string is never the headline.
+so the UI's "Details" surface can show real FFmpeg output — a bare stderr string is never the headline.
+
+- **Exit `-28` / `ENOSPC` → `DiskFull`.** The mapper keys the disk-full category on the **exit code**
+  (`-28` == `AVERROR(ENOSPC)`) as well as the `"No space left on device"` / `ENOSPC` stderr phrases.
+  An out-of-space write often leaves only an unrelated benign mpegts warning (`start time for stream N
+  is not set…`) in the tail, so keying on the phrase alone would mis-classify it as `Unknown` and
+  surface the warning as the headline. `SplitEngine` also runs a **best-effort pre-flight free-space
+  check** (`EnsureEnoughFreeSpace` via `DriveInfo`) so an obviously-too-small output drive fails early
+  with the friendly `DiskFull` message rather than mid-write; any inability to measure skips the check.
+- **Copyable error + saved full log.** `UserFacingError` carries `FullText` (the complete diagnostic
+  text — headline + full stderr, not just the tail) and `LogFilePath` (the on-disk log for the run),
+  and exposes computed `CopyText` / `DetailText` / `HasLogFile` so the copy surface and read-only
+  detail box are identical and unit-testable. **`ErrorLogWriter`** writes the full log — a UTC
+  timestamp, the exact command, the exit code, and the complete stderr (`BuildLogBody`, deterministic
+  and I/O-free so it is testable) — to `%LOCALAPPDATA%/VideoSplitJoiner/logs/<op>-<yyyyMMdd-HHmmss>.log`
+  (base dir injectable for tests). Writing is **best-effort** — any failure returns `null` and never
+  crashes the operation. In the `App` layer, `ErrorActions` (thin code-behind glue) copies `CopyText`
+  to the clipboard and reveals the log file in Explorer; both `SplitView` and `JoinView` expose a
+  **Copy error** + **Open log file** button over a selectable error box.
+
+## Settings store (`App/Settings/`)
+
+`AppSettings` (behind `IAppSettings`) persists the two "remember where I was" folders —
+`LastInputDir` / `LastOutputDir` — to `%APPDATA%/VideoSplitJoiner/settings.json` via
+`System.Text.Json` (file path injectable for tests, mirroring `ErrorLogWriter`'s convention). Setting a
+property saves immediately via a **temp-then-rename** write so a crash mid-write can't replace a good
+file with a half-written one. It is **robust by design** — a missing file, corrupt JSON, or an
+unwritable dir all fall back to in-memory defaults and never throw. The file picker seeds its
+`InitialDirectory` from `LastInputDir`, `SplitViewModel` defaults its output directory to
+`LastOutputDir` (on construction and after a load), and both are written back when a run's input/output
+folders are chosen — so the app reopens where you left off.
 
 ## MVVM / composition-root shape
 

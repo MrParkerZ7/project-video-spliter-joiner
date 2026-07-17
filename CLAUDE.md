@@ -18,6 +18,26 @@ A .NET 8 WPF app that splits and joins video **without re-encoding**. See [READM
 - **All FFmpeg/ffprobe execution goes through `FfmpegRunner` / `FfprobeRunner`.** Never spawn
   `ffmpeg`/`ffprobe` directly and never build commands by string concatenation — use the typed
   `FfmpegArgs` (`ArgumentList`-based) builder.
+- **Child-process std streams are decoded as UTF-8.** Both runners set
+  `StandardOutputEncoding`/`StandardErrorEncoding = Encoding.UTF8` on the `ProcessStartInfo`. ffmpeg/
+  ffprobe emit UTF-8 regardless of the console codepage; this is what keeps **non-ASCII (unicode)
+  paths** intact through the probe JSON and the stderr tail (and it's what resolved the `.ts`/mpegts
+  split failure — the exit `-28` was a mangled-path symptom). Don't remove the encoding overrides.
+- **Exit `-28` / `ENOSPC` maps to `DiskFull`; disk space is pre-flighted.** `FfmpegErrorMapper` keys
+  the disk-full category on the exit code (`-28` == `AVERROR(ENOSPC)`) as well as the stderr phrase,
+  because an out-of-space write often leaves only a benign mpegts warning in the tail. `SplitEngine`
+  runs a best-effort `DriveInfo` free-space pre-flight (`EnsureEnoughFreeSpace`) that fails early with
+  the friendly message; keep both. Don't surface a raw stderr warning as the headline.
+- **Errors are copyable and a full log is saved.** `UserFacingError` carries `FullText` + `LogFilePath`
+  (with computed `CopyText`/`DetailText`); `ErrorLogWriter` writes the complete stderr + command +
+  exit + UTC timestamp to `%LOCALAPPDATA%/VideoSplitJoiner/logs/<op>-<timestamp>.log`, best-effort
+  (a logging failure never crashes the run). The `App` layer's `ErrorActions` copies to the clipboard
+  and reveals the log in Explorer (Copy error / Open log file buttons on Split + Join). Keep log
+  writing best-effort and the copy text unit-testable on `UserFacingError`.
+- **Last folders persist via `AppSettings`.** `LastInputDir`/`LastOutputDir` are saved to
+  `%APPDATA%/VideoSplitJoiner/settings.json` (temp-then-rename, robust to missing/corrupt/unwritable —
+  never throws). The file picker opens at the last input folder and the split output dir defaults to
+  the last output folder. Keep settings failures non-fatal (in-memory fallback).
 - **The `-c copy` no-re-encode invariant is sacred (split + join).** Split and join must never emit
   an encoder flag. The args-builders forbid encoder tokens and require a bare `copy`; the invariant
   is re-asserted at runtime before launch and by unit tests on the token list. Do not add a
@@ -59,7 +79,9 @@ A .NET 8 WPF app that splits and joins video **without re-encoding**. See [READM
   ffmpeg), is thin plumbing that just has to compile — its **live playback is verified only via
   `app-run`**, never in the unit suite. `NullMediaPlayer` is the no-op default so non-UI
   constructions/tests keep working. Don't leak WPF types into the player/timeline VMs; keep new
-  transport (skip/frame-step/jump/volume/mute/speed) behind `IMediaPlayer` too.
+  transport (skip/frame-step/jump/volume/mute/speed) behind `IMediaPlayer` too. The jog row's skip
+  buttons pass signed-seconds `CommandParameter`s to one `SkipCommand` (±1/±5/±10/±20/±60/±300/±600/
+  ±1200 — the ±10m/±20m being ±600/±1200); add new skips as buttons, not new commands.
 - **All cuts funnel through `AddCutAt` — one snap path.** Every way of placing a cut (manual add,
   "set cut at playhead", clicking the timeline strip) routes through `SplitViewModel.AddCutAt`, which
   keyframe-snaps and dedupes. Do not add a second snap/dedupe implementation for a new cut-entry

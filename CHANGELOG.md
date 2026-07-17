@@ -30,8 +30,22 @@ re-encode — the player only previews; every cut continues to keyframe-snap thr
   `packaging/fetch-ffmpeg-shared.ps1`, packaging bundles it, and `THIRD-PARTY-NOTICES.md` covers FFME
   + the GPL ffmpeg build.
 - **Player controls to find the exact split point (G-007)** — skip buttons (**±1s / ±5s / ±10s /
-  ±20s / ±1m / ±5m**), **frame-step** (±1 frame), **jump to start / end**, plus a **volume slider +
-  mute** and a **playback-speed** selector (**0.25×–2×**), all on `PlayerViewModel` / `PlayerView`.
+  ±20s / ±1m / ±5m / ±10m / ±20m**), **frame-step** (±1 frame), **jump to start / end**, plus a
+  **volume slider + mute** and a **playback-speed** selector (**0.25×–2×**), all on `PlayerViewModel`
+  / `PlayerView`.
+- **±10m / ±20m skip buttons (G-011)** — the player's jog row gained back/forward **10-minute** and
+  **20-minute** skips alongside the existing 1s/5s/10s/20s/1m/5m jumps, so long clips can be traversed
+  in far fewer clicks (`PlayerView.xaml`, routed through the same `SkipCommand`).
+- **Copyable error + saved full log (G-010)** — a failed split/join now shows a **selectable** error
+  with a **Copy error** button (copies the headline + hint + full detail + log path) and an **Open
+  log file** button that reveals the saved log in Explorer. The complete ffmpeg output — command,
+  exit code, UTC timestamp, and full stderr — is written to
+  `%LOCALAPPDATA%/VideoSplitJoiner/logs/<op>-<timestamp>.log` (`ErrorLogWriter`), and `UserFacingError`
+  gained `LogFilePath` / `FullText` to carry it. The preview-unavailable banner is likewise selectable
+  with its own Copy button.
+- **Remembered last folders (G-010)** — the app now remembers your **last input and output folders**
+  across runs. They persist to `%APPDATA%/VideoSplitJoiner/settings.json` (`AppSettings`); the file
+  picker opens at the last input folder and the output directory defaults to the last-used one.
 - **Resizable video pane (G-006)** — the Split screen's preview area is drag-resizable via a
   `GridSplitter` in `SplitView.xaml`.
 - **Set cut point at playhead** — park the player and drop a cut marker at the current position.
@@ -76,6 +90,17 @@ re-encode — the player only previews; every cut continues to keyframe-snap thr
 
 ### Fixed
 
+- **Non-ASCII / unicode paths (G-010)** — files with non-ASCII paths (e.g. Japanese characters) now
+  work end-to-end. Both `FfmpegRunner` and `FfprobeRunner` decode the child process' stdout/stderr as
+  **UTF-8** (`StandardOutputEncoding` / `StandardErrorEncoding = UTF8`) regardless of the Windows
+  console codepage, so unicode paths in the ffprobe JSON and in error output survive intact instead of
+  becoming mojibake, and error text shows the real characters.
+- **`.ts` / mpegts split failure (G-010)** — splitting an `.ts` (mpegts) file (which previously failed
+  with exit `-28`) now works. The failure was the mangled-path symptom of the encoding issue above and
+  is resolved by the UTF-8 fix. Relatedly, an out-of-space write (exit `-28` / `ENOSPC`) is now mapped
+  to a clear **"not enough space to write the output"** (DiskFull) error — instead of surfacing an
+  unrelated benign mpegts warning as the headline — and `SplitEngine` runs a best-effort **pre-flight
+  free-space check** so an obviously-too-small output drive fails early with that friendly message.
 - **Scrub pop-back (G-009)** — dragging the scrub slider (or using skip / frame-step / jump) now
   lands the playhead **at the position you chose and holds it there**, paused or playing. Previously a
   stale `PositionChanged` echo arriving during FFME's async seek (or ongoing playback) would yank the

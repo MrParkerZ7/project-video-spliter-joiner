@@ -24,9 +24,9 @@ staring at a spinner before you can start.
   that still fails to preview shows a "preview unavailable, cut still works" banner and stays fully
   cuttable, but with FFmpeg decoding that banner is now rare.
 - **Full player controls** to land the exact split point — **skip** ±1s / ±5s / ±10s / ±20s / ±1m /
-  ±5m, **frame-step** ±1 frame, **jump to start / end**, a **volume slider + mute**, and a
-  **playback-speed** selector (0.25×–2×). Nudge the playhead onto the precise frame, then
-  "Set cut at playhead".
+  ±5m / ±10m / ±20m, **frame-step** ±1 frame, **jump to start / end**, a **volume slider + mute**, and
+  a **playback-speed** selector (0.25×–2×). The ±10m / ±20m skips make traversing long clips quick;
+  nudge the playhead onto the precise frame, then "Set cut at playhead".
 - **Resizable video pane** — drag the splitter under the preview to grow or shrink the video area
   against the markers / output panel below it.
 - **4K support** — the preview uses hardware-accelerated decoding and a downscaled preview surface so
@@ -38,8 +38,17 @@ staring at a spinner before you can start.
 - **Drag and drop** — drag video files from Explorer onto the **Split** screen to load (the first
   file) or onto the **Join** screen to add them all in drop order, and **drag Join clips to reorder**
   them (same effect as the Up/Down buttons). Non-video files are ignored.
-- Live **progress**, **cancel**, and friendly **error** messages with a details expander showing
-  the raw FFmpeg output.
+- Live **progress**, **cancel**, and friendly **error** messages. Errors are **selectable** with a
+  **Copy error** button and an **Open log file** button; the full FFmpeg output (command, exit code,
+  timestamp, and complete stderr) is also saved to a per-run log under
+  `%LOCALAPPDATA%/VideoSplitJoiner/logs/`. A failed write for lack of space reports a clear
+  "not enough space" message rather than a cryptic FFmpeg warning.
+- **Unicode paths and `.ts` files** — files with non-ASCII paths (e.g. Japanese) and `.ts` (mpegts)
+  sources split and join correctly; process output is decoded as UTF-8 so paths and error text never
+  garble.
+- **Remembers your last folders** — the input file picker reopens at your last-used input folder and
+  the output directory defaults to the last one you used, persisted to
+  `%APPDATA%/VideoSplitJoiner/settings.json`.
 
 ## Install & run (packaged release)
 

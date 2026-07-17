@@ -50,8 +50,11 @@ The Split screen cuts one video into several contiguous segments at the cut poin
    [preview player](#preview--pick-cuts-from-the-player) to find the exact frame and drop a cut
    there. Each marker row shows the snap: `requested → snapped (±delta)` — for example
    `01:23.4 → 01:22.0 (−1.4s)`. That tells you exactly how far the cut moved to land on a keyframe.
-3. **Choose output.** Set the output directory (it defaults to the input file's folder) and,
-   optionally, the segment **naming pattern**. The default pattern is `{name}_part{index:00}{ext}`
+3. **Choose output.** Set the output directory and, optionally, the segment **naming pattern**. The
+   app **remembers your last folders**: the output directory defaults to the folder you last output
+   to (and, until you've set one, to the input file's folder), and the **Load…** file picker reopens
+   at your last-used input folder. These preferences persist across runs (stored in
+   `%APPDATA%/VideoSplitJoiner/settings.json`). The default pattern is `{name}_part{index:00}{ext}`
    (e.g. `holiday_part01.mp4`, `holiday_part02.mp4`, …). Tokens: `{name}` = input name without
    extension, `{ext}` = input extension (with dot), `{index}` = 1-based segment number (supports a
    zero-pad form like `{index:00}`). Tick **Overwrite** to replace existing files; otherwise a run
@@ -89,8 +92,9 @@ can watch the video and pick cut points visually instead of typing times by hand
    and total duration. (Stop rewinds to the start; Play resumes from where you paused.)
 3. **Land the exact split point with the player controls.** A row of jog buttons lets you home in on
    the precise frame before you cut:
-   - **Skip** — jump the playhead by a fixed amount: **±1s, ±5s, ±10s, ±20s, ±1m, ±5m** (the minus
-     buttons go back, the plus buttons go forward).
+   - **Skip** — jump the playhead by a fixed amount: **±1s, ±5s, ±10s, ±20s, ±1m, ±5m, ±10m, ±20m**
+     (the minus buttons go back, the plus buttons go forward). The ±10m / ±20m jumps make it quick to
+     traverse a long recording before homing in with the smaller skips.
    - **Frame-step** — nudge **±1 frame** (`⏴` / `⏵`) to settle on the exact frame; the video pauses
      for a clean single-frame move.
    - **Jump to start / end** — snap the playhead to `00:00` or to the very end of the clip.
@@ -161,7 +165,24 @@ Every long-running operation (split, join) shares the same experience:
 - **Cancel** stops the in-flight operation immediately (FFmpeg's whole process tree is killed).
   Cancelling a split or join removes any partially written output — you never end up with a
   half-written final file.
-- On failure, you get a **friendly headline** (e.g. "The disk ran out of space while writing the
-  output.") plus an optional **hint**, and a **Details** expander that reveals the raw FFmpeg output
-  for troubleshooting. The raw output is always preserved — the app never surfaces a cryptic stderr
-  string as the headline.
+- On failure, you get a **friendly headline** (e.g. "Not enough space to write the output — free up
+  space or choose another output folder.") plus an optional **hint**, and a **Details** view that
+  reveals the FFmpeg output for troubleshooting. The raw output is always preserved — the app never
+  surfaces a cryptic stderr string as the headline.
+- **The error is selectable and copyable.** Click **Copy error** to put the whole error — headline,
+  hint, full detail, and the saved log path — on the clipboard for a bug report. Click **Open log
+  file** to reveal the saved log in Explorer.
+- **A full log file is saved** for every failed split/join at
+  `%LOCALAPPDATA%/VideoSplitJoiner/logs/<operation>-<timestamp>.log`. It contains the complete FFmpeg
+  stderr (not just the tail) plus the exact command, the exit code, and a UTC timestamp — everything
+  needed to diagnose or report the failure. (Log writing is best-effort and never blocks the app.)
+- **Out-of-space writes are named clearly.** If the output drive runs out of room, you get the "not
+  enough space" message above rather than a confusing FFmpeg warning, and the app tries to catch an
+  obviously-too-small output drive up front before the run even starts.
+
+### Unicode paths and `.ts` files
+
+Files with **non-ASCII paths** (for example Japanese filenames or folders) work end-to-end for both
+split and join, and any error text shows the real characters rather than garbled ones. **`.ts`
+(mpegts) files** split correctly too. If you ever see an error, the copyable full log will contain
+the exact path and output for troubleshooting.
