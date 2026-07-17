@@ -1,4 +1,5 @@
 using System.Globalization;
+using VideoSplitJoiner.Core.Errors;
 using VideoSplitJoiner.Core.Ffmpeg;
 using VideoSplitJoiner.Core.Media;
 
@@ -78,6 +79,13 @@ public sealed class SplitEngine : ISplitEngine
 
         Directory.CreateDirectory(req.OutputDir);
 
+        // --- Pre-flight: fail early + friendly if the output drive clearly can't hold the result. ---
+        // A stream-copy split writes ~the input's bytes back out (segments sum to the source size).
+        // If the output drive's free space is knowable and clearly below that, stop now with the
+        // DiskFull message rather than letting ffmpeg fail mid-write with exit -28 and a confusing
+        // tail. Best-effort: any inability to measure (unknown drive, exception) skips the check.
+        EnsureEnoughFreeSpace(req.InputPath, req.OutputDir);
+
         // --- Extract to a temp dir first, then move each into place (cancel-safe). ---
         var tempDir = Path.Combine(req.OutputDir, ".vsj-split-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(tempDir);
@@ -98,8 +106,13 @@ public sealed class SplitEngine : ISplitEngine
             var result = await _runner.RunAsync(args, duration, progress, ct).ConfigureAwait(false);
             if (!result.Success)
             {
+                // Classify via the signature+exit-code mapper so the CAUSE is the headline — a
+                // disk-full write (exit -28 / ENOSPC) is reported as such even when the stderr tail
+                // only carries a benign mpegts "start time for stream N is not set…" warning, which
+                // would otherwise be surfaced as the (misleading) failure text.
+                var mapped = FfmpegErrorMapper.Map(result);
                 throw new SplitException(
-                    $"ffmpeg split failed (exit {result.ExitCode}). Last output:{Environment.NewLine}{result.StdErrText}");
+                    $"{mapped.Message} (ffmpeg exit {result.ExitCode}).{Environment.NewLine}{result.StdErrText}");
             }
 
             // The segment muxer numbers its outputs 0,1,2,… — map them onto our planned paths.
@@ -194,6 +207,55 @@ public sealed class SplitEngine : ISplitEngine
         }
 
         return produced.AsReadOnly();
+    }
+
+    /// <summary>
+    /// Best-effort disk-space pre-flight. A stream-copy split reproduces roughly the input's byte
+    /// count across its output segments, so if the output drive's available free space is knowably
+    /// below the input size (plus a small margin), fail early with the friendly DiskFull message
+    /// instead of letting ffmpeg hit ENOSPC (exit -28) mid-write. Any inability to measure —
+    /// unknown/unc drive, permission, or a thrown <see cref="DriveInfo"/> query — silently skips
+    /// the check (never a false-positive block).
+    /// </summary>
+    private static void EnsureEnoughFreeSpace(string inputPath, string outputDir)
+    {
+        try
+        {
+            var inputSize = new FileInfo(inputPath).Length;
+            if (inputSize <= 0)
+            {
+                return;
+            }
+
+            var root = Path.GetPathRoot(Path.GetFullPath(outputDir));
+            if (string.IsNullOrEmpty(root))
+            {
+                return;
+            }
+
+            var drive = new DriveInfo(root);
+            if (!drive.IsReady)
+            {
+                return;
+            }
+
+            // Require the input size plus a small fixed margin (segment/container overhead).
+            var required = inputSize + (16L * 1024 * 1024);
+            if (drive.AvailableFreeSpace < required)
+            {
+                throw new SplitException(
+                    "Not enough space to write the output — free up space or choose another output folder. " +
+                    $"(need ~{inputSize / (1024 * 1024)} MB, {drive.AvailableFreeSpace / (1024 * 1024)} MB free on '{root}')");
+            }
+        }
+        catch (SplitException)
+        {
+            throw; // Our own friendly block — propagate.
+        }
+        catch
+        {
+            // Any measurement failure (unknown drive, UNC path, security) → skip the pre-flight.
+        }
     }
 
     private static string ResolveOutputPath(SplitRequest req, int oneBasedIndex)

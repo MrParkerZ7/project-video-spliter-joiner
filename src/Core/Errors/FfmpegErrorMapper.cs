@@ -60,12 +60,18 @@ public static class FfmpegErrorMapper
                 "Make sure ffmpeg is installed and its location is configured.");
         }
 
-        // Disk full.
-        if (Has("No space left on device"))
+        // Disk full — match the stderr signature OR the ENOSPC exit code. ffmpeg surfaces an
+        // out-of-space write as exit -28 (== AVERROR(ENOSPC)); the accompanying stderr tail is
+        // often an unrelated benign warning (e.g. the mpegts "start time for stream N is not
+        // set…" line), so keying only on the phrase would mis-classify a real disk-full as
+        // Unknown and surface the warning as the headline. Keying on the exit code too fixes that.
+        if (Has("No space left on device")
+            || Has("ENOSPC")
+            || exitCode == -28)
         {
             return new UserFacingError(
                 ErrorCategory.DiskFull,
-                "The disk ran out of space while writing the output.",
+                "Not enough space to write the output — free up space or choose another output folder.",
                 raw,
                 "Free up space on the output drive, or choose a different output folder.");
         }

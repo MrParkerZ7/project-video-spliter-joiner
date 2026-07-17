@@ -56,6 +56,31 @@ public sealed class FfmpegErrorMapperTests
     }
 
     [Fact]
+    public void Map_Exit28_IsDiskFull_EvenWithBenignWarningTail()
+    {
+        // The real T-035 shape: ffmpeg fails writing the output with exit -28 (== AVERROR(ENOSPC)),
+        // but the captured stderr tail is the benign mpegts "start time…" warning, NOT the
+        // "No space left on device" phrase. Keying on the exit code must still classify DiskFull.
+        var error = Map(
+            -28,
+            "[mpegts @ 000001] start time for stream 2 is not set in estimate_timings_from_pts",
+            "Input #0, mpegts, from 'F:\\_Janpanese\\...\\映像.ts':");
+
+        error.Category.Should().Be(ErrorCategory.DiskFull);
+        error.Message.Should().Contain("space");
+        error.RawTail.Should().Contain("start time for stream 2");
+    }
+
+    [Fact]
+    public void Map_ENOSPCPhrase_IsDiskFull()
+    {
+        var error = Map(1, "Error writing trailer: ENOSPC");
+
+        error.Category.Should().Be(ErrorCategory.DiskFull);
+        error.RawTail.Should().Contain("ENOSPC");
+    }
+
+    [Fact]
     public void Map_PermissionDenied_IsPermissionDenied()
     {
         var error = Map(1, "output.mp4: Permission denied");

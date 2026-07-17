@@ -40,6 +40,26 @@ public class SplitArgsInvariantTests
     }
 
     [Fact]
+    public void SegmentMuxer_ForTsInput_StillPureCopy_NoEncoderFlag()
+    {
+        // T-035: mpegts/.ts inputs go through the SAME builder — the copy invariant must hold for
+        // the .ts path exactly as for mp4 (no mpegts-specific re-encode ever leaks in).
+        var args = SplitArgsBuilder.SegmentMuxer(@"F:\broadcast\映像.ts", Cuts, @"F:\out\part%03d.ts");
+        var tokens = args.ToList();
+
+        tokens.Should().Contain("copy");
+        tokens.Should().Contain("-f");
+        tokens.Should().Contain("segment");
+
+        foreach (var forbidden in SplitArgsBuilder.ForbiddenEncoderTokens)
+        {
+            tokens.Should().NotContain(forbidden, $"the .ts split path must never re-encode ('{forbidden}')");
+        }
+
+        SplitArgsBuilder.SatisfiesCopyInvariant(tokens).Should().BeTrue();
+    }
+
+    [Fact]
     public void PerSegmentFallback_Command_ContainsCopy_AndNoEncoderFlag()
     {
         var args = SplitArgsBuilder.PerSegment(
