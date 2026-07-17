@@ -7,7 +7,9 @@ cuts land on the nearest **keyframe**, not on an exact frame.
 
 Built as a .NET 8 WPF app with a UI-free Core library that shells out to a bundled FFmpeg. The
 in-app preview decodes through the **same bundled FFmpeg** (via FFME), so it plays exactly what the
-split/join engine can cut.
+split/join engine can cut. **Loading is snappy** — the preview opens as soon as the file is probed
+and its keyframe index builds in the background (via a fast demux-level scan), so you're never
+staring at a spinner before you can start.
 
 ## Features
 

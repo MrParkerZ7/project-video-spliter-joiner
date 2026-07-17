@@ -40,6 +40,16 @@ A .NET 8 WPF app that splits and joins video **without re-encoding**. See [READM
 - **Keyframe-snap is intentional.** Cuts snap to the nearest keyframe (ties → earlier, clamps at
   ends). This is a design guarantee, not a bug — surface deltas/warnings, don't try to make cuts
   frame-exact.
+- **Keyframe indexing is background + non-blocking.** `SplitViewModel.LoadAsync` gates only on the
+  fast metadata probe and **opens the preview before the keyframe scan runs**; the scan indexes in a
+  cancellable background task (`IsIndexingKeyframes` / `KeyframesReady`), a new load cancels the prior
+  index (stale-guard), and a cut placed mid-index awaits the same in-flight scan (snap-before-ready).
+  Don't re-block the load on the full scan or add a second keyframe scan pass.
+- **The keyframe scan is demux packet-flag, with a frame-scan fallback.** `MediaProbe.GetKeyframesAsync`
+  reads keyframe packets at the demux layer (`-show_packets`, keeping `K`-flag packets) — no frame
+  decode — and falls back to the decode-based `-skip_frame nokey` frame scan only when the packet
+  query is empty or throws. Keep both paths producing the same sorted-distinct output; don't drop the
+  fallback.
 - **Compatibility is refused, not fixed.** An incompatible join reports named mismatches and writes
   no output. Do not silently re-encode to reconcile mismatched clips.
 - **The preview player is behind `IMediaPlayer` (FFME impl).** The Split-screen preview transport

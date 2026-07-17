@@ -233,6 +233,27 @@ that already existed on `SplitViewModel`.
 `SetCutAtPlayhead` is guarded by `CanSetCutAtPlayhead` (`HasFile && Player.IsReady`), so it only
 enables once the preview has a real playhead to capture.
 
+### Non-blocking load — probe → preview, then background keyframe index
+
+`SplitViewModel.LoadAsync` gates on **only** the fast metadata probe. As soon as `ProbeAsync`
+succeeds it commits `Info` / `InputPath` and **opens the preview** (`Player.Open`) at once — the load
+no longer blocks on the (formerly synchronous) full keyframe scan. The keyframe index then runs in a
+**cancellable background task** started by `StartKeyframeIndex`:
+
+- **`IsIndexingKeyframes`** flips true while the background scan runs and false when it completes,
+  faults, or is cancelled; the view binds it to a non-blocking **"indexing…"** hint. **`KeyframesReady`**
+  (`HasFile && !IsIndexingKeyframes`) is the "index done" signal.
+- **Stale-guard.** Each load cancels the previous file's in-flight index via a per-load
+  `CancellationTokenSource`, and the completion continuation drops its result unless it is still the
+  current scan — so a slow scan of an old file can never overwrite the newer file's keyframes. A scan
+  that has already completed synchronously (a cache hit, or a fake in tests) commits inline with no
+  thread hop.
+- **Snap-before-ready.** A cut placed while indexing is still running awaits the **same** in-flight
+  scan (`EnsureKeyframesAsync` → the stored index task) before snapping, so it snaps against the real
+  keyframes rather than an empty list; if that index failed/was cancelled it falls back to whatever
+  `Keyframes` holds (an identity snap on empty), never crashing. When keyframes are already present a
+  cut is added synchronously, exactly as before.
+
 ## Drag and drop (`App/Views/`, `App/VideoFileFilter.cs`)
 
 Drag-and-drop adds **no new load / add / reorder logic** — it is thin WPF **code-behind** wiring that
@@ -266,11 +287,25 @@ routes drop and drag events to the view-model commands that already existed.
 - `ProbeAsync` — duration, container, and video/audio `StreamInfo` (codec, resolution, pix_fmt,
   sample rate, channels, time base). A bad/corrupt file returns a typed `ProbeResult.ProbeFailed`,
   not an exception.
-- `GetKeyframesAsync` — sorted, distinct keyframe timestamps of the first video stream
-  (`-skip_frame nokey`), **cached** by (path, mtime, length) so repeat calls are cheap.
+- `GetKeyframesAsync` — sorted, distinct keyframe timestamps of the first video stream, **cached** by
+  (path, mtime, length) so repeat calls are cheap. It uses a **demux-level packet-flag scan** as its
+  primary path (see below) with a decode-based fallback.
 - `SnapToNearestKeyframe` — nearest keyframe to a requested time; **ties resolve to the earlier**
   keyframe; requests past the ends **clamp**.
 - `AverageGop` — mean keyframe spacing, used to warn when snapping will be coarse.
+
+### Keyframe scan — demux packet-flag (fast) with a frame-decode fallback
+
+`GetKeyframesAsync` reads keyframes at the **demux (packet) layer** rather than decoding frames. The
+primary path (`ScanKeyframesFromPacketsAsync`) runs
+`ffprobe -select_streams v:0 -show_packets -show_entries packet=pts_time,dts_time,flags` and keeps
+packets whose `flags` carry the **`K`** keyframe marker, taking `pts_time` (falling back to
+`dts_time`) as the timestamp. Because packets arrive in DTS order the times are sorted-distinct before
+return. Skipping frame decode makes this markedly faster on high-resolution sources (measured ~3.86×
+on a 4K clip). If the packet query throws or yields **zero** keyframes, it **falls back** to the
+decode-based scan (`ScanKeyframesFromFramesAsync`, the pre-existing `-skip_frame nokey` frame pass) so
+correctness never regresses. Both paths produce the same sorted-distinct output; the cache, snapping,
+and `AverageGop` are unchanged. (Which path ran is tracked internally for tests only.)
 
 ## Errors (`Core/Errors/`)
 

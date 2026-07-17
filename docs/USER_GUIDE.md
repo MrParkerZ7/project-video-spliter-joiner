@@ -39,8 +39,13 @@ only recognised video extensions (`.mp4`, `.mkv`, `.mov`, `.avi`, `.m4v`, `.webm
 The Split screen cuts one video into several contiguous segments at the cut points you choose.
 
 1. **Load a video.** Choose your input file, or **drag a video onto the screen** (see
-   [Drag and drop](#drag-and-drop)). The app probes it for duration, streams, and its keyframe
-   positions. If the file cannot be read, you get a friendly error and the screen stays unloaded.
+   [Drag and drop](#drag-and-drop)). Loading is **snappy**: as soon as the fast metadata probe
+   succeeds, the file's info appears and the **preview opens immediately** — you don't wait on a full
+   keyframe scan. The keyframe index (which cuts snap to) then builds **in the background**; while it
+   runs, an **"indexing…"** hint shows. Placing a cut is ready once indexing finishes — and if you're
+   very fast, a cut placed mid-index simply **waits briefly** for the scan to complete so it still
+   snaps correctly (never to an empty list). If the file cannot be read, you get a friendly error and
+   the screen stays unloaded.
 2. **Add cut markers.** Add a marker at a time position, or use the
    [preview player](#preview--pick-cuts-from-the-player) to find the exact frame and drop a cut
    there. Each marker row shows the snap: `requested → snapped (±delta)` — for example
@@ -66,8 +71,8 @@ keyframe).
 On most files keyframes are close together and the movement is tiny. On a source with a **coarse
 GOP** (keyframes seconds apart), a cut can move by seconds. The app does not hide this:
 
-- After loading, if the mean keyframe spacing is coarse, a **warning** appears telling you roughly
-  how far cuts may move.
+- Once the background keyframe index finishes, if the mean keyframe spacing is coarse a **warning**
+  appears telling you roughly how far cuts may move.
 - Every marker shows its own `±delta`, so you always see the exact snapped result before running.
 
 This is the deliberate trade-off for zero re-encode — it is not frame-exact editing.

@@ -50,6 +50,17 @@ re-encode — the player only previews; every cut continues to keyframe-snap thr
 
 ### Changed
 
+- **Faster, non-blocking video load (G-008)** — loading a file on the Split screen no longer waits on
+  the full keyframe scan. `SplitViewModel.LoadAsync` now gates only on the fast metadata probe: it
+  shows the file info and **opens the preview immediately**, then indexes keyframes in a
+  **cancellable background task**. A new `IsIndexingKeyframes` flag (with `KeyframesReady`) drives a
+  non-blocking **"indexing…"** hint; a new load cancels the previous file's index (stale-guard), and a
+  cut placed while indexing awaits the same in-flight scan so it still snaps correctly (never to an
+  empty list). Separately, `MediaProbe.GetKeyframesAsync` now scans keyframes at the **demux (packet)
+  layer** (`-show_packets`, keeping `K`-flag packets) instead of decoding frames (**~3.86× faster**;
+  4K: 216ms→56ms), with the previous `-skip_frame nokey` frame scan kept as a **fallback** when the
+  packet query is empty or throws. Same sorted-distinct keyframes, per-file cache, snapping, and GOP
+  behavior.
 - **4K preview performance (G-005)** — the FFME preview now uses **hardware-accelerated decoding**
   (D3D11VA / DXVA2 / …) plus a **downscaled preview surface** (`src/App/Media/PreviewScale.cs`, capped
   at ~1080p, aspect-preserving, even dimensions) so large 4K sources play back smoothly without
