@@ -201,12 +201,21 @@
                              Value="{Binding Operation.Progress, Mode=OneWay, Converter={StaticResource FractionToPercent}}"
                              Visibility="{Binding Operation.IsRunning, Converter={StaticResource BoolToVisibility}}" />
 
-                <!-- Running status line ("Splitting…") — always visible while the op runs (T-042) -->
-                <TextBlock Margin="0,6,0,0"
-                           TextWrapping="Wrap"
-                           Foreground="#333"
-                           Text="{Binding Operation.StatusText}"
-                           Visibility="{Binding Operation.IsRunning, Converter={StaticResource BoolToVisibility}}" />
+                <!-- Running status line + ETA ("Splitting… (3 parts)   ~40s left") — visible while running (T-042/T-045) -->
+                <StackPanel Orientation="Horizontal"
+                            Margin="0,6,0,0"
+                            Visibility="{Binding Operation.IsRunning, Converter={StaticResource BoolToVisibility}}">
+                    <TextBlock TextWrapping="Wrap"
+                               Foreground="#333"
+                               Text="{Binding Operation.StatusText}" />
+                    <!-- ETA — small, muted, shown next to the status (T-045) -->
+                    <TextBlock Margin="10,0,0,0"
+                               VerticalAlignment="Center"
+                               FontSize="11"
+                               Foreground="#777"
+                               Text="{Binding Operation.EtaText}"
+                               Visibility="{Binding Operation.EtaText, Converter={StaticResource NullToCollapsed}}" />
+                </StackPanel>
 
                 <!-- Free-form VM status line (load result / "Split complete.") — shown when not running -->
                 <TextBlock Margin="0,6,0,0"

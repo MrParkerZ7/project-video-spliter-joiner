@@ -79,12 +79,21 @@
                          Value="{Binding Operation.Progress, Mode=OneWay, Converter={StaticResource FractionToPercent}}"
                          Visibility="{Binding Operation.IsRunning, Converter={StaticResource BoolToVisibility}}" />
 
-            <!-- Running status line ("Joining…") — always visible while the op runs (T-042) -->
-            <TextBlock Margin="0,6,0,0"
-                       TextWrapping="Wrap"
-                       Foreground="#333"
-                       Text="{Binding Operation.StatusText}"
-                       Visibility="{Binding Operation.IsRunning, Converter={StaticResource BoolToVisibility}}" />
+            <!-- Running status line + ETA ("Joining… (2 clips)   ~40s left") — visible while running (T-042/T-045) -->
+            <StackPanel Orientation="Horizontal"
+                        Margin="0,6,0,0"
+                        Visibility="{Binding Operation.IsRunning, Converter={StaticResource BoolToVisibility}}">
+                <TextBlock TextWrapping="Wrap"
+                           Foreground="#333"
+                           Text="{Binding Operation.StatusText}" />
+                <!-- ETA — small, muted, shown next to the status (T-045) -->
+                <TextBlock Margin="10,0,0,0"
+                           VerticalAlignment="Center"
+                           FontSize="11"
+                           Foreground="#777"
+                           Text="{Binding Operation.EtaText}"
+                           Visibility="{Binding Operation.EtaText, Converter={StaticResource NullToCollapsed}}" />
+            </StackPanel>
 
             <!-- Error headline + hint + copyable, selectable full-log details (T-037) -->
             <Border Margin="0,6,0,0"

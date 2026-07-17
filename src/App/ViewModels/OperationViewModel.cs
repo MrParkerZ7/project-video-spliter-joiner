@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
 using VideoSplitJoiner.Core.Errors;
@@ -19,8 +20,15 @@ public sealed class OperationViewModel : ObservableObject
     private OperationState _state = OperationState.Idle;
     private double _progress;
     private string _statusText = string.Empty;
+    private string? _etaText;
     private UserFacingError? _error;
     private CancellationTokenSource? _cts;
+
+    // T-045: ETA is estimated from real elapsed time vs reported fraction. The stopwatch measures the
+    // run's wall-clock; the estimator turns (elapsed, fraction) samples into a smoothed remaining-time
+    // and the friendly EtaText label. Both are per-run — reset at BeginRun, cleared on end/Reset.
+    private readonly Stopwatch _stopwatch = new();
+    private readonly EtaEstimator _eta = new();
 
     public OperationViewModel()
     {
@@ -53,6 +61,14 @@ public sealed class OperationViewModel : ObservableObject
             {
                 // A real fraction (>0) flips the busy indicator off — see IsIndeterminate.
                 OnPropertyChanged(nameof(IsIndeterminate));
+
+                // T-045: feed the real elapsed vs this fraction to the ETA estimator. Only while
+                // actually running — completion sets Progress = 1 through here too, and we don't want
+                // that to compute (or resurrect) an ETA; EndRun/Complete clear it explicitly.
+                if (IsRunning)
+                {
+                    UpdateEta(value);
+                }
             }
         }
     }
@@ -78,6 +94,19 @@ public sealed class OperationViewModel : ObservableObject
     /// sparse/instant, so the bar shows motion immediately rather than a frozen 0%.
     /// </summary>
     public bool IsIndeterminate => IsRunning && _progress <= 0d;
+
+    /// <summary>
+    /// T-045: friendly estimated-time-remaining label shown while the op runs — e.g. "~40s left",
+    /// "~1m 20s left". Set from the <see cref="EtaEstimator"/> on each progress sample. While the run
+    /// is indeterminate (no usable fraction yet) it reads "estimating…" rather than a fake number;
+    /// it is null when no operation is running (the UI hides the label). Cleared on
+    /// complete/fail/cancel and <see cref="Reset"/>.
+    /// </summary>
+    public string? EtaText
+    {
+        get => _etaText;
+        private set => SetProperty(ref _etaText, value);
+    }
 
     /// <summary>The friendly error when <see cref="State"/> is <see cref="OperationState.Failed"/>; otherwise null.</summary>
     public UserFacingError? Error
@@ -206,6 +235,9 @@ public sealed class OperationViewModel : ObservableObject
         Error = null;
         Progress = 0;
         StatusText = string.Empty;
+        EtaText = null;
+        _stopwatch.Reset();
+        _eta.Reset();
         State = OperationState.Idle;
     }
 
@@ -230,7 +262,14 @@ public sealed class OperationViewModel : ObservableObject
         Error = null;
         Progress = 0;
         StatusText = runningStatus;
+
+        // T-045: start timing this run and prime the estimator. State is flipped to Running BEFORE
+        // touching ETA so the "estimating…" seed and any progress-driven UpdateEta see IsRunning=true.
+        _eta.Reset();
+        _stopwatch.Restart();
         State = OperationState.Running;
+        // No usable fraction yet → show "estimating…" rather than nothing or a fake number.
+        EtaText = EtaEstimator.FormatEta(null);
 
         // Progress<T> captures the current SynchronizationContext (the UI thread in a real app,
         // the test thread under xUnit) and posts updates back to it.
@@ -266,10 +305,26 @@ public sealed class OperationViewModel : ObservableObject
         State = OperationState.Completed;
     }
 
+    /// <summary>
+    /// T-045: feed the current elapsed time + reported fraction to the estimator and update
+    /// <see cref="EtaText"/>. A fraction too early (or NaN) leaves it at "estimating…"; a real
+    /// estimate becomes a friendly "~Ns left". Called only while running (from the Progress setter).
+    /// </summary>
+    private void UpdateEta(double fraction)
+    {
+        var remaining = _eta.Update(_stopwatch.Elapsed, fraction);
+        EtaText = EtaEstimator.FormatEta(remaining);
+    }
+
     private void EndRun()
     {
         _cts?.Dispose();
         _cts = null;
+
+        // T-045: the run is over (completed / cancelled / failed) — stop timing and clear the ETA so
+        // the UI hides the label. This is the single clear point every terminal path funnels through.
+        _stopwatch.Stop();
+        EtaText = null;
     }
 
     private static UserFacingError MapException(Exception ex)

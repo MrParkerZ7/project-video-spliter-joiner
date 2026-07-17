@@ -267,4 +267,100 @@ public sealed class OperationViewModelTests
         vm.StatusText.Should().Be("Stage 2 of 3…");
         raised.Should().BeTrue("StatusText change must raise PropertyChanged so the UI updates");
     }
+
+    // ---- T-045: ETA text wiring --------------------------------------------------------------
+
+    [Fact]
+    public async Task Indeterminate_BeforeAnyFraction_EtaTextIsEstimating()
+    {
+        var vm = new OperationViewModel();
+        var gate = new TaskCompletionSource();
+
+        string? etaObserved = null;
+        bool indeterminateObserved = false;
+
+        var run = vm.RunAsync(async (_, _) =>
+        {
+            // No fraction reported yet → indeterminate → ETA must read "estimating…", not a number.
+            indeterminateObserved = vm.IsIndeterminate;
+            etaObserved = vm.EtaText;
+            await gate.Task;
+        }, "Splitting…");
+
+        await Task.Yield();
+        indeterminateObserved.Should().BeTrue();
+        etaObserved.Should().Be("estimating…", "no usable fraction yet → estimating, never a fake number");
+
+        gate.SetResult();
+        await run;
+    }
+
+    [Fact]
+    public async Task DuringRun_ProgressSamples_SetEtaTextNonEmpty_AndUpdate()
+    {
+        var vm = new OperationViewModel();
+
+        var etaValues = new List<string?>();
+        vm.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(OperationViewModel.EtaText))
+            {
+                etaValues.Add(vm.EtaText);
+            }
+        };
+
+        await vm.RunWithResultAsync(
+            work: async (progress, _) =>
+            {
+                progress.Report(0.2);
+                await Task.Delay(20);
+                progress.Report(0.5);
+                await Task.Delay(20);
+                progress.Report(0.9);
+                await Task.Delay(20);
+                return new FakeResult(Ok: true, Failure: null);
+            },
+            failureSelector: r => r.Failure,
+            runningStatus: "Splitting…");
+
+        // While running, at least one progress sample produced a concrete "~…left" ETA label.
+        etaValues.Should().Contain(v => v != null && v.Contains("left"),
+            "a real fraction with measured elapsed yields a concrete ETA");
+
+        // Cleared on completion.
+        vm.State.Should().Be(OperationState.Completed);
+        vm.EtaText.Should().BeNull("ETA is cleared when the run ends");
+    }
+
+    [Fact]
+    public async Task EtaText_ClearsOnCancel()
+    {
+        var vm = new OperationViewModel();
+        var started = new TaskCompletionSource();
+
+        var run = vm.RunAsync(async (progress, token) =>
+        {
+            progress.Report(0.3);
+            started.SetResult();
+            await Task.Delay(Timeout.Infinite, token);
+        }, "Splitting…");
+
+        await started.Task;
+        vm.CancelCommand.Execute(null);
+        await run;
+
+        vm.State.Should().Be(OperationState.Cancelled);
+        vm.EtaText.Should().BeNull("ETA is cleared on cancel");
+    }
+
+    [Fact]
+    public async Task EtaText_ClearsOnReset()
+    {
+        var vm = new OperationViewModel();
+        await vm.RunAsync((_, _) => throw new InvalidOperationException("boom"), "Splitting…");
+
+        vm.Reset();
+
+        vm.EtaText.Should().BeNull("ETA is cleared on Reset");
+    }
 }
