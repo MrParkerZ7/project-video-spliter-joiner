@@ -2,6 +2,68 @@
 
 <!-- latest on top; entries are never deleted -->
 
+## 2026-07-17 — ✅ finalization complete — G-004/5/6/7 sealed
+
+- **T-026 ✅** docs `fadecf7` — README·USER_GUIDE·ARCHITECTURE·CHANGELOG·CLAUDE updated for FFME + no-detect + 4K + resizable pane + player controls; grep-clean of auto-detect/MediaElement refs.
+- **Sealed done:** G-004 (FFME preview) · G-005 (remove auto-detect + 4K) · G-006 (resizable pane) · G-007 (player controls). All feature work + finalization complete.
+- Ready for `cycle-push` (commits local, G-002→G-007 + docs). **G-008 (fast load) remains PLANNED** (not built) — `proceed G-008` when wanted.
+- Minor follow-up flagged by docs worker (not blocking): 2 stale in-code comments (SplitView.xaml candidates comment, SplitViewModel.cs "no candidates" doc-comment) — cosmetic, a later cleanup ticket.
+
+## 2026-07-17 — T-025 done → T-026 (docs); + G-008 (fast load) PLANNED
+
+- **T-025 ✅** packaging — `package.ps1` now bundles the FFME ffmpeg SHARED build (8 shared DLLs + ffmpeg/ffprobe exes) into one `dist/publish/ffmpeg/` folder serving BOTH FFME (FFmpegDirectory) + engine (locator); THIRD-PARTY-NOTICES adds FFME (Ms-PL) + ffmpeg 7.1 shared (GPL). Ran: 73MB exe → 127MB zip. 247 tests. Commit `63055fe`.
+- **T-026 🔵** docs (FFME + no-detect + 4K + resizable + player-controls; closes G-004→G-007) dispatched — last finalization step before cycle-push.
+- **G-008 PLANNED (todo-goal, plan-only):** "Fast video load" — diagnosed: `LoadAsync` blocks on the full keyframe scan (SplitViewModel.cs:270) before opening the preview (L301), and the scan uses slow `-skip_frame nokey` frame decode. Tasks: T-030 non-blocking load (preview instant + background index) · T-031 faster scan (demux packet-flag query + fallback) · T-032 docs. Follow-up — does NOT block finalization; `proceed G-008` later.
+
+## 2026-07-17 — user "approve" → finalization (T-025 packaging → T-026 docs)
+
+- User approved proceeding without the live-verify gate. Driving the two remaining finalization tasks to convergence.
+- **T-025 🔵** packaging — bundle the FFME ffmpeg SHARED build (DLLs + exes) into the package; update THIRD-PARTY-NOTICES; closes G-004 packaging. Then **T-026** docs (covers G-004→G-007). Then ready for cycle-push (18 commits local).
+
+## 2026-07-17 — T-028 done → T-029 started (G-007 drive)
+
+- **T-028 ✅** skip/jog — `SkipBy` (relative Scrub, clamped) + parameterized `SkipCommand` (±1/5/10/20/60/300s) + frame-step (`IMediaPlayer.StepFrame` → FFME `StepForward`/`StepBackward`) + jump-to-start/end; WrapPanel jog row. 240 tests (11 new). Commit `2548024`.
+- **T-029 🔵** volume/mute/playback-speed dispatched (extends IMediaPlayer: Volume/IsMuted/SpeedRatio).
+
+## 2026-07-17 — todo-goal-next: G-007 (player controls) planned → building
+
+- **G-007** "Player controls" — T-028 skip/jog (±1s/5s/10s/20s/1m/5m) + frame-step + jump-to-ends (find the exact split point) · T-029 fundamental options (volume/mute/playback-speed). Docs fold into T-026 (now G-004/5/6/7).
+- Decisions: **D1** skip = relative-seek VM-only over existing Seek · **D2** frame-step + volume/mute/speed extend IMediaPlayer (FFME maps StepForward/Backward/Volume/IsMuted/SpeedRatio) · **D3** fundamental set only (fullscreen/loop parked).
+- Noted to user: FFME playback still unconfirmed live — these features build on it.
+- **T-028 🔵** skip/jog + frame-step dispatched.
+
+## 2026-07-17 — todo-goal-next: G-006 (adjustable video pane) planned → building
+
+- **G-006** "Adjustable video preview area" — lean goal (1 build task): drag-resizable player pane via GridSplitter, remove the 320px cap, FFME scales to fit. Docs folded into the pending T-026 finalization (now covers G-004+G-005+G-006).
+- **T-027 🔵** resizable player pane dispatched. Pure XAML layout, no VM change.
+- (T-025 packaging + T-026 docs still the shared finalization, pending user verification of FFME/4K.)
+
+## 2026-07-17 — T-023 done → T-024 started (G-005 drive)
+
+- **T-023 ✅** auto-detect removed — deleted `Core/Detect/` + `CandidateViewModel` + all SplitViewModel/Timeline/SplitView candidate wiring + 29 detect tests; grep-clean (0 refs). `SplitViewModel` ctor now `(IMediaProbe, ISplitEngine, IMediaPlayer? = null)`. **209 tests** green, 0-warning. Commit `0798c6d`.
+- **T-024 🔵** 4K performance dispatched — FFME HW-decode + downscale-preview fallback + verify 4K split (copy) + keyframe-scan stay fast. Also the live re-verification of FFME playback.
+
+## 2026-07-16 — todo-goal-next: G-005 (remove auto-detect + 4K perf) planned → building
+
+- G-004 FFME code shipped (T-019 ✅ deps+probe, T-020 ✅ swap, launches clean pid 17564). User pivoted before confirming playback → treating "support 4K play" as implicit confirmation; 4K work re-verifies play.
+- **G-004 T-021/T-022 dropped (superseded)** → folded into G-005 T-025 (packaging) + T-026 (docs) for one clean finalization.
+- **G-005** planned: T-023 remove auto-detect (Detect + all VM/UI/test wiring) · T-024 4K perf (FFME HW-decode/downscale preview + verify fast 4K split — split is `-c copy`, resolution-independent) · T-025 packaging (bundle FFME shared build) · T-026 docs.
+- Decisions: **D1** remove auto-detect wholesale (keep markers/playhead/click-to-cut) · **D2** 4K play = HW-decode first, downscale-preview fallback (never touches the cut) · **D3** split stays copy · **D4** finalize G-004 here.
+- **T-023 🔵** remove auto-detect dispatched.
+
+## 2026-07-16 — T-019 done → T-020 started (G-004 drive)
+
+- **T-019 ✅** FFME deps — package `FFME.Windows 7.0.361-beta.1` (id ≠ `Unosquare.FFME.Windows`; only the beta binds ffmpeg 7.x via FFmpeg.AutoGen 7.0.0) + BtbN ffmpeg 7.1 shared build in gitignored `ffmpeg-shared/` + `Library.FFmpegDirectory` startup resolver + `packaging/fetch-ffmpeg-shared.{ps1,sh}`. **Init probe PASSED — FFME loaded ffmpeg n7.1.5 clean.** 238 tests. Commit `b2972fd`. (FFME is a prerelease — the only ffmpeg-7.x build.)
+- **T-020 🔵** swap MediaElement → FFME behind IMediaPlayer dispatched.
+
+## 2026-07-16 — bug: "can't play video" → diagnosed + G-004 (FFME) planned
+
+- **Diagnosis:** user reported preview "can't play". Traced full player path — wiring is CORRECT (MainViewModel → MediaElementPlayer → PlayerView attach → Open). User confirmed the **yellow "Preview unavailable" banner** shows → CODEC issue: Windows Media Foundation lacks the decoder (HEVC/H.265 or MKV). The realized **D1 risk** from G-002. Cut/join unaffected.
+- User chose the **FFME (ffmpeg-decoded preview)** fix over LibVLC / HEVC-extension / leave-as-is.
+- **G-004** "FFME preview" planned → T-019 (FFME pkg + matched ffmpeg SHARED build + startup init + engine consolidation) · T-020 (player impl swap behind IMediaPlayer) · T-021 (packaging bundles DLLs) · T-022 (docs).
+- Feasibility: no shared build on disk; network to nuget.org + gyan.dev OK.
+- **T-019 🔵** driven inline (version-matching is make-or-break).
+
 ## 2026-07-16 — ✅ G-003 DONE — drag-and-drop converged (3/3)
 
 - **T-018 ✅** docs — drag-and-drop woven into README · USER_GUIDE · ARCHITECTURE · CHANGELOG (0.2.0) · CLAUDE. Commit `599da2d`.
