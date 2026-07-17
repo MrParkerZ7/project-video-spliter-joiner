@@ -21,11 +21,18 @@ public sealed class MediaFixtures : IDisposable
     /// <summary>Length of the 4K / matched-1080p perf fixtures in seconds (T-024).</summary>
     public const double PerfDurationSeconds = 15.0;
 
+    /// <summary>Length of the T-031 scan-cost fixture in seconds (long 4K clip).</summary>
+    public const double ScanCostDurationSeconds = 20.0;
+
+    /// <summary>GOP length in frames for the T-031 scan-cost fixture (60 = 2s @ 30fps).</summary>
+    public const int ScanCostGopFrames = 60;
+
     private readonly string _dir;
     private readonly Lazy<string> _videoOnly;
     private readonly Lazy<string> _videoWithAudio;
     private readonly Lazy<string> _uhd4k;
     private readonly Lazy<string> _fullHd1080;
+    private readonly Lazy<string> _scanCost4k;
 
     public MediaFixtures()
     {
@@ -36,6 +43,7 @@ public sealed class MediaFixtures : IDisposable
         _videoWithAudio = new Lazy<string>(() => GenerateVideoWithAudio(Path.Combine(_dir, "video_audio.mp4")));
         _uhd4k = new Lazy<string>(() => GeneratePerfClip(Path.Combine(_dir, "uhd_4k.mp4"), 3840, 2160));
         _fullHd1080 = new Lazy<string>(() => GeneratePerfClip(Path.Combine(_dir, "fhd_1080.mp4"), 1920, 1080));
+        _scanCost4k = new Lazy<string>(() => GenerateScanCostClip(Path.Combine(_dir, "scan_cost_4k.mp4")));
     }
 
     /// <summary>True when the real ffmpeg override exists — gate for fixture generation.</summary>
@@ -52,6 +60,12 @@ public sealed class MediaFixtures : IDisposable
 
     /// <summary>Path to a length-matched 1920×1080 clip — the 1080p baseline for split timing.</summary>
     public string FullHd1080Path => _fullHd1080.Value;
+
+    /// <summary>
+    /// Path to a 20s 3840×2160 H.264 clip at 30fps with a 2s GOP (T-031). Longer + high-res so the
+    /// decode-vs-demux scan-cost gap is visible when benchmarking the frame path against the packet path.
+    /// </summary>
+    public string ScanCost4kPath => _scanCost4k.Value;
 
     public void Dispose()
     {
@@ -117,6 +131,27 @@ public sealed class MediaFixtures : IDisposable
             "-c:v", "libx264",
             "-preset", "veryfast",
             "-g", "60",
+            "-pix_fmt", "yuv420p",
+            outPath);
+        return outPath;
+    }
+
+    /// <summary>
+    /// Generate the T-031 scan-cost fixture: a long (20s) 4K testsrc2 clip, 30fps, GOP 60 (2s),
+    /// veryfast x264. High resolution + length make the decode-based frame scan measurably slower
+    /// than the demux-based packet scan, so the perf improvement is observable.
+    /// </summary>
+    private static string GenerateScanCostClip(string outPath)
+    {
+        RunFfmpeg(
+            "-y",
+            "-f", "lavfi",
+            "-i", $"testsrc2=size=3840x2160:rate=30:d={(int)ScanCostDurationSeconds}",
+            "-c:v", "libx264",
+            "-preset", "veryfast",
+            "-g", ScanCostGopFrames.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            "-keyint_min", ScanCostGopFrames.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            "-sc_threshold", "0",
             "-pix_fmt", "yuv420p",
             outPath);
         return outPath;

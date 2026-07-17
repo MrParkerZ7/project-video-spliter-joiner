@@ -123,16 +123,16 @@ public class MediaProbeSnapTests
     [Fact]
     public async Task GetKeyframes_TwiceOnSameFile_UsesCache_OnlyOneFfprobeCall()
     {
-        // A fake runner returns a fixed frames payload and counts invocations, proving the
-        // second GetKeyframesAsync call is served from cache (no binary needed).
-        const string framesJson = """
-            {"frames":[
-              {"media_type":"video","key_frame":1,"pts_time":"0.000000"},
-              {"media_type":"video","key_frame":1,"pts_time":"1.000000"},
-              {"media_type":"video","key_frame":1,"pts_time":"2.000000"}
+        // A query-aware fake returns a packet payload for the T-031 packet query and counts
+        // invocations, proving the second GetKeyframesAsync call is served from cache (no binary).
+        const string packetsJson = """
+            {"packets":[
+              {"pts_time":"0.000000","dts_time":"0.000000","flags":"K__"},
+              {"pts_time":"1.000000","dts_time":"1.000000","flags":"K__"},
+              {"pts_time":"2.000000","dts_time":"2.000000","flags":"K__"}
             ]}
             """;
-        var fake = new FakeFfprobeRunner(framesJson);
+        var fake = new QueryAwareFfprobeRunner(packetsPayload: packetsJson, framesPayload: "{}");
         var probe = MakeProbe(fake);
 
         var tmp = Path.Combine(Path.GetTempPath(), "vsj-cache-" + Guid.NewGuid().ToString("N") + ".mp4");
@@ -147,7 +147,8 @@ public class MediaProbeSnapTests
                 TimeSpan.FromSeconds(1),
                 TimeSpan.FromSeconds(2));
             second.Should().Equal(first);
-            fake.CallCount.Should().Be(1, "the second call must be served from cache");
+            fake.PacketCallCount.Should().Be(1, "the second call must be served from cache");
+            fake.FrameCallCount.Should().Be(0, "the packet path succeeds, so no frame fallback runs");
         }
         finally
         {

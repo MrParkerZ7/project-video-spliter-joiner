@@ -82,3 +82,27 @@ internal sealed class FfprobeFrame
     [JsonPropertyName("best_effort_timestamp_time")]
     public string? BestEffortTimestampTime { get; set; }
 }
+
+/// <summary>
+/// DTO for the demux-level <c>-show_packets</c> keyframe payload (T-031). Reading packet flags
+/// avoids frame decoding entirely, so the keyframe scan is much faster on high-resolution clips.
+/// </summary>
+internal sealed class FfprobePacketsRoot
+{
+    [JsonPropertyName("packets")]
+    public List<FfprobePacket>? Packets { get; set; }
+}
+
+internal sealed class FfprobePacket
+{
+    [JsonPropertyName("pts_time")]
+    public string? PtsTime { get; set; }
+
+    [JsonPropertyName("dts_time")]
+    public string? DtsTime { get; set; }
+
+    // ffprobe prints packet flags as a fixed-width string, e.g. "K__" for a keyframe,
+    // "___" for a non-keyframe. The 'K' marker (any position) means keyframe.
+    [JsonPropertyName("flags")]
+    public string? Flags { get; set; }
+}
