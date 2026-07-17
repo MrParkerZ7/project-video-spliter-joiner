@@ -311,10 +311,10 @@ public sealed class SplitViewModelNonBlockingLoadTests
         });
     }
 
-    // ---- Snap-before-ready (D3) -------------------------------------------------------------
+    // ---- Optimistic marker + async snap resolve (T-041) -------------------------------------
 
     [Fact]
-    public void CutPlacedWhileIndexing_SnapsCorrectly_OnceKeyframesArrive()
+    public void CutPlacedWhileIndexing_AddsInstantly_AsPending_ThenResolvesSnap()
     {
         WithPump(pump =>
         {
@@ -323,24 +323,154 @@ public sealed class SplitViewModelNonBlockingLoadTests
             pump.RunUntil(() => load.IsCompleted);
             vm.IsIndexingKeyframes.Should().BeTrue();
 
-            // Place a cut BEFORE keyframes exist → AddCutAt awaits the in-flight scan.
+            // Place a cut BEFORE keyframes exist → the marker appears INSTANTLY (T-041), pending snap.
             vm.AddCutAt(TimeSpan.FromSeconds(3.4));
 
-            // The marker isn't added synchronously (it's waiting on the scan).
-            vm.Markers.Should().BeEmpty("the cut is waiting for the in-flight keyframe scan");
+            vm.Markers.Should().ContainSingle("the marker is added immediately, not deferred");
+            vm.Markers[0].Requested.Should().Be(TimeSpan.FromSeconds(3.4));
+            vm.Markers[0].IsSnapPending.Should().BeTrue();
+            vm.Markers[0].Snapped.Should().Be(TimeSpan.FromSeconds(3.4), "provisional identity snap while pending");
+            vm.Markers[0].Display.Should().Contain("snapping…");
 
-            // Release keyframes at whole seconds → 3.4 should snap to 3.0.
+            // Release keyframes at whole seconds → 3.4 resolves in place to 3.0.
             probe.Release(PathA, Enumerable.Range(0, 11).Select(i => TimeSpan.FromSeconds(i)).ToArray());
-            pump.RunUntil(() => vm.Markers.Count == 1);
+            pump.RunUntil(() => !vm.Markers[0].IsSnapPending);
 
             vm.Markers.Should().ContainSingle();
-            vm.Markers[0].Requested.Should().Be(TimeSpan.FromSeconds(3.4));
-            vm.Markers[0].Snapped.Should().Be(TimeSpan.FromSeconds(3), "snapped against the awaited in-flight scan");
+            vm.Markers[0].IsSnapPending.Should().BeFalse();
+            vm.Markers[0].Snapped.Should().Be(TimeSpan.FromSeconds(3), "resolved against the awaited in-flight scan");
+            vm.Markers[0].Delta.Should().Be(TimeSpan.FromSeconds(3) - TimeSpan.FromSeconds(3.4));
         });
     }
 
     [Fact]
-    public void CutPlacedWhileIndexing_IndexFails_DoesNotCrash_IdentitySnap()
+    public void AddCutAtCommand_WhileIndexing_AddsInstantly_AsPending_ThenResolves()
+    {
+        WithPump(pump =>
+        {
+            var (vm, probe, _) = Build();
+            var load = vm.LoadAsync(PathA);
+            pump.RunUntil(() => load.IsCompleted);
+            vm.IsIndexingKeyframes.Should().BeTrue();
+
+            // The timeline-click / playhead-capture entry points all route through AddCutAt; exercise
+            // it via the command (SetCutAtPlayhead is additionally gated on Player.IsReady, which the
+            // duration-less fake never reports — the instant-add behaviour is identical either way).
+            vm.AddCutAtCommand.Execute(TimeSpan.FromSeconds(5.7));
+
+            vm.Markers.Should().ContainSingle("AddCutAt adds the marker instantly while indexing");
+            vm.Markers[0].IsSnapPending.Should().BeTrue();
+
+            probe.Release(PathA, Enumerable.Range(0, 11).Select(i => TimeSpan.FromSeconds(i)).ToArray());
+            pump.RunUntil(() => !vm.Markers[0].IsSnapPending);
+
+            vm.Markers[0].Snapped.Should().Be(TimeSpan.FromSeconds(6), "5.7 snaps to 6");
+        });
+    }
+
+    [Fact]
+    public void CutPlacedWhenKeyframesReady_AddsSynchronously_NotPending()
+    {
+        WithPump(pump =>
+        {
+            var (vm, probe, _) = Build();
+            var load = vm.LoadAsync(PathA);
+            pump.RunUntil(() => load.IsCompleted);
+
+            // Keyframes arrive FIRST → the ready path is taken.
+            probe.Release(PathA, Enumerable.Range(0, 11).Select(i => TimeSpan.FromSeconds(i)).ToArray());
+            pump.RunUntil(() => !vm.IsIndexingKeyframes);
+
+            vm.AddCutAt(TimeSpan.FromSeconds(3.4));
+
+            vm.Markers.Should().ContainSingle();
+            vm.Markers[0].IsSnapPending.Should().BeFalse("keyframes were ready → synchronous snap");
+            vm.Markers[0].Snapped.Should().Be(TimeSpan.FromSeconds(3), "snapped synchronously on add");
+        });
+    }
+
+    [Fact]
+    public void TwoCutsWhileIndexing_ResolvingToSameKeyframe_DedupeToOne()
+    {
+        WithPump(pump =>
+        {
+            var (vm, probe, _) = Build();
+            var load = vm.LoadAsync(PathA);
+            pump.RunUntil(() => load.IsCompleted);
+
+            // Two DIFFERENT requested times that will BOTH snap to the 3.0 keyframe (3.2 and 3.4).
+            vm.AddCutAt(TimeSpan.FromSeconds(3.2));
+            vm.AddCutAt(TimeSpan.FromSeconds(3.4));
+
+            // Different requested times → both add optimistically (requested-time dedupe lets them by).
+            vm.Markers.Should().HaveCount(2, "distinct requested times both add while pending");
+
+            probe.Release(PathA, Enumerable.Range(0, 11).Select(i => TimeSpan.FromSeconds(i)).ToArray());
+            pump.RunUntil(() => vm.Markers.Count == 1);
+
+            // Both resolved to keyframe 3.0 → the resolve-time dedupe collapses them to one.
+            vm.Markers.Should().ContainSingle("both snapped to the same keyframe → deduped on resolve");
+            vm.Markers[0].Snapped.Should().Be(TimeSpan.FromSeconds(3));
+            vm.Markers[0].IsSnapPending.Should().BeFalse();
+        });
+    }
+
+    [Fact]
+    public void SameRequestedTimeWhileIndexing_DoesNotDoubleAdd()
+    {
+        WithPump(pump =>
+        {
+            var (vm, _, _) = Build();
+            var load = vm.LoadAsync(PathA);
+            pump.RunUntil(() => load.IsCompleted);
+
+            // Identical requested times must not double-add while pending (requested-time dedupe).
+            vm.AddCutAt(TimeSpan.FromSeconds(3.4));
+            vm.AddCutAt(TimeSpan.FromSeconds(3.4));
+
+            vm.Markers.Should().ContainSingle("identical requested times dedupe before resolve");
+        });
+    }
+
+    [Fact]
+    public void PendingCut_WhenFileChanges_DoesNotCorruptNewFilesMarkers()
+    {
+        WithPump(pump =>
+        {
+            var (vm, probe, _) = Build();
+
+            // Load A, place a cut while A is still indexing → pending marker on A.
+            var loadA = vm.LoadAsync(PathA);
+            pump.RunUntil(() => loadA.IsCompleted);
+            vm.AddCutAt(TimeSpan.FromSeconds(3.4));
+            vm.Markers.Should().ContainSingle();
+
+            // Load B before A's scan finishes → markers cleared, A's index cancelled, B's starts.
+            var loadB = vm.LoadAsync(PathB);
+            pump.RunUntil(() => loadB.IsCompleted);
+            vm.InputPath.Should().Be(PathB);
+            vm.Markers.Should().BeEmpty("a new load clears markers");
+
+            // Place a cut on B (pending).
+            vm.AddCutAt(TimeSpan.FromSeconds(7.0));
+            vm.Markers.Should().ContainSingle();
+
+            // A's scan completes LATE — its stale pending resolve must NOT touch B's markers.
+            probe.Release(PathA, Enumerable.Range(0, 11).Select(i => TimeSpan.FromSeconds(i)).ToArray());
+            pump.RunUntil(() => true, TimeSpan.FromMilliseconds(200));
+
+            // Now B resolves normally.
+            probe.Release(PathB, Enumerable.Range(0, 11).Select(i => TimeSpan.FromSeconds(i)).ToArray());
+            pump.RunUntil(() => !vm.Markers[0].IsSnapPending);
+
+            vm.Markers.Should().ContainSingle("only B's marker survives; A's stale resolve was dropped");
+            vm.Markers[0].Requested.Should().Be(TimeSpan.FromSeconds(7.0));
+            vm.Markers[0].Snapped.Should().Be(TimeSpan.FromSeconds(7), "resolved against B's keyframes");
+        });
+    }
+
+    [Fact]
+    public void PendingCut_IndexFails_DoesNotCrash_IdentitySnap()
     {
         WithPump(pump =>
         {
@@ -349,11 +479,12 @@ public sealed class SplitViewModelNonBlockingLoadTests
             pump.RunUntil(() => load.IsCompleted);
 
             vm.AddCutAt(TimeSpan.FromSeconds(3.4));
+            vm.Markers.Should().ContainSingle();
+            vm.Markers[0].IsSnapPending.Should().BeTrue();
 
-            // Fail the scan (empty result modelled as failure by never providing keyframes; here we
-            // release an EMPTY list so snap falls back to identity — no crash, delta 0).
+            // Release an EMPTY list → snap falls back to identity — no crash, delta 0, pending cleared.
             probe.Release(PathA, Array.Empty<TimeSpan>());
-            pump.RunUntil(() => vm.Markers.Count == 1);
+            pump.RunUntil(() => !vm.Markers[0].IsSnapPending);
 
             vm.Markers.Should().ContainSingle();
             vm.Markers[0].Snapped.Should().Be(TimeSpan.FromSeconds(3.4), "no keyframes → identity snap");

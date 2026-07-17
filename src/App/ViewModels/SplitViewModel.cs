@@ -39,7 +39,8 @@ public sealed class SplitViewModel : ObservableObject
     private string? _statusText;
 
     // The in-flight background keyframe index for the current file (T-030). Swapped on each load;
-    // AddCutAt awaits it when a cut is placed before the scan finishes so the cut still snaps.
+    // a marker placed before the scan finishes is added instantly (T-041) and its pending resolve
+    // awaits this same scan so the cut snaps against the already-running index (never a second pass).
     private Task<IReadOnlyList<TimeSpan>>? _keyframeIndexTask;
 
     // Cancels the previous file's background index when a new file is loaded, so a stale scan
@@ -527,14 +528,15 @@ public sealed class SplitViewModel : ObservableObject
             return;
         }
 
-        // Snap-before-ready (T-030, D3): if a cut is placed while the background keyframe scan is
-        // still running, Keyframes is empty and a synchronous snap would snap to nothing. Await the
-        // SAME in-flight scan for just this action so the cut snaps correctly, then add it back on
-        // the captured context. When keyframes are already present, add synchronously as before so
-        // the existing contract / tests are unchanged.
+        // Optimistic add (T-041): if a cut is placed while the background keyframe scan is still
+        // running, DON'T defer the visible add — the marker must appear INSTANTLY. Add it now at the
+        // requested position with an unresolved snap (IsSnapPending), dedupe on the REQUESTED time
+        // for now, and kick off a continuation that re-snaps it in place once the keyframes arrive
+        // (and re-dedupes on the FINAL snapped time). When keyframes are already present, add
+        // synchronously as before so the existing keyframes-ready contract / tests are unchanged.
         if (IsIndexingKeyframes && Keyframes.Count == 0)
         {
-            _ = AddCutAtWhenIndexedAsync(position);
+            AddPendingMarker(position);
             return;
         }
 
@@ -542,22 +544,63 @@ public sealed class SplitViewModel : ObservableObject
     }
 
     /// <summary>
-    /// Await the in-flight keyframe index (T-030), then add the marker so it snaps against the
-    /// arrived keyframes. If the index failed / was cancelled, the marker still adds — it snaps
-    /// against whatever <see cref="Keyframes"/> holds (an identity snap on empty, delta 0), never
-    /// crashing on an empty list (<see cref="CutMarkerViewModel"/> already guards that).
+    /// Add a marker INSTANTLY at <paramref name="position"/> with an unresolved snap (T-041), deduped
+    /// on the requested time, then start a continuation that resolves the snap in place once the
+    /// in-flight keyframe scan finishes. The continuation is guarded against a stale file (a newer
+    /// load / no file) so it never touches a different file's markers.
     /// </summary>
-    private async Task AddCutAtWhenIndexedAsync(TimeSpan position)
+    private void AddPendingMarker(TimeSpan position)
     {
-        await EnsureKeyframesAsync().ConfigureAwait(true);
-
-        // The file may have changed while awaiting (a newer load) — only add if still loaded.
-        if (!HasFile)
+        // Dedupe on the REQUESTED time while pending — two identical requested times don't double-add
+        // before either has resolved. (Final snapped-time dedupe happens on resolve.)
+        if (Markers.Any(m => m.Requested == position))
         {
             return;
         }
 
-        AddSnappedMarker(position);
+        var marker = new CutMarkerViewModel(_probe, () => Keyframes, position, snapPending: true);
+        Markers.Add(marker);
+
+        // Capture the CTS of the scan this marker is riding on, so we can detect a newer load: if the
+        // current index CTS changed (or the file went away) by the time keyframes arrive, this pending
+        // resolve is stale and must be dropped.
+        var owningCts = _keyframeIndexCts;
+        _ = ResolvePendingMarkerAsync(marker, owningCts);
+    }
+
+    /// <summary>
+    /// Await the in-flight keyframe index (T-041), then re-snap <paramref name="marker"/> in place and
+    /// re-dedupe on its FINAL snapped time. Dropped silently if the file changed while pending (a
+    /// newer load swapped the index CTS, or the file was unloaded) so a stale resolve never corrupts
+    /// a different file's markers. If the resolved snap collides with an existing marker, this one is
+    /// removed (the duplicate is dropped).
+    /// </summary>
+    private async Task ResolvePendingMarkerAsync(CutMarkerViewModel marker, CancellationTokenSource? owningCts)
+    {
+        await EnsureKeyframesAsync().ConfigureAwait(true);
+
+        // Staleness guard: a newer load (or unload) happened while we were pending → drop the resolve
+        // without touching markers (they belong to a different file now).
+        if (!HasFile || !ReferenceEquals(_keyframeIndexCts, owningCts))
+        {
+            return;
+        }
+
+        // The marker may have been removed by the user while the scan was in flight.
+        if (!Markers.Contains(marker))
+        {
+            return;
+        }
+
+        // Recompute Snapped/Delta from the arrived keyframes and clear the pending flag.
+        marker.ResolveSnap();
+
+        // Re-dedupe on the FINAL snapped time: if this marker now lands on the same keyframe as
+        // another existing marker, drop this one (the resolved duplicate).
+        if (Markers.Any(m => !ReferenceEquals(m, marker) && !m.IsSnapPending && m.Snapped == marker.Snapped))
+        {
+            Markers.Remove(marker);
+        }
     }
 
     /// <summary>Build a snapping marker at <paramref name="position"/> and add it (dedup on snapped time).</summary>
