@@ -321,6 +321,8 @@ public sealed class TimelineTests
         public event EventHandler? DurationAvailable;
 
 #pragma warning disable CS0067
+        public event EventHandler? Seeked;
+
         public event EventHandler? Ended;
 
         public event EventHandler<string>? Failed;

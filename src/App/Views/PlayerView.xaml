@@ -34,13 +34,17 @@
                                Stretch="Uniform" />
         </Border>
 
-        <!-- Scrubbable timeline -->
-        <Slider Grid.Row="1"
+        <!-- Scrubbable timeline. Thumb.DragStarted/DragCompleted gate position echoes while the user
+             drags so playback ticks can't fight the drag; seek fires on release (T-033). -->
+        <Slider x:Name="ScrubSlider"
+                Grid.Row="1"
                 Margin="0,6,0,0"
                 Minimum="0"
                 Maximum="{Binding DurationSeconds, Mode=OneWay}"
                 Value="{Binding PositionSeconds, Mode=TwoWay}"
-                IsEnabled="{Binding IsReady}" />
+                IsEnabled="{Binding IsReady}"
+                Thumb.DragStarted="OnScrubDragStarted"
+                Thumb.DragCompleted="OnScrubDragCompleted" />
 
         <!-- Skip / jog / frame-step / jump-to-ends (T-028) — wraps so it stays readable at min width.
              Layout: |◄start  −5m −1m −20s −10s −5s −1s  ⏴frame  ▶/⏸  frame⏵  +1s +5s +10s +20s +1m +5m  end►| -->

@@ -58,6 +58,13 @@ public interface IMediaPlayer
     /// <summary>Raised as the playhead advances during playback (roughly every ~200ms).</summary>
     event EventHandler PositionChanged;
 
+    /// <summary>
+    /// Raised once a <see cref="Seek"/> operation has completed (the async seek settled). Lets the VM
+    /// clear its seek-target hold deterministically rather than relying on a position tolerance — see
+    /// <see cref="VideoSplitJoiner.App.ViewModels.PlayerViewModel"/>'s scrub pop-back guard (T-033).
+    /// </summary>
+    event EventHandler Seeked;
+
     /// <summary>Raised once the source's <see cref="Duration"/> becomes known.</summary>
     event EventHandler DurationAvailable;
 

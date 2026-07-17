@@ -96,11 +96,20 @@ public sealed class PlayerViewModelTests
             PositionChanged?.Invoke(this, EventArgs.Empty);
         }
 
+        /// <summary>Simulate FFME's async seek settling: set the position and raise Seeked.</summary>
+        public void RaiseSeeked(TimeSpan position)
+        {
+            Position = position;
+            Seeked?.Invoke(this, EventArgs.Empty);
+        }
+
         public void RaiseEnded() => Ended?.Invoke(this, EventArgs.Empty);
 
         public void RaiseFailed(string reason) => Failed?.Invoke(this, reason);
 
         public event EventHandler? PositionChanged;
+
+        public event EventHandler? Seeked;
 
         public event EventHandler? DurationAvailable;
 
@@ -183,6 +192,135 @@ public sealed class PlayerViewModelTests
         // The playback-driven update must NOT loop back into a Seek.
         player.Calls.Should().NotContain("Seek");
         player.Seeks.Should().BeEmpty();
+    }
+
+    // ---- Scrub pop-back guard (T-033) -------------------------------------------------------
+
+    [Fact]
+    public void UserSeek_StaleEcho_DoesNotPopPositionOffTarget()
+    {
+        // The KEY regression: user seeks to T; a stale echo P ≠ T (outside tolerance) arrives while
+        // the async seek is still in flight → the display must STAY at T, not pop back to P.
+        var (vm, player) = BuildReady(60);
+
+        vm.Position = TimeSpan.FromSeconds(40);          // user scrub → seek to 40
+        vm.Position.Should().Be(TimeSpan.FromSeconds(40), "display pins at the seek target immediately");
+
+        player.RaisePositionChanged(TimeSpan.FromSeconds(12)); // STALE echo far from 40
+
+        vm.Position.Should().Be(TimeSpan.FromSeconds(40), "a stale echo must not pop the playhead off the target");
+    }
+
+    [Fact]
+    public void UserSeek_SeekedEvent_ClearsHold_ThenNormalEchoUpdates()
+    {
+        var (vm, player) = BuildReady(60);
+
+        vm.Position = TimeSpan.FromSeconds(40);
+        player.RaisePositionChanged(TimeSpan.FromSeconds(12)); // stale, held
+        vm.Position.Should().Be(TimeSpan.FromSeconds(40));
+
+        // Deterministic release: the player signals the seek completed at the target.
+        player.RaiseSeeked(TimeSpan.FromSeconds(40));
+        vm.Position.Should().Be(TimeSpan.FromSeconds(40));
+
+        // Hold released → subsequent playback echo now moves the display normally.
+        player.RaisePositionChanged(TimeSpan.FromSeconds(41));
+        vm.Position.Should().Be(TimeSpan.FromSeconds(41), "after the seek settles, normal playback echo resumes");
+    }
+
+    [Fact]
+    public void UserSeek_EchoWithinTolerance_SettlesHold_AndResumesEchoes()
+    {
+        var (vm, player) = BuildReady(60);
+
+        vm.Position = TimeSpan.FromSeconds(40);
+
+        // An echo within ~250ms of the target counts as "landed" → hold clears, update applies.
+        player.RaisePositionChanged(TimeSpan.FromSeconds(40.1));
+        vm.Position.Should().BeCloseTo(TimeSpan.FromSeconds(40.1), TimeSpan.FromMilliseconds(1));
+
+        // Not frozen: a later distinct echo moves the display.
+        player.RaisePositionChanged(TimeSpan.FromSeconds(41));
+        vm.Position.Should().Be(TimeSpan.FromSeconds(41));
+    }
+
+    [Fact]
+    public void Scrub_HoldsTargetUnderStaleEcho()
+    {
+        var (vm, player) = BuildReady(60);
+
+        vm.Scrub(TimeSpan.FromSeconds(50));
+        vm.Position.Should().Be(TimeSpan.FromSeconds(50));
+
+        player.RaisePositionChanged(TimeSpan.FromSeconds(20)); // stale
+        vm.Position.Should().Be(TimeSpan.FromSeconds(50), "skip/jump seeks hold their target too");
+    }
+
+    [Fact]
+    public void SkipBy_HoldsTargetUnderStaleEcho()
+    {
+        var (vm, player) = BuildReady(60);
+        player.RaisePositionChanged(TimeSpan.FromSeconds(10)); // establish current position (not seeking)
+
+        vm.SkipBy(TimeSpan.FromSeconds(20));                   // → seek to 30
+        vm.Position.Should().Be(TimeSpan.FromSeconds(30));
+
+        player.RaisePositionChanged(TimeSpan.FromSeconds(11)); // stale echo near old pos
+        vm.Position.Should().Be(TimeSpan.FromSeconds(30));
+    }
+
+    [Fact]
+    public void UserSeek_NeverMatchingEcho_ReleasesHold_AfterBoundedTicks_NotFrozenForever()
+    {
+        // Anti-freeze backstop: if echoes never hit the target and no Seeked ever fires, the hold
+        // must release after a bounded number of ticks so the slider is not stuck permanently.
+        var (vm, player) = BuildReady(600);
+
+        vm.Position = TimeSpan.FromSeconds(300);
+
+        // Pump many off-target echoes (advancing playback that never equals the target).
+        for (var i = 0; i < 30; i++)
+        {
+            player.RaisePositionChanged(TimeSpan.FromSeconds(100 + i));
+        }
+
+        // The hold has since released; the display now tracks live echoes again (not pinned at 300).
+        vm.Position.Should().NotBe(TimeSpan.FromSeconds(300), "the hold must not freeze the slider forever");
+    }
+
+    [Fact]
+    public void UserSeek_StaleEcho_DoesNotTriggerReSeek()
+    {
+        // Existing seek-feedback protection stays intact: a player-driven echo never re-seeks, even
+        // while the seek-target hold is active.
+        var (vm, player) = BuildReady(60);
+
+        vm.Position = TimeSpan.FromSeconds(40); // one user seek
+        var seekCountAfterUserScrub = player.Seeks.Count;
+
+        player.RaisePositionChanged(TimeSpan.FromSeconds(12)); // stale echo
+        player.RaiseSeeked(TimeSpan.FromSeconds(40));          // settle
+        player.RaisePositionChanged(TimeSpan.FromSeconds(41)); // normal echo
+
+        player.Seeks.Count.Should().Be(seekCountAfterUserScrub, "echoes must not loop back into a Seek");
+    }
+
+    [Fact]
+    public void DragScrub_SuppressesEchoes_ThenSeeksOnRelease()
+    {
+        var (vm, player) = BuildReady(60);
+
+        vm.BeginUserScrub();
+        player.RaisePositionChanged(TimeSpan.FromSeconds(5)); // echo while dragging → ignored
+        vm.Position.Should().NotBe(TimeSpan.FromSeconds(5), "echoes are suppressed while dragging");
+
+        vm.EndUserScrub(35);                                  // release at 35 → seek + hold
+        vm.Position.Should().Be(TimeSpan.FromSeconds(35));
+        player.Seeks[^1].Should().Be(TimeSpan.FromSeconds(35));
+
+        player.RaisePositionChanged(TimeSpan.FromSeconds(9)); // stale echo after release → held
+        vm.Position.Should().Be(TimeSpan.FromSeconds(35));
     }
 
     // ---- User scrub (Position setter → Seek) ------------------------------------------------

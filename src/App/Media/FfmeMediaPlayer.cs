@@ -142,6 +142,8 @@ public sealed class FfmeMediaPlayer : IMediaPlayer
 
     public event EventHandler? PositionChanged;
 
+    public event EventHandler? Seeked;
+
     public event EventHandler? DurationAvailable;
 
     public event EventHandler? Ended;
@@ -204,7 +206,15 @@ public sealed class FfmeMediaPlayer : IMediaPlayer
         }
 
         var clamped = Clamp(t);
-        Run(() => _element.Seek(clamped), () => PositionChanged?.Invoke(this, EventArgs.Empty));
+        // On completion of the async seek, surface the new position AND signal seek-completion so the
+        // VM can release its seek-target hold deterministically (T-033).
+        Run(
+            () => _element.Seek(clamped),
+            () =>
+            {
+                PositionChanged?.Invoke(this, EventArgs.Empty);
+                Seeked?.Invoke(this, EventArgs.Empty);
+            });
     }
 
     public void StepFrame(int direction)

@@ -324,6 +324,8 @@ public sealed class SplitViewModelTests
 #pragma warning disable CS0067
         public event EventHandler? PositionChanged;
 
+        public event EventHandler? Seeked;
+
         public event EventHandler? DurationAvailable;
 
         public event EventHandler? Ended;

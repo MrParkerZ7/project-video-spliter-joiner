@@ -32,12 +32,35 @@ public sealed class PlayerViewModel : ObservableObject
     // — used to suppress the Position setter's Seek so a playback tick never re-seeks the player.
     private bool _suppressSeek;
 
+    // ---- Scrub pop-back guard (T-033) -------------------------------------------------------
+    // A user seek to T is async in FFME: the seek to T is dispatched but playback keeps ticking, so
+    // PositionChanged echoes arrive with STALE positions before the seek lands. Without this guard
+    // those echoes yank the slider/display off T ("pop-back"). While _seeking is true we PIN the
+    // display at _seekTarget and ignore any echo that isn't near the target; the hold is released
+    // deterministically by the player's Seeked event, or defensively by a tolerance match or a
+    // bounded number of non-matching ticks so the slider can never freeze permanently.
+
+    /// <summary>How close an echo must be to <see cref="_seekTarget"/> to count as "the seek landed".</summary>
+    private static readonly TimeSpan SeekTolerance = TimeSpan.FromMilliseconds(250);
+
+    /// <summary>Max non-matching echoes to swallow before releasing the hold anyway (anti-freeze backstop).</summary>
+    private const int MaxHeldTicks = 12;
+
+    private bool _seeking;
+    private TimeSpan _seekTarget;
+    private int _heldTicks;
+
+    // True while the user is actively dragging the scrub thumb (PlayerView Thumb.DragStarted..
+    // DragCompleted). While dragging we suppress position echoes entirely; the seek fires on release.
+    private bool _isUserScrubbing;
+
     /// <summary>Create the player VM over <paramref name="player"/> and subscribe to its events.</summary>
     public PlayerViewModel(IMediaPlayer player)
     {
         _player = player ?? throw new ArgumentNullException(nameof(player));
 
         _player.PositionChanged += OnPositionChanged;
+        _player.Seeked += OnSeeked;
         _player.DurationAvailable += OnDurationAvailable;
         _player.Ended += OnEnded;
         _player.Failed += OnFailed;
@@ -74,7 +97,8 @@ public sealed class PlayerViewModel : ObservableObject
                 OnPropertyChanged(nameof(PositionSeconds));
                 if (!_suppressSeek)
                 {
-                    _player.Seek(clamped);
+                    // User-driven set (bound slider): arm the seek-target hold, then seek.
+                    BeginSeek(clamped);
                 }
             }
         }
@@ -271,6 +295,8 @@ public sealed class PlayerViewModel : ObservableObject
         Volume = 1.0;
         IsMuted = false;
         SpeedRatio = 1.0;
+        ClearSeekHold();
+        _isUserScrubbing = false;
         SetPositionFromPlayer(TimeSpan.Zero);
         _player.Open(path);
     }
@@ -300,6 +326,7 @@ public sealed class PlayerViewModel : ObservableObject
     {
         _player.Stop();
         IsPlaying = false;
+        ClearSeekHold();
         SetPositionFromPlayer(TimeSpan.Zero);
     }
 
@@ -309,8 +336,31 @@ public sealed class PlayerViewModel : ObservableObject
     /// </summary>
     public void ToggleMute() => IsMuted = !IsMuted;
 
-    /// <summary>Seek the player to <paramref name="t"/> (used by the timeline / T-013 capture).</summary>
-    public void Scrub(TimeSpan t) => _player.Seek(Clamp(t));
+    /// <summary>
+    /// Seek the player to <paramref name="t"/> (used by the timeline / T-013 capture and by every
+    /// skip/jump/frame-step jog). Pins the display at the target and arms the seek-target hold so a
+    /// stale playback echo can't pop the playhead back off the requested position (T-033).
+    /// </summary>
+    public void Scrub(TimeSpan t) => BeginSeek(Clamp(t));
+
+    /// <summary>
+    /// Signal that the user has grabbed the scrub thumb. While scrubbing, position echoes are
+    /// suppressed entirely (the slider follows the drag, not playback); the actual seek fires on
+    /// <see cref="EndUserScrub"/>. Wired from the view's <c>Thumb.DragStarted</c> (T-033).
+    /// </summary>
+    public void BeginUserScrub() => _isUserScrubbing = true;
+
+    /// <summary>
+    /// Signal that the user released the scrub thumb at <paramref name="finalSeconds"/> (the slider's
+    /// final value). Clears the scrubbing flag and seeks to the final position with the seek-target
+    /// hold armed. Wired from the view's <c>Thumb.DragCompleted</c> (T-033).
+    /// </summary>
+    public void EndUserScrub(double finalSeconds)
+    {
+        _isUserScrubbing = false;
+        // Setting Position (not _suppressSeek) arms BeginSeek and issues the seek to the final value.
+        Position = TimeSpan.FromSeconds(finalSeconds);
+    }
 
     /// <summary>
     /// Jog the playhead by <paramref name="delta"/> relative to the current position, clamped to
@@ -355,7 +405,67 @@ public sealed class PlayerViewModel : ObservableObject
 
     // ---- Player events ----------------------------------------------------------------------
 
-    private void OnPositionChanged(object? sender, EventArgs e) => SetPositionFromPlayer(_player.Position);
+    private void OnPositionChanged(object? sender, EventArgs e)
+    {
+        var incoming = _player.Position;
+
+        // (1) While the user is dragging the thumb, the slider owns the display — ignore echoes
+        //     entirely so playback ticks don't fight the drag.
+        if (_isUserScrubbing)
+        {
+            return;
+        }
+
+        // (2) While a seek-target hold is armed, keep the display pinned at the target until the
+        //     seek lands (or the anti-freeze backstop trips), so stale echoes don't pop it back.
+        if (_seeking)
+        {
+            var delta = incoming - _seekTarget;
+            if (delta < TimeSpan.Zero)
+            {
+                delta = delta.Negate();
+            }
+
+            if (delta <= SeekTolerance)
+            {
+                // The seek landed — release the hold and apply this (on-target) update normally.
+                ClearSeekHold();
+                SetPositionFromPlayer(incoming);
+                return;
+            }
+
+            // Not on target yet. Swallow the stale echo (display stays pinned at _seekTarget) unless
+            // we've swallowed too many — then release so a never-exactly-matching echo can't freeze
+            // the slider forever, and let this echo through as the resumed playback position.
+            if (++_heldTicks >= MaxHeldTicks)
+            {
+                ClearSeekHold();
+                SetPositionFromPlayer(incoming);
+            }
+
+            return;
+        }
+
+        // (3) Normal playback echo.
+        SetPositionFromPlayer(incoming);
+    }
+
+    /// <summary>
+    /// The player finished the async seek (FFME's continuation). Release the seek-target hold
+    /// deterministically and snap the display to the landed position (T-033).
+    /// </summary>
+    private void OnSeeked(object? sender, EventArgs e)
+    {
+        if (!_seeking)
+        {
+            return;
+        }
+
+        ClearSeekHold();
+        // Snap to the player's settled position (normally == _seekTarget); a player-driven set so it
+        // does not re-seek.
+        SetPositionFromPlayer(_player.Position);
+    }
 
     private void OnDurationAvailable(object? sender, EventArgs e)
     {
@@ -376,6 +486,32 @@ public sealed class PlayerViewModel : ObservableObject
     }
 
     // ---- Helpers ----------------------------------------------------------------------------
+
+    /// <summary>
+    /// Arm the seek-target hold and issue the seek. Pins the display at <paramref name="target"/>
+    /// (a suppressed set, so it does not itself re-seek), records the target, and calls the player's
+    /// async <see cref="IMediaPlayer.Seek"/>. Until the seek settles, <see cref="OnPositionChanged"/>
+    /// ignores off-target echoes so the playhead can't pop back (T-033).
+    /// </summary>
+    private void BeginSeek(TimeSpan target)
+    {
+        _seekTarget = target;
+        _seeking = true;
+        _heldTicks = 0;
+
+        // Pin the visible position at the target now (suppressed = no re-seek), so the slider shows
+        // where the user asked to go even before the async seek lands.
+        SetPositionFromPlayer(target);
+
+        _player.Seek(target);
+    }
+
+    /// <summary>Release the seek-target hold (T-033).</summary>
+    private void ClearSeekHold()
+    {
+        _seeking = false;
+        _heldTicks = 0;
+    }
 
     /// <summary>Apply a player-originated position without re-seeking (breaks the feedback loop).</summary>
     private void SetPositionFromPlayer(TimeSpan value)

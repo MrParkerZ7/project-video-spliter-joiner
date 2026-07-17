@@ -43,6 +43,8 @@ public sealed class NullMediaPlayer : IMediaPlayer
 #pragma warning disable CS0067 // Events are part of the interface contract but never raised by the null object.
     public event EventHandler? PositionChanged;
 
+    public event EventHandler? Seeked;
+
     public event EventHandler? DurationAvailable;
 
     public event EventHandler? Ended;
