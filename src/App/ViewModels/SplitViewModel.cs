@@ -5,6 +5,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using VideoSplitJoiner.App.Media;
 using VideoSplitJoiner.Core.Errors;
@@ -32,7 +33,16 @@ public sealed class SplitViewModel : ObservableObject
     private MediaInfo? _info;
     private IReadOnlyList<TimeSpan> _keyframes = Array.Empty<TimeSpan>();
     private string? _keyframeWarning;
+    private bool _isIndexingKeyframes;
     private string? _statusText;
+
+    // The in-flight background keyframe index for the current file (T-030). Swapped on each load;
+    // AddCutAt awaits it when a cut is placed before the scan finishes so the cut still snaps.
+    private Task<IReadOnlyList<TimeSpan>>? _keyframeIndexTask;
+
+    // Cancels the previous file's background index when a new file is loaded, so a stale scan
+    // result can never overwrite the newer file's keyframes.
+    private CancellationTokenSource? _keyframeIndexCts;
     private TimeSpan _newMarkerPosition;
     private string _outputDir = string.Empty;
     private string _namingPattern = SplitRequest.DefaultNamingPattern;
@@ -93,6 +103,7 @@ public sealed class SplitViewModel : ObservableObject
             if (SetProperty(ref _inputPath, value))
             {
                 OnPropertyChanged(nameof(HasFile));
+                OnPropertyChanged(nameof(KeyframesReady));
                 OnPropertyChanged(nameof(CanRunSplit));
                 OnPropertyChanged(nameof(CanSetCutAtPlayhead));
                 RaiseCommandStates();
@@ -113,6 +124,27 @@ public sealed class SplitViewModel : ObservableObject
         get => _keyframes;
         private set => SetProperty(ref _keyframes, value);
     }
+
+    /// <summary>
+    /// True while the background keyframe scan for the loaded file is still running (T-030). The
+    /// preview + <see cref="Info"/> appear as soon as the probe succeeds; keyframes are indexed in
+    /// the background, and this flag lets the view show a non-blocking "indexing…" hint. Flipped
+    /// false when the scan completes, fails, or is cancelled by a newer load.
+    /// </summary>
+    public bool IsIndexingKeyframes
+    {
+        get => _isIndexingKeyframes;
+        private set
+        {
+            if (SetProperty(ref _isIndexingKeyframes, value))
+            {
+                OnPropertyChanged(nameof(KeyframesReady));
+            }
+        }
+    }
+
+    /// <summary>True once a file is loaded AND its background keyframe scan has finished.</summary>
+    public bool KeyframesReady => HasFile && !IsIndexingKeyframes;
 
     /// <summary>Set when the mean GOP is coarse — warns the user cuts may move noticeably.</summary>
     public string? KeyframeWarning
@@ -255,11 +287,12 @@ public sealed class SplitViewModel : ObservableObject
 
         StatusText = null;
         MediaInfo? loadedInfo = null;
-        IReadOnlyList<TimeSpan>? loadedKeyframes = null;
 
         // Route the load through Operation so a bad file yields a friendly error + details expander
-        // exactly like a run does. ProbeFailed is a typed failure (not an exception) → surface it
-        // via the failureSelector; a thrown probe/keyframe error is mapped by RunWithResultAsync.
+        // exactly like a run does. T-030: the PROBE is now the only gating async step — the
+        // keyframe scan no longer blocks the load; it runs in the background after this returns.
+        // ProbeFailed is a typed failure (not an exception) → surface it via the failureSelector;
+        // a thrown probe error is mapped by RunWithResultAsync.
         await Operation.RunWithResultAsync(
             work: async (_, ct) =>
             {
@@ -267,7 +300,6 @@ public sealed class SplitViewModel : ObservableObject
                 if (probeResult is ProbeResult.ProbeSucceeded ok)
                 {
                     loadedInfo = ok.Info;
-                    loadedKeyframes = await _probe.GetKeyframesAsync(path, ct).ConfigureAwait(true);
                 }
 
                 return probeResult;
@@ -281,7 +313,7 @@ public sealed class SplitViewModel : ObservableObject
                 : null,
             runningStatus: "Loading…").ConfigureAwait(true);
 
-        if (Operation.State != OperationState.Completed || loadedInfo is null || loadedKeyframes is null)
+        if (Operation.State != OperationState.Completed || loadedInfo is null)
         {
             // Failure/cancel already reflected in Operation.Error; also mirror a short status line.
             if (Operation.State == OperationState.Failed)
@@ -292,16 +324,18 @@ public sealed class SplitViewModel : ObservableObject
             return;
         }
 
-        // Success — commit the loaded state and clear prior markers.
+        // Success — the probe returned, so the preview + info can appear AT ONCE, before any
+        // keyframe scan. Commit the loaded state and clear prior markers immediately.
         Info = loadedInfo;
-        Keyframes = loadedKeyframes;
+        Keyframes = Array.Empty<TimeSpan>();
         InputPath = path;
         // Feed the freshly-loaded file to the in-app preview player (T-012). No-op under the
         // NullMediaPlayer default; the fake records the Open in tests.
         Player.Open(path);
         Markers.Clear();
         LastResult = null;
-        UpdateKeyframeWarning();
+        // No keyframes yet → clear any stale warning until the background scan reports.
+        KeyframeWarning = null;
 
         // Default the output dir to the input file's folder when none is set yet.
         if (string.IsNullOrWhiteSpace(OutputDir))
@@ -314,6 +348,116 @@ public sealed class SplitViewModel : ObservableObject
         }
 
         StatusText = $"Loaded {Path.GetFileName(path)} — {FormatDuration(loadedInfo.Duration)}.";
+
+        // Now index keyframes IN THE BACKGROUND (T-030). Cancel any previous file's index so a
+        // stale result can't overwrite this file's keyframes, then start a fresh one.
+        StartKeyframeIndex(path);
+    }
+
+    /// <summary>
+    /// Cancel any in-flight background keyframe index, then start a new one for <paramref name="path"/>
+    /// (T-030). The load has already committed the preview + info; this runs the keyframe scan
+    /// without blocking. On completion (back on the captured sync context) it commits
+    /// <see cref="Keyframes"/> + the coarse-GOP warning and clears the indexing flag — but ONLY if
+    /// this scan is still the current one (a newer load cancels it). Failure/cancel just clears the
+    /// flag and leaves <see cref="Keyframes"/> empty (snap then awaits/falls back — see
+    /// <see cref="EnsureKeyframesAsync"/>).
+    /// </summary>
+    private void StartKeyframeIndex(string path)
+    {
+        // Cancel + dispose the previous file's index (stale-result guard).
+        _keyframeIndexCts?.Cancel();
+        _keyframeIndexCts?.Dispose();
+
+        var cts = new CancellationTokenSource();
+        _keyframeIndexCts = cts;
+
+        IsIndexingKeyframes = true;
+
+        // The task AddCutAt awaits when a cut is placed before the scan finishes. Kept as a field
+        // so the same in-flight scan is reused (never a second ffprobe pass).
+        var indexTask = _probe.GetKeyframesAsync(path, cts.Token);
+        _keyframeIndexTask = indexTask;
+
+        // Fast path: a probe whose keyframe scan already completed synchronously (cached result, or
+        // a fake that returns Task.FromResult) commits inline — no posted continuation, no thread
+        // hop — so callers that load-then-read keyframes on the same call see them immediately.
+        if (indexTask.IsCompleted)
+        {
+            if (ReferenceEquals(_keyframeIndexCts, cts))
+            {
+                if (indexTask.Status == TaskStatus.RanToCompletion)
+                {
+                    Keyframes = indexTask.Result;
+                    UpdateKeyframeWarning();
+                }
+
+                IsIndexingKeyframes = false;
+            }
+
+            return;
+        }
+
+        // Observe completion back on the captured context (the WPF dispatcher in the app). When
+        // there is no synchronization context (e.g. the xUnit default), fall back to the default
+        // scheduler — the continuation body only touches VM state, which those tests read after
+        // awaiting anyway.
+        var completionScheduler = SynchronizationContext.Current is not null
+            ? TaskScheduler.FromCurrentSynchronizationContext()
+            : TaskScheduler.Default;
+
+        _ = indexTask.ContinueWith(
+            t =>
+            {
+                // A newer load already superseded this scan → drop the result silently.
+                if (!ReferenceEquals(_keyframeIndexCts, cts))
+                {
+                    return;
+                }
+
+                if (t.Status == TaskStatus.RanToCompletion)
+                {
+                    Keyframes = t.Result;
+                    UpdateKeyframeWarning();
+                }
+                // Faulted/cancelled → leave Keyframes empty; snap falls back (EnsureKeyframesAsync).
+
+                IsIndexingKeyframes = false;
+            },
+            CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously,
+            completionScheduler);
+    }
+
+    /// <summary>
+    /// Return the loaded file's keyframes, awaiting the in-flight background index if it is still
+    /// running (T-030 snap-before-ready). Used by <see cref="AddCutAt"/> so a cut placed while
+    /// <see cref="IsIndexingKeyframes"/> is true still snaps correctly against the SAME scan already
+    /// running — never against an empty list. If the index failed / was cancelled (or never ran),
+    /// returns whatever <see cref="Keyframes"/> holds (possibly empty), and the caller falls back to
+    /// an identity snap rather than crashing.
+    /// </summary>
+    private async Task<IReadOnlyList<TimeSpan>> EnsureKeyframesAsync()
+    {
+        if (Keyframes.Count > 0)
+        {
+            return Keyframes;
+        }
+
+        var task = _keyframeIndexTask;
+        if (task is not null)
+        {
+            try
+            {
+                return await task.ConfigureAwait(true);
+            }
+            catch
+            {
+                // Index failed / cancelled → fall through to whatever Keyframes holds (empty).
+            }
+        }
+
+        return Keyframes;
     }
 
     private void UpdateKeyframeWarning()
@@ -350,6 +494,42 @@ public sealed class SplitViewModel : ObservableObject
             return;
         }
 
+        // Snap-before-ready (T-030, D3): if a cut is placed while the background keyframe scan is
+        // still running, Keyframes is empty and a synchronous snap would snap to nothing. Await the
+        // SAME in-flight scan for just this action so the cut snaps correctly, then add it back on
+        // the captured context. When keyframes are already present, add synchronously as before so
+        // the existing contract / tests are unchanged.
+        if (IsIndexingKeyframes && Keyframes.Count == 0)
+        {
+            _ = AddCutAtWhenIndexedAsync(position);
+            return;
+        }
+
+        AddSnappedMarker(position);
+    }
+
+    /// <summary>
+    /// Await the in-flight keyframe index (T-030), then add the marker so it snaps against the
+    /// arrived keyframes. If the index failed / was cancelled, the marker still adds — it snaps
+    /// against whatever <see cref="Keyframes"/> holds (an identity snap on empty, delta 0), never
+    /// crashing on an empty list (<see cref="CutMarkerViewModel"/> already guards that).
+    /// </summary>
+    private async Task AddCutAtWhenIndexedAsync(TimeSpan position)
+    {
+        await EnsureKeyframesAsync().ConfigureAwait(true);
+
+        // The file may have changed while awaiting (a newer load) — only add if still loaded.
+        if (!HasFile)
+        {
+            return;
+        }
+
+        AddSnappedMarker(position);
+    }
+
+    /// <summary>Build a snapping marker at <paramref name="position"/> and add it (dedup on snapped time).</summary>
+    private void AddSnappedMarker(TimeSpan position)
+    {
         var marker = new CutMarkerViewModel(_probe, () => Keyframes, position);
 
         // Dedupe on the snapped time — the cut actually lands on the keyframe, so two requests that
