@@ -282,6 +282,12 @@ public sealed class TimelineTests
 
         public bool IsPlaying => false;
 
+        public double Volume { get; set; } = 1.0;
+
+        public bool IsMuted { get; set; }
+
+        public double SpeedRatio { get; set; } = 1.0;
+
         public void Open(string path) => Opened.Add(path);
 
         public void Play() { }

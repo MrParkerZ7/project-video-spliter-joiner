@@ -119,6 +119,37 @@
                     Content="Stop"
                     Command="{Binding StopCommand}" />
 
+            <!-- Audio (mute + volume) and playback speed — compact, on the transport line. -->
+            <StackPanel Grid.Column="1"
+                        Orientation="Horizontal"
+                        HorizontalAlignment="Center"
+                        VerticalAlignment="Center">
+                <Button MinWidth="52"
+                        Padding="6,3"
+                        Margin="8,0,4,0"
+                        Content="{Binding MuteLabel}"
+                        ToolTip="Toggle mute"
+                        Command="{Binding MuteCommand}" />
+                <Slider Width="90"
+                        VerticalAlignment="Center"
+                        Minimum="0"
+                        Maximum="1"
+                        Value="{Binding Volume, Mode=TwoWay}"
+                        ToolTip="Volume" />
+                <ComboBox Margin="10,0,4,0"
+                          MinWidth="64"
+                          VerticalAlignment="Center"
+                          ItemsSource="{Binding SpeedPresets}"
+                          SelectedItem="{Binding SpeedRatio, Mode=TwoWay}"
+                          ToolTip="Playback speed">
+                    <ComboBox.ItemTemplate>
+                        <DataTemplate>
+                            <TextBlock Text="{Binding StringFormat={}{0}x}" />
+                        </DataTemplate>
+                    </ComboBox.ItemTemplate>
+                </ComboBox>
+            </StackPanel>
+
             <TextBlock Grid.Column="2"
                        VerticalAlignment="Center"
                        FontFamily="Consolas">

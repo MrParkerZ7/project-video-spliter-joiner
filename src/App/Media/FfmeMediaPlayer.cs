@@ -96,6 +96,50 @@ public sealed class FfmeMediaPlayer : IMediaPlayer
 
     public bool IsPlaying => _isPlaying;
 
+    /// <summary>
+    /// Output volume 0..1, mapped to FFME's <see cref="MediaElement.Volume"/> (a double
+    /// DependencyProperty). Unlike the transport calls, this is a plain synchronous property set on
+    /// the control — no <see cref="Run"/> adaption needed. Null-guarded like every other member; the
+    /// getter returns 1.0 (full) before an element is attached.
+    /// </summary>
+    public double Volume
+    {
+        get => _element?.Volume ?? 1.0;
+        set
+        {
+            if (_element is not null)
+            {
+                _element.Volume = value;
+            }
+        }
+    }
+
+    /// <summary>Mute flag, mapped to FFME's <see cref="MediaElement.IsMuted"/> (a bool DependencyProperty).</summary>
+    public bool IsMuted
+    {
+        get => _element?.IsMuted ?? false;
+        set
+        {
+            if (_element is not null)
+            {
+                _element.IsMuted = value;
+            }
+        }
+    }
+
+    /// <summary>Playback speed, mapped to FFME's <see cref="MediaElement.SpeedRatio"/> (a double DependencyProperty).</summary>
+    public double SpeedRatio
+    {
+        get => _element?.SpeedRatio ?? 1.0;
+        set
+        {
+            if (_element is not null)
+            {
+                _element.SpeedRatio = value;
+            }
+        }
+    }
+
     public event EventHandler? PositionChanged;
 
     public event EventHandler? DurationAvailable;

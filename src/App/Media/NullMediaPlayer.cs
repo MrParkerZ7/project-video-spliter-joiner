@@ -19,6 +19,15 @@ public sealed class NullMediaPlayer : IMediaPlayer
 
     public bool IsPlaying => false;
 
+    /// <summary>No-op semantics, but stored so bindings read back what they set (default full).</summary>
+    public double Volume { get; set; } = 1.0;
+
+    /// <summary>No-op semantics, but stored so bindings read back what they set.</summary>
+    public bool IsMuted { get; set; }
+
+    /// <summary>No-op semantics, but stored so bindings read back what they set (default normal).</summary>
+    public double SpeedRatio { get; set; } = 1.0;
+
     public void Open(string path) { }
 
     public void Play() { }

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Globalization;
 using VideoSplitJoiner.App.Media;
 
@@ -23,6 +24,9 @@ public sealed class PlayerViewModel : ObservableObject
     private bool _isPlaying;
     private bool _previewFailed;
     private string? _previewFailedReason;
+    private double _volume = 1.0;
+    private bool _isMuted;
+    private double _speedRatio = 1.0;
 
     // True while we are applying a player-driven position update (PositionChanged / Stop / Seek echo)
     // — used to suppress the Position setter's Seek so a playback tick never re-seeks the player.
@@ -40,6 +44,7 @@ public sealed class PlayerViewModel : ObservableObject
 
         PlayPauseCommand = new RelayCommand(_ => PlayPause(), _ => IsReady);
         StopCommand = new RelayCommand(_ => Stop());
+        MuteCommand = new RelayCommand(_ => ToggleMute());
 
         // Relative jog: the command parameter is a number of SECONDS (a double, or a string XAML
         // supplies as CommandParameter="10" / "-5"). All jog/step/jump commands are gated on IsReady.
@@ -152,6 +157,74 @@ public sealed class PlayerViewModel : ObservableObject
     /// <summary>Button caption reflecting the transport state.</summary>
     public string PlayPauseLabel => IsPlaying ? "Pause" : "Play";
 
+    // ---- Audio (volume + mute) --------------------------------------------------------------
+
+    /// <summary>
+    /// Output volume 0..1 (default 1.0). The setter writes <see cref="IMediaPlayer.Volume"/>. This is
+    /// the value the slider binds to; it is kept intact across a mute/unmute cycle (muting toggles the
+    /// player's <see cref="IMediaPlayer.IsMuted"/>, not this slider value), so unmuting restores the
+    /// exact level the slider showed.
+    /// </summary>
+    public double Volume
+    {
+        get => _volume;
+        set
+        {
+            var clamped = value < 0 ? 0 : value > 1 ? 1 : value;
+            if (SetProperty(ref _volume, clamped))
+            {
+                _player.Volume = clamped;
+            }
+        }
+    }
+
+    /// <summary>
+    /// True while audio is muted. Toggled by <see cref="MuteCommand"/>; the setter writes
+    /// <see cref="IMediaPlayer.IsMuted"/>. Muting does NOT alter <see cref="Volume"/> (the slider keeps
+    /// its value), so unmute needs no separate "restore" — the slider level was never lost.
+    /// </summary>
+    public bool IsMuted
+    {
+        get => _isMuted;
+        set
+        {
+            if (SetProperty(ref _isMuted, value))
+            {
+                _player.IsMuted = value;
+                OnPropertyChanged(nameof(MuteLabel));
+            }
+        }
+    }
+
+    /// <summary>Button caption/glyph reflecting the mute state.</summary>
+    public string MuteLabel => IsMuted ? "Unmute" : "Mute";
+
+    // ---- Playback speed ---------------------------------------------------------------------
+
+    /// <summary>
+    /// Playback speed multiplier (default 1.0). The setter writes <see cref="IMediaPlayer.SpeedRatio"/>.
+    /// Bound to the speed ComboBox's SelectedItem against <see cref="SpeedPresets"/>.
+    /// </summary>
+    public double SpeedRatio
+    {
+        get => _speedRatio;
+        set
+        {
+            if (SetProperty(ref _speedRatio, value))
+            {
+                _player.SpeedRatio = value;
+                OnPropertyChanged(nameof(SpeedText));
+            }
+        }
+    }
+
+    /// <summary>Selectable speed presets for the ComboBox (0.25×…2×).</summary>
+    public IReadOnlyList<double> SpeedPresets { get; } = new[] { 0.25, 0.5, 1.0, 1.5, 2.0 };
+
+    /// <summary>Current speed as a short label, e.g. <c>"1x"</c> / <c>"1.5x"</c>.</summary>
+    public string SpeedText =>
+        string.Create(CultureInfo.InvariantCulture, $"{_speedRatio.ToString("0.##", CultureInfo.InvariantCulture)}x");
+
     // ---- Commands ---------------------------------------------------------------------------
 
     /// <summary>Toggle play/pause (guarded by <see cref="IsReady"/>).</summary>
@@ -159,6 +232,9 @@ public sealed class PlayerViewModel : ObservableObject
 
     /// <summary>Stop playback and rewind to the start.</summary>
     public RelayCommand StopCommand { get; }
+
+    /// <summary>Toggle mute on/off (writes the player's IsMuted; leaves the slider Volume intact).</summary>
+    public RelayCommand MuteCommand { get; }
 
     /// <summary>
     /// Jog the playhead by a relative number of seconds. The command parameter is the delta in
@@ -191,6 +267,10 @@ public sealed class PlayerViewModel : ObservableObject
         PreviewFailedReason = null;
         Duration = null;
         IsPlaying = false;
+        // Reset audio/speed to defaults for the new source (writes through to the player too).
+        Volume = 1.0;
+        IsMuted = false;
+        SpeedRatio = 1.0;
         SetPositionFromPlayer(TimeSpan.Zero);
         _player.Open(path);
     }
@@ -222,6 +302,12 @@ public sealed class PlayerViewModel : ObservableObject
         IsPlaying = false;
         SetPositionFromPlayer(TimeSpan.Zero);
     }
+
+    /// <summary>
+    /// Toggle mute. Flips <see cref="IsMuted"/> (which writes the player's IsMuted); the slider
+    /// <see cref="Volume"/> value is deliberately left untouched so unmute restores the prior level.
+    /// </summary>
+    public void ToggleMute() => IsMuted = !IsMuted;
 
     /// <summary>Seek the player to <paramref name="t"/> (used by the timeline / T-013 capture).</summary>
     public void Scrub(TimeSpan t) => _player.Seek(Clamp(t));

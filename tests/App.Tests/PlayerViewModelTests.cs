@@ -38,6 +38,12 @@ public sealed class PlayerViewModelTests
 
         public bool IsPlaying { get; private set; }
 
+        public double Volume { get; set; } = 1.0;
+
+        public bool IsMuted { get; set; }
+
+        public double SpeedRatio { get; set; } = 1.0;
+
         public void Open(string path)
         {
             Calls.Add("Open");
@@ -433,5 +439,100 @@ public sealed class PlayerViewModelTests
         vm.JumpToEndCommand.CanExecute(null).Should().BeTrue();
         vm.StepForwardCommand.CanExecute(null).Should().BeTrue();
         vm.StepBackCommand.CanExecute(null).Should().BeTrue();
+    }
+
+    // ---- Volume (T-029) ---------------------------------------------------------------------
+
+    [Fact]
+    public void SettingVolume_WritesPlayerVolume()
+    {
+        var (vm, player) = BuildReady();
+
+        vm.Volume = 0.3;
+
+        vm.Volume.Should().Be(0.3);
+        player.Volume.Should().Be(0.3);
+    }
+
+    [Fact]
+    public void Volume_DefaultsToOne()
+    {
+        var (vm, _) = Build();
+
+        vm.Volume.Should().Be(1.0);
+    }
+
+    // ---- Mute (T-029) -----------------------------------------------------------------------
+
+    [Fact]
+    public void MuteCommand_Toggles_IsMuted_And_WritesPlayer()
+    {
+        var (vm, player) = BuildReady();
+
+        vm.MuteCommand.Execute(null);
+        vm.IsMuted.Should().BeTrue();
+        player.IsMuted.Should().BeTrue();
+
+        vm.MuteCommand.Execute(null);
+        vm.IsMuted.Should().BeFalse();
+        player.IsMuted.Should().BeFalse();
+    }
+
+    [Fact]
+    public void MuteUnmute_PreservesSliderVolumeLevel()
+    {
+        var (vm, player) = BuildReady();
+        vm.Volume = 0.4;
+
+        vm.MuteCommand.Execute(null);   // mute
+        vm.Volume.Should().Be(0.4, "muting must not lose the slider value");
+        player.IsMuted.Should().BeTrue();
+
+        vm.MuteCommand.Execute(null);   // unmute
+        vm.Volume.Should().Be(0.4, "unmute restores the prior slider level");
+        vm.IsMuted.Should().BeFalse();
+        player.IsMuted.Should().BeFalse();
+    }
+
+    // ---- Speed (T-029) ----------------------------------------------------------------------
+
+    [Fact]
+    public void SettingSpeedRatio_WritesPlayer_AndUpdatesText()
+    {
+        var (vm, player) = BuildReady();
+
+        vm.SpeedRatio = 1.5;
+
+        vm.SpeedRatio.Should().Be(1.5);
+        player.SpeedRatio.Should().Be(1.5);
+        vm.SpeedText.Should().Be("1.5x");
+    }
+
+    [Fact]
+    public void SpeedPresets_ContainsExpectedValues()
+    {
+        var (vm, _) = Build();
+
+        vm.SpeedPresets.Should().Equal(0.25, 0.5, 1.0, 1.5, 2.0);
+    }
+
+    // ---- Open resets volume / mute / speed (T-029) ------------------------------------------
+
+    [Fact]
+    public void Open_ResetsVolumeMuteSpeed_ToDefaults()
+    {
+        var (vm, player) = BuildReady();
+        vm.Volume = 0.2;
+        vm.IsMuted = true;
+        vm.SpeedRatio = 2.0;
+
+        vm.Open(@"C:\videos\next.mp4");
+
+        vm.Volume.Should().Be(1.0);
+        vm.IsMuted.Should().BeFalse();
+        vm.SpeedRatio.Should().Be(1.0);
+        player.Volume.Should().Be(1.0);
+        player.IsMuted.Should().BeFalse();
+        player.SpeedRatio.Should().Be(1.0);
     }
 }

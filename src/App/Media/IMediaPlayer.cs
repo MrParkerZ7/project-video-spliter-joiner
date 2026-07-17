@@ -24,6 +24,15 @@ public interface IMediaPlayer
     /// <summary>True while playback is running.</summary>
     bool IsPlaying { get; }
 
+    /// <summary>Output volume in 0..1 (0 = silent, 1 = full). Setting it applies immediately.</summary>
+    double Volume { get; set; }
+
+    /// <summary>True while audio output is muted (independent of <see cref="Volume"/>).</summary>
+    bool IsMuted { get; set; }
+
+    /// <summary>Playback speed multiplier (1.0 = normal, 0.5 = half, 2.0 = double).</summary>
+    double SpeedRatio { get; set; }
+
     /// <summary>Load <paramref name="path"/> as the current source (does not auto-play).</summary>
     void Open(string path);
 
