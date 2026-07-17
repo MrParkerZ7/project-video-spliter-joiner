@@ -290,6 +290,43 @@ public sealed class SplitViewModelTests
         vm.LastResult.Should().BeNull();
     }
 
+    [Fact]
+    public async Task RunSplit_FfmpegFailure_ErrorExposesFullCopyText_AndLogPath()
+    {
+        var (vm, probe, engine) = Build();
+        probe.KeyframesToReturn = new[] { TimeSpan.Zero, TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(10) };
+        await vm.LoadAsync(FakePath);
+        vm.OutputDir = @"C:\out";
+        vm.AddMarker(TimeSpan.FromSeconds(5));
+
+        var fullStdErr = "line A\nline B\nConversion failed! the real cause";
+        var logPath = @"C:\logs\split-20260717-120000.log";
+        // The engine leads its message with the mapped friendly headline, then the full stderr.
+        engine.Handler = _ => throw new SplitException(
+            "Not enough space to write the output (ffmpeg exit -22).\n" + fullStdErr,
+            logPath,
+            fullStdErr);
+
+        await vm.RunSplitAsync();
+
+        vm.Operation.State.Should().Be(OperationState.Failed);
+        var err = vm.Operation.Error;
+        err.Should().NotBeNull();
+
+        // Headline is the FIRST line only — not the whole multi-line stderr blob.
+        err!.Message.Should().Be("Not enough space to write the output (ffmpeg exit -22).");
+        err.Message.Should().NotContain("Conversion failed!");
+
+        // The full text + log path are threaded through and copyable.
+        err.FullText.Should().Be(fullStdErr);
+        err.LogFilePath.Should().Be(logPath);
+        err.HasLogFile.Should().BeTrue();
+        err.DetailText.Should().Contain("Conversion failed! the real cause");
+        err.CopyText.Should().Contain("Not enough space to write the output")
+            .And.Contain("Conversion failed! the real cause")
+            .And.Contain(logPath);
+    }
+
     // ---- Player wiring (T-012) --------------------------------------------------------------
 
     /// <summary>Minimal recording fake for the preview-player seam.</summary>

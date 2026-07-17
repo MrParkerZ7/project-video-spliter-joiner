@@ -26,12 +26,23 @@ public sealed class SplitEngine : ISplitEngine
 {
     private readonly IFfmpegRunner _runner;
     private readonly IMediaProbe _probe;
+    private readonly ErrorLogWriter _logWriter;
 
     /// <summary>Create the engine over the T-002 runner and T-003 probe.</summary>
     public SplitEngine(IFfmpegRunner runner, IMediaProbe probe)
+        : this(runner, probe, new ErrorLogWriter())
+    {
+    }
+
+    /// <summary>
+    /// Create the engine with an explicit <see cref="ErrorLogWriter"/> (used by tests to redirect the
+    /// full-error log to a temp directory).
+    /// </summary>
+    public SplitEngine(IFfmpegRunner runner, IMediaProbe probe, ErrorLogWriter logWriter)
     {
         _runner = runner ?? throw new ArgumentNullException(nameof(runner));
         _probe = probe ?? throw new ArgumentNullException(nameof(probe));
+        _logWriter = logWriter ?? throw new ArgumentNullException(nameof(logWriter));
     }
 
     /// <inheritdoc />
@@ -111,8 +122,18 @@ public sealed class SplitEngine : ISplitEngine
                 // only carries a benign mpegts "start time for stream N is not set…" warning, which
                 // would otherwise be surfaced as the (misleading) failure text.
                 var mapped = FfmpegErrorMapper.Map(result);
+                var fullStdErr = result.StdErrText;
+
+                // Persist the FULL stderr (+ command + exit code + timestamp) to a per-run log so the
+                // user has the complete output, not just the tail. Best-effort — a write failure
+                // returns null and never aborts the (already-failing) op.
+                var command = "ffmpeg " + string.Join(" ", args.ToList());
+                var logPath = _logWriter.TryWrite("split", command, result.ExitCode, fullStdErr);
+
                 throw new SplitException(
-                    $"{mapped.Message} (ffmpeg exit {result.ExitCode}).{Environment.NewLine}{result.StdErrText}");
+                    $"{mapped.Message} (ffmpeg exit {result.ExitCode}).{Environment.NewLine}{fullStdErr}",
+                    logPath,
+                    fullStdErr);
             }
 
             // The segment muxer numbers its outputs 0,1,2,… — map them onto our planned paths.

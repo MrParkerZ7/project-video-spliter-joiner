@@ -3,6 +3,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using VideoSplitJoiner.Core.Errors;
 using VideoSplitJoiner.Core.Ffmpeg;
+using VideoSplitJoiner.Core.Split;
 
 namespace VideoSplitJoiner.App.ViewModels;
 
@@ -205,6 +206,19 @@ public sealed class OperationViewModel : ObservableObject
         // the signature mapper so they get a friendly headline too.
         switch (ex)
         {
+            case SplitException sx:
+                // A split ffmpeg failure carries the friendly headline in its message's first line
+                // plus the full stderr + saved-log path. Surface all three so the error is copyable
+                // and the "Open log" affordance lights up. The message already leads with the mapped
+                // friendly headline (see SplitEngine), so keep it as the headline.
+                return new UserFacingError(
+                    ErrorCategory.Unknown,
+                    HeadlineOf(sx.Message),
+                    sx.FullStdErr ?? sx.Message,
+                    "See the details for the raw output from ffmpeg.",
+                    LogFilePath: sx.LogFilePath,
+                    FullText: sx.FullStdErr);
+
             case FfprobeException fpx:
                 return FfmpegErrorMapper.Map(fpx.StdErrTail, fpx.ExitCode);
 
@@ -226,5 +240,21 @@ public sealed class OperationViewModel : ObservableObject
             "The operation failed unexpectedly.",
             ex.Message,
             "See the details for the underlying error.");
+    }
+
+    /// <summary>
+    /// The friendly headline of a multi-line engine message: its FIRST line (the mapped headline the
+    /// engine leads with), never the full stderr that follows. Falls back to a generic headline if the
+    /// message is empty.
+    /// </summary>
+    private static string HeadlineOf(string message)
+    {
+        if (string.IsNullOrWhiteSpace(message))
+        {
+            return "The operation failed.";
+        }
+
+        var newline = message.IndexOfAny(new[] { '\r', '\n' });
+        return newline >= 0 ? message.Substring(0, newline) : message;
     }
 }

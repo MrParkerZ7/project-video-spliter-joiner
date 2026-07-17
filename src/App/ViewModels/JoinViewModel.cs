@@ -364,7 +364,12 @@ public sealed class JoinViewModel : ObservableObject
                     ErrorCategory.IncompatibleJoin,
                     "The clips could not be joined.",
                     RefusalDetail(r.Refusal),
-                    "Fix or remove the offending clip, then try again."),
+                    "Fix or remove the offending clip, then try again.",
+                    // When the refusal came from a failed ffmpeg run, carry its saved-log path + full
+                    // stderr so the error surface is copyable and the "Open log" affordance lights up.
+                    // Pre-flight refusals (incompatible inputs) leave both null.
+                    LogFilePath: r.LogFilePath,
+                    FullText: r.FullStdErr),
             runningStatus: "Joining…").ConfigureAwait(true);
 
         if (Operation.State == OperationState.Completed && result is { Success: true })

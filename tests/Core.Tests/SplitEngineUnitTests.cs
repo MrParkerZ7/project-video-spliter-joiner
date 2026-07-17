@@ -1,4 +1,5 @@
 using FluentAssertions;
+using VideoSplitJoiner.Core.Errors;
 using VideoSplitJoiner.Core.Ffmpeg;
 using VideoSplitJoiner.Core.Media;
 using VideoSplitJoiner.Core.Split;
@@ -65,6 +66,50 @@ public class SplitEngineUnitTests
             // No FINAL named segment should exist, and no leftover temp dir.
             Directory.GetFiles(outDir, "*.mp4").Should().BeEmpty("a cancelled split must leave no final output");
             Directory.GetDirectories(outDir, ".vsj-split-*").Should().BeEmpty("the temp dir must be cleaned up");
+        }
+        finally
+        {
+            try { Directory.Delete(dir, recursive: true); } catch { /* best-effort */ }
+        }
+    }
+
+    [Fact]
+    public async Task SplitAsync_FfmpegFailure_WritesFullLog_AndThreadsPathAndFullText_ToException()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "vsj-splitfail-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        var input = Path.Combine(dir, "clip.mp4");
+        await File.WriteAllTextAsync(input, "placeholder");
+        var outDir = Path.Combine(dir, "out");
+        Directory.CreateDirectory(outDir);
+        var logDir = Path.Combine(dir, "logs");
+
+        try
+        {
+            var fullStdErr = string.Join(Environment.NewLine,
+                Enumerable.Range(0, 500).Select(i => $"stderr line {i}"))
+                + Environment.NewLine + "Conversion failed! disk error";
+
+            var runner = new FailingFakeRunner(exitCode: -22, stderr: fullStdErr);
+            var probe = new FakeProbe(
+                TimeSpan.FromSeconds(10),
+                Enumerable.Range(0, 11).Select(i => TimeSpan.FromSeconds(i)).ToList());
+
+            var engine = new SplitEngine(runner, probe, new ErrorLogWriter(logDir));
+            var req = new SplitRequest(input, new[] { TimeSpan.FromSeconds(5) }, outDir);
+
+            var ex = await Assert.ThrowsAsync<SplitException>(() => engine.SplitAsync(req));
+
+            // Full text is threaded through (not a truncated tail) + a log file was written.
+            ex.FullStdErr.Should().NotBeNullOrEmpty();
+            ex.FullStdErr!.Should().Contain("stderr line 0").And.Contain("stderr line 499")
+                .And.Contain("Conversion failed! disk error");
+            ex.LogFilePath.Should().NotBeNull();
+            File.Exists(ex.LogFilePath!).Should().BeTrue();
+
+            var logContent = await File.ReadAllTextAsync(ex.LogFilePath!);
+            logContent.Should().Contain("stderr line 499", "the FULL stderr is persisted, not just the tail");
+            logContent.Should().Contain("-22", "the exit code is persisted");
         }
         finally
         {
@@ -155,6 +200,26 @@ internal sealed class CancellingFakeRunner : IFfmpegRunner
         ct.ThrowIfCancellationRequested();
         throw new OperationCanceledException(ct);
     }
+}
+
+/// <summary>Runner that returns a non-zero exit + a supplied (large) stderr, simulating an ffmpeg failure.</summary>
+internal sealed class FailingFakeRunner : IFfmpegRunner
+{
+    private readonly int _exitCode;
+    private readonly IReadOnlyList<string> _stderr;
+
+    public FailingFakeRunner(int exitCode, string stderr)
+    {
+        _exitCode = exitCode;
+        _stderr = stderr.Split('\n').Select(s => s.TrimEnd('\r')).ToList().AsReadOnly();
+    }
+
+    public Task<FfmpegResult> RunAsync(
+        FfmpegArgs args,
+        TimeSpan? totalDuration = null,
+        IProgress<double>? progress = null,
+        CancellationToken ct = default) =>
+        Task.FromResult(new FfmpegResult(_exitCode, _stderr));
 }
 
 /// <summary>Runner that would succeed but is never expected to be reached in these tests.</summary>

@@ -1,3 +1,4 @@
+using VideoSplitJoiner.Core.Errors;
 using VideoSplitJoiner.Core.Ffmpeg;
 using VideoSplitJoiner.Core.Media;
 
@@ -34,12 +35,23 @@ public sealed class JoinEngine : IJoinEngine
 {
     private readonly IFfmpegRunner _runner;
     private readonly IMediaProbe _probe;
+    private readonly ErrorLogWriter _logWriter;
 
     /// <summary>Create the engine over the T-002 runner and T-003 probe.</summary>
     public JoinEngine(IFfmpegRunner runner, IMediaProbe probe)
+        : this(runner, probe, new ErrorLogWriter())
+    {
+    }
+
+    /// <summary>
+    /// Create the engine with an explicit <see cref="ErrorLogWriter"/> (used by tests to redirect the
+    /// full-error log to a temp directory).
+    /// </summary>
+    public JoinEngine(IFfmpegRunner runner, IMediaProbe probe, ErrorLogWriter logWriter)
     {
         _runner = runner ?? throw new ArgumentNullException(nameof(runner));
         _probe = probe ?? throw new ArgumentNullException(nameof(probe));
+        _logWriter = logWriter ?? throw new ArgumentNullException(nameof(logWriter));
     }
 
     /// <inheritdoc />
@@ -164,12 +176,24 @@ public sealed class JoinEngine : IJoinEngine
             if (!result.Success)
             {
                 TryDeleteFile(tempOut);
-                return JoinResult.Refused(CompatReport.Incompatible(new[]
-                {
-                    new Mismatch(
-                        "ffmpeg",
-                        $"ffmpeg concat failed (exit {result.ExitCode}). Last output:{Environment.NewLine}{result.StdErrText}"),
-                }));
+
+                var fullStdErr = result.StdErrText;
+
+                // Persist the FULL stderr (+ command + exit code + timestamp) to a per-run log so the
+                // user has the complete output, not just the tail. Best-effort — a write failure
+                // returns null and never aborts the (already-failing) op.
+                var command = "ffmpeg " + string.Join(" ", args.ToList());
+                var logPath = _logWriter.TryWrite("join", command, result.ExitCode, fullStdErr);
+
+                return JoinResult.RefusedWithLog(
+                    CompatReport.Incompatible(new[]
+                    {
+                        new Mismatch(
+                            "ffmpeg",
+                            $"ffmpeg concat failed (exit {result.ExitCode}). Last output:{Environment.NewLine}{fullStdErr}"),
+                    }),
+                    logPath,
+                    fullStdErr);
             }
 
             // Move the temp output into place (overwrite already permission-checked upstream).

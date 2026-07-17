@@ -351,6 +351,36 @@ public sealed class JoinViewModelTests
     }
 
     [Fact]
+    public async Task RunJoin_FfmpegFailure_ErrorExposesFullText_AndLogPath()
+    {
+        var (vm, engine, _) = Build();
+        engine.CompatToReturn = CompatReport.Ok();
+        await vm.AddFilesAsync(new[] { Clip1, Clip2 });
+        vm.OutputPath = Output;
+
+        var fullStdErr = "concat line 1\nconcat line 2\nImpossible to open list.txt";
+        var logPath = @"C:\logs\join-20260717-120000.log";
+        engine.JoinHandler = _ => JoinResult.RefusedWithLog(
+            Incompatible("ffmpeg", "ffmpeg concat failed (exit 1). Last output:\n" + fullStdErr),
+            logPath,
+            fullStdErr);
+
+        await vm.RunJoinAsync();
+
+        vm.Operation.State.Should().Be(OperationState.Failed);
+        var err = vm.Operation.Error;
+        err.Should().NotBeNull();
+        err!.FullText.Should().Be(fullStdErr);
+        err.LogFilePath.Should().Be(logPath);
+        err.HasLogFile.Should().BeTrue();
+        err.DetailText.Should().Contain("Impossible to open list.txt");
+        err.CopyText.Should().Contain("The clips could not be joined")
+            .And.Contain("Impossible to open list.txt")
+            .And.Contain(logPath);
+        vm.LastResult.Should().BeNull();
+    }
+
+    [Fact]
     public async Task RunJoin_WhenNotRunnable_IsNoOp()
     {
         var (vm, engine, _) = Build();

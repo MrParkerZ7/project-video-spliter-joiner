@@ -176,10 +176,24 @@
                            FontWeight="Bold"
                            Foreground="#7A5C00"
                            TextWrapping="Wrap" />
-                <TextBlock Margin="0,2,0,0"
-                           Text="{Binding PreviewFailedReason}"
-                           Foreground="#7A5C00"
-                           TextWrapping="Wrap" />
+                <!-- Selectable + copyable reason (T-037) -->
+                <TextBox Margin="0,2,0,0"
+                         Text="{Binding PreviewFailedReason, Mode=OneWay}"
+                         IsReadOnly="True"
+                         IsReadOnlyCaretVisible="True"
+                         AcceptsReturn="True"
+                         BorderThickness="0"
+                         Background="Transparent"
+                         Foreground="#7A5C00"
+                         TextWrapping="Wrap"
+                         MaxHeight="120"
+                         VerticalScrollBarVisibility="Auto" />
+                <Button Content="Copy"
+                        Margin="0,4,0,0"
+                        Padding="8,2"
+                        HorizontalAlignment="Left"
+                        ToolTip="Copy the preview error to the clipboard"
+                        Click="OnCopyPreviewErrorClicked" />
             </StackPanel>
         </Border>
     </Grid>

@@ -78,7 +78,7 @@
                          Value="{Binding Operation.Progress, Mode=OneWay, Converter={StaticResource FractionToPercent}}"
                          Visibility="{Binding Operation.IsRunning, Converter={StaticResource BoolToVisibility}}" />
 
-            <!-- Error headline + hint + details expander -->
+            <!-- Error headline + hint + copyable, selectable full-log details (T-037) -->
             <Border Margin="0,6,0,0"
                     Padding="6"
                     Background="#FDECEA"
@@ -92,13 +92,31 @@
                                TextWrapping="Wrap"
                                Foreground="#7A2018"
                                Visibility="{Binding Operation.Error.Hint, Converter={StaticResource NullToCollapsed}}" />
-                    <Expander Header="Details" Margin="0,4,0,0">
-                        <TextBox Text="{Binding Operation.Error.RawTail, Mode=OneWay}"
+
+                    <!-- Action row: copy the full error, open the saved full log -->
+                    <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
+                        <Button Content="Copy error"
+                                Padding="8,2"
+                                ToolTip="Copy the full error (message + full log) to the clipboard"
+                                Click="OnCopyErrorClicked" />
+                        <Button Content="Open log file"
+                                Margin="6,0,0,0"
+                                Padding="8,2"
+                                ToolTip="Reveal the saved full log in Explorer"
+                                Click="OnOpenLogClicked"
+                                Visibility="{Binding Operation.Error.HasLogFile, Converter={StaticResource BoolToVisibility}}" />
+                    </StackPanel>
+
+                    <Expander Header="Details (full log — selectable)" Margin="0,4,0,0" IsExpanded="True">
+                        <TextBox Text="{Binding Operation.Error.DetailText, Mode=OneWay}"
                                  IsReadOnly="True"
+                                 AcceptsReturn="True"
+                                 IsReadOnlyCaretVisible="True"
                                  FontFamily="Consolas"
                                  TextWrapping="Wrap"
-                                 MaxHeight="120"
-                                 VerticalScrollBarVisibility="Auto" />
+                                 MaxHeight="180"
+                                 VerticalScrollBarVisibility="Auto"
+                                 HorizontalScrollBarVisibility="Auto" />
                     </Expander>
                 </StackPanel>
             </Border>

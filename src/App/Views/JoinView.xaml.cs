@@ -30,6 +30,24 @@ public partial class JoinView : UserControl
         InitializeComponent();
     }
 
+    // ---- Copyable error surface (T-037) ----------------------------------------------------
+
+    private void OnCopyErrorClicked(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is JoinViewModel vm)
+        {
+            ErrorActions.CopyError(vm.Operation.Error);
+        }
+    }
+
+    private void OnOpenLogClicked(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is JoinViewModel vm)
+        {
+            ErrorActions.OpenLog(vm.Operation.Error);
+        }
+    }
+
     // ---- Internal drag-to-reorder (T-017) --------------------------------------------------
 
     private void OnClipListPreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)

@@ -36,6 +36,15 @@ public partial class PlayerView : UserControl
         }
     }
 
+    /// <summary>Copy the preview-unavailable reason to the clipboard (T-037). Best-effort.</summary>
+    private void OnCopyPreviewErrorClicked(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is PlayerViewModel vm)
+        {
+            ErrorActions.TryCopy(vm.PreviewFailedReason);
+        }
+    }
+
     /// <summary>
     /// The user grabbed the scrub thumb — tell the VM to suppress position echoes for the duration
     /// of the drag (T-033). Seek fires on release, not on every intermediate drag tick.

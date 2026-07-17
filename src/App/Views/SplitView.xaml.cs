@@ -18,6 +18,22 @@ public partial class SplitView : UserControl
         InitializeComponent();
     }
 
+    private void OnCopyErrorClicked(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is SplitViewModel vm)
+        {
+            ErrorActions.CopyError(vm.Operation.Error);
+        }
+    }
+
+    private void OnOpenLogClicked(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is SplitViewModel vm)
+        {
+            ErrorActions.OpenLog(vm.Operation.Error);
+        }
+    }
+
     private void OnLoadClicked(object sender, RoutedEventArgs e)
     {
         if (DataContext is not SplitViewModel vm)

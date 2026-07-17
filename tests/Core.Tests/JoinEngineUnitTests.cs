@@ -1,4 +1,5 @@
 using FluentAssertions;
+using VideoSplitJoiner.Core.Errors;
 using VideoSplitJoiner.Core.Ffmpeg;
 using VideoSplitJoiner.Core.Join;
 using VideoSplitJoiner.Core.Media;
@@ -82,5 +83,74 @@ public class JoinEngineUnitTests
 
         report.Compatible.Should().BeFalse();
         report.Mismatches.Should().Contain(m => m.Field == "input_count");
+    }
+
+    private sealed class FailingRunner : IFfmpegRunner
+    {
+        private readonly int _exitCode;
+        private readonly IReadOnlyList<string> _stderr;
+
+        public FailingRunner(int exitCode, string stderr)
+        {
+            _exitCode = exitCode;
+            _stderr = stderr.Split('\n').Select(s => s.TrimEnd('\r')).ToList().AsReadOnly();
+        }
+
+        public Task<FfmpegResult> RunAsync(
+            FfmpegArgs args,
+            TimeSpan? totalDuration = null,
+            IProgress<double>? progress = null,
+            CancellationToken ct = default) =>
+            Task.FromResult(new FfmpegResult(_exitCode, _stderr));
+    }
+
+    private static MediaInfo CompatibleClip() =>
+        new(TimeSpan.FromSeconds(5), "mp4",
+            new[] { new StreamInfo(0, "h264", "video", 1920, 1080, "yuv420p", null, null, "1/30") },
+            new[] { new StreamInfo(1, "aac", "audio", null, null, null, 48000, 2, "1/48000") });
+
+    [Fact]
+    public async Task JoinAsync_FfmpegFailure_WritesFullLog_AndThreadsPathAndFullText_OnRefusal()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "vsj-joinfail-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        var a = Path.Combine(dir, "a.mp4");
+        var b = Path.Combine(dir, "b.mp4");
+        await File.WriteAllTextAsync(a, "placeholder");
+        await File.WriteAllTextAsync(b, "placeholder");
+        var outPath = Path.Combine(dir, "joined.mp4");
+        var logDir = Path.Combine(dir, "logs");
+
+        try
+        {
+            var fullStdErr = string.Join(Environment.NewLine,
+                Enumerable.Range(0, 300).Select(i => $"concat stderr line {i}"))
+                + Environment.NewLine + "Impossible to open list.txt";
+
+            // Compatible inputs → the engine reaches the ffmpeg run, which we fail.
+            var engine = new JoinEngine(
+                new FailingRunner(exitCode: 1, stderr: fullStdErr),
+                new StubProbe(_ => ProbeResult.Success(CompatibleClip())),
+                new ErrorLogWriter(logDir));
+
+            var result = await engine.JoinAsync(new JoinRequest(new[] { a, b }, outPath));
+
+            result.Success.Should().BeFalse();
+            File.Exists(outPath).Should().BeFalse("a failed join leaves no output");
+
+            result.FullStdErr.Should().NotBeNullOrEmpty();
+            result.FullStdErr!.Should().Contain("concat stderr line 0")
+                .And.Contain("concat stderr line 299")
+                .And.Contain("Impossible to open list.txt");
+            result.LogFilePath.Should().NotBeNull();
+            File.Exists(result.LogFilePath!).Should().BeTrue();
+
+            var logContent = await File.ReadAllTextAsync(result.LogFilePath!);
+            logContent.Should().Contain("concat stderr line 299", "the FULL stderr is persisted, not just the tail");
+        }
+        finally
+        {
+            try { Directory.Delete(dir, recursive: true); } catch { /* best-effort */ }
+        }
     }
 }
