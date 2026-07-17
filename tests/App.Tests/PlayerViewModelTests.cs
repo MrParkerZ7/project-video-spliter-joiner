@@ -472,6 +472,30 @@ public sealed class PlayerViewModelTests
         player.Seeks[^1].Should().Be(TimeSpan.FromSeconds(60));
     }
 
+    // Large-jog magnitudes wired by the ±10m/±20m buttons (T-040). Same SkipBy clamp path,
+    // asserted at the button deltas: +600s from 5s lands mid-clip; -1200s from 30s clamps to 0.
+    [Fact]
+    public void SkipBy_TenMinutesForward_SeeksToPositionPlusDelta_WhenDurationAllows()
+    {
+        var (vm, player) = BuildReady(1000);
+        player.RaisePositionChanged(TimeSpan.FromSeconds(5));
+
+        vm.SkipBy(TimeSpan.FromSeconds(600));
+
+        player.Seeks[^1].Should().Be(TimeSpan.FromSeconds(605));
+    }
+
+    [Fact]
+    public void SkipBy_TwentyMinutesBackward_ClampsToZero()
+    {
+        var (vm, player) = BuildReady(1000);
+        player.RaisePositionChanged(TimeSpan.FromSeconds(30));
+
+        vm.SkipBy(TimeSpan.FromSeconds(-1200));
+
+        player.Seeks[^1].Should().Be(TimeSpan.Zero);
+    }
+
     [Fact]
     public void SkipBy_NoOp_WhenNotReady()
     {

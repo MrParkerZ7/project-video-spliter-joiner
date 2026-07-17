@@ -53,6 +53,12 @@
                     ToolTip="Jump to start"
                     Command="{Binding JumpToStartCommand}" />
 
+            <Button Style="{StaticResource JogButton}" Content="&#x2212;20m"
+                    ToolTip="Back 20 minutes"
+                    Command="{Binding SkipCommand}" CommandParameter="-1200" />
+            <Button Style="{StaticResource JogButton}" Content="&#x2212;10m"
+                    ToolTip="Back 10 minutes"
+                    Command="{Binding SkipCommand}" CommandParameter="-600" />
             <Button Style="{StaticResource JogButton}" Content="-5m"
                     ToolTip="Back 5 minutes"
                     Command="{Binding SkipCommand}" CommandParameter="-300" />
@@ -103,6 +109,12 @@
             <Button Style="{StaticResource JogButton}" Content="+5m"
                     ToolTip="Forward 5 minutes"
                     Command="{Binding SkipCommand}" CommandParameter="300" />
+            <Button Style="{StaticResource JogButton}" Content="+10m"
+                    ToolTip="Forward 10 minutes"
+                    Command="{Binding SkipCommand}" CommandParameter="600" />
+            <Button Style="{StaticResource JogButton}" Content="+20m"
+                    ToolTip="Forward 20 minutes"
+                    Command="{Binding SkipCommand}" CommandParameter="1200" />
 
             <Button Style="{StaticResource JogButton}" Content="&#x2759;&#x25BA;"
                     ToolTip="Jump to end"
