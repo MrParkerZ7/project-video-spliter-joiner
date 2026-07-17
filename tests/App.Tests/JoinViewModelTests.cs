@@ -45,7 +45,7 @@ public sealed class JoinViewModelTests
             return Task.FromResult(CompatToReturn);
         }
 
-        public Task<JoinResult> JoinAsync(JoinRequest req, IProgress<double>? progress = null, CancellationToken ct = default)
+        public Task<JoinResult> JoinAsync(JoinRequest req, IProgress<double>? progress = null, CancellationToken ct = default, IProgress<VideoSplitJoiner.Core.Ffmpeg.OperationStatus>? status = null)
         {
             LastRequest = req;
             progress?.Report(0.5);

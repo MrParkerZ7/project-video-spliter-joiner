@@ -10,6 +10,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using VideoSplitJoiner.App.Settings;
 using VideoSplitJoiner.Core.Errors;
+using VideoSplitJoiner.Core.Ffmpeg;
 using VideoSplitJoiner.Core.Join;
 using VideoSplitJoiner.Core.Media;
 
@@ -374,9 +375,11 @@ public sealed class JoinViewModel : ObservableObject
         JoinResult? result = null;
 
         await Operation.RunWithResultAsync(
-            work: async (progress, ct) =>
+            work: async (progress, status, ct) =>
             {
-                result = await _joinEngine.JoinAsync(request, progress, ct).ConfigureAwait(true);
+                // T-044: pass the stage reporter so Operation.StatusText tracks each real phase
+                // (Checking compatibility → Joining → Finalizing → Done) as the engine progresses.
+                result = await _joinEngine.JoinAsync(request, progress, ct, status).ConfigureAwait(true);
                 return result;
             },
             // A refusal is reported as a JoinResult with Success == false — turn it into a friendly

@@ -142,13 +142,33 @@ public sealed class OperationViewModel : ObservableObject
         Func<T, UserFacingError?> failureSelector,
         string runningStatus)
     {
+        await RunWithResultAsync(
+            (progress, _, token) => work(progress, token),
+            failureSelector,
+            runningStatus).ConfigureAwait(true);
+    }
+
+    /// <summary>
+    /// T-044 overload of <see cref="RunWithResultAsync{T}(Func{IProgress{double}, CancellationToken, Task{T}}, Func{T, UserFacingError?}, string)"/>
+    /// that also hands the work an <see cref="IProgress{OperationStatus}"/>. Each reported
+    /// <see cref="OperationStatus"/> updates <see cref="StatusText"/> (formatted stage + detail),
+    /// marshalled onto the captured synchronization context exactly like the numeric progress — so a
+    /// real UI updates the bound status label on the UI thread while tests observe it after awaiting.
+    /// The engine emits these as it enters each real stage (Preparing → Splitting → Finalizing → Done),
+    /// so the label tracks the actual work rather than a timer.
+    /// </summary>
+    public async Task RunWithResultAsync<T>(
+        Func<IProgress<double>, IProgress<OperationStatus>, CancellationToken, Task<T>> work,
+        Func<T, UserFacingError?> failureSelector,
+        string runningStatus)
+    {
         ArgumentNullException.ThrowIfNull(work);
         ArgumentNullException.ThrowIfNull(failureSelector);
 
-        BeginRun(runningStatus, out var progress, out var token);
+        BeginRun(runningStatus, out var progress, out var status, out var token);
         try
         {
-            var result = await work(progress, token).ConfigureAwait(true);
+            var result = await work(progress, status, token).ConfigureAwait(true);
             var failure = failureSelector(result);
             if (failure is not null)
             {
@@ -195,6 +215,13 @@ public sealed class OperationViewModel : ObservableObject
     }
 
     private void BeginRun(string runningStatus, out IProgress<double> progress, out CancellationToken token)
+        => BeginRun(runningStatus, out progress, out _, out token);
+
+    private void BeginRun(
+        string runningStatus,
+        out IProgress<double> progress,
+        out IProgress<OperationStatus> status,
+        out CancellationToken token)
     {
         _cts?.Dispose();
         _cts = new CancellationTokenSource();
@@ -208,6 +235,29 @@ public sealed class OperationViewModel : ObservableObject
         // Progress<T> captures the current SynchronizationContext (the UI thread in a real app,
         // the test thread under xUnit) and posts updates back to it.
         progress = new Progress<double>(value => Progress = Math.Clamp(value, 0d, 1d));
+
+        // T-044: the stage channel. Each OperationStatus becomes the human-readable StatusText line,
+        // marshalled through the same captured context as the numeric progress.
+        status = new Progress<OperationStatus>(s => StatusText = FormatStatus(s));
+    }
+
+    /// <summary>
+    /// Format a stage transition into the one-line status label: "Stage… (detail)" — e.g.
+    /// "Splitting… (4 parts)", "Preparing…", "Finalizing…". A "Done" stage collapses to a plain
+    /// "Done" (no ellipsis) since it marks completion rather than ongoing work.
+    /// </summary>
+    private static string FormatStatus(OperationStatus s)
+    {
+        if (s is null || string.IsNullOrWhiteSpace(s.Stage))
+        {
+            return string.Empty;
+        }
+
+        var stage = string.Equals(s.Stage, "Done", StringComparison.Ordinal)
+            ? "Done"
+            : s.Stage + "…";
+
+        return string.IsNullOrWhiteSpace(s.Detail) ? stage : $"{stage} ({s.Detail})";
     }
 
     private void Complete()

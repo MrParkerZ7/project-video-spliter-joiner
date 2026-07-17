@@ -26,8 +26,15 @@ public interface IJoinEngine
     /// NOTHING. Reports progress 0..1 against the summed input duration. A single input is
     /// passed through with the same <c>-c copy</c> command. Cancellation removes any partially
     /// written output.
+    /// <paramref name="status"/> (optional, T-044) receives a stage transition as the engine enters
+    /// each real phase: Checking compatibility → Joining → Finalizing → Done — synced to the actual
+    /// work, never a timer. The numeric <paramref name="progress"/> channel is unchanged.
     /// </summary>
-    Task<JoinResult> JoinAsync(JoinRequest req, IProgress<double>? progress = null, CancellationToken ct = default);
+    Task<JoinResult> JoinAsync(
+        JoinRequest req,
+        IProgress<double>? progress = null,
+        CancellationToken ct = default,
+        IProgress<OperationStatus>? status = null);
 }
 
 /// <inheritdoc cref="IJoinEngine" />
@@ -101,7 +108,8 @@ public sealed class JoinEngine : IJoinEngine
     public async Task<JoinResult> JoinAsync(
         JoinRequest req,
         IProgress<double>? progress = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        IProgress<OperationStatus>? status = null)
     {
         ArgumentNullException.ThrowIfNull(req);
 
@@ -120,6 +128,9 @@ public sealed class JoinEngine : IJoinEngine
                 new Mismatch("output", "Output path is empty."),
             }));
         }
+
+        // T-044: entering the compatibility pre-flight.
+        status?.Report(new OperationStatus("Checking compatibility"));
 
         // --- Pre-flight: refuse (write nothing) on any incompatibility. ---
         var report = await CheckCompatibilityAsync(req.InputPaths, ct).ConfigureAwait(false);
@@ -172,6 +183,11 @@ public sealed class JoinEngine : IJoinEngine
                 }));
             }
 
+            // T-044: inputs are compatible + the concat list is written — entering the ffmpeg join.
+            status?.Report(new OperationStatus(
+                "Joining",
+                req.InputPaths.Count == 1 ? "1 clip" : $"{req.InputPaths.Count} clips"));
+
             var result = await _runner.RunAsync(args, totalDuration, progress, ct).ConfigureAwait(false);
             if (!result.Success)
             {
@@ -196,6 +212,9 @@ public sealed class JoinEngine : IJoinEngine
                     fullStdErr);
             }
 
+            // T-044: ffmpeg finished — entering the finalize phase (temp→move into place).
+            status?.Report(new OperationStatus("Finalizing"));
+
             // Move the temp output into place (overwrite already permission-checked upstream).
             if (File.Exists(outFull))
             {
@@ -205,6 +224,7 @@ public sealed class JoinEngine : IJoinEngine
             File.Move(tempOut, outFull);
 
             progress?.Report(1.0);
+            status?.Report(new OperationStatus("Done", null, 1.0));
             return JoinResult.Ok(outFull);
         }
         catch (OperationCanceledException)

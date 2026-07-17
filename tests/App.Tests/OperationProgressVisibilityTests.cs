@@ -71,7 +71,7 @@ public sealed class OperationProgressVisibilityTests
             _release = release;
         }
 
-        public async Task<SplitResult> SplitAsync(SplitRequest req, IProgress<double>? progress = null, CancellationToken ct = default)
+        public async Task<SplitResult> SplitAsync(SplitRequest req, IProgress<double>? progress = null, CancellationToken ct = default, IProgress<VideoSplitJoiner.Core.Ffmpeg.OperationStatus>? status = null)
         {
             if (_reportsProgress)
             {
@@ -97,7 +97,7 @@ public sealed class OperationProgressVisibilityTests
         public Task<CompatReport> CheckCompatibilityAsync(IReadOnlyList<string> inputPaths, CancellationToken ct = default)
             => Task.FromResult(CompatReport.Ok());
 
-        public async Task<JoinResult> JoinAsync(JoinRequest req, IProgress<double>? progress = null, CancellationToken ct = default)
+        public async Task<JoinResult> JoinAsync(JoinRequest req, IProgress<double>? progress = null, CancellationToken ct = default, IProgress<VideoSplitJoiner.Core.Ffmpeg.OperationStatus>? status = null)
         {
             if (_reportsProgress)
             {

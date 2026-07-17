@@ -70,7 +70,7 @@ public sealed class SplitViewModelPlayheadTests
 
     private sealed class NoOpSplitEngine : ISplitEngine
     {
-        public Task<SplitResult> SplitAsync(SplitRequest req, IProgress<double>? progress = null, CancellationToken ct = default)
+        public Task<SplitResult> SplitAsync(SplitRequest req, IProgress<double>? progress = null, CancellationToken ct = default, IProgress<VideoSplitJoiner.Core.Ffmpeg.OperationStatus>? status = null)
             => Task.FromResult(new SplitResult(Array.Empty<SplitSegment>(), Array.Empty<string>()));
     }
 

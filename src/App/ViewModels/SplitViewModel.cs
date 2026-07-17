@@ -10,6 +10,7 @@ using System.Threading.Tasks;
 using VideoSplitJoiner.App.Media;
 using VideoSplitJoiner.App.Settings;
 using VideoSplitJoiner.Core.Errors;
+using VideoSplitJoiner.Core.Ffmpeg;
 using VideoSplitJoiner.Core.Media;
 using VideoSplitJoiner.Core.Split;
 
@@ -677,9 +678,11 @@ public sealed class SplitViewModel : ObservableObject
         SplitResult? result = null;
 
         await Operation.RunWithResultAsync(
-            work: async (progress, ct) =>
+            work: async (progress, status, ct) =>
             {
-                result = await _splitEngine.SplitAsync(request, progress, ct).ConfigureAwait(true);
+                // T-044: pass the stage reporter so Operation.StatusText tracks each real phase
+                // (Preparing → Splitting (M parts) → Finalizing → Done) as the engine progresses.
+                result = await _splitEngine.SplitAsync(request, progress, ct, status).ConfigureAwait(true);
                 return result;
             },
             // The engine reports genuine failures as SplitException (mapped by OperationViewModel);

@@ -17,8 +17,15 @@ public interface ISplitEngine
     /// pass), preserving ALL streams. Reports progress 0..1. Cancellation removes any partially
     /// written final output. Throws <see cref="SplitException"/> for a genuinely invalid request
     /// (missing input, unwritable dir, no valid cuts, refused overwrite).
+    /// <paramref name="status"/> (optional, T-044) receives a stage transition as the engine enters
+    /// each real phase: Preparing → Splitting → Finalizing → Done — synced to the actual work, never
+    /// a timer. The numeric <paramref name="progress"/> channel is unchanged.
     /// </summary>
-    Task<SplitResult> SplitAsync(SplitRequest req, IProgress<double>? progress = null, CancellationToken ct = default);
+    Task<SplitResult> SplitAsync(
+        SplitRequest req,
+        IProgress<double>? progress = null,
+        CancellationToken ct = default,
+        IProgress<OperationStatus>? status = null);
 }
 
 /// <inheritdoc cref="ISplitEngine" />
@@ -49,10 +56,14 @@ public sealed class SplitEngine : ISplitEngine
     public async Task<SplitResult> SplitAsync(
         SplitRequest req,
         IProgress<double>? progress = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        IProgress<OperationStatus>? status = null)
     {
         ArgumentNullException.ThrowIfNull(req);
         ValidateRequestShape(req);
+
+        // T-044: entering the prepare phase — probe + cut-point planning/snapping.
+        status?.Report(new OperationStatus("Preparing"));
 
         // --- Probe the input for duration + keyframes (via T-003, which uses T-002). ---
         var probeResult = await _probe.ProbeAsync(req.InputPath, ct).ConfigureAwait(false);
@@ -114,6 +125,14 @@ public sealed class SplitEngine : ISplitEngine
                     "Internal error: built ffmpeg command violates the stream-copy invariant (would re-encode). Refusing to run.");
             }
 
+            // T-044: entering the ffmpeg segment pass. The segment count M is known from the cut
+            // plan; intra-segment index mapping from ffmpeg stderr is not reliably surfaced through
+            // the runner, so report the honest "M parts" rather than fabricate a live segment index.
+            var partCount = plan.Segments.Count;
+            status?.Report(new OperationStatus(
+                "Splitting",
+                partCount == 1 ? "1 part" : $"{partCount} parts"));
+
             var result = await _runner.RunAsync(args, duration, progress, ct).ConfigureAwait(false);
             if (!result.Success)
             {
@@ -136,10 +155,14 @@ public sealed class SplitEngine : ISplitEngine
                     fullStdErr);
             }
 
+            // T-044: ffmpeg finished — entering the finalize phase (temp→move + verify each segment).
+            status?.Report(new OperationStatus("Finalizing"));
+
             // The segment muxer numbers its outputs 0,1,2,… — map them onto our planned paths.
             var produced = MoveTempSegmentsIntoPlace(tempDir, req, plan, ct);
 
             progress?.Report(1.0);
+            status?.Report(new OperationStatus("Done", null, 1.0));
             return new SplitResult(produced, plan.Warnings);
         }
         finally

@@ -70,7 +70,7 @@ public sealed class ViewModelSettingsTests : IDisposable
 
     private sealed class NoOpSplitEngine : ISplitEngine
     {
-        public Task<SplitResult> SplitAsync(SplitRequest req, IProgress<double>? progress = null, CancellationToken ct = default)
+        public Task<SplitResult> SplitAsync(SplitRequest req, IProgress<double>? progress = null, CancellationToken ct = default, IProgress<VideoSplitJoiner.Core.Ffmpeg.OperationStatus>? status = null)
             => Task.FromResult(new SplitResult(Array.Empty<SplitSegment>(), Array.Empty<string>()));
     }
 
@@ -79,7 +79,7 @@ public sealed class ViewModelSettingsTests : IDisposable
         public Task<CompatReport> CheckCompatibilityAsync(IReadOnlyList<string> inputPaths, CancellationToken ct = default)
             => Task.FromResult(CompatReport.Ok());
 
-        public Task<JoinResult> JoinAsync(JoinRequest req, IProgress<double>? progress = null, CancellationToken ct = default)
+        public Task<JoinResult> JoinAsync(JoinRequest req, IProgress<double>? progress = null, CancellationToken ct = default, IProgress<VideoSplitJoiner.Core.Ffmpeg.OperationStatus>? status = null)
             => Task.FromResult(JoinResult.Ok(req.OutputPath));
     }
 
