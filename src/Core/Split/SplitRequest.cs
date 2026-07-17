@@ -20,12 +20,23 @@ namespace VideoSplitJoiner.Core.Split;
 /// When false (default), a split that would clobber an existing output file is rejected
 /// before any ffmpeg runs. When true, existing files are replaced.
 /// </param>
+/// <param name="SelectedSegmentIndices">
+/// The 1-based indices of the contiguous segments to actually write (T-049). The planner always
+/// computes the full contiguous set <c>[0..s1],[s1..s2],…,[sN..end]</c>; this restricts which of
+/// those parts are extracted. <c>null</c> (the default) means "all segments" — today's behaviour,
+/// so the field is fully backward-compatible. When a strict SUBSET is selected, the engine writes
+/// ONLY those parts (via the per-segment <c>-ss/-to -c copy</c> path) and keeps each part's
+/// ORIGINAL index in its filename (a selected middle part is still <c>_part02</c>). Indices are
+/// deduped and clamped to the planned range; any out-of-range index is ignored. An empty (non-null)
+/// list selects nothing and is rejected as an invalid request.
+/// </param>
 public sealed record SplitRequest(
     string InputPath,
     IReadOnlyList<TimeSpan> CutPoints,
     string OutputDir,
     string NamingPattern = SplitRequest.DefaultNamingPattern,
-    bool Overwrite = false)
+    bool Overwrite = false,
+    IReadOnlyList<int>? SelectedSegmentIndices = null)
 {
     /// <summary>Default segment filename template: <c>&lt;name&gt;_part01.mp4</c>, etc.</summary>
     public const string DefaultNamingPattern = "{name}_part{index:00}{ext}";

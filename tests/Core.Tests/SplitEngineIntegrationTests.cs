@@ -203,6 +203,133 @@ public class SplitEngineIntegrationTests
         }
     }
 
+    // ---- Selectable segments (T-049) --------------------------------------------------------
+
+    [Fact]
+    public async Task Split_SelectOnlyMiddlePart_WritesOnlyThatFile_OthersNotCreated_ReprobesPlayable()
+    {
+        if (ShouldSkip())
+        {
+            return;
+        }
+
+        var outDir = NewOutDir();
+        try
+        {
+            var engine = MakeEngine();
+            var probe = MakeProbe();
+
+            // Cuts at 3s & 6s on the 10s / 1s-GOP fixture → 3 parts: [0..3],[3..6],[6..10].
+            // Select ONLY the middle part (index 2). The default pattern is {name}_part{index:00}{ext},
+            // so the expected file keeps its ORIGINAL index: video_only_part02.mp4.
+            var req = new SplitRequest(
+                _fixtures.VideoOnlyPath,
+                new[] { TimeSpan.FromSeconds(3), TimeSpan.FromSeconds(6) },
+                outDir,
+                SelectedSegmentIndices: new[] { 2 });
+
+            var result = await engine.SplitAsync(req);
+
+            // Exactly one produced segment — the middle part — and it is _part02 (original index kept).
+            result.Segments.Should().ContainSingle();
+            var only = result.Segments[0];
+            Path.GetFileName(only.Path).Should().Be("video_only_part02.mp4");
+            File.Exists(only.Path).Should().BeTrue();
+
+            // The OTHER parts must NOT have been written.
+            File.Exists(Path.Combine(outDir, "video_only_part01.mp4")).Should().BeFalse(
+                "part 1 was not selected and must never be written");
+            File.Exists(Path.Combine(outDir, "video_only_part03.mp4")).Should().BeFalse(
+                "part 3 was not selected and must never be written");
+
+            // Only ONE mp4 exists on disk in the output dir.
+            Directory.GetFiles(outDir, "*.mp4").Should().ContainSingle();
+
+            // The written middle part re-probes as a clean, playable video ~3s long ([3..6]).
+            var probed = await probe.ProbeAsync(only.Path);
+            probed.IsSuccess.Should().BeTrue("the selected middle part must probe cleanly");
+            var info = ((ProbeResult.ProbeSucceeded)probed).Info;
+            info.HasVideo.Should().BeTrue();
+            info.Duration.Should().BeCloseTo(TimeSpan.FromSeconds(3), TimeSpan.FromMilliseconds(300));
+
+            only.ActualStart.Should().BeCloseTo(TimeSpan.FromSeconds(3), TimeSpan.FromMilliseconds(80));
+        }
+        finally
+        {
+            TryDelete(outDir);
+        }
+    }
+
+    [Fact]
+    public async Task Split_SelectAll_SameAsMuxerPath_AllPartsProduced()
+    {
+        if (ShouldSkip())
+        {
+            return;
+        }
+
+        var outDir = NewOutDir();
+        try
+        {
+            var engine = MakeEngine();
+
+            // Explicitly selecting ALL three parts is the full contiguous set → the muxer fast path,
+            // identical to a null selection: all parts written.
+            var req = new SplitRequest(
+                _fixtures.VideoOnlyPath,
+                new[] { TimeSpan.FromSeconds(3), TimeSpan.FromSeconds(6) },
+                outDir,
+                SelectedSegmentIndices: new[] { 1, 2, 3 });
+
+            var result = await engine.SplitAsync(req);
+
+            result.Segments.Should().HaveCount(3);
+            result.Segments.Should().OnlyContain(s => File.Exists(s.Path));
+            Directory.GetFiles(outDir, "*.mp4").Should().HaveCount(3);
+        }
+        finally
+        {
+            TryDelete(outDir);
+        }
+    }
+
+    [Fact]
+    public async Task Split_SelectFirstAndLast_WritesOnlyThoseTwo_MiddleSkipped()
+    {
+        if (ShouldSkip())
+        {
+            return;
+        }
+
+        var outDir = NewOutDir();
+        try
+        {
+            var engine = MakeEngine();
+
+            // Select parts 1 and 3 (skip the middle) — the non-contiguous subset exercises the
+            // per-segment path for both the first part ([0..3]) and the FINAL part ([6..end], to EOF).
+            var req = new SplitRequest(
+                _fixtures.VideoOnlyPath,
+                new[] { TimeSpan.FromSeconds(3), TimeSpan.FromSeconds(6) },
+                outDir,
+                SelectedSegmentIndices: new[] { 1, 3 });
+
+            var result = await engine.SplitAsync(req);
+
+            result.Segments.Should().HaveCount(2);
+            Path.GetFileName(result.Segments[0].Path).Should().Be("video_only_part01.mp4");
+            Path.GetFileName(result.Segments[1].Path).Should().Be("video_only_part03.mp4");
+
+            File.Exists(Path.Combine(outDir, "video_only_part02.mp4")).Should().BeFalse(
+                "the middle part was not selected");
+            Directory.GetFiles(outDir, "*.mp4").Should().HaveCount(2);
+        }
+        finally
+        {
+            TryDelete(outDir);
+        }
+    }
+
     private static void TryDelete(string dir)
     {
         try { Directory.Delete(dir, recursive: true); } catch { /* best-effort */ }

@@ -86,15 +86,24 @@ public sealed class SplitEngine : ISplitEngine
             averageGop,
             index => ResolveOutputPath(req, index));
 
-        // --- Refuse to clobber existing outputs unless Overwrite. ---
+        // T-049: resolve which contiguous parts the caller actually wants written. null selection =
+        // ALL parts (today's behaviour, the fast muxer path). A strict SUBSET keeps each part's
+        // ORIGINAL 1-based index (so a selected middle part is still …_part02) and is extracted via
+        // the per-segment -ss/-to copy path — unselected parts are never written.
+        var (selected, isFullSet) = ResolveSelectedSegments(req, plan);
+
+        // The end of the file — used so the FINAL selected part extracts to EOF (omit -to).
+        var fileDuration = duration;
+
+        // --- Refuse to clobber existing outputs unless Overwrite (only the SELECTED outputs). ---
         if (!req.Overwrite)
         {
-            foreach (var seg in plan.Segments)
+            foreach (var seg in selected)
             {
-                if (File.Exists(seg.OutputPath))
+                if (File.Exists(seg.Planned.OutputPath))
                 {
                     throw new SplitException(
-                        $"Output '{seg.OutputPath}' already exists. Pass Overwrite=true to replace existing segments.");
+                        $"Output '{seg.Planned.OutputPath}' already exists. Pass Overwrite=true to replace existing segments.");
                 }
             }
         }
@@ -114,61 +123,205 @@ public sealed class SplitEngine : ISplitEngine
 
         try
         {
-            var tempPattern = Path.Combine(tempDir, "part%03d" + GetOutputExtension(req));
-
-            var args = SplitArgsBuilder.SegmentMuxer(req.InputPath, plan.InteriorSnappedCuts, tempPattern);
-
-            // Enforce the copy invariant at runtime, not just in tests.
-            if (!SplitArgsBuilder.SatisfiesCopyInvariant(args.ToList()))
-            {
-                throw new SplitException(
-                    "Internal error: built ffmpeg command violates the stream-copy invariant (would re-encode). Refusing to run.");
-            }
-
-            // T-044: entering the ffmpeg segment pass. The segment count M is known from the cut
-            // plan; intra-segment index mapping from ffmpeg stderr is not reliably surfaced through
-            // the runner, so report the honest "M parts" rather than fabricate a live segment index.
-            var partCount = plan.Segments.Count;
+            // T-044: entering the ffmpeg pass. Report the count of parts actually being written.
+            var partCount = selected.Count;
             status?.Report(new OperationStatus(
                 "Splitting",
                 partCount == 1 ? "1 part" : $"{partCount} parts"));
 
-            var result = await _runner.RunAsync(args, duration, progress, ct).ConfigureAwait(false);
-            if (!result.Success)
-            {
-                // Classify via the signature+exit-code mapper so the CAUSE is the headline — a
-                // disk-full write (exit -28 / ENOSPC) is reported as such even when the stderr tail
-                // only carries a benign mpegts "start time for stream N is not set…" warning, which
-                // would otherwise be surfaced as the (misleading) failure text.
-                var mapped = FfmpegErrorMapper.Map(result);
-                var fullStdErr = result.StdErrText;
-
-                // Persist the FULL stderr (+ command + exit code + timestamp) to a per-run log so the
-                // user has the complete output, not just the tail. Best-effort — a write failure
-                // returns null and never aborts the (already-failing) op.
-                var command = "ffmpeg " + string.Join(" ", args.ToList());
-                var logPath = _logWriter.TryWrite("split", command, result.ExitCode, fullStdErr);
-
-                throw new SplitException(
-                    $"{mapped.Message} (ffmpeg exit {result.ExitCode}).{Environment.NewLine}{fullStdErr}",
-                    logPath,
-                    fullStdErr);
-            }
+            // T-049 routing: the full contiguous set → the single-pass segment muxer (unchanged fast
+            // path). A strict SUBSET → the per-segment -ss/-to copy path, one ffmpeg run per selected
+            // part, so ONLY the chosen ranges are written.
+            var produced = isFullSet
+                ? await ExtractAllViaSegmentMuxer(req, plan, duration, tempDir, progress, ct).ConfigureAwait(false)
+                : await ExtractSelectedPerSegment(req, selected, fileDuration, tempDir, progress, ct).ConfigureAwait(false);
 
             // T-044: ffmpeg finished — entering the finalize phase (temp→move + verify each segment).
             status?.Report(new OperationStatus("Finalizing"));
 
-            // The segment muxer numbers its outputs 0,1,2,… — map them onto our planned paths.
-            var produced = MoveTempSegmentsIntoPlace(tempDir, req, plan, ct);
+            var moved = MoveTempSegmentsIntoPlace(tempDir, produced, ct);
 
             progress?.Report(1.0);
             status?.Report(new OperationStatus("Done", null, 1.0));
-            return new SplitResult(produced, plan.Warnings);
+            return new SplitResult(moved, plan.Warnings);
         }
         finally
         {
             TryDeleteDirectory(tempDir);
         }
+    }
+
+    /// <summary>
+    /// One contiguous part chosen for extraction (T-049): the planned segment plus its ORIGINAL
+    /// 1-based index in the full plan and whether it is the plan's LAST part (extracts to EOF).
+    /// Keeping the original index means a selected middle part is still named <c>…_part02</c>.
+    /// </summary>
+    private readonly record struct SelectedSegment(PlannedSegment Planned, int OneBasedIndex, bool IsFinalPart);
+
+    /// <summary>
+    /// Resolve the caller's <see cref="SplitRequest.SelectedSegmentIndices"/> against the computed
+    /// plan (T-049). Returns the ordered list of selected parts (each keeping its ORIGINAL 1-based
+    /// index / output path) and a flag telling whether that set is the full contiguous plan (which
+    /// stays on the fast segment-muxer path). A null selection = all segments. A non-null selection is
+    /// deduped and clamped to the planned range; an empty (non-null) selection — or one that clamps to
+    /// nothing — is rejected.
+    /// </summary>
+    private static (IReadOnlyList<SelectedSegment> Selected, bool IsFullSet) ResolveSelectedSegments(
+        SplitRequest req,
+        SplitPlan plan)
+    {
+        var n = plan.Segments.Count;
+
+        IReadOnlyList<int> wantedIndices;
+        if (req.SelectedSegmentIndices is null)
+        {
+            // null = all parts, 1..N.
+            wantedIndices = Enumerable.Range(1, n).ToList();
+        }
+        else if (req.SelectedSegmentIndices.Count == 0)
+        {
+            throw new SplitException(
+                "No segments selected — select at least one part to export, or pass a null selection to export all.");
+        }
+        else
+        {
+            wantedIndices = req.SelectedSegmentIndices;
+        }
+
+        // Keep the distinct, in-range indices in plan order (1-based), building each SelectedSegment.
+        var wanted = new HashSet<int>(wantedIndices);
+        var selected = new List<SelectedSegment>(n);
+        for (var i = 0; i < n; i++)
+        {
+            var oneBased = i + 1;
+            if (wanted.Contains(oneBased))
+            {
+                selected.Add(new SelectedSegment(plan.Segments[i], oneBased, IsFinalPart: oneBased == n));
+            }
+        }
+
+        if (selected.Count == 0)
+        {
+            throw new SplitException(
+                "None of the selected segment indices fall within the planned parts — nothing to write.");
+        }
+
+        var isFullSet = selected.Count == n;
+        return (selected, isFullSet);
+    }
+
+    /// <summary>
+    /// The full-set fast path (unchanged behaviour): one single-pass segment-muxer command writes
+    /// every contiguous part into <paramref name="tempDir"/> as part000, part001, … which are then
+    /// mapped in plan order onto the planned destinations.
+    /// </summary>
+    private async Task<IReadOnlyList<(PlannedSegment Planned, string TempFile)>> ExtractAllViaSegmentMuxer(
+        SplitRequest req,
+        SplitPlan plan,
+        TimeSpan duration,
+        string tempDir,
+        IProgress<double>? progress,
+        CancellationToken ct)
+    {
+        var ext = GetOutputExtension(req);
+        var tempPattern = Path.Combine(tempDir, "part%03d" + ext);
+
+        var args = SplitArgsBuilder.SegmentMuxer(req.InputPath, plan.InteriorSnappedCuts, tempPattern);
+        AssertCopyInvariant(args);
+
+        var result = await _runner.RunAsync(args, duration, progress, ct).ConfigureAwait(false);
+        ThrowIfFailed(result, args);
+
+        var produced = new List<(PlannedSegment, string)>(plan.Segments.Count);
+        for (var i = 0; i < plan.Segments.Count; i++)
+        {
+            produced.Add((plan.Segments[i], Path.Combine(tempDir, $"part{i:000}{ext}")));
+        }
+
+        return produced;
+    }
+
+    /// <summary>
+    /// The subset path (T-049): run the per-segment <c>-ss/-to -c copy</c> command once per SELECTED
+    /// part, writing ONLY those ranges. Each temp file is named by the part's ORIGINAL 1-based index
+    /// (e.g. <c>part002.mp4</c> for a selected middle part) so the identity is preserved through the
+    /// move onto the planned destination. The plan's LAST part omits <c>-to</c> and runs to end of
+    /// file; interior parts pass an explicit <c>-to == SnappedEnd</c>. Progress is reported coarsely
+    /// across the selected parts. The copy invariant is asserted on every command.
+    /// </summary>
+    private async Task<IReadOnlyList<(PlannedSegment Planned, string TempFile)>> ExtractSelectedPerSegment(
+        SplitRequest req,
+        IReadOnlyList<SelectedSegment> selected,
+        TimeSpan fileDuration,
+        string tempDir,
+        IProgress<double>? progress,
+        CancellationToken ct)
+    {
+        var ext = GetOutputExtension(req);
+        var produced = new List<(PlannedSegment, string)>(selected.Count);
+
+        for (var i = 0; i < selected.Count; i++)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            var sel = selected[i];
+            var planned = sel.Planned;
+            var tempFile = Path.Combine(tempDir, $"part{sel.OneBasedIndex:000}{ext}");
+
+            // The plan's final part runs to EOF → omit -to (matches the muxer's last segment). Interior
+            // parts pass their explicit snapped end. Either way the boundaries are keyframe-snapped so
+            // the -c copy is clean.
+            TimeSpan? end = sel.IsFinalPart ? null : planned.SnappedEnd;
+            var reportedDuration = (end ?? fileDuration) - planned.SnappedStart;
+
+            var args = SplitArgsBuilder.PerSegment(req.InputPath, planned.SnappedStart, end, tempFile);
+            AssertCopyInvariant(args);
+
+            var result = await _runner.RunAsync(args, reportedDuration, null, ct).ConfigureAwait(false);
+            ThrowIfFailed(result, args);
+
+            progress?.Report((double)(i + 1) / selected.Count);
+            produced.Add((planned, tempFile));
+        }
+
+        return produced;
+    }
+
+    /// <summary>Assert the stream-copy invariant at runtime (not just in tests) before launching ffmpeg.</summary>
+    private static void AssertCopyInvariant(FfmpegArgs args)
+    {
+        if (!SplitArgsBuilder.SatisfiesCopyInvariant(args.ToList()))
+        {
+            throw new SplitException(
+                "Internal error: built ffmpeg command violates the stream-copy invariant (would re-encode). Refusing to run.");
+        }
+    }
+
+    /// <summary>
+    /// Turn a non-zero ffmpeg result into the mapped, friendly <see cref="SplitException"/> (persisting
+    /// the full stderr to a per-run log). No-op on success. Shared by both extraction paths.
+    /// </summary>
+    private void ThrowIfFailed(FfmpegResult result, FfmpegArgs args)
+    {
+        if (result.Success)
+        {
+            return;
+        }
+
+        // Classify via the signature+exit-code mapper so the CAUSE is the headline — a disk-full write
+        // (exit -28 / ENOSPC) is reported as such even when the stderr tail only carries a benign
+        // warning that would otherwise be surfaced as the (misleading) failure text.
+        var mapped = FfmpegErrorMapper.Map(result);
+        var fullStdErr = result.StdErrText;
+
+        // Persist the FULL stderr (+ command + exit code + timestamp) to a per-run log. Best-effort.
+        var command = "ffmpeg " + string.Join(" ", args.ToList());
+        var logPath = _logWriter.TryWrite("split", command, result.ExitCode, fullStdErr);
+
+        throw new SplitException(
+            $"{mapped.Message} (ffmpeg exit {result.ExitCode}).{Environment.NewLine}{fullStdErr}",
+            logPath,
+            fullStdErr);
     }
 
     private static void ValidateRequestShape(SplitRequest req)
@@ -208,31 +361,28 @@ public sealed class SplitEngine : ISplitEngine
     }
 
     /// <summary>
-    /// Move the segment muxer's numbered temp outputs (part000, part001, …) onto the planned,
-    /// user-named destinations. Doing the move AFTER ffmpeg succeeds means a cancel mid-run
-    /// leaves only temp files (cleaned in finally), never a half-written FINAL segment.
+    /// Move the extracted temp outputs onto their planned, user-named destinations (only the parts
+    /// that were actually produced — the SELECTED ones, T-049). Doing the move AFTER ffmpeg succeeds
+    /// means a cancel mid-run leaves only temp files (cleaned in finally), never a half-written FINAL
+    /// segment. The returned <see cref="SplitResult.Segments"/> lists only the written parts.
     /// </summary>
     private static IReadOnlyList<SplitSegment> MoveTempSegmentsIntoPlace(
         string tempDir,
-        SplitRequest req,
-        SplitPlan plan,
+        IReadOnlyList<(PlannedSegment Planned, string TempFile)> produced,
         CancellationToken ct)
     {
-        var ext = GetOutputExtension(req);
-        var produced = new List<SplitSegment>(plan.Segments.Count);
+        var moved = new List<SplitSegment>(produced.Count);
 
-        for (var i = 0; i < plan.Segments.Count; i++)
+        foreach (var (planned, tempFile) in produced)
         {
             ct.ThrowIfCancellationRequested();
 
-            var tempFile = Path.Combine(tempDir, $"part{i:000}{ext}");
             if (!File.Exists(tempFile))
             {
                 throw new SplitException(
                     $"Expected segment '{tempFile}' was not produced by ffmpeg (got fewer segments than planned).");
             }
 
-            var planned = plan.Segments[i];
             var dest = planned.OutputPath;
 
             if (File.Exists(dest))
@@ -242,7 +392,7 @@ public sealed class SplitEngine : ISplitEngine
 
             File.Move(tempFile, dest);
 
-            produced.Add(new SplitSegment(
+            moved.Add(new SplitSegment(
                 Path: dest,
                 Start: planned.RequestedStart,
                 End: planned.RequestedEnd,
@@ -250,7 +400,7 @@ public sealed class SplitEngine : ISplitEngine
                 Delta: planned.StartDelta));
         }
 
-        return produced.AsReadOnly();
+        return moved.AsReadOnly();
     }
 
     /// <summary>

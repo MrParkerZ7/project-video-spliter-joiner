@@ -327,6 +327,156 @@ public sealed class SplitViewModelTests
             .And.Contain(logPath);
     }
 
+    // ---- Selectable segments (T-049) --------------------------------------------------------
+
+    /// <summary>Build a VM loaded with a 15m clip and a 1s-GOP keyframe grid (0,1,…,900s).</summary>
+    private static async Task<(SplitViewModel Vm, FakeProbe Probe)> BuildLoaded15mAsync()
+    {
+        var probe = new FakeProbe
+        {
+            ProbeResultToReturn = ProbeResult.Success(new MediaInfo(
+                TimeSpan.FromMinutes(15), "mp4", Array.Empty<StreamInfo>(), Array.Empty<StreamInfo>())),
+            // Keyframes every second so 5m / 10m snap exactly to themselves.
+            KeyframesToReturn = Enumerable.Range(0, 901).Select(i => TimeSpan.FromSeconds(i)).ToArray(),
+        };
+        var vm = new SplitViewModel(probe, new FakeSplitEngine());
+        await vm.LoadAsync(FakePath);
+        vm.OutputDir = @"C:\out";
+        return (vm, probe);
+    }
+
+    [Fact]
+    public async Task Segments_MarkersAt5And10On15mClip_ProjectsThreeParts_AllSelected()
+    {
+        var (vm, _) = await BuildLoaded15mAsync();
+
+        vm.AddMarker(TimeSpan.FromMinutes(5));
+        vm.AddMarker(TimeSpan.FromMinutes(10));
+
+        vm.Segments.Should().HaveCount(3);
+
+        vm.Segments[0].Index.Should().Be(1);
+        vm.Segments[0].Start.Should().Be(TimeSpan.Zero);
+        vm.Segments[0].End.Should().Be(TimeSpan.FromMinutes(5));
+        vm.Segments[0].Duration.Should().Be(TimeSpan.FromMinutes(5));
+
+        vm.Segments[1].Index.Should().Be(2);
+        vm.Segments[1].Start.Should().Be(TimeSpan.FromMinutes(5));
+        vm.Segments[1].End.Should().Be(TimeSpan.FromMinutes(10));
+
+        vm.Segments[2].Index.Should().Be(3);
+        vm.Segments[2].Start.Should().Be(TimeSpan.FromMinutes(10));
+        vm.Segments[2].End.Should().Be(TimeSpan.FromMinutes(15));
+
+        vm.Segments.Should().OnlyContain(s => s.IsSelected, "parts default to selected");
+        vm.SelectedSegmentCount.Should().Be(3);
+        vm.SegmentCount.Should().Be(3);
+
+        // Display formatting: "Part 2 · 05:00–10:00 · 5:00".
+        vm.Segments[1].Display.Should().Be("Part 2 · 05:00–10:00 · 5:00");
+    }
+
+    [Fact]
+    public async Task Segments_Deselect_UpdatesSelectedCountAndRunLabel()
+    {
+        var (vm, _) = await BuildLoaded15mAsync();
+        vm.AddMarker(TimeSpan.FromMinutes(5));
+        vm.AddMarker(TimeSpan.FromMinutes(10));
+
+        vm.RunLabel.Should().Be("Split 3 parts");
+
+        vm.Segments[1].IsSelected = false;
+
+        vm.SelectedSegmentCount.Should().Be(2);
+        vm.RunLabel.Should().Be("Split 2 of 3 parts");
+        vm.CanRunSplit.Should().BeTrue("two parts still selected");
+    }
+
+    [Fact]
+    public async Task Segments_ZeroSelected_DisablesRun()
+    {
+        var (vm, _) = await BuildLoaded15mAsync();
+        vm.AddMarker(TimeSpan.FromMinutes(5));
+        vm.AddMarker(TimeSpan.FromMinutes(10));
+
+        vm.SelectNoSegmentsCommand.Execute(null);
+
+        vm.SelectedSegmentCount.Should().Be(0);
+        vm.CanRunSplit.Should().BeFalse("zero parts selected → Run disabled");
+        vm.RunSplitCommand.CanExecute(null).Should().BeFalse();
+
+        // Re-select all restores Run.
+        vm.SelectAllSegmentsCommand.Execute(null);
+        vm.SelectedSegmentCount.Should().Be(3);
+        vm.CanRunSplit.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task Segments_DeselectPreservedAcrossRebuild_WhenAnotherMarkerAdded()
+    {
+        var (vm, _) = await BuildLoaded15mAsync();
+        vm.AddMarker(TimeSpan.FromMinutes(5));
+        vm.AddMarker(TimeSpan.FromMinutes(10));
+
+        // Uncheck part 1, then add another marker (rebuild) — part 1 must stay unchecked.
+        vm.Segments[0].IsSelected = false;
+        vm.AddMarker(TimeSpan.FromMinutes(12));
+
+        vm.Segments.Should().HaveCount(4);
+        vm.Segments[0].IsSelected.Should().BeFalse("prior selection is preserved by index across rebuild");
+    }
+
+    [Fact]
+    public async Task RunSplit_AllSelected_PassesNullSelection_MuxerPath()
+    {
+        var probe = new FakeProbe
+        {
+            ProbeResultToReturn = ProbeResult.Success(new MediaInfo(
+                TimeSpan.FromMinutes(15), "mp4", Array.Empty<StreamInfo>(), Array.Empty<StreamInfo>())),
+            KeyframesToReturn = Enumerable.Range(0, 901).Select(i => TimeSpan.FromSeconds(i)).ToArray(),
+        };
+        var engine = new FakeSplitEngine();
+        var vm = new SplitViewModel(probe, engine);
+        await vm.LoadAsync(FakePath);
+        vm.OutputDir = @"C:\out";
+        vm.AddMarker(TimeSpan.FromMinutes(5));
+        vm.AddMarker(TimeSpan.FromMinutes(10));
+
+        await vm.RunSplitAsync();
+
+        engine.LastRequest.Should().NotBeNull();
+        engine.LastRequest!.SelectedSegmentIndices.Should().BeNull(
+            "all parts selected → null selection keeps the fast muxer path");
+    }
+
+    [Fact]
+    public async Task RunSplit_Subset_PassesSelectedIndices_KeepingOriginalIndex()
+    {
+        var probe = new FakeProbe
+        {
+            ProbeResultToReturn = ProbeResult.Success(new MediaInfo(
+                TimeSpan.FromMinutes(15), "mp4", Array.Empty<StreamInfo>(), Array.Empty<StreamInfo>())),
+            KeyframesToReturn = Enumerable.Range(0, 901).Select(i => TimeSpan.FromSeconds(i)).ToArray(),
+        };
+        var engine = new FakeSplitEngine();
+        var vm = new SplitViewModel(probe, engine);
+        await vm.LoadAsync(FakePath);
+        vm.OutputDir = @"C:\out";
+        vm.AddMarker(TimeSpan.FromMinutes(5));
+        vm.AddMarker(TimeSpan.FromMinutes(10));
+
+        // Keep only the MIDDLE part (index 2).
+        vm.Segments[0].IsSelected = false;
+        vm.Segments[2].IsSelected = false;
+
+        await vm.RunSplitAsync();
+
+        engine.LastRequest.Should().NotBeNull();
+        engine.LastRequest!.SelectedSegmentIndices.Should().NotBeNull();
+        engine.LastRequest.SelectedSegmentIndices.Should().ContainSingle().Which.Should().Be(
+            2, "the ORIGINAL 1-based index of the selected middle part is preserved");
+    }
+
     // ---- Player wiring (T-012) --------------------------------------------------------------
 
     /// <summary>Minimal recording fake for the preview-player seam.</summary>

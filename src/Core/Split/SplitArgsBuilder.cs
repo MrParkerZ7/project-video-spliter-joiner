@@ -56,10 +56,15 @@ public static class SplitArgsBuilder
     }
 
     /// <summary>
-    /// Build the PER-SEGMENT fallback command for one range [start..end] — used for
-    /// robustness or arbitrary-subset extraction. Input-seek before <c>-i</c> for speed, then
-    /// <c>-to</c> the end, <c>-map 0 -c copy -avoid_negative_ts make_zero</c> so the copied
-    /// segment starts at zero. <paramref name="end"/> may be null for "to end of file".
+    /// Build the PER-SEGMENT command for one range <c>[start..end]</c> (T-049 subset extraction) —
+    /// input-seek before <c>-i</c> for speed, then <c>-map 0 -c copy -avoid_negative_ts make_zero</c>
+    /// so the copied segment starts at zero. <paramref name="end"/> may be null for "to end of file".
+    ///
+    /// <para>IMPORTANT ffmpeg semantics: because <c>-ss</c> is placed BEFORE <c>-i</c> (an INPUT
+    /// seek), the input timeline is reset to zero at the seek point, so <c>-to</c> is measured from
+    /// the seek point — i.e. it is effectively a DURATION, not an absolute source timestamp. This
+    /// builder therefore emits <c>-to (end − start)</c> so the produced clip is exactly the requested
+    /// <c>[start..end]</c> range (emitting the absolute end would over-run by <c>start</c>).</para>
     /// </summary>
     public static FfmpegArgs PerSegment(
         string inputPath,
@@ -77,7 +82,14 @@ public static class SplitArgsBuilder
 
         if (end is { } e)
         {
-            args.Raw("-to", SplitPlanner.ToFfmpegSeconds(e));
+            // -to is relative to the input-seek point → pass the DURATION (end − start), clamped ≥ 0.
+            var duration = e - start;
+            if (duration < TimeSpan.Zero)
+            {
+                duration = TimeSpan.Zero;
+            }
+
+            args.Raw("-to", SplitPlanner.ToFfmpegSeconds(duration));
         }
 
         return args

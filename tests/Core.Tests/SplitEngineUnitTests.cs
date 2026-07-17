@@ -118,6 +118,128 @@ public class SplitEngineUnitTests
     }
 
     [Fact]
+    public async Task SplitAsync_Subset_UsesPerSegmentCopyPath_NoEncoderTokens_WritesOnlySelected()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "vsj-subset-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        var input = Path.Combine(dir, "clip.mp4");
+        await File.WriteAllTextAsync(input, "placeholder");
+        var outDir = Path.Combine(dir, "out");
+        Directory.CreateDirectory(outDir);
+
+        try
+        {
+            // 10s file, 1s GOP. Cuts at 3 & 6 → 3 parts. Select only the middle part (index 2).
+            var runner = new RecordingFakeRunner();
+            var probe = new FakeProbe(
+                TimeSpan.FromSeconds(10),
+                Enumerable.Range(0, 11).Select(i => TimeSpan.FromSeconds(i)).ToList());
+            var engine = new SplitEngine(runner, probe);
+
+            var req = new SplitRequest(
+                input,
+                new[] { TimeSpan.FromSeconds(3), TimeSpan.FromSeconds(6) },
+                outDir,
+                SelectedSegmentIndices: new[] { 2 });
+
+            var result = await engine.SplitAsync(req);
+
+            // ONE ffmpeg run (one selected part), and it is the PER-SEGMENT path (-ss/-to), not the muxer.
+            runner.Commands.Should().ContainSingle();
+            var tokens = runner.Commands[0];
+            tokens.Should().Contain("-ss").And.Contain("-to");
+            tokens.Should().NotContain("segment", "the subset path must NOT use the segment muxer");
+
+            // The copy invariant holds and NO encoder token leaks in.
+            SplitArgsBuilder.SatisfiesCopyInvariant(tokens).Should().BeTrue();
+            foreach (var forbidden in SplitArgsBuilder.ForbiddenEncoderTokens)
+            {
+                tokens.Should().NotContain(forbidden);
+            }
+
+            // Only the selected part is produced, and it keeps its ORIGINAL index (_part02).
+            result.Segments.Should().ContainSingle();
+            Path.GetFileName(result.Segments[0].Path).Should().Be("clip_part02.mp4");
+            Directory.GetFiles(outDir, "*.mp4").Select(Path.GetFileName)
+                .Should().BeEquivalentTo(new[] { "clip_part02.mp4" });
+        }
+        finally
+        {
+            try { Directory.Delete(dir, recursive: true); } catch { /* best-effort */ }
+        }
+    }
+
+    [Fact]
+    public async Task SplitAsync_FullSelection_UsesSegmentMuxerPath()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "vsj-fullsel-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        var input = Path.Combine(dir, "clip.mp4");
+        await File.WriteAllTextAsync(input, "placeholder");
+        var outDir = Path.Combine(dir, "out");
+        Directory.CreateDirectory(outDir);
+
+        try
+        {
+            var runner = new RecordingFakeRunner();
+            var probe = new FakeProbe(
+                TimeSpan.FromSeconds(10),
+                Enumerable.Range(0, 11).Select(i => TimeSpan.FromSeconds(i)).ToList());
+            var engine = new SplitEngine(runner, probe);
+
+            // Selecting all 3 parts explicitly == the full contiguous set → single muxer pass.
+            var req = new SplitRequest(
+                input,
+                new[] { TimeSpan.FromSeconds(3), TimeSpan.FromSeconds(6) },
+                outDir,
+                SelectedSegmentIndices: new[] { 1, 2, 3 });
+
+            await engine.SplitAsync(req);
+
+            runner.Commands.Should().ContainSingle("the muxer path is a single ffmpeg pass");
+            runner.Commands[0].Should().Contain("segment").And.Contain("-segment_times");
+        }
+        finally
+        {
+            try { Directory.Delete(dir, recursive: true); } catch { /* best-effort */ }
+        }
+    }
+
+    [Fact]
+    public async Task SplitAsync_EmptySelection_Rejected()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "vsj-emptysel-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        var input = Path.Combine(dir, "clip.mp4");
+        await File.WriteAllTextAsync(input, "placeholder");
+        var outDir = Path.Combine(dir, "out");
+        Directory.CreateDirectory(outDir);
+
+        try
+        {
+            var runner = new RecordingFakeRunner();
+            var probe = new FakeProbe(
+                TimeSpan.FromSeconds(10),
+                Enumerable.Range(0, 11).Select(i => TimeSpan.FromSeconds(i)).ToList());
+            var engine = new SplitEngine(runner, probe);
+
+            var req = new SplitRequest(
+                input,
+                new[] { TimeSpan.FromSeconds(5) },
+                outDir,
+                SelectedSegmentIndices: Array.Empty<int>());
+
+            Func<Task> act = () => engine.SplitAsync(req);
+            await act.Should().ThrowAsync<SplitException>().WithMessage("*No segments selected*");
+            runner.Commands.Should().BeEmpty("no ffmpeg should run for an empty selection");
+        }
+        finally
+        {
+            try { Directory.Delete(dir, recursive: true); } catch { /* best-effort */ }
+        }
+    }
+
+    [Fact]
     public async Task SplitAsync_RefusesToOverwrite_WhenOverwriteFalse()
     {
         var dir = Path.Combine(Path.GetTempPath(), "vsj-clobber-" + Guid.NewGuid().ToString("N"));
@@ -231,4 +353,49 @@ internal sealed class NoopFakeRunner : IFfmpegRunner
         IProgress<double>? progress = null,
         CancellationToken ct = default) =>
         Task.FromResult(new FfmpegResult(0, new List<string>().AsReadOnly()));
+}
+
+/// <summary>
+/// Records every command's token list AND materializes the temp files the engine expects to move
+/// into place — so routing/invariant assertions run without a real binary while the split still
+/// "succeeds". For the per-segment path the output token is a concrete file (created verbatim); for
+/// the segment-muxer path the output token is a <c>part%03d.ext</c> pattern, expanded to
+/// <c>part000…part00{N-1}</c> where N = (comma count in <c>-segment_times</c>) + 1.
+/// </summary>
+internal sealed class RecordingFakeRunner : IFfmpegRunner
+{
+    public List<IReadOnlyList<string>> Commands { get; } = new();
+
+    public Task<FfmpegResult> RunAsync(
+        FfmpegArgs args,
+        TimeSpan? totalDuration = null,
+        IProgress<double>? progress = null,
+        CancellationToken ct = default)
+    {
+        var tokens = args.ToList().ToList();
+        Commands.Add(tokens);
+
+        var output = tokens[^1];
+        if (output.Contains("%03d", StringComparison.Ordinal))
+        {
+            // Muxer pattern → expand from the -segment_times comma count.
+            var idx = tokens.IndexOf("-segment_times");
+            var count = 1;
+            if (idx >= 0 && idx + 1 < tokens.Count)
+            {
+                count = tokens[idx + 1].Split(',').Length + 1;
+            }
+
+            for (var i = 0; i < count; i++)
+            {
+                File.WriteAllText(output.Replace("%03d", i.ToString("000")), "seg");
+            }
+        }
+        else
+        {
+            File.WriteAllText(output, "seg");
+        }
+
+        return Task.FromResult(new FfmpegResult(0, new List<string>().AsReadOnly()));
+    }
 }

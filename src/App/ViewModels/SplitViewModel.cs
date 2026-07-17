@@ -86,6 +86,9 @@ public sealed class SplitViewModel : ObservableObject
 
         Markers = new ObservableCollection<CutMarkerViewModel>();
 
+        // T-049: the selectable segment projection ([0..s1],[s1..s2],…,[sN..end]).
+        Segments = new ObservableCollection<SplitSegmentViewModel>();
+
         // The timeline overlay (T-014) projects Player/Markers onto a normalized strip.
         // Constructed last so it can subscribe to the fully-built collections + player.
         Timeline = new TimelineViewModel(this);
@@ -108,6 +111,8 @@ public sealed class SplitViewModel : ObservableObject
         SeekToMarkerCommand = new RelayCommand(SeekToMarker);
         RemoveMarkerCommand = new RelayCommand(RemoveMarker);
         RunSplitCommand = new RelayCommand(_ => _ = RunSplitAsync(), _ => CanRunSplit);
+        SelectAllSegmentsCommand = new RelayCommand(_ => SetAllSegmentsSelected(true), _ => Segments.Count > 0);
+        SelectNoSegmentsCommand = new RelayCommand(_ => SetAllSegmentsSelected(false), _ => Segments.Count > 0);
         OpenFolderCommand = new RelayCommand(_ => OpenFolder(), _ => !string.IsNullOrWhiteSpace(OutputDir));
         ClearCommand = new RelayCommand(_ => Clear(), _ => CanClear);
         CancelCommand = Operation.CancelCommand;
@@ -136,14 +141,28 @@ public sealed class SplitViewModel : ObservableObject
     public MediaInfo? Info
     {
         get => _info;
-        private set => SetProperty(ref _info, value);
+        private set
+        {
+            if (SetProperty(ref _info, value))
+            {
+                // Duration becoming known (or cleared) re-projects the selectable parts (T-049).
+                RebuildSegments();
+            }
+        }
     }
 
     /// <summary>Video keyframe timestamps of the loaded file (drives snapping).</summary>
     public IReadOnlyList<TimeSpan> Keyframes
     {
         get => _keyframes;
-        private set => SetProperty(ref _keyframes, value);
+        private set
+        {
+            if (SetProperty(ref _keyframes, value))
+            {
+                // Keyframes arriving re-snap the markers, moving segment boundaries → re-project.
+                RebuildSegments();
+            }
+        }
     }
 
     /// <summary>
@@ -240,6 +259,45 @@ public sealed class SplitViewModel : ObservableObject
     public ObservableCollection<CutMarkerViewModel> Markers { get; }
 
     /// <summary>
+    /// The selectable split parts (T-049): the ordered contiguous ranges the current markers +
+    /// duration imply (<c>[0..s1],[s1..s2],…,[sN..end]</c>), each with an observable
+    /// <see cref="SplitSegmentViewModel.IsSelected"/> (default true). Recomputed whenever the markers
+    /// change, a marker resolves its snap, or the duration becomes known. Only the selected parts are
+    /// written when the split runs; unselected parts are never produced.
+    /// </summary>
+    public ObservableCollection<SplitSegmentViewModel> Segments { get; }
+
+    /// <summary>Number of parts currently selected for export (T-049).</summary>
+    public int SelectedSegmentCount => Segments.Count(s => s.IsSelected);
+
+    /// <summary>Total number of parts the current markers produce (selected or not).</summary>
+    public int SegmentCount => Segments.Count;
+
+    /// <summary>
+    /// Run button label reflecting the current selection (T-049): "Split 3 parts" when all are
+    /// selected, "Split 2 of 3 parts" for a subset, "Split" when there is nothing to split yet.
+    /// </summary>
+    public string RunLabel
+    {
+        get
+        {
+            var total = Segments.Count;
+            if (total == 0)
+            {
+                return "Split";
+            }
+
+            var selected = SelectedSegmentCount;
+            if (selected == total)
+            {
+                return total == 1 ? "Split 1 part" : $"Split {total} parts";
+            }
+
+            return $"Split {selected} of {total} parts";
+        }
+    }
+
+    /// <summary>
     /// The timeline overlay projection (T-014): markers + playhead on a normalized strip under the
     /// player, with click-to-cut / click-to-seek routed back through this VM's existing
     /// <see cref="AddCutAt"/> / seek commands.
@@ -263,11 +321,15 @@ public sealed class SplitViewModel : ObservableObject
     /// </summary>
     public bool CanClear => HasFile && !Operation.IsRunning;
 
-    /// <summary>Run is enabled only with a file, at least one marker, and an output dir set.</summary>
+    /// <summary>
+    /// Run is enabled only with a file, at least one marker, an output dir set, AND at least one
+    /// segment selected for export (T-049 — zero selected → disabled).
+    /// </summary>
     public bool CanRunSplit =>
         !string.IsNullOrWhiteSpace(InputPath)
         && Markers.Count >= 1
-        && !string.IsNullOrWhiteSpace(OutputDir);
+        && !string.IsNullOrWhiteSpace(OutputDir)
+        && SelectedSegmentCount >= 1;
 
     // ---- Commands ---------------------------------------------------------------------------
 
@@ -298,6 +360,12 @@ public sealed class SplitViewModel : ObservableObject
 
     /// <summary>Run the split through the engine (guarded by <see cref="CanRunSplit"/>).</summary>
     public RelayCommand RunSplitCommand { get; }
+
+    /// <summary>Select every split part for export (T-049). Enabled when parts exist.</summary>
+    public RelayCommand SelectAllSegmentsCommand { get; }
+
+    /// <summary>Deselect every split part (T-049) — leaves Run disabled until one is re-selected.</summary>
+    public RelayCommand SelectNoSegmentsCommand { get; }
 
     /// <summary>Open the output directory in Explorer.</summary>
     public RelayCommand OpenFolderCommand { get; }
@@ -684,12 +752,21 @@ public sealed class SplitViewModel : ObservableObject
             .ToList()
             .AsReadOnly();
 
+        // T-049: pass the selected part indices so ONLY those are written. When ALL parts are selected
+        // (or the projection is empty), pass null so the engine keeps its fast segment-muxer path —
+        // today's behaviour, unchanged. A strict subset routes to the per-segment copy path.
+        var allSelected = Segments.Count == 0 || Segments.All(s => s.IsSelected);
+        IReadOnlyList<int>? selectedIndices = allSelected
+            ? null
+            : Segments.Where(s => s.IsSelected).Select(s => s.Index).ToList().AsReadOnly();
+
         var request = new SplitRequest(
             InputPath: InputPath,
             CutPoints: cutPoints,
             OutputDir: OutputDir,
             NamingPattern: string.IsNullOrWhiteSpace(NamingPattern) ? SplitRequest.DefaultNamingPattern : NamingPattern,
-            Overwrite: Overwrite);
+            Overwrite: Overwrite,
+            SelectedSegmentIndices: selectedIndices);
 
         LastResult = null;
         SplitResult? result = null;
@@ -797,8 +874,135 @@ public sealed class SplitViewModel : ObservableObject
 
     private void OnMarkersChanged(object? sender, NotifyCollectionChangedEventArgs e)
     {
+        // Keep a snap-change subscription on each marker so a marker resolving its snap (T-041) or the
+        // user retiming it re-projects the segments. Unsubscribe removed markers to avoid leaks.
+        if (e.OldItems is not null)
+        {
+            foreach (CutMarkerViewModel m in e.OldItems)
+            {
+                m.PropertyChanged -= OnMarkerPropertyChanged;
+            }
+        }
+
+        if (e.NewItems is not null)
+        {
+            foreach (CutMarkerViewModel m in e.NewItems)
+            {
+                m.PropertyChanged += OnMarkerPropertyChanged;
+            }
+        }
+
+        if (e.Action == NotifyCollectionChangedAction.Reset)
+        {
+            // Clear() raises a Reset with no OldItems — the markers were already detached logically;
+            // their handlers simply stop firing once the collection is empty. New adds re-subscribe.
+        }
+
+        RebuildSegments();
+
         OnPropertyChanged(nameof(CanRunSplit));
         RaiseCommandStates();
+    }
+
+    private void OnMarkerPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        // A marker's snapped time is what the segment boundaries are built from — re-project when it
+        // (or the requested time it derives from) changes.
+        if (e.PropertyName is nameof(CutMarkerViewModel.Snapped) or nameof(CutMarkerViewModel.Requested))
+        {
+            RebuildSegments();
+        }
+    }
+
+    /// <summary>
+    /// Re-project the selectable split parts (T-049) from the current markers' SNAPPED times + the
+    /// probed duration. Produces the ordered contiguous ranges <c>[0..s1],[s1..s2],…,[sN..end]</c>.
+    /// Preserves each part's <see cref="SplitSegmentViewModel.IsSelected"/> state by index across a
+    /// rebuild so re-snapping a marker doesn't silently re-check parts the user unchecked. No file /
+    /// no duration → empty projection. A marker still pending its snap is skipped as a boundary (it
+    /// resolves shortly and triggers another rebuild).
+    /// </summary>
+    private void RebuildSegments()
+    {
+        // Remember prior selection by 1-based index so a rebuild keeps the user's choices.
+        var priorSelection = Segments.ToDictionary(s => s.Index, s => s.IsSelected);
+
+        // Detach old rows.
+        foreach (var seg in Segments)
+        {
+            seg.PropertyChanged -= OnSegmentPropertyChanged;
+        }
+
+        Segments.Clear();
+
+        var duration = Info?.Duration ?? TimeSpan.Zero;
+        if (!HasFile || duration <= TimeSpan.Zero)
+        {
+            OnSegmentsChanged();
+            return;
+        }
+
+        // Interior boundaries = distinct snapped marker times strictly inside (0, duration), ascending.
+        var boundaries = Markers
+            .Select(m => m.Snapped)
+            .Where(t => t > TimeSpan.Zero && t < duration)
+            .Distinct()
+            .OrderBy(t => t)
+            .ToList();
+
+        var start = TimeSpan.Zero;
+        var index = 1;
+        foreach (var b in boundaries)
+        {
+            AddSegmentRow(index, start, b, priorSelection);
+            start = b;
+            index++;
+        }
+
+        // Final part runs to the end of the file.
+        AddSegmentRow(index, start, duration, priorSelection);
+
+        OnSegmentsChanged();
+    }
+
+    private void AddSegmentRow(int index, TimeSpan start, TimeSpan end, IReadOnlyDictionary<int, bool> priorSelection)
+    {
+        var selected = priorSelection.TryGetValue(index, out var wasSelected) ? wasSelected : true;
+        var row = new SplitSegmentViewModel(index, start, end, selected);
+        row.PropertyChanged += OnSegmentPropertyChanged;
+        Segments.Add(row);
+    }
+
+    private void OnSegmentPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(SplitSegmentViewModel.IsSelected))
+        {
+            OnSegmentsChanged();
+        }
+    }
+
+    /// <summary>Re-raise everything that depends on the segment projection / selection.</summary>
+    private void OnSegmentsChanged()
+    {
+        OnPropertyChanged(nameof(SegmentCount));
+        OnPropertyChanged(nameof(SelectedSegmentCount));
+        OnPropertyChanged(nameof(RunLabel));
+        OnPropertyChanged(nameof(CanRunSplit));
+        RaiseCommandStates();
+        SelectAllSegmentsCommand.RaiseCanExecuteChanged();
+        SelectNoSegmentsCommand.RaiseCanExecuteChanged();
+    }
+
+    private void SetAllSegmentsSelected(bool selected)
+    {
+        foreach (var seg in Segments)
+        {
+            seg.IsSelected = selected;
+        }
+
+        // Each IsSelected change fires OnSegmentsChanged already, but call once more in case the
+        // collection was empty / all values were unchanged (idempotent).
+        OnSegmentsChanged();
     }
 
     private void OnPlayerChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)

@@ -129,6 +129,37 @@
                 <TextBlock Text="Cut markers (snapped to keyframe):" FontWeight="Bold" Margin="0,4,0,2" />
             </StackPanel>
 
+            <!-- ====== Selectable split parts (T-049): checkbox per part + select all/none ====== -->
+            <StackPanel DockPanel.Dock="Bottom" Margin="0,10,0,0">
+                <StackPanel Orientation="Horizontal" Margin="0,0,0,2">
+                    <TextBlock Text="Parts to export:" FontWeight="Bold" VerticalAlignment="Center" />
+                    <TextBlock Margin="8,0,0,0"
+                               VerticalAlignment="Center"
+                               Foreground="#555"
+                               Text="{Binding SelectedSegmentCount, StringFormat={}({0} selected)}" />
+                    <Button Content="All"
+                            Margin="10,0,0,0"
+                            Padding="8,1"
+                            ToolTip="Select every part for export"
+                            Command="{Binding SelectAllSegmentsCommand}" />
+                    <Button Content="None"
+                            Margin="4,0,0,0"
+                            Padding="8,1"
+                            ToolTip="Deselect every part"
+                            Command="{Binding SelectNoSegmentsCommand}" />
+                </StackPanel>
+                <ListBox ItemsSource="{Binding Segments}" MaxHeight="140">
+                    <ListBox.ItemTemplate>
+                        <DataTemplate DataType="{x:Type vm:SplitSegmentViewModel}">
+                            <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay}"
+                                      Content="{Binding Display}"
+                                      FontFamily="Consolas"
+                                      ToolTip="Uncheck to exclude this part from the export" />
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+            </StackPanel>
+
             <!-- Marker list -->
             <ListBox ItemsSource="{Binding Markers}" MinHeight="120">
                 <ListBox.ItemTemplate>
@@ -188,7 +219,7 @@
                           IsChecked="{Binding Overwrite, Mode=TwoWay}" />
 
                 <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
-                    <Button Content="Run split"
+                    <Button Content="{Binding RunLabel}"
                             Padding="14,4"
                             FontWeight="Bold"
                             Command="{Binding RunSplitCommand}" />
