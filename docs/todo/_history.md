@@ -2,6 +2,11 @@
 
 <!-- latest on top; entries are never deleted -->
 
+## 2026-07-18 — todo-next-all: draining G-020 + G-019
+
+- Order: T-061 (output-dir, quick) → T-058 (tokens+IBM Plex fonts) → T-059 (relayout to sample) → docs (T-060+T-062 combined). Serialized.
+- **T-061 🔵** output-dir defaults to loaded file's folder + resets per load dispatched.
+
 ## 2026-07-18 — todo-goal PLANNED: G-020 output-dir defaults to file folder + resets per load
 
 - User: split output should DEFAULT to the loaded file's folder (configurable), and RESET on every new load. Current (post-T-038): output defaults to the remembered LastOutputDir — opposite of the ask.
@@ -383,3 +388,8 @@
 - Locked decisions: **D1** stack = .NET/C# WPF · **D2** cut = keyframe-snap zero re-encode (`-c copy`) · **D3** auto-detect = black + white + scene cuts (ranked, decode-only). All user-confirmed at plan time.
 - Greenfield: target was an empty git repo — entire scope is gap.
 - Proceedable now: **T-001** (sole root).
+
+## 2026-07-18 · T-061 done + new layout req folded into T-059
+- **T-061 done** (`1dc07bc`): `SplitViewModel.LoadAsync` sets `OutputDir` = loaded file's folder unconditionally on every load (drag + picker), still editable, re-anchors per file; stopped defaulting from `LastOutputDir`; T-038 tests updated; 379/379 green, 0 warnings. Closes G-020 core (T-062 docs remain).
+- **New user todo-goal** (folded, not a new goal): "move the tool from load/clear and below to right side tab same as claude design sample." Captured into **T-059** as the ★ two-column layout requirement (video/preview + timeline LEFT; Load/Clear + all tools RIGHT panel) + acceptance criterion; also noted in G-019 design spec. Avoided a redundant G-021 that would fight T-059 over the same views.
+- Drain (G-019/G-020) **paused** by the interrupt — resume with `todo-next-all`.
