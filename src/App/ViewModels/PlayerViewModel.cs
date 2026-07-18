@@ -651,9 +651,25 @@ public sealed class PlayerViewModel : ObservableObject
     /// (a suppressed set, so it does not itself re-seek), records the target, and calls the player's
     /// async <see cref="IMediaPlayer.Seek"/>. Until the seek settles, <see cref="OnPositionChanged"/>
     /// ignores off-target echoes so the playhead can't pop back (T-033).
+    ///
+    /// <para>Click double-seek dedupe (T-075): with <c>IsMoveToPointEnabled</c> a single track click
+    /// fires the click-point <c>Value</c> change (→ <see cref="Position"/> setter → BeginSeek) AND a
+    /// zero-distance thumb drag whose release (<see cref="EndUserScrub"/>) issues a second BeginSeek to
+    /// the SAME point. If a seek to the same target is already in flight (hold still armed, not yet
+    /// released by <see cref="OnSeeked"/>) within <see cref="SeekTolerance"/>, the redundant second
+    /// seek is skipped so a click converges on exactly ONE seek. This never suppresses a distinct
+    /// target (a real drag issues converging DISTINCT targets, gated by the T-051 dead-band) — only a
+    /// duplicate of the in-flight seek is collapsed. The display re-pin is a no-op (already at target).</para>
     /// </summary>
     private void BeginSeek(TimeSpan target)
     {
+        // Dedupe: a duplicate of the seek already in flight (same target within tolerance) is the
+        // click's second (drag-completed) seek chasing its first (Value-change) seek — skip it.
+        if (_seeking && Within(target, _seekTarget, SeekTolerance))
+        {
+            return;
+        }
+
         _seekTarget = target;
         _seeking = true;
         _heldTicks = 0;

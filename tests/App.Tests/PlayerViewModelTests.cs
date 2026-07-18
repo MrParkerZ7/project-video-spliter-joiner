@@ -470,6 +470,115 @@ public sealed class PlayerViewModelTests
         player.Seeks[^1].Should().Be(TimeSpan.FromSeconds(35), "release issues the final exact seek");
     }
 
+    // ---- Track click to point (T-075) -------------------------------------------------------
+
+    // With IsMoveToPointEnabled=True, a click on the slider TRACK jumps the thumb straight to the
+    // click point: WPF sets Value to the clicked time (→ Position setter → BeginSeek) AND begins a
+    // zero-distance thumb drag whose release (EndUserScrub) issues a second seek to the SAME point.
+    // These tests model that exact event sequence in VM terms and assert a click converges on a
+    // SINGLE seek to the click point — not a page-step sequence and not a double-seek/warp.
+
+    [Fact]
+    public void TrackClickToPoint_ValueChangeThenZeroDistanceDrag_SeeksOnceToClickPoint()
+    {
+        var (vm, player) = BuildReady(60);
+
+        // Click at 45s: (1) move-to-point sets Value → Position setter seeks to 45, then
+        // (2) DragStarted → BeginUserScrub, (3) DragCompleted at the same value → EndUserScrub(45).
+        vm.PositionSeconds = 45;   // move-to-point Value change
+        vm.BeginUserScrub();       // Thumb.DragStarted
+        vm.EndUserScrub(45);       // Thumb.DragCompleted at the SAME point
+
+        // Exactly ONE seek, landing at the click point — the drag-completed duplicate is deduped.
+        player.Seeks.Should().ContainSingle("a click converges on a single seek, not a double-seek/warp");
+        player.Seeks[0].Should().Be(TimeSpan.FromSeconds(45));
+        vm.Position.Should().Be(TimeSpan.FromSeconds(45), "the click lands the playhead at the clicked time");
+    }
+
+    [Fact]
+    public void TrackClickToPoint_DragStartedBeforeValueChange_StillSeeksOnceToClickPoint()
+    {
+        // WPF may raise Thumb.DragStarted before the Value change settles. Either ordering must still
+        // yield exactly one seek to the click point (the setter's BeginSeek is not gated on scrubbing).
+        var (vm, player) = BuildReady(60);
+
+        vm.BeginUserScrub();       // Thumb.DragStarted first
+        vm.PositionSeconds = 45;   // then the move-to-point Value change
+        vm.EndUserScrub(45);       // Thumb.DragCompleted at the same point
+
+        player.Seeks.Should().ContainSingle();
+        player.Seeks[0].Should().Be(TimeSpan.FromSeconds(45));
+        vm.Position.Should().Be(TimeSpan.FromSeconds(45));
+    }
+
+    [Fact]
+    public void TrackClickToPoint_NoDragEvents_StillSeeksToClickPoint()
+    {
+        // A pure click that produces NO drag events at all (only the Value change) must still fire the
+        // exact seek to the click point via the Position-setter path.
+        var (vm, player) = BuildReady(60);
+
+        vm.PositionSeconds = 45;   // move-to-point Value change only
+
+        player.Seeks.Should().ContainSingle();
+        player.Seeks[0].Should().Be(TimeSpan.FromSeconds(45));
+        vm.Position.Should().Be(TimeSpan.FromSeconds(45));
+    }
+
+    [Fact]
+    public void TrackClickToPoint_ClickWithoutValueChange_StillSeeksViaRelease()
+    {
+        // Defensive: if the Value change did NOT fire (e.g. click at the current position, or WPF
+        // routed only the drag), the drag-completed EndUserScrub must still issue the exact seek so
+        // the click is never a no-op. Here no prior seek is in flight, so it is not deduped away.
+        var (vm, player) = BuildReady(60);
+
+        vm.BeginUserScrub();
+        vm.EndUserScrub(45);       // click-without-value-change → release must still seek
+
+        player.Seeks.Should().ContainSingle();
+        player.Seeks[0].Should().Be(TimeSpan.FromSeconds(45));
+        vm.Position.Should().Be(TimeSpan.FromSeconds(45));
+    }
+
+    [Fact]
+    public void TrackClickToPoint_WhileHeld_StaleEchoDoesNotWarpOffClickPoint()
+    {
+        // A click while playing seeks to the point; a stale playback echo arriving before the async
+        // seek lands must not pop/warp the playhead off the clicked time (T-033 hold preserved).
+        var (vm, player) = BuildReady(60);
+
+        vm.PositionSeconds = 45;   // click to 45
+        vm.BeginUserScrub();
+        vm.EndUserScrub(45);
+
+        player.RaisePositionChanged(TimeSpan.FromSeconds(12)); // stale echo far from 45
+        vm.Position.Should().Be(TimeSpan.FromSeconds(45), "the click's seek hold blocks the stale echo — no warp");
+    }
+
+    [Fact]
+    public void TrackClickToPoint_DoesNotWedgeLiveScrubState_NextClickStillSeeks()
+    {
+        // The deduped drag-completed seek must not leave the T-051 coalesce state wedged: after the
+        // in-flight click seek settles (FFME Seeked), a subsequent click must still issue its seek.
+        var (vm, player) = BuildReady(60);
+
+        vm.PositionSeconds = 45;
+        vm.BeginUserScrub();
+        vm.EndUserScrub(45);
+        player.Seeks.Should().ContainSingle();
+
+        player.RaiseSeeked(TimeSpan.FromSeconds(45)); // the click's seek settles, clears in-flight
+
+        // A second click elsewhere must produce its own seek.
+        vm.PositionSeconds = 20;
+        vm.BeginUserScrub();
+        vm.EndUserScrub(20);
+
+        player.Seeks.Should().HaveCount(2, "a later click still seeks — live-scrub state is not wedged");
+        player.Seeks[^1].Should().Be(TimeSpan.FromSeconds(20));
+    }
+
     // ---- User scrub (Position setter → Seek) ------------------------------------------------
 
     [Fact]

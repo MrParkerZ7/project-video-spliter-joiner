@@ -48,7 +48,11 @@
 
         <!-- Scrubbable timeline. DragStarted/DragDelta/DragCompleted drive a LIVE scrub (T-051): the
              frame follows the pin during the drag via ScrubPreview (coalesced + throttled), and the
-             final exact seek fires on release. The T-033 seek-target hold gates stale echoes. -->
+             final exact seek fires on release. The T-033 seek-target hold gates stale echoes.
+             IsMoveToPointEnabled=True (T-075): a click on the TRACK jumps the thumb straight to the
+             click point (one Value change to the clicked time) instead of page-stepping toward it, so
+             a click seeks to exactly where the user clicked. The VM dedupes the click Value-change
+             seek against the drag-completed seek so a click yields one converged seek, not two. -->
         <Slider x:Name="ScrubSlider"
                 Grid.Row="1"
                 Margin="0,6,0,0"
@@ -56,6 +60,7 @@
                 Maximum="{Binding DurationSeconds, Mode=OneWay}"
                 Value="{Binding PositionSeconds, Mode=TwoWay}"
                 IsEnabled="{Binding IsReady}"
+                IsMoveToPointEnabled="True"
                 Thumb.DragStarted="OnScrubDragStarted"
                 Thumb.DragDelta="OnScrubDragDelta"
                 Thumb.DragCompleted="OnScrubDragCompleted" />
