@@ -52,4 +52,25 @@
     <Resource Include="Fonts\*.ttf" />
   </ItemGroup>
 
+  <!--
+    G-024 / T-067 — self-bundle ffmpeg. Copy the repo-root ffmpeg-shared/ CLI (ffmpeg.exe/ffprobe.exe)
+    + its shared DLLs into an app-local ffmpeg/ folder in the build output, which is exactly where
+    FfmpegBinaryLocator looks (app-local ffmpeg/ next to the assembly). This makes a plain `dotnet build`
+    produce a runnable app that splits/joins WITHOUT ffmpeg on PATH — fulfilling the csproj's
+    "bundled ffmpeg" promise. ffmpeg-shared/ is gitignored (populated by packaging/fetch-ffmpeg-shared.ps1);
+    if it's absent (fresh clone before fetch) the target WARNS and skips rather than failing the build,
+    so CI / clean checkouts still build. Publish/single-file bundling is a separate T-010 concern.
+  -->
+  <Target Name="CopyBundledFfmpeg" AfterTargets="Build">
+    <ItemGroup>
+      <FfmpegSharedFiles Include="$(MSBuildProjectDirectory)\..\..\ffmpeg-shared\*.exe;$(MSBuildProjectDirectory)\..\..\ffmpeg-shared\*.dll" />
+    </ItemGroup>
+    <Warning Condition="'@(FfmpegSharedFiles)' == ''"
+             Text="ffmpeg-shared/ not found at repo root — app-local ffmpeg/ was NOT bundled. Run packaging/fetch-ffmpeg-shared.ps1; otherwise split/join needs ffmpeg on PATH." />
+    <Copy Condition="'@(FfmpegSharedFiles)' != ''"
+          SourceFiles="@(FfmpegSharedFiles)"
+          DestinationFolder="$(OutDir)ffmpeg\"
+          SkipUnchangedFiles="true" />
+  </Target>
+
 </Project>
