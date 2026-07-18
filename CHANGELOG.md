@@ -84,6 +84,11 @@ re-encode — the player only previews; every cut continues to keyframe-snap thr
 
 ### Changed
 
+- **Custom themed window frame (G-018)** — the default light Windows title bar is replaced by a custom
+  **dark title bar** (WindowChrome) matching the theme: the app title with a gold accent on the left,
+  and themed minimize / maximize-restore / close caption buttons (close hovers red) on the right. The
+  window still drags, resizes on all edges, and maximizes/restores correctly without covering the
+  taskbar (a `WM_GETMINMAXINFO` work-area clamp + maximized content margin).
 - **New premium dark + gold theme (G-017)** — the whole app is restyled to a token-driven **dark theme
   with a gold accent** (`#e0a83a`): near-black window (`#0d0f13`), charcoal rounded panels (`#15181e`),
   pure-black video area, and gold used consistently for primary actions (Run, play), the timeline

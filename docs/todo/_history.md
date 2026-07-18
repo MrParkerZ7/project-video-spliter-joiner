@@ -2,6 +2,16 @@
 
 <!-- latest on top; entries are never deleted -->
 
+## 2026-07-18 — ✅ G-018 DONE — themed window frame
+
+- **T-056 ✅** `ae6d09a` custom WindowChrome dark title bar (title + gold accent + min/max/close, close=red; WM_GETMINMAXINFO taskbar clamp + maximized content margin). 379 tests.
+- **T-057 ✅** CHANGELOG + CLAUDE note. **G-018 sealed done.** Window frame now dark+gold. Live behavior/look = user-verified.
+
+## 2026-07-18 — todo-goal-next: G-018 themed window frame (plan+build)
+
+- **G-018** "Themed window frame" — custom `WindowChrome` dark+gold title bar (caption + min/max/close buttons + correct resize/maximize/drag) replacing the clashing light native chrome. Tasks: T-056 frame · T-057 docs. todo-goal-next → building immediately.
+- **T-056 🔵** custom themed WindowChrome title bar dispatched. (Fallback noted: DWM dark native title bar if custom chrome regresses window behavior.)
+
 ## 2026-07-18 — ✅ G-017 DONE — dark+gold theme (todo-next-all, 3/3)
 
 - **T-054 ✅** `5e9cdb8` all screens restyled to tokens (gold play/Run/pins/playhead, dark rounded panels, token text, dark-tuned compat/error), UX/UI review, no leftover hardcoded colors. 379 tests.

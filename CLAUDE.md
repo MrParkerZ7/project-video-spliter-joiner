@@ -21,6 +21,10 @@ A .NET 8 WPF app that splits and joins video **without re-encoding**. See [READM
   — do not add hardcoded hex/`Colors.*` in a view (a code-behind converter that can't use `StaticResource`
   is the only exception, and it uses the same token color values). Gold `AccentBrush` = primary actions /
   timeline pins / playhead / focus. The redesign reference is `docs/design/references/`.
+- **The window uses a custom `WindowChrome` title bar** (`MainWindow.xaml` caption row + caption-button
+  styles in `Themes/Controls.xaml` + `WindowStateConverters.cs`), not the native chrome. Keep the
+  `WM_GETMINMAXINFO` work-area clamp + the maximized content margin — they stop a maximized window from
+  covering the taskbar / clipping content. Caption buttons drive `WindowState`; close hovers `DangerBrush`.
 - **All FFmpeg/ffprobe execution goes through `FfmpegRunner` / `FfprobeRunner`.** Never spawn
   `ffmpeg`/`ffprobe` directly and never build commands by string concatenation — use the typed
   `FfmpegArgs` (`ArgumentList`-based) builder.
