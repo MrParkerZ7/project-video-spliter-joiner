@@ -406,6 +406,52 @@
                                    Visibility="{Binding Operation.EtaText, Converter={StaticResource NullToCollapsed}}" />
                     </StackPanel>
 
+                    <!-- ===== COMPLETED surface (T-073): ✓ green + result summary + Open folder =====
+                         Visible only on Operation.IsCompleted; persists until the next run/load/Clear
+                         (which flips the state away from Completed). One of the four mutually-exclusive
+                         lifecycle surfaces — Running / Completed / Cancelled / Failed. -->
+                    <Border Margin="0,8,0,0"
+                            Padding="8"
+                            Background="{StaticResource Surface2Brush}"
+                            BorderBrush="{StaticResource OkBrush}"
+                            BorderThickness="1"
+                            CornerRadius="{StaticResource RadiusSm}"
+                            Visibility="{Binding Operation.IsCompleted, Converter={StaticResource BoolToVisibility}}">
+                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                            <TextBlock Text="✓"
+                                       FontFamily="{StaticResource MonoFontFamily}"
+                                       FontWeight="Bold"
+                                       Foreground="{StaticResource OkBrush}"
+                                       VerticalAlignment="Center" />
+                            <TextBlock Margin="8,0,0,0"
+                                       VerticalAlignment="Center"
+                                       TextWrapping="Wrap"
+                                       Foreground="{StaticResource TextPrimaryBrush}"
+                                       Text="{Binding Operation.ResultSummary}" />
+                            <Button Content="Open folder"
+                                    Margin="10,0,0,0"
+                                    Padding="8,2"
+                                    VerticalAlignment="Center"
+                                    ToolTip="Reveal the output folder in Explorer"
+                                    Command="{Binding OpenFolderCommand}" />
+                        </StackPanel>
+                    </Border>
+
+                    <!-- ===== CANCELLED surface (T-073): muted "Cancelled" — neutral, NOT error-red =====
+                         Visible only on Operation.IsCancelled. -->
+                    <Border Margin="0,8,0,0"
+                            Padding="8"
+                            Background="{StaticResource Surface2Brush}"
+                            BorderBrush="{StaticResource BorderBrush}"
+                            BorderThickness="1"
+                            CornerRadius="{StaticResource RadiusSm}"
+                            Visibility="{Binding Operation.IsCancelled, Converter={StaticResource BoolToVisibility}}">
+                        <TextBlock Text="Cancelled"
+                                   FontFamily="{StaticResource MonoFontFamily}"
+                                   Foreground="{StaticResource TextMutedBrush}"
+                                   VerticalAlignment="Center" />
+                    </Border>
+
                     <!-- Free-form VM status line (load result / "Split complete.") — shown when not running -->
                     <TextBlock Margin="0,6,0,0"
                                TextWrapping="Wrap"

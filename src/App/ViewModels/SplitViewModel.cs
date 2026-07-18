@@ -918,6 +918,17 @@ public sealed class SplitViewModel : ObservableObject
                 ? $"Split complete with {result.Warnings.Count} warning(s)."
                 : "Split complete.";
 
+            // T-073: hand the shared operation a human success line for the Completed surface — the
+            // ACTUAL number of segments written (result.Segments). When only a subset of the projected
+            // parts were exported, spell out "Wrote N of M parts" so the count is never misleading.
+            var written = result.Segments.Count;
+            var totalParts = Segments.Count;
+            Operation.ResultSummary = totalParts > written && totalParts > 0
+                ? $"Wrote {written} of {totalParts} parts"
+                : written == 1
+                    ? "Split into 1 part"
+                    : $"Split into {written} parts";
+
             // T-069: on success, every SELECTED part is written — mark them all Done so no row is
             // left mid-Writing if the final progress sample undershot the last part's boundary.
             foreach (var seg in Segments)

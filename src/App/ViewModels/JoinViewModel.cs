@@ -449,6 +449,15 @@ public sealed class JoinViewModel : ObservableObject
         {
             LastResult = result;
 
+            // T-073: hand the shared operation a human success line for the Completed surface — the
+            // real clip count joined + the real written output file name (fall back to the request's
+            // OutputPath if the engine didn't echo one back).
+            var clipCount = request.InputPaths.Count;
+            var outName = Path.GetFileName(result.OutputPath ?? OutputPath);
+            Operation.ResultSummary = clipCount == 1
+                ? $"Joined 1 clip → {outName}"
+                : $"Joined {clipCount} clips → {outName}";
+
             // Remember the folder we just wrote the joined file into (T-038) so it seeds next session's
             // output-save picker. Best-effort — swallowed inside the settings store.
             var outputDir = SafeGetDirectory(OutputPath);

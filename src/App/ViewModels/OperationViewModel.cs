@@ -21,6 +21,7 @@ public sealed class OperationViewModel : ObservableObject
     private double _progress;
     private string _statusText = string.Empty;
     private string? _etaText;
+    private string? _resultSummary;
     private UserFacingError? _error;
     private CancellationTokenSource? _cts;
 
@@ -44,6 +45,11 @@ public sealed class OperationViewModel : ObservableObject
             if (SetProperty(ref _state, value))
             {
                 OnPropertyChanged(nameof(IsRunning));
+                // T-073: the per-state lifecycle surfaces (Running / Completed / Cancelled) are all
+                // computed from State, so re-raise them here alongside IsRunning. Failed is surfaced
+                // via the existing Error block (NullToCollapsed), not a bool, so it needs no flag.
+                OnPropertyChanged(nameof(IsCompleted));
+                OnPropertyChanged(nameof(IsCancelled));
                 OnPropertyChanged(nameof(CanCancel));
                 OnPropertyChanged(nameof(IsIndeterminate));
                 OnPropertyChanged(nameof(TaskbarProgressState));
@@ -158,6 +164,33 @@ public sealed class OperationViewModel : ObservableObject
 
     /// <summary>True while an operation is running.</summary>
     public bool IsRunning => State == OperationState.Running;
+
+    /// <summary>
+    /// T-073: true once an operation finished successfully — drives the Completed success surface
+    /// (✓ + <see cref="ResultSummary"/> + Open folder). Stays true until the next run/load/Reset moves
+    /// the state away from <see cref="OperationState.Completed"/>, so "done" no longer silently vanishes.
+    /// </summary>
+    public bool IsCompleted => State == OperationState.Completed;
+
+    /// <summary>
+    /// T-073: true once an operation was cancelled by the user — drives the muted "Cancelled" surface
+    /// (neutral, NOT error-red). Stays true until the next run/load/Reset moves the state away from
+    /// <see cref="OperationState.Cancelled"/>.
+    /// </summary>
+    public bool IsCancelled => State == OperationState.Cancelled;
+
+    /// <summary>
+    /// T-073: a short human line describing what a successful run produced — e.g. "Split into 3 parts"
+    /// or "Joined 4 clips → joined.mkv". Supplied by the producing VM (Split/Join) after a successful
+    /// run, since it knows the real counts + output name; shown in the Completed surface. Cleared at the
+    /// start of every new run (<see cref="BeginRun(string, out IProgress{double}, out CancellationToken)"/>)
+    /// and on <see cref="Reset"/>, so a stale "done" line never lingers into a new run/load.
+    /// </summary>
+    public string? ResultSummary
+    {
+        get => _resultSummary;
+        set => SetProperty(ref _resultSummary, value);
+    }
 
     /// <summary>True only while running — the <see cref="CancelCommand"/> is enabled solely in this window.</summary>
     public bool CanCancel => State == OperationState.Running;
@@ -327,6 +360,8 @@ public sealed class OperationViewModel : ObservableObject
         }
 
         Error = null;
+        // T-073: clear the success line so a Clear/reset drops any lingering "done" surface.
+        ResultSummary = null;
         Progress = 0;
         StatusText = string.Empty;
         EtaText = null;
@@ -354,6 +389,8 @@ public sealed class OperationViewModel : ObservableObject
         token = _cts.Token;
 
         Error = null;
+        // T-073: clear any prior success line so a new run never shows the previous run's "done".
+        ResultSummary = null;
         Progress = 0;
         StatusText = runningStatus;
 
