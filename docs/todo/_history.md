@@ -2,6 +2,23 @@
 
 <!-- latest on top; entries are never deleted -->
 
+## 2026-07-18 — ✅ G-017 DONE — dark+gold theme (todo-next-all, 3/3)
+
+- **T-054 ✅** `5e9cdb8` all screens restyled to tokens (gold play/Run/pins/playhead, dark rounded panels, token text, dark-tuned compat/error), UX/UI review, no leftover hardcoded colors. 379 tests.
+- **T-055 ✅** CHANGELOG (Changed: dark+gold theme) + CLAUDE token convention.
+- **G-017 sealed done.** Chain: T-053 `b014d72` → T-054 `5e9cdb8` → T-055 (docs).
+- Theme = token-driven (`src/App/Themes/Tokens.xaml`+`Controls.xaml`). Visual look = app-run/user-verified.
+
+## 2026-07-18 — T-053 done → T-054 (G-017 theme drain)
+
+- **T-053 ✅** tokens — `Tokens.xaml` (brushes/radii/type) + `Controls.xaml` (re-templated Button/AccentButton/Slider/CheckBox/ComboBox/Tabs/ProgressBar/ListBox/GridSplitter/TextBox), merged in App.xaml. 379 tests. Commit `b014d72`.
+- **T-054 🔵** restyle all screens + UX/UI review dispatched.
+
+## 2026-07-18 — todo-next-all: draining G-017 (theme)
+
+- Order: T-053 (tokens + base styles) → T-054 (restyle all views + UX/UI review) → T-055 (docs). Serialized (shared XAML).
+- **T-053 🔵** design-token ResourceDictionary dispatched. (Worker headless → works from the extracted palette; exact mockup detail deferred to the user's live review.)
+
 ## 2026-07-18 — ✅ G-016 done (scrub) · todo-goal PLANNED: G-017 theme
 
 - **G-016 ✅** — T-051 `c211810` live coalesced+throttled scrub (video follows the pin; one-in-flight + latest-target via Seeked; 70ms throttle; T-033 hold preserved; 379 tests) + T-052 CHANGELOG. Sealed done.

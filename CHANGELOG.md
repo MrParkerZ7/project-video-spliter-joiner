@@ -84,6 +84,13 @@ re-encode — the player only previews; every cut continues to keyframe-snap thr
 
 ### Changed
 
+- **New premium dark + gold theme (G-017)** — the whole app is restyled to a token-driven **dark theme
+  with a gold accent** (`#e0a83a`): near-black window (`#0d0f13`), charcoal rounded panels (`#15181e`),
+  pure-black video area, and gold used consistently for primary actions (Run, play), the timeline
+  **playhead and cut pins**, focus, and selection. Built as a design-token system — `src/App/Themes/`
+  `Tokens.xaml` (brushes, corner radii, typography) + `Controls.xaml` (themed control templates), merged
+  in `App.xaml`; every view references tokens, no hardcoded colors. Text uses theme tokens (readable on
+  dark); compat green/red and error affordances are preserved, dark-tuned.
 - **Split/join always show visible progress (G-012)** — a running operation now always shows a progress
   bar plus a status label, never a silent window. When granular progress hasn't arrived yet the bar
   animates as an **indeterminate busy indicator** (`OperationViewModel.IsIndeterminate`) instead of
