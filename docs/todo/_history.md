@@ -2,6 +2,12 @@
 
 <!-- latest on top; entries are never deleted -->
 
+## 2026-07-18 — todo-goal PLANNED: G-020 output-dir defaults to file folder + resets per load
+
+- User: split output should DEFAULT to the loaded file's folder (configurable), and RESET on every new load. Current (post-T-038): output defaults to the remembered LastOutputDir — opposite of the ask.
+- **G-020** — T-061: `SplitViewModel.LoadAsync` unconditionally sets `OutputDir` = loaded file's folder on every load (drag+picker), still editable; drop the LastOutputDir-as-default (keep LastInputDir picker memory); update the affected T-038 tests. · T-062 docs. Plan-only; `proceed G-020`.
+- Planned queue: G-019 (match UX/UI to sample) · G-020 (output-dir). 28 commits unpushed.
+
 ## 2026-07-18 — todo-goal PLANNED: G-019 match UX/UI to the sample (design EXTRACTED)
 
 - Decoded the sample bundle (`docs/design/references/2026-07-18_redesign-standalone.html`) via a 🚫 python extractor — got the REAL design (not just palette): **font IBM Plex Mono + Plex Sans** (G-017 used Segoe UI = wrong), full dark surface scale `#0a0b0d→#232935`, text `#eef0f3`/`#9aa0ab`/`#767c88`, gold `#e0a83a`+`#f0bc55`, semantic green/blue/purple, **tight radii 6–12px** (not 24), dense 8–18px type; LAYOUT: header + "lossless · no re-encode" tagline + format badge · file-info cards ("matroska · 10:00 · 1.4 GB") · "Cut markers" · "Parts to export (All/None)" · DIR/NAME/FILE mono labels · Join "Estimated result" panel.
