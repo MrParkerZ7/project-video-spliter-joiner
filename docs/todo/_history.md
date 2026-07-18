@@ -414,3 +414,7 @@
 
 ## 2026-07-18 · G-023 done — window polish (todo-goal-next)
 - **T-066 done** (`242dd7f`): themed window frame — wrapped root Grid in a Border with BorderStrongBrush (#3a4250) 1px line + BgBrush bg, replacing the default system hairline. New `WindowStateToBorderThicknessConverter` collapses the border to 0 when maximized (no stray line). Startup 900x600 → 1280x800 CenterScreen; mins 600x400 → 960x600 (fits the two-column layout). WindowChrome/caption/taskbar-clamp untouched. 423/423 green.
+
+## 2026-07-18 · backlog drain (todo-next-all)
+- **T-067 done** (`48cc6f2`, G-024): added `CopyBundledFfmpeg` MSBuild target (AfterTargets=Build) to App.csproj — copies repo-root `ffmpeg-shared/*.{exe,dll}` into `$(OutDir)ffmpeg/` (where FfmpegBinaryLocator looks). Warns (not errors) if ffmpeg-shared/ absent. **Verified:** the concurrent T-063 worker's Debug build auto-populated `bin/Debug/.../ffmpeg/` with all 10 binaries — the built app now splits/joins without ffmpeg on PATH. Fixes the "bundled ffmpeg" gap found 2026-07-18 (Release exe couldn't find ffprobe). Release confirmed on next clean rebuild. Publish/single-file bundling left to T-010.
+- **T-063 (flaky test)** — worker dispatched (G-021); classify test-race vs product-race, fix at the true layer, 20/20 isolated. Result pending.
