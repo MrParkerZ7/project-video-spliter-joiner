@@ -46,6 +46,7 @@ public sealed class OperationViewModel : ObservableObject
                 OnPropertyChanged(nameof(IsRunning));
                 OnPropertyChanged(nameof(CanCancel));
                 OnPropertyChanged(nameof(IsIndeterminate));
+                OnPropertyChanged(nameof(TaskbarProgressState));
                 CancelCommand.RaiseCanExecuteChanged();
             }
         }
@@ -61,6 +62,10 @@ public sealed class OperationViewModel : ObservableObject
             {
                 // A real fraction (>0) flips the busy indicator off — see IsIndeterminate.
                 OnPropertyChanged(nameof(IsIndeterminate));
+
+                // T-068: crossing 0 → >0 also flips the taskbar state Indeterminate → Normal
+                // (and every value change moves ProgressValue), so re-raise it here too.
+                OnPropertyChanged(nameof(TaskbarProgressState));
 
                 // T-045: feed the real elapsed vs this fraction to the ETA estimator. Only while
                 // actually running — completion sets Progress = 1 through here too, and we don't want
@@ -94,6 +99,42 @@ public sealed class OperationViewModel : ObservableObject
     /// sparse/instant, so the bar shows motion immediately rather than a frozen 0%.
     /// </summary>
     public bool IsIndeterminate => IsRunning && _progress <= 0d;
+
+    /// <summary>
+    /// T-068: the Windows taskbar-button progress state for this operation, bound by
+    /// <c>Window.TaskbarItemInfo.ProgressState</c> (the fill uses <see cref="Progress"/> for
+    /// <c>ProgressValue</c>). Mapping:
+    /// <list type="bullet">
+    /// <item><see cref="OperationState.Failed"/> → <see cref="TaskbarItemProgressState.Error"/> (red).</item>
+    /// <item>not running (Idle / Completed / Cancelled) → <see cref="TaskbarItemProgressState.None"/>
+    /// (clears the bar — no stuck fill after a run ends or is reset).</item>
+    /// <item>running with no usable fraction yet (<see cref="IsIndeterminate"/>) →
+    /// <see cref="TaskbarItemProgressState.Indeterminate"/> (the busy pulse while "Preparing").</item>
+    /// <item>running with a real fraction → <see cref="TaskbarItemProgressState.Normal"/> (green fill).</item>
+    /// </list>
+    /// Failed is checked first so a failed run shows red rather than clearing to None. This is a
+    /// pure computed property (unit-testable); <see cref="OnPropertyChanged"/> is raised for it
+    /// wherever <see cref="State"/> / <see cref="Progress"/> / <see cref="IsIndeterminate"/> change.
+    /// </summary>
+    public System.Windows.Shell.TaskbarItemProgressState TaskbarProgressState
+    {
+        get
+        {
+            if (State == OperationState.Failed)
+            {
+                return System.Windows.Shell.TaskbarItemProgressState.Error;
+            }
+
+            if (!IsRunning)
+            {
+                return System.Windows.Shell.TaskbarItemProgressState.None;
+            }
+
+            return IsIndeterminate
+                ? System.Windows.Shell.TaskbarItemProgressState.Indeterminate
+                : System.Windows.Shell.TaskbarItemProgressState.Normal;
+        }
+    }
 
     /// <summary>
     /// T-045: friendly estimated-time-remaining label shown while the op runs — e.g. "~40s left",
