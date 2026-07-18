@@ -462,3 +462,8 @@
 
 ## 2026-07-18 · G-029 done — crisp vector caption icons
 - **T-076 done** (`942292a`, +6 tests → 487): replaced Segoe MDL2 caption glyphs with vector Path icons (min=line, maximize=square, restore=double-square, close=X) on a pixel-aligned 10×10 field (.5 offsets, 1px stroke, SnapsToDevicePixels/UseLayoutRounding). Max↔restore swap = pure-XAML DataTriggers on WindowState (two Paths, visibility toggle). Close hover = DangerBrush red bg + X binds to Foreground→#FFF (light-on-red). Retired FontFamily=Segoe MDL2 Assets + WindowStateToMaxRestoreGlyphConverter. Click handlers/clamp/drag untouched.
+
+## 2026-07-19 · G-030 (todo-goal-next) — scrub-bar hover thumbnail
+- **Ask:** on hover over the timing bar, show a mini frame image at that play time (YouTube-style).
+- **Grounding:** no thumbnail infra (new). FfmpegRunner reads stdout as UTF-8 text → can't pipe binary image bytes → extract frames to TEMP FILES. FfmpegArgs supports -ss/-i/-frames/scale via Raw+Input+Output. Main preview is FFME (separate) — use ffmpeg CLI for thumbs so they don't fight the player.
+- **Plan:** G-030 = T-077 (Core IThumbnailService: ffmpeg `-ss T -i in -frames:v 1 -vf scale=W:-1` → temp jpg; time-bucket cache; coalesce/cancel; best-effort null-not-throw; Clear on load) → T-078 (App: ScrubSlider MouseMove→hover time→debounced+coalesced grab→Popup image+mm:ss at cursor; frozen BitmapImage; cleanup; don't break click-seek/drag; docs folded). The crux is debounce+coalesce+cache so hovering doesn't spawn an ffmpeg per pixel. Building now.
