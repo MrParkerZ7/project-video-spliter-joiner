@@ -427,3 +427,8 @@
 - **Ask:** taskbar-button progress bar + ETA, and per-part progress during a split.
 - **Grounding:** no TaskbarItemInfo yet (new); progress is overall-only (Operation.Progress 0..1 + EtaText + staged StatusText); split has a fast single-pass muxer path (full set) + a per-segment subset path (per-part index natural). Taskbar button renders only a fill, no text → ETA goes in the window title.
 - **Plan:** G-025 = T-068 (TaskbarItemInfo bound to Operation.Progress + a unit-tested TaskbarProgressState; ETA+% in the window Title while running) → T-069 (per-part channel: subset path reports loop index; fast muxer path DERIVES current part from ffmpeg time via a pure boundary-mapping function — keep the single pass; per-part UI = each parts-list row animates Pending→Writing→Done) → T-070 docs. Plan-only; STOPPED per todo-goal.
+
+## 2026-07-18 · G-026 planned (todo-goal) — markers ordered by time
+- **Ask:** split positions ordered by time, not add order.
+- **Grounding:** the split OUTPUT is already time-ordered (SplitPlan sorts cuts `SplitPlan.cs:91`; segments list sorts by Snapped `SplitViewModel.cs:1008-1011`) — parts already numbered by time. Only the `Markers` ObservableCollection is append-order (`Markers.Add` at :702/:758), so the "Cut markers" LIST shows add-order. This is a display fix, not correctness.
+- **Plan:** G-026 = T-071 — order Markers by time via sorted-insert OR a live-sorted CollectionView (key: Snapped, fallback Requested while pending); handle T-041 pending→resolved re-position + removal; verify parts byte-identical; docs folded in. Plan-only; STOPPED per todo-goal.
