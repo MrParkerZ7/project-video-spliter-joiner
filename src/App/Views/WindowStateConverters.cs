@@ -46,3 +46,18 @@ public sealed class WindowStateToContentMarginConverter : IValueConverter
     public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
         => throw new NotSupportedException();
 }
+
+/// <summary>
+/// T-066 — Root-border thickness per <see cref="WindowState"/>. The themed 1px frame line is
+/// shown only in the Normal state; in the Maximized state it would otherwise read as a stray
+/// floating line inside the window, so it collapses to zero. Mirrors how
+/// <see cref="WindowStateToContentMarginConverter"/> switches on the window state.
+/// </summary>
+public sealed class WindowStateToBorderThicknessConverter : IValueConverter
+{
+    public object Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
+        => value is WindowState.Maximized ? new Thickness(0) : new Thickness(1);
+
+    public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
+        => throw new NotSupportedException();
+}
