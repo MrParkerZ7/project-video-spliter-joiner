@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
@@ -23,6 +24,64 @@ namespace VideoSplitJoiner.App.Tests;
 public sealed class StagedStatusWiringTests
 {
     private const string FakePath = @"C:\videos\clip.mp4";
+
+    // ---- Deterministic dispatch harness -----------------------------------------------------
+
+    /// <summary>
+    /// A minimal single-threaded <see cref="SynchronizationContext"/> that queues every
+    /// <see cref="Post"/> callback and runs them, in FIFO order, only when <see cref="Drain"/> is
+    /// called. This reproduces the WPF Dispatcher semantics the product relies on:
+    /// <see cref="OperationViewModel"/> marshals its staged <c>IProgress&lt;OperationStatus&gt;</c>
+    /// reports through <see cref="Progress{T}"/>, which captures the ambient
+    /// <see cref="SynchronizationContext"/>. In a real app that context is the ordered, single-threaded
+    /// UI message pump. Under xUnit's default there is NO context, so <see cref="Progress{T}"/> falls
+    /// back to the ThreadPool — each report runs on an arbitrary pool thread with no ordering and may
+    /// not have executed before the test asserts, scrambling/dropping the recorded stage sequence.
+    /// Installing this context on the test thread restores the production ordering guarantee, so the
+    /// test verifies the REAL marshalling path (ordered FIFO) rather than the ThreadPool fallback —
+    /// without weakening what is asserted.
+    /// </summary>
+    private sealed class OrderedSyncContext : SynchronizationContext
+    {
+        private readonly ConcurrentQueue<(SendOrPostCallback Callback, object? State)> _queue = new();
+
+        public override void Post(SendOrPostCallback d, object? state) => _queue.Enqueue((d, state));
+
+        // Send runs inline — a real dispatcher would marshal, but for tests the ordering that matters
+        // is Post (what Progress<T> uses); running Send inline keeps any synchronous callers correct.
+        public override void Send(SendOrPostCallback d, object? state) => d(state);
+
+        /// <summary>Run every queued callback, in the order it was posted, until the queue is empty.</summary>
+        public void Drain()
+        {
+            while (_queue.TryDequeue(out var work))
+            {
+                work.Callback(work.State);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Run <paramref name="body"/> with an <see cref="OrderedSyncContext"/> installed as the ambient
+    /// synchronization context, then drain all posted callbacks so every staged status report has been
+    /// delivered — in order — before the caller asserts. Restores the previous context on exit.
+    /// </summary>
+    private static async Task WithOrderedDispatchAsync(Func<Task> body)
+    {
+        var previous = SynchronizationContext.Current;
+        var ctx = new OrderedSyncContext();
+        SynchronizationContext.SetSynchronizationContext(ctx);
+        try
+        {
+            await body().ConfigureAwait(true);
+            // Flush every Progress<T> callback the run posted, in FIFO order, before returning.
+            ctx.Drain();
+        }
+        finally
+        {
+            SynchronizationContext.SetSynchronizationContext(previous);
+        }
+    }
 
     // ---- Fakes ------------------------------------------------------------------------------
 
@@ -143,7 +202,11 @@ public sealed class StagedStatusWiringTests
 
         var seen = RecordStatusText(vm.Operation);
 
-        await vm.RunSplitAsync();
+        // Drive the run under an ordered single-threaded dispatch context (mirrors the WPF Dispatcher)
+        // and drain every posted status callback before asserting — so the recorded sequence is the
+        // deterministic, in-order one the product produces in a real app, not the ThreadPool-scrambled
+        // fallback xUnit's context-free thread would yield.
+        await WithOrderedDispatchAsync(() => vm.RunSplitAsync());
 
         // The staged labels must have appeared, in order, on the UI-bound StatusText.
         seen.Should().ContainInOrder(
@@ -162,7 +225,8 @@ public sealed class StagedStatusWiringTests
 
         var seen = RecordStatusText(vm.Operation);
 
-        await vm.RunJoinAsync();
+        // Same deterministic ordered dispatch as the split test (see WithOrderedDispatchAsync).
+        await WithOrderedDispatchAsync(() => vm.RunJoinAsync());
 
         seen.Should().ContainInOrder(
             "Checking compatibility…", "Joining… (2 clips)", "Finalizing…", "Done");
