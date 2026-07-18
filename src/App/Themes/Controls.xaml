@@ -539,21 +539,38 @@
     </Style>
 
     <!-- ================================================================= -->
-    <!-- Caption buttons (T-056) — flat square window controls              -->
-    <!-- min / max-restore / close. Transparent bg, TextPrimary glyph,      -->
-    <!-- SurfaceHover on hover; CloseCaptionButton hovers Danger (red).     -->
-    <!-- Glyphs: Segoe MDL2 Assets. Used only by MainWindow's caption row.  -->
+    <!-- Caption buttons (T-056, vector icons T-076) — flat square window   -->
+    <!-- controls: min / max-restore / close. Transparent bg, crisp stroked -->
+    <!-- vector Path icons (TextPrimary stroke), SurfaceHover on hover;      -->
+    <!-- CloseCaptionButton hovers Danger (red) + light-X. No font glyphs.   -->
+    <!-- The icon Path(s) live in each Button's Content in MainWindow.xaml;  -->
+    <!-- geometry is defined by the *CaptionGeometry resources below so the  -->
+    <!-- three icons stay consistent. Coords are integer/×.5 aligned and the -->
+    <!-- Paths carry SnapsToDevicePixels/UseLayoutRounding for sharp 1px     -->
+    <!-- edges at 100%/150% DPI. Used only by MainWindow's caption row.      -->
     <!-- ================================================================= -->
+
+    <!-- Icon geometries — drawn on a 10×10 field, pixel-aligned on .5 so a  -->
+    <!-- 1px stroke straddles a device-pixel boundary crisply.               -->
+    <!-- Minimize: one horizontal line.                                      -->
+    <Geometry x:Key="MinimizeCaptionGeometry">M0.5,5.5 L10.5,5.5</Geometry>
+    <!-- Maximize: a 10×10 square outline.                                   -->
+    <RectangleGeometry x:Key="MaximizeCaptionGeometry" Rect="0.5,0.5,10,10" />
+    <!-- Restore: two offset overlapping squares (back top-right, front      -->
+    <!-- bottom-left) — the classic restore double-square.                   -->
+    <Geometry x:Key="RestoreCaptionGeometry">M2.5,2.5 L2.5,0.5 L10.5,0.5 L10.5,8.5 L8.5,8.5 M0.5,2.5 L8.5,2.5 L8.5,10.5 L0.5,10.5 Z</Geometry>
+    <!-- Close: two diagonals (an X) across the 10×10 field.                 -->
+    <Geometry x:Key="CloseCaptionGeometry">M0.5,0.5 L10.5,10.5 M10.5,0.5 L0.5,10.5</Geometry>
+
     <Style x:Key="CaptionButton" TargetType="Button">
         <Setter Property="Width" Value="46" />
         <Setter Property="Height" Value="34" />
         <Setter Property="Background" Value="Transparent" />
         <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
         <Setter Property="BorderThickness" Value="0" />
-        <Setter Property="FontFamily" Value="Segoe MDL2 Assets" />
-        <Setter Property="FontSize" Value="10" />
         <Setter Property="Cursor" Value="Arrow" />
         <Setter Property="SnapsToDevicePixels" Value="True" />
+        <Setter Property="UseLayoutRounding" Value="True" />
         <Setter Property="WindowChrome.IsHitTestVisibleInChrome" Value="True" />
         <Setter Property="Template">
             <Setter.Value>
@@ -577,7 +594,9 @@
         </Setter>
     </Style>
 
-    <!-- Close button — same shell, but hover = Danger (red) bg + light glyph -->
+    <!-- Close button — same shell, but hover = Danger (red) bg; the close X -->
+    <!-- Path (x:Name="CloseIcon" in its Content) switches to a near-white   -->
+    <!-- stroke on hover/press for contrast against the red field.          -->
     <Style x:Key="CloseCaptionButton" TargetType="Button" BasedOn="{StaticResource CaptionButton}">
         <Setter Property="Template">
             <Setter.Value>
@@ -587,17 +606,16 @@
                             SnapsToDevicePixels="True">
                         <ContentPresenter x:Name="Cp"
                                           HorizontalAlignment="Center"
-                                          VerticalAlignment="Center"
-                                          TextElement.Foreground="{TemplateBinding Foreground}" />
+                                          VerticalAlignment="Center" />
                     </Border>
                     <ControlTemplate.Triggers>
                         <Trigger Property="IsMouseOver" Value="True">
                             <Setter TargetName="Bd" Property="Background" Value="{DynamicResource DangerBrush}" />
-                            <Setter TargetName="Cp" Property="TextElement.Foreground" Value="#FFFFFFFF" />
+                            <Setter Property="Foreground" Value="#FFFFFFFF" />
                         </Trigger>
                         <Trigger Property="IsPressed" Value="True">
                             <Setter TargetName="Bd" Property="Background" Value="{DynamicResource DangerBrush}" />
-                            <Setter TargetName="Cp" Property="TextElement.Foreground" Value="#FFFFFFFF" />
+                            <Setter Property="Foreground" Value="#FFFFFFFF" />
                             <Setter TargetName="Bd" Property="Opacity" Value="0.85" />
                         </Trigger>
                     </ControlTemplate.Triggers>

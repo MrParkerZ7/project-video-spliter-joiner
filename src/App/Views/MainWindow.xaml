@@ -31,7 +31,6 @@
     </WindowChrome.WindowChrome>
 
     <Window.Resources>
-        <views:WindowStateToMaxRestoreGlyphConverter x:Key="MaxRestoreGlyph" />
         <views:WindowStateToContentMarginConverter x:Key="ContentMargin" />
         <views:WindowStateToBorderThicknessConverter x:Key="BorderThickness" />
     </Window.Resources>
@@ -81,22 +80,75 @@
             <!-- Right: min / max-restore / close caption buttons -->
             <StackPanel Grid.Column="2" Orientation="Horizontal"
                         VerticalAlignment="Top">
+                <!-- T-076 — crisp vector caption icons (min / max↔restore / close). -->
                 <Button x:Name="MinimizeButton"
                         Style="{StaticResource CaptionButton}"
                         ToolTip="Minimize"
-                        Click="Minimize_Click"
-                        Content="&#xE921;" />
+                        Click="Minimize_Click">
+                    <Path Data="{StaticResource MinimizeCaptionGeometry}"
+                          Stroke="{DynamicResource TextPrimaryBrush}"
+                          StrokeThickness="1"
+                          SnapsToDevicePixels="True"
+                          UseLayoutRounding="True" />
+                </Button>
                 <Button x:Name="MaxRestoreButton"
                         Style="{StaticResource CaptionButton}"
                         ToolTip="Maximize"
-                        Click="MaxRestore_Click"
-                        Content="{Binding WindowState, RelativeSource={RelativeSource AncestorType=Window},
-                                          Converter={StaticResource MaxRestoreGlyph}}" />
+                        Click="MaxRestore_Click">
+                    <!-- Both icons present; per-Path WindowState DataTriggers swap
+                         Visibility (maximize square in Normal, restore double-square
+                         in Maximized). No click-handler role in the swap. -->
+                    <Grid>
+                        <Path x:Name="MaximizeIcon"
+                              Data="{StaticResource MaximizeCaptionGeometry}"
+                              Stroke="{DynamicResource TextPrimaryBrush}"
+                              StrokeThickness="1"
+                              SnapsToDevicePixels="True"
+                              UseLayoutRounding="True">
+                            <Path.Style>
+                                <Style TargetType="Path">
+                                    <Setter Property="Visibility" Value="Visible" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding WindowState, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                     Value="Maximized">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Path.Style>
+                        </Path>
+                        <Path x:Name="RestoreIcon"
+                              Data="{StaticResource RestoreCaptionGeometry}"
+                              Stroke="{DynamicResource TextPrimaryBrush}"
+                              StrokeThickness="1"
+                              SnapsToDevicePixels="True"
+                              UseLayoutRounding="True">
+                            <Path.Style>
+                                <Style TargetType="Path">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding WindowState, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                     Value="Maximized">
+                                            <Setter Property="Visibility" Value="Visible" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Path.Style>
+                        </Path>
+                    </Grid>
+                </Button>
                 <Button x:Name="CloseButton"
                         Style="{StaticResource CloseCaptionButton}"
                         ToolTip="Close"
-                        Click="Close_Click"
-                        Content="&#xE8BB;" />
+                        Click="Close_Click">
+                    <!-- Stroke tracks the button Foreground so the close-hover trigger
+                         (Foreground → near-white) lightens the X on the red field. -->
+                    <Path Data="{StaticResource CloseCaptionGeometry}"
+                          Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                          StrokeThickness="1"
+                          SnapsToDevicePixels="True"
+                          UseLayoutRounding="True" />
+                </Button>
             </StackPanel>
         </Grid>
 

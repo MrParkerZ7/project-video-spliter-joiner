@@ -5,22 +5,9 @@ using System.Windows.Data;
 
 namespace VideoSplitJoiner.App.Views;
 
-/// <summary>
-/// T-056 — Maps <see cref="WindowState"/> to the Segoe MDL2 glyph shown on the
-/// maximize/restore caption button: Maximized -> restore glyph, otherwise -> maximize glyph.
-/// </summary>
-public sealed class WindowStateToMaxRestoreGlyphConverter : IValueConverter
-{
-    // Segoe MDL2 Assets: maximize = E922, restore = E923.
-    private const string MaximizeGlyph = "\uE922";
-    private const string RestoreGlyph = "\uE923";
-
-    public object Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
-        => value is WindowState.Maximized ? RestoreGlyph : MaximizeGlyph;
-
-    public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
-        => throw new NotSupportedException();
-}
+// T-076 — retired the Segoe MDL2 glyph converter (WindowStateToMaxRestoreGlyphConverter):
+// the maximize/restore caption icon is now a pair of vector Paths whose Visibility is
+// swapped by a WindowState DataTrigger in MainWindow.xaml.
 
 /// <summary>
 /// T-056 — Root-content margin per <see cref="WindowState"/>. A WindowChrome window keeps its
