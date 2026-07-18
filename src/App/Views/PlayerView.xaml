@@ -7,12 +7,14 @@
     <UserControl.Resources>
         <conv:BoolToVisibilityConverter x:Key="BoolToVisibility" />
 
-        <!-- Compact square-ish jog button: small, tooltip-labelled, wraps at pane min width. -->
-        <Style x:Key="JogButton" TargetType="Button">
+        <!-- Compact square-ish jog button: small, tooltip-labelled, wraps at pane min width.
+             Inherits the themed implicit Button (dark surface, TextPrimary, gold hover); only
+             sizing/typography are overridden here. -->
+        <Style x:Key="JogButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
             <Setter Property="MinWidth" Value="34" />
             <Setter Property="Padding" Value="4,2" />
             <Setter Property="Margin" Value="2,0" />
-            <Setter Property="FontSize" Value="11" />
+            <Setter Property="FontSize" Value="{StaticResource FontSizeSmall}" />
         </Style>
     </UserControl.Resources>
 
@@ -25,13 +27,23 @@
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
-        <!-- Video surface -->
-        <Border Grid.Row="0" Background="Black" MinHeight="160">
-            <ffme:MediaElement x:Name="Media"
-                               LoadedBehavior="Manual"
-                               UnloadedBehavior="Manual"
-                               ScrubbingEnabled="True"
-                               Stretch="Uniform" />
+        <!-- Video surface: black video area inside a rounded surface frame with a muted-gold border. -->
+        <Border Grid.Row="0"
+                MinHeight="160"
+                Padding="6"
+                Background="{StaticResource SurfaceBrush}"
+                BorderBrush="{StaticResource AccentMutedBrush}"
+                BorderThickness="1"
+                CornerRadius="{StaticResource RadiusMd}">
+            <Border Background="{StaticResource VideoBgBrush}"
+                    CornerRadius="{StaticResource RadiusSm}"
+                    ClipToBounds="True">
+                <ffme:MediaElement x:Name="Media"
+                                   LoadedBehavior="Manual"
+                                   UnloadedBehavior="Manual"
+                                   ScrubbingEnabled="True"
+                                   Stretch="Uniform" />
+            </Border>
         </Border>
 
         <!-- Scrubbable timeline. DragStarted/DragDelta/DragCompleted drive a LIVE scrub (T-051): the
@@ -84,8 +96,9 @@
                     ToolTip="Step back one frame"
                     Command="{Binding StepBackCommand}" />
 
-            <!-- Reused play/pause -->
-            <Button MinWidth="60" Padding="8,2" Margin="4,0"
+            <!-- Reused play/pause — primary transport action: gold AccentButton. -->
+            <Button Style="{StaticResource AccentButton}"
+                    MinWidth="60" Padding="12,2" Margin="4,0"
                     Content="{Binding PlayPauseLabel}"
                     Command="{Binding PlayPauseCommand}" />
 
@@ -123,8 +136,11 @@
                     Command="{Binding JumpToEndCommand}" />
         </WrapPanel>
 
-        <!-- Transport + time readout -->
-        <Grid Grid.Row="3" Margin="0,4,0,0">
+        <!-- Transport + time readout — sits on a rounded secondary-surface bar. -->
+        <Border Grid.Row="3" Margin="0,6,0,0" Padding="8,6"
+                Background="{StaticResource Surface2Brush}"
+                CornerRadius="{StaticResource RadiusSm}">
+        <Grid>
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="*" />
@@ -170,25 +186,28 @@
 
             <TextBlock Grid.Column="2"
                        VerticalAlignment="Center"
-                       FontFamily="Consolas">
+                       FontFamily="Consolas"
+                       Foreground="{StaticResource TextPrimaryBrush}">
                 <Run Text="{Binding PositionText, Mode=OneWay}" />
-                <Run Text=" / " />
-                <Run Text="{Binding DurationText, Mode=OneWay}" />
+                <Run Text=" / " Foreground="{StaticResource TextMutedBrush}" />
+                <Run Text="{Binding DurationText, Mode=OneWay}" Foreground="{StaticResource TextMutedBrush}" />
             </TextBlock>
         </Grid>
+        </Border>
 
-        <!-- Preview-unavailable banner -->
+        <!-- Preview-unavailable banner — warning role, kept noticeable via muted-gold fill + gold headline. -->
         <Border Grid.Row="4"
                 Margin="0,6,0,0"
-                Padding="6"
-                Background="#FFF7E6"
-                BorderBrush="#E8B84B"
+                Padding="8"
+                Background="{StaticResource AccentMutedBrush}"
+                BorderBrush="{StaticResource AccentBrush}"
                 BorderThickness="1"
+                CornerRadius="{StaticResource RadiusSm}"
                 Visibility="{Binding PreviewFailed, Converter={StaticResource BoolToVisibility}}">
             <StackPanel>
                 <TextBlock Text="Preview unavailable — you can still cut this file."
                            FontWeight="Bold"
-                           Foreground="#7A5C00"
+                           Foreground="{StaticResource AccentBrush}"
                            TextWrapping="Wrap" />
                 <!-- Selectable + copyable reason (T-037) -->
                 <TextBox Margin="0,2,0,0"
@@ -198,7 +217,7 @@
                          AcceptsReturn="True"
                          BorderThickness="0"
                          Background="Transparent"
-                         Foreground="#7A5C00"
+                         Foreground="{StaticResource TextPrimaryBrush}"
                          TextWrapping="Wrap"
                          MaxHeight="120"
                          VerticalScrollBarVisibility="Auto" />

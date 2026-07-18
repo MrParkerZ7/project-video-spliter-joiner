@@ -24,12 +24,18 @@ public partial class TimelineView : UserControl
 {
     private const double TickHitRadiusPx = 6d;
 
-    /// <summary>Marker tick colour (a distinct, saturated blue — tall solid bars).</summary>
-    public static readonly Brush MarkerBrush = Frozen("#3A6EA5");
-
-    private static readonly Brush PlayheadBrush = Frozen("#C0392B");
+    /// <summary>
+    /// Fallback gold used only if the <c>AccentBrush</c> theme resource cannot be resolved
+    /// (e.g. in a design-time / test host without the merged token dictionaries). Matches
+    /// <c>AccentColor</c> in <c>Themes/Tokens.xaml</c>. At runtime the ticks + playhead pull the
+    /// live <c>AccentBrush</c> via <see cref="AccentBrush"/> so they track the theme, not a literal.
+    /// </summary>
+    private static readonly Brush FallbackAccentBrush = Frozen("#E0A83A");
 
     private TimelineViewModel? _vm;
+
+    /// <summary>Marker ticks + playhead colour — the gold theme accent, resolved live from resources.</summary>
+    private Brush AccentBrush => TryFindResource("AccentBrush") as Brush ?? FallbackAccentBrush;
 
     public TimelineView()
     {
@@ -85,13 +91,16 @@ public partial class TimelineView : UserControl
             return;
         }
 
-        // Marker ticks (tall solid bars).
+        // Gold accent, resolved once per redraw from the live theme resource.
+        var accent = AccentBrush;
+
+        // Marker ticks (tall solid bars) — gold pins.
         foreach (var tick in _vm.MarkerTicks)
         {
-            DrawTick(tick.Normalized * width, height, MarkerBrush, thickness: 3d, tag: tick);
+            DrawTick(tick.Normalized * width, height, accent, thickness: 3d, tag: tick);
         }
 
-        // Playhead line (drawn last, on top).
+        // Playhead line (drawn last, on top) — gold.
         var playX = _vm.PlayheadNormalized * width;
         var playhead = new Line
         {
@@ -99,7 +108,7 @@ public partial class TimelineView : UserControl
             X2 = playX,
             Y1 = 0,
             Y2 = height,
-            Stroke = PlayheadBrush,
+            Stroke = accent,
             StrokeThickness = 2d,
             IsHitTestVisible = false,
         };

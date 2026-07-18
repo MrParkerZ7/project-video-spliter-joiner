@@ -32,14 +32,15 @@
                         Command="{Binding ClearCommand}" />
                 <TextBlock Margin="8,0,0,0"
                            VerticalAlignment="Center"
-                           Foreground="#666"
+                           Foreground="{StaticResource TextMutedBrush}"
                            Text="Add two or more compatible clips, order them, then join." />
             </StackPanel>
 
-            <!-- Compat banner (green when compatible, red otherwise) -->
+            <!-- Compat banner (green when compatible, red otherwise) — dark-tuned via the converter (Ok/Danger). -->
             <Border Margin="0,8,0,0"
                     Padding="8"
                     BorderThickness="1"
+                    CornerRadius="{StaticResource RadiusSm}"
                     Background="{Binding IsCompatible, Converter={StaticResource BoolToCompatBrush}, ConverterParameter=bg}"
                     BorderBrush="{Binding IsCompatible, Converter={StaticResource BoolToCompatBrush}, ConverterParameter=border}">
                 <TextBlock Text="{Binding CompatSummary}"
@@ -66,9 +67,9 @@
                       IsChecked="{Binding Overwrite, Mode=TwoWay}" />
 
             <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
-                <Button Content="Run join"
-                        Padding="14,4"
-                        FontWeight="Bold"
+                <Button Style="{StaticResource AccentButton}"
+                        Content="Run join"
+                        Padding="16,5"
                         Command="{Binding RunJoinCommand}" />
                 <Button Content="Cancel"
                         Margin="6,0,0,0"
@@ -90,30 +91,31 @@
                         Margin="0,6,0,0"
                         Visibility="{Binding Operation.IsRunning, Converter={StaticResource BoolToVisibility}}">
                 <TextBlock TextWrapping="Wrap"
-                           Foreground="#333"
+                           Foreground="{StaticResource TextPrimaryBrush}"
                            Text="{Binding Operation.StatusText}" />
                 <!-- ETA — small, muted, shown next to the status (T-045) -->
                 <TextBlock Margin="10,0,0,0"
                            VerticalAlignment="Center"
-                           FontSize="11"
-                           Foreground="#777"
+                           FontSize="{StaticResource FontSizeSmall}"
+                           Foreground="{StaticResource TextMutedBrush}"
                            Text="{Binding Operation.EtaText}"
                            Visibility="{Binding Operation.EtaText, Converter={StaticResource NullToCollapsed}}" />
             </StackPanel>
 
-            <!-- Error headline + hint + copyable, selectable full-log details (T-037) -->
+            <!-- Error headline + hint + copyable, selectable full-log details (T-037) — danger role on dark. -->
             <Border Margin="0,6,0,0"
-                    Padding="6"
-                    Background="#FDECEA"
-                    BorderBrush="#E57373"
+                    Padding="8"
+                    Background="{StaticResource SurfaceBrush}"
+                    BorderBrush="{StaticResource DangerBrush}"
                     BorderThickness="1"
+                    CornerRadius="{StaticResource RadiusSm}"
                     Visibility="{Binding Operation.Error, Converter={StaticResource NullToCollapsed}}">
                 <StackPanel>
-                    <TextBlock Text="{Binding Operation.Error.Message}" FontWeight="Bold" Foreground="#B71C1C" TextWrapping="Wrap" />
+                    <TextBlock Text="{Binding Operation.Error.Message}" FontWeight="Bold" Foreground="{StaticResource DangerBrush}" TextWrapping="Wrap" />
                     <TextBlock Text="{Binding Operation.Error.Hint}"
                                Margin="0,2,0,0"
                                TextWrapping="Wrap"
-                               Foreground="#7A2018"
+                               Foreground="{StaticResource TextPrimaryBrush}"
                                Visibility="{Binding Operation.Error.Hint, Converter={StaticResource NullToCollapsed}}" />
 
                     <!-- Action row: copy the full error, open the saved full log -->
@@ -181,8 +183,8 @@
                             <TextBlock Text="{Binding Display}" FontWeight="SemiBold" />
                             <TextBlock Text="{Binding InfoText}"
                                        FontFamily="Consolas"
-                                       FontSize="11"
-                                       Foreground="#666"
+                                       FontSize="{StaticResource FontSizeSmall}"
+                                       Foreground="{StaticResource TextMutedBrush}"
                                        Visibility="{Binding InfoText, Converter={StaticResource NullToCollapsed}}" />
                         </StackPanel>
 
@@ -215,9 +217,9 @@
                 IsHitTestVisible="False"
                 Visibility="Collapsed"
                 Margin="8"
-                BorderBrush="#3399FF"
+                BorderBrush="{StaticResource AccentBrush}"
                 BorderThickness="3"
-                Background="#223399FF"
-                CornerRadius="4" />
+                Background="{StaticResource AccentMutedBrush}"
+                CornerRadius="{StaticResource RadiusSm}" />
     </Grid>
 </UserControl>

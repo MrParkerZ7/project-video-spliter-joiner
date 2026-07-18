@@ -41,7 +41,6 @@
                       VerticalAlignment="Center"
                       ResizeBehavior="PreviousAndNext"
                       ResizeDirection="Rows"
-                      Background="#D0D0D0"
                       ToolTip="Drag to resize the video preview" />
 
         <!-- ================= Content: timeline + markers + output/run ================= -->
@@ -98,14 +97,16 @@
                     <Run Text="{Binding Info.Container, Mode=OneWay}" />
                 </TextBlock>
 
-                <!-- Coarse-keyframe warning -->
+                <!-- Coarse-keyframe warning — warning role: muted-gold fill, gold border, primary text. -->
                 <Border Margin="0,6,0,0"
-                        Padding="6"
-                        Background="#FFF7E6"
-                        BorderBrush="#E8B84B"
+                        Padding="8"
+                        Background="{StaticResource AccentMutedBrush}"
+                        BorderBrush="{StaticResource AccentBrush}"
                         BorderThickness="1"
+                        CornerRadius="{StaticResource RadiusSm}"
                         Visibility="{Binding KeyframeWarning, Converter={StaticResource NullToCollapsed}}">
-                    <TextBlock Text="{Binding KeyframeWarning}" TextWrapping="Wrap" Foreground="#7A5C00" />
+                    <TextBlock Text="{Binding KeyframeWarning}" TextWrapping="Wrap"
+                               Foreground="{StaticResource TextPrimaryBrush}" />
                 </Border>
 
                 <!-- Add-marker input -->
@@ -135,7 +136,7 @@
                     <TextBlock Text="Parts to export:" FontWeight="Bold" VerticalAlignment="Center" />
                     <TextBlock Margin="8,0,0,0"
                                VerticalAlignment="Center"
-                               Foreground="#555"
+                               Foreground="{StaticResource TextMutedBrush}"
                                Text="{Binding SelectedSegmentCount, StringFormat={}({0} selected)}" />
                     <Button Content="All"
                             Margin="10,0,0,0"
@@ -219,9 +220,9 @@
                           IsChecked="{Binding Overwrite, Mode=TwoWay}" />
 
                 <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
-                    <Button Content="{Binding RunLabel}"
-                            Padding="14,4"
-                            FontWeight="Bold"
+                    <Button Style="{StaticResource AccentButton}"
+                            Content="{Binding RunLabel}"
+                            Padding="16,5"
                             Command="{Binding RunSplitCommand}" />
                     <Button Content="Cancel"
                             Margin="6,0,0,0"
@@ -243,13 +244,13 @@
                             Margin="0,6,0,0"
                             Visibility="{Binding Operation.IsRunning, Converter={StaticResource BoolToVisibility}}">
                     <TextBlock TextWrapping="Wrap"
-                               Foreground="#333"
+                               Foreground="{StaticResource TextPrimaryBrush}"
                                Text="{Binding Operation.StatusText}" />
                     <!-- ETA — small, muted, shown next to the status (T-045) -->
                     <TextBlock Margin="10,0,0,0"
                                VerticalAlignment="Center"
-                               FontSize="11"
-                               Foreground="#777"
+                               FontSize="{StaticResource FontSizeSmall}"
+                               Foreground="{StaticResource TextMutedBrush}"
                                Text="{Binding Operation.EtaText}"
                                Visibility="{Binding Operation.EtaText, Converter={StaticResource NullToCollapsed}}" />
                 </StackPanel>
@@ -257,23 +258,24 @@
                 <!-- Free-form VM status line (load result / "Split complete.") — shown when not running -->
                 <TextBlock Margin="0,6,0,0"
                            TextWrapping="Wrap"
-                           Foreground="#333"
+                           Foreground="{StaticResource TextPrimaryBrush}"
                            Text="{Binding StatusText}"
                            Visibility="{Binding StatusText, Converter={StaticResource NullToCollapsed}}" />
 
-                <!-- Error headline + hint + copyable, selectable full-log details (T-037) -->
+                <!-- Error headline + hint + copyable, selectable full-log details (T-037) — danger role on dark. -->
                 <Border Margin="0,6,0,0"
-                        Padding="6"
-                        Background="#FDECEA"
-                        BorderBrush="#E57373"
+                        Padding="8"
+                        Background="{StaticResource SurfaceBrush}"
+                        BorderBrush="{StaticResource DangerBrush}"
                         BorderThickness="1"
+                        CornerRadius="{StaticResource RadiusSm}"
                         Visibility="{Binding Operation.Error, Converter={StaticResource NullToCollapsed}}">
                     <StackPanel>
-                        <TextBlock Text="{Binding Operation.Error.Message}" FontWeight="Bold" Foreground="#B71C1C" TextWrapping="Wrap" />
+                        <TextBlock Text="{Binding Operation.Error.Message}" FontWeight="Bold" Foreground="{StaticResource DangerBrush}" TextWrapping="Wrap" />
                         <TextBlock Text="{Binding Operation.Error.Hint}"
                                    Margin="0,2,0,0"
                                    TextWrapping="Wrap"
-                                   Foreground="#7A2018"
+                                   Foreground="{StaticResource TextPrimaryBrush}"
                                    Visibility="{Binding Operation.Error.Hint, Converter={StaticResource NullToCollapsed}}" />
 
                         <!-- Action row: copy the full error, open the saved full log -->
@@ -340,9 +342,9 @@
                 Grid.RowSpan="3"
                 IsHitTestVisible="False"
                 Visibility="Collapsed"
-                BorderBrush="#3399FF"
+                BorderBrush="{StaticResource AccentBrush}"
                 BorderThickness="3"
-                Background="#223399FF"
-                CornerRadius="4" />
+                Background="{StaticResource AccentMutedBrush}"
+                CornerRadius="{StaticResource RadiusSm}" />
     </Grid>
 </UserControl>

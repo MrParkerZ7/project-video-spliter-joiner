@@ -3,9 +3,10 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
     <StackPanel>
         <!-- The track: fixed-height strip; ticks + playhead are drawn onto Track in code-behind. -->
-        <Border BorderBrush="#B0B0B0"
+        <Border BorderBrush="{StaticResource BorderBrush}"
                 BorderThickness="1"
-                Background="#F3F3F3"
+                Background="{StaticResource Surface2Brush}"
+                CornerRadius="{StaticResource RadiusSm}"
                 Height="34"
                 Cursor="Hand"
                 ToolTip="Click to drop a cut here; click a marker tick to seek.">
@@ -16,10 +17,12 @@
                     MouseLeftButtonUp="OnTrackClicked" />
         </Border>
 
-        <!-- Legend -->
+        <!-- Legend — gold swatch matches the gold marker ticks + playhead pins. -->
         <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
-            <Rectangle Width="12" Height="12" Fill="#3A6EA5" VerticalAlignment="Center" />
-            <TextBlock Text="marker" Margin="4,0,10,0" VerticalAlignment="Center" FontSize="11" Foreground="#444" />
+            <Rectangle Width="12" Height="12" Fill="{StaticResource AccentBrush}" VerticalAlignment="Center" />
+            <TextBlock Text="marker" Margin="4,0,10,0" VerticalAlignment="Center"
+                       FontSize="{StaticResource FontSizeSmall}"
+                       Foreground="{StaticResource TextMutedBrush}" />
         </StackPanel>
     </StackPanel>
 </UserControl>

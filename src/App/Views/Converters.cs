@@ -60,15 +60,21 @@ public sealed class FractionToPercentConverter : IValueConverter
 /// Maps a compatibility bool to a banner background/foreground brush pair via the converter
 /// parameter: <c>bg</c> → green when true, red when false; <c>fg</c> → the matching text colour.
 /// Used by the Join screen's compat banner so a compatible verdict reads green and a refusal red.
+///
+/// <para>Dark+gold theme (T-054): colours are tuned for the dark surfaces — a low-alpha green/red
+/// wash for the background and the readable <c>OkColor #3FB950</c> / <c>DangerColor #E5484D</c>
+/// tokens (from <c>Themes/Tokens.xaml</c>) for text + border, so the green/red compatibility
+/// semantics survive on a near-black panel.</para>
 /// </summary>
 public sealed class BoolToCompatBrushConverter : IValueConverter
 {
-    private static readonly SolidColorBrush GreenBackground = Freeze("#E6F4EA");
-    private static readonly SolidColorBrush GreenForeground = Freeze("#1E7E34");
-    private static readonly SolidColorBrush GreenBorder = Freeze("#7CC28A");
-    private static readonly SolidColorBrush RedBackground = Freeze("#FDECEA");
-    private static readonly SolidColorBrush RedForeground = Freeze("#B71C1C");
-    private static readonly SolidColorBrush RedBorder = Freeze("#E57373");
+    // Backgrounds: the Ok/Danger token colour at low alpha, so it reads as a subtle tint on dark.
+    private static readonly SolidColorBrush GreenBackground = Freeze("#243FB950");
+    private static readonly SolidColorBrush GreenForeground = Freeze("#FF3FB950"); // OkColor
+    private static readonly SolidColorBrush GreenBorder = Freeze("#FF3FB950");     // OkColor
+    private static readonly SolidColorBrush RedBackground = Freeze("#24E5484D");
+    private static readonly SolidColorBrush RedForeground = Freeze("#FFE5484D");   // DangerColor
+    private static readonly SolidColorBrush RedBorder = Freeze("#FFE5484D");       // DangerColor
 
     public object Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
     {
