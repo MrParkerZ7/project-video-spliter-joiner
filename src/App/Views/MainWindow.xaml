@@ -80,9 +80,33 @@
             </StackPanel>
         </Grid>
 
-        <!-- ===================== Content (unchanged) ===================== -->
+        <!-- ===================== Content ===================== -->
         <Grid Grid.Row="1">
-            <TabControl Margin="8">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+
+            <!-- App header (T-059): name + muted tagline "lossless · no re-encode" -->
+            <StackPanel Grid.Row="0"
+                        Orientation="Horizontal"
+                        VerticalAlignment="Center"
+                        Margin="16,10,16,4">
+                <TextBlock Text="VideoSplitJoiner"
+                           FontFamily="{DynamicResource SansFontFamily}"
+                           FontSize="{DynamicResource FontSizeTitle}"
+                           FontWeight="SemiBold"
+                           Foreground="{DynamicResource TextPrimaryBrush}"
+                           VerticalAlignment="Center" />
+                <TextBlock Text="lossless · no re-encode"
+                           Margin="10,0,0,0"
+                           FontFamily="{DynamicResource MonoFontFamily}"
+                           FontSize="{DynamicResource FontSizeSmall}"
+                           Foreground="{DynamicResource TextMutedBrush}"
+                           VerticalAlignment="Center" />
+            </StackPanel>
+
+            <TabControl Grid.Row="1" Margin="8,4,8,8">
                 <TabItem Header="Split">
                     <views:SplitView DataContext="{Binding Split}" />
                 </TabItem>

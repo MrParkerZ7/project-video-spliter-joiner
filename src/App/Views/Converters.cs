@@ -33,6 +33,19 @@ public sealed class BoolToVisibilityConverter : IValueConverter
 }
 
 /// <summary>
+/// Maps a bool to Visibility INVERTED (true → Collapsed, false → Visible). Used to show an
+/// empty-state placeholder only while a bound "HasFile"/"HasClips" flag is false (T-059).
+/// </summary>
+public sealed class BoolToCollapsedConverter : IValueConverter
+{
+    public object Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
+        => value is true ? Visibility.Collapsed : Visibility.Visible;
+
+    public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
+        => value is not Visibility.Visible;
+}
+
+/// <summary>
 /// Two-way maps a <see cref="TimeSpan"/> to its total seconds (double) — used so a
 /// <c>Slider</c> whose Value is a double can bind against the player's TimeSpan
 /// <c>Position</c>/<c>Duration</c> directly.

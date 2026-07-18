@@ -157,6 +157,31 @@ public sealed class JoinViewModel : ObservableObject
     /// </summary>
     public bool CanClear => Items.Count > 0 && !Operation.IsRunning;
 
+    /// <summary>True when at least one clip is queued — gates the "Estimated result" panel (T-059).</summary>
+    public bool HasClips => Items.Count > 0;
+
+    /// <summary>
+    /// Estimated total duration of the joined output (T-059) — the sum of every queued clip's probed
+    /// duration, formatted as <c>M:SS</c> / <c>H:MM:SS</c>. Clips not yet probed contribute zero.
+    /// </summary>
+    public string EstimatedDuration => MediaFormat.FormatDuration(MediaFormat.Estimate(EstimateInputs()).TotalDuration);
+
+    /// <summary>
+    /// Estimated approximate size of the joined output (T-059) — the sum of every queued clip's
+    /// on-disk size, human-formatted (e.g. <c>"2.8 GB"</c>). Stream-copy concat is lossless, so the
+    /// summed input size is a faithful estimate.
+    /// </summary>
+    public string EstimatedSize => MediaFormat.FormatSize(MediaFormat.Estimate(EstimateInputs()).ApproxBytes);
+
+    private IEnumerable<(TimeSpan Duration, long Bytes)> EstimateInputs() =>
+        Items.Select(i => (i.Duration ?? TimeSpan.Zero, i.SizeBytes));
+
+    /// <summary>
+    /// Count-aware primary-button label (T-059): <c>"Join"</c> with no clips, <c>"Join 2 clips"</c>
+    /// otherwise. Mirrors the Split screen's <c>RunLabel</c> so the gold button reads the same way.
+    /// </summary>
+    public string RunLabel => Items.Count == 0 ? "Join" : $"Join {Items.Count} clips";
+
     // ---- Commands ---------------------------------------------------------------------------
 
     /// <summary>Append clips (parameter = paths); each is probed for its chip, then compat re-checks.</summary>
@@ -208,7 +233,11 @@ public sealed class JoinViewModel : ObservableObject
                 continue;
             }
 
-            var item = new JoinItemViewModel(path);
+            var item = new JoinItemViewModel(path)
+            {
+                // On-disk size for the estimated-result sum (T-059) — best-effort, 0 if unreadable.
+                SizeBytes = SafeFileSize(path),
+            };
             Items.Add(item);
             added.Add(item);
         }
@@ -232,6 +261,7 @@ public sealed class JoinViewModel : ObservableObject
             await PopulateInfoChipAsync(item).ConfigureAwait(true);
         }
 
+        RaiseEstimate();
         await RefreshCompatAsync().ConfigureAwait(true);
     }
 
@@ -242,6 +272,7 @@ public sealed class JoinViewModel : ObservableObject
             return;
         }
 
+        RaiseEstimate();
         await RefreshCompatAsync().ConfigureAwait(true);
     }
 
@@ -457,9 +488,24 @@ public sealed class JoinViewModel : ObservableObject
         // Reset the shared operation (clears any prior error/progress; not running per CanClear).
         Operation.Reset();
 
-        // OutputPath intentionally preserved (see summary). Re-raise the derived guards.
+        // OutputPath intentionally preserved (see summary). Re-raise the derived guards + estimate.
+        RaiseEstimate();
         OnPropertyChanged(nameof(CanClear));
         RaiseCommandStates();
+    }
+
+    /// <summary>On-disk byte size of <paramref name="path"/>, or 0 if it can't be read. Never throws.</summary>
+    private static long SafeFileSize(string path)
+    {
+        try
+        {
+            var fi = new FileInfo(path);
+            return fi.Exists ? fi.Length : 0;
+        }
+        catch
+        {
+            return 0;
+        }
     }
 
     /// <summary>The containing folder of <paramref name="path"/>, or null if it can't be resolved. Never throws.</summary>
@@ -500,6 +546,8 @@ public sealed class JoinViewModel : ObservableObject
             if (result is ProbeResult.ProbeSucceeded ok)
             {
                 item.InfoText = FormatInfoChip(ok.Info);
+                // Capture the probed duration for the estimated-result sum (T-059).
+                item.Duration = ok.Info.Duration;
             }
         }
         catch
@@ -557,7 +605,17 @@ public sealed class JoinViewModel : ObservableObject
     {
         OnPropertyChanged(nameof(CanRunJoin));
         OnPropertyChanged(nameof(CanClear));
+        OnPropertyChanged(nameof(HasClips));
+        OnPropertyChanged(nameof(RunLabel));
         RaiseCommandStates();
+    }
+
+    /// <summary>Re-raise the estimated-result readouts (T-059) after the queued clips change.</summary>
+    private void RaiseEstimate()
+    {
+        OnPropertyChanged(nameof(HasClips));
+        OnPropertyChanged(nameof(EstimatedDuration));
+        OnPropertyChanged(nameof(EstimatedSize));
     }
 
     private void OnOperationChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)

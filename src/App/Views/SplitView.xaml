@@ -7,7 +7,32 @@
     <UserControl.Resources>
         <conv:NullToCollapsedConverter x:Key="NullToCollapsed" />
         <conv:BoolToVisibilityConverter x:Key="BoolToVisibility" />
+        <conv:BoolToCollapsedConverter x:Key="BoolToCollapsed" />
         <conv:FractionToPercentConverter x:Key="FractionToPercent" />
+
+        <!-- Small mono section-header label, e.g. "Cut markers" / "Parts to export" (T-059). -->
+        <Style x:Key="SectionHeader" TargetType="TextBlock">
+            <Setter Property="FontFamily" Value="{StaticResource MonoFontFamily}" />
+            <Setter Property="FontSize" Value="{StaticResource FontSizeSmall}" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Foreground" Value="{StaticResource TextSecondaryBrush}" />
+            <Setter Property="Margin" Value="0,0,0,4" />
+        </Style>
+
+        <!-- Mono field label (DIR / NAME / Position) — faint, small, upper-ish (T-059). -->
+        <Style x:Key="FieldLabel" TargetType="TextBlock">
+            <Setter Property="FontFamily" Value="{StaticResource MonoFontFamily}" />
+            <Setter Property="FontSize" Value="{StaticResource FontSizeSmall}" />
+            <Setter Property="Foreground" Value="{StaticResource TextMutedBrush}" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+
+        <!-- All / None select chip — compact, muted surface (T-059). -->
+        <Style x:Key="ChipButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+            <Setter Property="Padding" Value="10,2" />
+            <Setter Property="FontSize" Value="{StaticResource FontSizeSmall}" />
+            <Setter Property="MinWidth" Value="44" />
+        </Style>
     </UserControl.Resources>
 
     <Grid x:Name="RootGrid"
@@ -16,330 +41,402 @@
           PreviewDragOver="OnDragOver"
           DragLeave="OnDragLeave"
           Drop="OnDrop">
-        <Grid.RowDefinitions>
-            <!-- Row 0: resizable video preview pane (T-027) -->
-            <RowDefinition Height="300" MinHeight="140" />
-            <!-- Row 1: drag handle to resize the preview vs the content below -->
-            <RowDefinition Height="Auto" />
-            <!-- Row 2: timeline + markers + output/run — star-sized, never clipped -->
-            <RowDefinition Height="*" MinHeight="200" />
-        </Grid.RowDefinitions>
-
-        <!-- ================= TOP: in-app video preview (T-012), user-resizable (T-027) ================= -->
-        <views:PlayerView Grid.Row="0"
-                          Margin="0,0,0,6"
-                          DataContext="{Binding Player}"
-                          Visibility="{Binding DataContext.HasFile,
-                                       RelativeSource={RelativeSource AncestorType=UserControl},
-                                       Converter={StaticResource BoolToVisibility}}" />
-
-        <!-- ============ Drag handle: resize the preview against the content below (T-027) ============ -->
-        <GridSplitter Grid.Row="1"
-                      Height="6"
-                      Margin="0,0,0,6"
-                      HorizontalAlignment="Stretch"
-                      VerticalAlignment="Center"
-                      ResizeBehavior="PreviousAndNext"
-                      ResizeDirection="Rows"
-                      ToolTip="Drag to resize the video preview" />
-
-        <!-- ================= Content: timeline + markers + output/run ================= -->
-        <Grid Grid.Row="2">
-        <Grid.RowDefinitions>
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="*" />
-        </Grid.RowDefinitions>
-
-        <!-- ============ Timeline overlay: markers + candidates (T-014) ============ -->
-        <views:TimelineView Grid.Row="0"
-                            Margin="0,0,0,10"
-                            DataContext="{Binding Timeline}"
-                            Visibility="{Binding DataContext.HasFile,
-                                         RelativeSource={RelativeSource AncestorType=UserControl},
-                                         Converter={StaticResource BoolToVisibility}}" />
-
-        <Grid Grid.Row="1">
+        <!-- ★ T-059 two-column body: LEFT = video/preview + timeline (flexes), RIGHT = tool panel. -->
         <Grid.ColumnDefinitions>
-            <ColumnDefinition Width="*" />
-            <ColumnDefinition Width="8" />
-            <ColumnDefinition Width="*" />
+            <ColumnDefinition Width="*" MinWidth="320" />
+            <ColumnDefinition Width="6" />
+            <ColumnDefinition Width="360" MinWidth="300" MaxWidth="520" />
         </Grid.ColumnDefinitions>
 
-        <!-- ================= LEFT: file + markers ================= -->
-        <DockPanel Grid.Column="0">
+        <!-- ================= LEFT COLUMN: video preview + timeline ================= -->
+        <Grid Grid.Column="0" Margin="0,0,6,0">
+            <Grid.RowDefinitions>
+                <!-- Row 0: resizable video preview pane (T-027) -->
+                <RowDefinition Height="*" MinHeight="140" />
+                <!-- Row 1: drag handle to resize the preview vs the timeline below -->
+                <RowDefinition Height="Auto" />
+                <!-- Row 2: timeline overlay -->
+                <RowDefinition Height="Auto" MinHeight="80" />
+            </Grid.RowDefinitions>
 
-            <!-- File load + info -->
-            <StackPanel DockPanel.Dock="Top">
-                <StackPanel Orientation="Horizontal">
-                    <Button x:Name="LoadButton"
-                            Content="Load…"
-                            Padding="12,4"
-                            Click="OnLoadClicked" />
-                    <Button x:Name="ClearButton"
-                            Content="Clear"
-                            Margin="6,0,0,0"
-                            Padding="12,4"
-                            ToolTip="Unload the current file and reset the Split screen"
-                            Command="{Binding ClearCommand}" />
-                    <TextBlock Margin="8,0,0,0"
-                               VerticalAlignment="Center"
-                               Text="{Binding InputPath}"
-                               TextTrimming="CharacterEllipsis" />
+            <!-- In-app video preview (T-012), user-resizable (T-027) -->
+            <views:PlayerView Grid.Row="0"
+                              DataContext="{Binding Player}"
+                              Visibility="{Binding DataContext.HasFile,
+                                           RelativeSource={RelativeSource AncestorType=UserControl},
+                                           Converter={StaticResource BoolToVisibility}}" />
+
+            <!-- Empty-state hint when no file is loaded (T-059) -->
+            <Border Grid.Row="0"
+                    Background="{StaticResource Surface1Brush}"
+                    BorderBrush="{StaticResource BorderBrush}"
+                    BorderThickness="1"
+                    CornerRadius="{StaticResource RadiusMd}"
+                    Visibility="{Binding HasFile, Converter={StaticResource BoolToCollapsed}}">
+                <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+                    <TextBlock Text="No file loaded"
+                               HorizontalAlignment="Center"
+                               FontFamily="{StaticResource SansFontFamily}"
+                               FontSize="{StaticResource FontSizeTitle}"
+                               Foreground="{StaticResource TextSecondaryBrush}" />
+                    <TextBlock Text="Load a video or drop it here to begin."
+                               Margin="0,4,0,0"
+                               HorizontalAlignment="Center"
+                               Foreground="{StaticResource TextMutedBrush}" />
                 </StackPanel>
+            </Border>
 
-                <TextBlock Margin="0,6,0,0"
-                           Visibility="{Binding Info, Converter={StaticResource NullToCollapsed}}">
-                    <Run Text="Duration: " FontWeight="Bold" />
-                    <Run Text="{Binding Info.Duration, Mode=OneWay}" />
-                </TextBlock>
-                <TextBlock Visibility="{Binding Info, Converter={StaticResource NullToCollapsed}}">
-                    <Run Text="Container: " FontWeight="Bold" />
-                    <Run Text="{Binding Info.Container, Mode=OneWay}" />
-                </TextBlock>
+            <!-- Drag handle: resize the preview against the timeline below (T-027) -->
+            <GridSplitter Grid.Row="1"
+                          Height="6"
+                          Margin="0,6"
+                          HorizontalAlignment="Stretch"
+                          VerticalAlignment="Center"
+                          ResizeBehavior="PreviousAndNext"
+                          ResizeDirection="Rows"
+                          ToolTip="Drag to resize the video preview" />
 
-                <!-- Coarse-keyframe warning — warning role: muted-gold fill, gold border, primary text. -->
-                <Border Margin="0,6,0,0"
-                        Padding="8"
-                        Background="{StaticResource AccentMutedBrush}"
-                        BorderBrush="{StaticResource AccentBrush}"
-                        BorderThickness="1"
-                        CornerRadius="{StaticResource RadiusSm}"
-                        Visibility="{Binding KeyframeWarning, Converter={StaticResource NullToCollapsed}}">
-                    <TextBlock Text="{Binding KeyframeWarning}" TextWrapping="Wrap"
-                               Foreground="{StaticResource TextPrimaryBrush}" />
-                </Border>
+            <!-- Timeline overlay: markers + candidates (T-014) -->
+            <views:TimelineView Grid.Row="2"
+                                DataContext="{Binding Timeline}"
+                                Visibility="{Binding DataContext.HasFile,
+                                             RelativeSource={RelativeSource AncestorType=UserControl},
+                                             Converter={StaticResource BoolToVisibility}}" />
+        </Grid>
 
-                <!-- Add-marker input -->
-                <StackPanel Orientation="Horizontal" Margin="0,10,0,4">
-                    <TextBlock Text="Position:" VerticalAlignment="Center" />
-                    <TextBox x:Name="PositionBox"
-                             Width="90"
-                             Margin="6,0,0,0"
-                             Text="{Binding NewMarkerPosition, Mode=TwoWay}"
-                             ToolTip="Time from start, e.g. 00:01:23.5" />
-                    <Button Content="Add marker"
-                            Margin="6,0,0,0"
-                            Padding="8,2"
-                            Command="{Binding AddMarkerCommand}" />
+        <!-- ================= Draggable divider between the video area and the tool panel ================= -->
+        <GridSplitter Grid.Column="1"
+                      Width="6"
+                      HorizontalAlignment="Center"
+                      VerticalAlignment="Stretch"
+                      ResizeBehavior="PreviousAndNext"
+                      ResizeDirection="Columns"
+                      ToolTip="Drag to resize the tool panel" />
+
+        <!-- ================= RIGHT COLUMN: tool panel (Load → Run), scrollable ================= -->
+        <Border Grid.Column="2"
+                Background="{StaticResource SurfaceBrush}"
+                BorderBrush="{StaticResource BorderBrush}"
+                BorderThickness="1"
+                CornerRadius="{StaticResource RadiusMd}">
+            <ScrollViewer VerticalScrollBarVisibility="Auto"
+                          HorizontalScrollBarVisibility="Disabled"
+                          Padding="12">
+                <StackPanel>
+
+                    <!-- ===== File load + info card ===== -->
+                    <StackPanel Orientation="Horizontal">
+                        <Button x:Name="LoadButton"
+                                Content="Load…"
+                                Padding="14,5"
+                                Click="OnLoadClicked" />
+                        <Button x:Name="ClearButton"
+                                Content="Clear"
+                                Margin="6,0,0,0"
+                                Padding="14,5"
+                                ToolTip="Unload the current file and reset the Split screen"
+                                Command="{Binding ClearCommand}" />
+                    </StackPanel>
+
+                    <!-- File-info card: name + mono meta line (container · duration · size) + badge (T-059) -->
+                    <Border Margin="0,10,0,0"
+                            Padding="10"
+                            Background="{StaticResource Surface2Brush}"
+                            BorderBrush="{StaticResource BorderBrush}"
+                            BorderThickness="1"
+                            CornerRadius="{StaticResource RadiusSm}"
+                            Visibility="{Binding Info, Converter={StaticResource NullToCollapsed}}">
+                        <StackPanel>
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0"
+                                           Text="{Binding FileName}"
+                                           FontFamily="{StaticResource SansFontFamily}"
+                                           FontWeight="SemiBold"
+                                           TextTrimming="CharacterEllipsis"
+                                           ToolTip="{Binding InputPath}"
+                                           VerticalAlignment="Center" />
+                                <!-- Format/status badge: gold-accented mono chip -->
+                                <Border Grid.Column="1"
+                                        Margin="8,0,0,0"
+                                        Padding="7,2"
+                                        Background="{StaticResource AccentMutedBrush}"
+                                        BorderBrush="{StaticResource AccentBrush}"
+                                        BorderThickness="1"
+                                        CornerRadius="{StaticResource RadiusSm}"
+                                        VerticalAlignment="Center"
+                                        Visibility="{Binding Badge, Converter={StaticResource NullToCollapsed}}">
+                                    <TextBlock Text="{Binding Badge}"
+                                               FontFamily="{StaticResource MonoFontFamily}"
+                                               FontSize="{StaticResource FontSizeSmall}"
+                                               FontWeight="SemiBold"
+                                               Foreground="{StaticResource AccentBrush}" />
+                                </Border>
+                            </Grid>
+                            <TextBlock Text="{Binding MetaLine}"
+                                       Margin="0,4,0,0"
+                                       FontFamily="{StaticResource MonoFontFamily}"
+                                       FontSize="{StaticResource FontSizeSmall}"
+                                       Foreground="{StaticResource TextMutedBrush}" />
+                        </StackPanel>
+                    </Border>
+
+                    <!-- Coarse-keyframe warning — warning role: muted-gold fill, gold border, primary text. -->
+                    <Border Margin="0,10,0,0"
+                            Padding="8"
+                            Background="{StaticResource AccentMutedBrush}"
+                            BorderBrush="{StaticResource AccentBrush}"
+                            BorderThickness="1"
+                            CornerRadius="{StaticResource RadiusSm}"
+                            Visibility="{Binding KeyframeWarning, Converter={StaticResource NullToCollapsed}}">
+                        <TextBlock Text="{Binding KeyframeWarning}" TextWrapping="Wrap"
+                                   Foreground="{StaticResource TextPrimaryBrush}" />
+                    </Border>
+
+                    <!-- ===== Cut markers section ===== -->
+                    <TextBlock Text="Cut markers" Style="{StaticResource SectionHeader}" Margin="0,14,0,4" />
+
+                    <!-- Add-marker input: Position field + Add + capture-at-playhead -->
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="POSITION" Style="{StaticResource FieldLabel}" />
+                        <TextBox x:Name="PositionBox"
+                                 Width="86"
+                                 Margin="8,0,0,0"
+                                 Text="{Binding NewMarkerPosition, Mode=TwoWay}"
+                                 ToolTip="Time from start, e.g. 00:01:23.5" />
+                        <Button Content="Add"
+                                Margin="6,0,0,0"
+                                Padding="10,3"
+                                ToolTip="Add a cut marker at the position above"
+                                Command="{Binding AddMarkerCommand}" />
+                    </StackPanel>
                     <Button Content="Set cut point at playhead"
-                            Margin="6,0,0,0"
-                            Padding="8,2"
+                            Margin="0,6,0,0"
+                            HorizontalAlignment="Left"
+                            Padding="10,3"
                             ToolTip="Drop a cut at the preview player's current position (snaps to the nearest keyframe)"
                             Command="{Binding SetCutAtPlayheadCommand}" />
-                </StackPanel>
-                <TextBlock Text="Cut markers (snapped to keyframe):" FontWeight="Bold" Margin="0,4,0,2" />
-            </StackPanel>
 
-            <!-- ====== Selectable split parts (T-049): checkbox per part + select all/none ====== -->
-            <StackPanel DockPanel.Dock="Bottom" Margin="0,10,0,0">
-                <StackPanel Orientation="Horizontal" Margin="0,0,0,2">
-                    <TextBlock Text="Parts to export:" FontWeight="Bold" VerticalAlignment="Center" />
-                    <TextBlock Margin="8,0,0,0"
-                               VerticalAlignment="Center"
-                               Foreground="{StaticResource TextMutedBrush}"
-                               Text="{Binding SelectedSegmentCount, StringFormat={}({0} selected)}" />
-                    <Button Content="All"
-                            Margin="10,0,0,0"
-                            Padding="8,1"
-                            ToolTip="Select every part for export"
-                            Command="{Binding SelectAllSegmentsCommand}" />
-                    <Button Content="None"
-                            Margin="4,0,0,0"
-                            Padding="8,1"
-                            ToolTip="Deselect every part"
-                            Command="{Binding SelectNoSegmentsCommand}" />
-                </StackPanel>
-                <ListBox ItemsSource="{Binding Segments}" MaxHeight="140">
-                    <ListBox.ItemTemplate>
-                        <DataTemplate DataType="{x:Type vm:SplitSegmentViewModel}">
-                            <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay}"
-                                      Content="{Binding Display}"
-                                      FontFamily="Consolas"
-                                      ToolTip="Uncheck to exclude this part from the export" />
-                        </DataTemplate>
-                    </ListBox.ItemTemplate>
-                </ListBox>
-            </StackPanel>
-
-            <!-- Marker list -->
-            <ListBox ItemsSource="{Binding Markers}" MinHeight="120">
-                <ListBox.ItemTemplate>
-                    <DataTemplate DataType="{x:Type vm:CutMarkerViewModel}">
-                        <Grid>
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="Auto" />
-                                <ColumnDefinition Width="Auto" />
-                            </Grid.ColumnDefinitions>
-                            <TextBlock Grid.Column="0"
-                                       VerticalAlignment="Center"
-                                       Text="{Binding Display}"
-                                       FontFamily="Consolas" />
-                            <Button Grid.Column="1"
-                                    Content="▶ seek"
-                                    Padding="6,1"
-                                    Margin="0,0,4,0"
-                                    ToolTip="Seek the preview player to this cut's snapped time"
-                                    Command="{Binding DataContext.SeekToMarkerCommand,
-                                              RelativeSource={RelativeSource AncestorType=ListBox}}"
-                                    CommandParameter="{Binding}" />
-                            <Button Grid.Column="2"
-                                    Content="Remove"
-                                    Padding="6,1"
-                                    Command="{Binding DataContext.RemoveMarkerCommand,
-                                              RelativeSource={RelativeSource AncestorType=ListBox}}"
-                                    CommandParameter="{Binding}" />
-                        </Grid>
-                    </DataTemplate>
-                </ListBox.ItemTemplate>
-            </ListBox>
-        </DockPanel>
-
-        <!-- ================= RIGHT: output + run ================= -->
-        <DockPanel Grid.Column="2">
-
-            <!-- Output + run controls anchored at the bottom -->
-            <StackPanel DockPanel.Dock="Bottom" Margin="0,8,0,0">
-                <Grid>
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="Auto" />
-                        <ColumnDefinition Width="*" />
-                    </Grid.ColumnDefinitions>
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto" />
-                        <RowDefinition Height="Auto" />
-                    </Grid.RowDefinitions>
-                    <TextBlock Grid.Row="0" Grid.Column="0" Text="Output dir:" VerticalAlignment="Center" Margin="0,0,6,4" />
-                    <TextBox Grid.Row="0" Grid.Column="1" Margin="0,0,0,4" Text="{Binding OutputDir, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
-                    <TextBlock Grid.Row="1" Grid.Column="0" Text="Pattern:" VerticalAlignment="Center" Margin="0,0,6,0" />
-                    <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding NamingPattern, Mode=TwoWay}" />
-                </Grid>
-
-                <CheckBox Content="Overwrite existing segments"
-                          Margin="0,6,0,0"
-                          IsChecked="{Binding Overwrite, Mode=TwoWay}" />
-
-                <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
-                    <Button Style="{StaticResource AccentButton}"
-                            Content="{Binding RunLabel}"
-                            Padding="16,5"
-                            Command="{Binding RunSplitCommand}" />
-                    <Button Content="Cancel"
-                            Margin="6,0,0,0"
-                            Padding="10,4"
-                            Command="{Binding CancelCommand}"
-                            Visibility="{Binding Operation.CanCancel, Converter={StaticResource BoolToVisibility}}" />
-                </StackPanel>
-
-                <ProgressBar Height="16"
-                             Margin="0,8,0,0"
-                             Minimum="0"
-                             Maximum="100"
-                             IsIndeterminate="{Binding Operation.IsIndeterminate, Mode=OneWay}"
-                             Value="{Binding Operation.Progress, Mode=OneWay, Converter={StaticResource FractionToPercent}}"
-                             Visibility="{Binding Operation.IsRunning, Converter={StaticResource BoolToVisibility}}" />
-
-                <!-- Running status line + ETA ("Splitting… (3 parts)   ~40s left") — visible while running (T-042/T-045) -->
-                <StackPanel Orientation="Horizontal"
-                            Margin="0,6,0,0"
-                            Visibility="{Binding Operation.IsRunning, Converter={StaticResource BoolToVisibility}}">
-                    <TextBlock TextWrapping="Wrap"
-                               Foreground="{StaticResource TextPrimaryBrush}"
-                               Text="{Binding Operation.StatusText}" />
-                    <!-- ETA — small, muted, shown next to the status (T-045) -->
-                    <TextBlock Margin="10,0,0,0"
-                               VerticalAlignment="Center"
-                               FontSize="{StaticResource FontSizeSmall}"
-                               Foreground="{StaticResource TextMutedBrush}"
-                               Text="{Binding Operation.EtaText}"
-                               Visibility="{Binding Operation.EtaText, Converter={StaticResource NullToCollapsed}}" />
-                </StackPanel>
-
-                <!-- Free-form VM status line (load result / "Split complete.") — shown when not running -->
-                <TextBlock Margin="0,6,0,0"
-                           TextWrapping="Wrap"
-                           Foreground="{StaticResource TextPrimaryBrush}"
-                           Text="{Binding StatusText}"
-                           Visibility="{Binding StatusText, Converter={StaticResource NullToCollapsed}}" />
-
-                <!-- Error headline + hint + copyable, selectable full-log details (T-037) — danger role on dark. -->
-                <Border Margin="0,6,0,0"
-                        Padding="8"
-                        Background="{StaticResource SurfaceBrush}"
-                        BorderBrush="{StaticResource DangerBrush}"
-                        BorderThickness="1"
-                        CornerRadius="{StaticResource RadiusSm}"
-                        Visibility="{Binding Operation.Error, Converter={StaticResource NullToCollapsed}}">
-                    <StackPanel>
-                        <TextBlock Text="{Binding Operation.Error.Message}" FontWeight="Bold" Foreground="{StaticResource DangerBrush}" TextWrapping="Wrap" />
-                        <TextBlock Text="{Binding Operation.Error.Hint}"
-                                   Margin="0,2,0,0"
-                                   TextWrapping="Wrap"
-                                   Foreground="{StaticResource TextPrimaryBrush}"
-                                   Visibility="{Binding Operation.Error.Hint, Converter={StaticResource NullToCollapsed}}" />
-
-                        <!-- Action row: copy the full error, open the saved full log -->
-                        <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
-                            <Button Content="Copy error"
-                                    Padding="8,2"
-                                    ToolTip="Copy the full error (message + full log) to the clipboard"
-                                    Click="OnCopyErrorClicked" />
-                            <Button Content="Open log file"
-                                    Margin="6,0,0,0"
-                                    Padding="8,2"
-                                    ToolTip="Reveal the saved full log in Explorer"
-                                    Click="OnOpenLogClicked"
-                                    Visibility="{Binding Operation.Error.HasLogFile, Converter={StaticResource BoolToVisibility}}" />
-                        </StackPanel>
-
-                        <Expander Header="Details (full log — selectable)" Margin="0,4,0,0" IsExpanded="True">
-                            <TextBox Text="{Binding Operation.Error.DetailText, Mode=OneWay}"
-                                     IsReadOnly="True"
-                                     AcceptsReturn="True"
-                                     IsReadOnlyCaretVisible="True"
-                                     FontFamily="Consolas"
-                                     TextWrapping="Wrap"
-                                     MaxHeight="180"
-                                     VerticalScrollBarVisibility="Auto"
-                                     HorizontalScrollBarVisibility="Auto" />
-                        </Expander>
-                    </StackPanel>
-                </Border>
-
-                <!-- Results panel -->
-                <StackPanel Margin="0,6,0,0"
-                            Visibility="{Binding LastResult, Converter={StaticResource NullToCollapsed}}">
-                    <StackPanel Orientation="Horizontal">
-                        <TextBlock Text="Segments produced:" FontWeight="Bold" VerticalAlignment="Center" />
-                        <Button Content="Open folder"
-                                Margin="8,0,0,0"
-                                Padding="6,1"
-                                Command="{Binding OpenFolderCommand}" />
-                    </StackPanel>
-                    <ItemsControl ItemsSource="{Binding LastResult.Segments}" Margin="0,4,0,0">
-                        <ItemsControl.ItemTemplate>
-                            <DataTemplate>
-                                <TextBlock FontFamily="Consolas">
-                                    <Run Text="{Binding Path, Mode=OneWay}" />
-                                    <Run Text=" @ " />
-                                    <Run Text="{Binding ActualStart, Mode=OneWay}" />
-                                    <Run Text=" (Δ " />
-                                    <Run Text="{Binding Delta, Mode=OneWay}" />
-                                    <Run Text=")" />
-                                </TextBlock>
+                    <!-- Marker list -->
+                    <ListBox ItemsSource="{Binding Markers}"
+                             Margin="0,6,0,0"
+                             MinHeight="90"
+                             MaxHeight="180">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate DataType="{x:Type vm:CutMarkerViewModel}">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0"
+                                               VerticalAlignment="Center"
+                                               Text="{Binding Display}"
+                                               FontFamily="{StaticResource MonoFontFamily}" />
+                                    <Button Grid.Column="1"
+                                            Content="▶ seek"
+                                            Padding="6,1"
+                                            Margin="0,0,4,0"
+                                            ToolTip="Seek the preview player to this cut's snapped time"
+                                            Command="{Binding DataContext.SeekToMarkerCommand,
+                                                      RelativeSource={RelativeSource AncestorType=ListBox}}"
+                                            CommandParameter="{Binding}" />
+                                    <Button Grid.Column="2"
+                                            Content="Remove"
+                                            Padding="6,1"
+                                            Command="{Binding DataContext.RemoveMarkerCommand,
+                                                      RelativeSource={RelativeSource AncestorType=ListBox}}"
+                                            CommandParameter="{Binding}" />
+                                </Grid>
                             </DataTemplate>
-                        </ItemsControl.ItemTemplate>
-                    </ItemsControl>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+
+                    <!-- ===== Parts to export section (T-049 select) ===== -->
+                    <Grid Margin="0,14,0,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+                            <TextBlock Text="Parts to export" Style="{StaticResource SectionHeader}" Margin="0" />
+                            <TextBlock Margin="8,0,0,0"
+                                       VerticalAlignment="Center"
+                                       FontFamily="{StaticResource MonoFontFamily}"
+                                       FontSize="{StaticResource FontSizeSmall}"
+                                       Foreground="{StaticResource TextMutedBrush}"
+                                       Text="{Binding SelectedSegmentCount, StringFormat={}({0} selected)}" />
+                        </StackPanel>
+                        <Button Grid.Column="1"
+                                Content="All"
+                                Style="{StaticResource ChipButton}"
+                                Margin="0,0,4,0"
+                                ToolTip="Select every part for export"
+                                Command="{Binding SelectAllSegmentsCommand}" />
+                        <Button Grid.Column="2"
+                                Content="None"
+                                Style="{StaticResource ChipButton}"
+                                ToolTip="Deselect every part"
+                                Command="{Binding SelectNoSegmentsCommand}" />
+                    </Grid>
+                    <ListBox ItemsSource="{Binding Segments}" MaxHeight="150">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate DataType="{x:Type vm:SplitSegmentViewModel}">
+                                <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay}"
+                                          Content="{Binding Display}"
+                                          FontFamily="{StaticResource MonoFontFamily}"
+                                          ToolTip="Uncheck to exclude this part from the export" />
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+
+                    <!-- ===== Output section (mono DIR / NAME fields) ===== -->
+                    <TextBlock Text="Output" Style="{StaticResource SectionHeader}" Margin="0,14,0,4" />
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+                        <TextBlock Grid.Row="0" Grid.Column="0" Text="DIR" Style="{StaticResource FieldLabel}" Margin="0,0,8,4" />
+                        <TextBox Grid.Row="0" Grid.Column="1" Margin="0,0,0,4"
+                                 Text="{Binding OutputDir, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                        <TextBlock Grid.Row="1" Grid.Column="0" Text="NAME" Style="{StaticResource FieldLabel}" Margin="0,0,8,0" />
+                        <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding NamingPattern, Mode=TwoWay}" />
+                    </Grid>
+
+                    <CheckBox Content="Overwrite existing segments"
+                              Margin="0,10,0,0"
+                              IsChecked="{Binding Overwrite, Mode=TwoWay}" />
+
+                    <!-- ===== Primary Run (gold, count-aware) + Cancel ===== -->
+                    <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
+                        <Button Style="{StaticResource AccentButton}"
+                                Content="{Binding RunLabel}"
+                                Padding="16,6"
+                                Command="{Binding RunSplitCommand}" />
+                        <Button Content="Cancel"
+                                Margin="6,0,0,0"
+                                Padding="10,5"
+                                Command="{Binding CancelCommand}"
+                                Visibility="{Binding Operation.CanCancel, Converter={StaticResource BoolToVisibility}}" />
+                    </StackPanel>
+
+                    <ProgressBar Height="16"
+                                 Margin="0,10,0,0"
+                                 Minimum="0"
+                                 Maximum="100"
+                                 IsIndeterminate="{Binding Operation.IsIndeterminate, Mode=OneWay}"
+                                 Value="{Binding Operation.Progress, Mode=OneWay, Converter={StaticResource FractionToPercent}}"
+                                 Visibility="{Binding Operation.IsRunning, Converter={StaticResource BoolToVisibility}}" />
+
+                    <!-- Running status line + ETA ("Splitting… (3 parts)   ~40s left") — visible while running (T-042/T-045) -->
+                    <StackPanel Orientation="Horizontal"
+                                Margin="0,6,0,0"
+                                Visibility="{Binding Operation.IsRunning, Converter={StaticResource BoolToVisibility}}">
+                        <TextBlock TextWrapping="Wrap"
+                                   Foreground="{StaticResource TextPrimaryBrush}"
+                                   Text="{Binding Operation.StatusText}" />
+                        <TextBlock Margin="10,0,0,0"
+                                   VerticalAlignment="Center"
+                                   FontSize="{StaticResource FontSizeSmall}"
+                                   Foreground="{StaticResource TextMutedBrush}"
+                                   Text="{Binding Operation.EtaText}"
+                                   Visibility="{Binding Operation.EtaText, Converter={StaticResource NullToCollapsed}}" />
+                    </StackPanel>
+
+                    <!-- Free-form VM status line (load result / "Split complete.") — shown when not running -->
+                    <TextBlock Margin="0,6,0,0"
+                               TextWrapping="Wrap"
+                               Foreground="{StaticResource TextPrimaryBrush}"
+                               Text="{Binding StatusText}"
+                               Visibility="{Binding StatusText, Converter={StaticResource NullToCollapsed}}" />
+
+                    <!-- Error headline + hint + copyable, selectable full-log details (T-037) — danger role on dark. -->
+                    <Border Margin="0,6,0,0"
+                            Padding="8"
+                            Background="{StaticResource Surface2Brush}"
+                            BorderBrush="{StaticResource DangerBrush}"
+                            BorderThickness="1"
+                            CornerRadius="{StaticResource RadiusSm}"
+                            Visibility="{Binding Operation.Error, Converter={StaticResource NullToCollapsed}}">
+                        <StackPanel>
+                            <TextBlock Text="{Binding Operation.Error.Message}" FontWeight="Bold" Foreground="{StaticResource DangerBrush}" TextWrapping="Wrap" />
+                            <TextBlock Text="{Binding Operation.Error.Hint}"
+                                       Margin="0,2,0,0"
+                                       TextWrapping="Wrap"
+                                       Foreground="{StaticResource TextPrimaryBrush}"
+                                       Visibility="{Binding Operation.Error.Hint, Converter={StaticResource NullToCollapsed}}" />
+
+                            <!-- Action row: copy the full error, open the saved full log -->
+                            <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
+                                <Button Content="Copy error"
+                                        Padding="8,2"
+                                        ToolTip="Copy the full error (message + full log) to the clipboard"
+                                        Click="OnCopyErrorClicked" />
+                                <Button Content="Open log file"
+                                        Margin="6,0,0,0"
+                                        Padding="8,2"
+                                        ToolTip="Reveal the saved full log in Explorer"
+                                        Click="OnOpenLogClicked"
+                                        Visibility="{Binding Operation.Error.HasLogFile, Converter={StaticResource BoolToVisibility}}" />
+                            </StackPanel>
+
+                            <Expander Header="Details (full log — selectable)" Margin="0,4,0,0" IsExpanded="True">
+                                <TextBox Text="{Binding Operation.Error.DetailText, Mode=OneWay}"
+                                         IsReadOnly="True"
+                                         AcceptsReturn="True"
+                                         IsReadOnlyCaretVisible="True"
+                                         FontFamily="{StaticResource MonoFontFamily}"
+                                         TextWrapping="Wrap"
+                                         MaxHeight="180"
+                                         VerticalScrollBarVisibility="Auto"
+                                         HorizontalScrollBarVisibility="Auto" />
+                            </Expander>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- Results panel -->
+                    <StackPanel Margin="0,6,0,0"
+                                Visibility="{Binding LastResult, Converter={StaticResource NullToCollapsed}}">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="Segments produced:" FontWeight="Bold" VerticalAlignment="Center" />
+                            <Button Content="Open folder"
+                                    Margin="8,0,0,0"
+                                    Padding="6,1"
+                                    Command="{Binding OpenFolderCommand}" />
+                        </StackPanel>
+                        <ItemsControl ItemsSource="{Binding LastResult.Segments}" Margin="0,4,0,0">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <TextBlock FontFamily="{StaticResource MonoFontFamily}">
+                                        <Run Text="{Binding Path, Mode=OneWay}" />
+                                        <Run Text=" @ " />
+                                        <Run Text="{Binding ActualStart, Mode=OneWay}" />
+                                        <Run Text=" (Δ " />
+                                        <Run Text="{Binding Delta, Mode=OneWay}" />
+                                        <Run Text=")" />
+                                    </TextBlock>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
                 </StackPanel>
-            </StackPanel>
-        </DockPanel>
-        </Grid>
-        </Grid>
+            </ScrollViewer>
+        </Border>
 
         <!-- ================= Drag-drop highlight overlay (T-016) ================= -->
         <Border x:Name="DropHighlight"
-                Grid.Row="0"
-                Grid.RowSpan="3"
+                Grid.Column="0"
+                Grid.ColumnSpan="3"
                 IsHitTestVisible="False"
                 Visibility="Collapsed"
                 BorderBrush="{StaticResource AccentBrush}"

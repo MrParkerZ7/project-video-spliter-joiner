@@ -6,217 +6,315 @@
     <UserControl.Resources>
         <conv:NullToCollapsedConverter x:Key="NullToCollapsed" />
         <conv:BoolToVisibilityConverter x:Key="BoolToVisibility" />
+        <conv:BoolToCollapsedConverter x:Key="BoolToCollapsed" />
         <conv:FractionToPercentConverter x:Key="FractionToPercent" />
         <conv:BoolToCompatBrushConverter x:Key="BoolToCompatBrush" />
+
+        <!-- Small mono section-header label (T-059). -->
+        <Style x:Key="SectionHeader" TargetType="TextBlock">
+            <Setter Property="FontFamily" Value="{StaticResource MonoFontFamily}" />
+            <Setter Property="FontSize" Value="{StaticResource FontSizeSmall}" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Foreground" Value="{StaticResource TextSecondaryBrush}" />
+            <Setter Property="Margin" Value="0,0,0,4" />
+        </Style>
+
+        <!-- Mono field label (FILE) — faint, small (T-059). -->
+        <Style x:Key="FieldLabel" TargetType="TextBlock">
+            <Setter Property="FontFamily" Value="{StaticResource MonoFontFamily}" />
+            <Setter Property="FontSize" Value="{StaticResource FontSizeSmall}" />
+            <Setter Property="Foreground" Value="{StaticResource TextMutedBrush}" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
     </UserControl.Resources>
 
     <Grid x:Name="RootGrid"
+          Margin="8"
           AllowDrop="True"
           PreviewDragOver="OnDragOver"
           DragLeave="OnDragLeave"
           Drop="OnDrop">
-    <DockPanel Margin="8">
+        <!-- ★ T-059 two-column body: LEFT = ordered clip list (flexes), RIGHT = tool panel. -->
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*" MinWidth="300" />
+            <ColumnDefinition Width="6" />
+            <ColumnDefinition Width="360" MinWidth="300" MaxWidth="520" />
+        </Grid.ColumnDefinitions>
 
-        <!-- ================= TOP: add files + compat banner ================= -->
-        <StackPanel DockPanel.Dock="Top">
-            <StackPanel Orientation="Horizontal">
-                <Button x:Name="AddFilesButton"
-                        Content="Add files…"
-                        Padding="12,4"
-                        Click="OnAddFilesClicked" />
-                <Button x:Name="ClearAllButton"
-                        Content="Clear all"
-                        Margin="6,0,0,0"
-                        Padding="12,4"
-                        ToolTip="Remove all queued clips and reset the Join screen"
-                        Command="{Binding ClearCommand}" />
-                <TextBlock Margin="8,0,0,0"
-                           VerticalAlignment="Center"
-                           Foreground="{StaticResource TextMutedBrush}"
-                           Text="Add two or more compatible clips, order them, then join." />
-            </StackPanel>
+        <!-- ================= LEFT COLUMN: ordered clip list ================= -->
+        <Grid Grid.Column="0" Margin="0,0,6,0">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
 
-            <!-- Compat banner (green when compatible, red otherwise) — dark-tuned via the converter (Ok/Danger). -->
-            <Border Margin="0,8,0,0"
-                    Padding="8"
-                    BorderThickness="1"
-                    CornerRadius="{StaticResource RadiusSm}"
-                    Background="{Binding IsCompatible, Converter={StaticResource BoolToCompatBrush}, ConverterParameter=bg}"
-                    BorderBrush="{Binding IsCompatible, Converter={StaticResource BoolToCompatBrush}, ConverterParameter=border}">
-                <TextBlock Text="{Binding CompatSummary}"
-                           TextWrapping="Wrap"
-                           FontWeight="Bold"
-                           Foreground="{Binding IsCompatible, Converter={StaticResource BoolToCompatBrush}, ConverterParameter=fg}" />
-            </Border>
-        </StackPanel>
+            <TextBlock Grid.Row="0" Text="Clips" Style="{StaticResource SectionHeader}" />
 
-        <!-- ================= BOTTOM: output + run + status/result ================= -->
-        <StackPanel DockPanel.Dock="Bottom" Margin="0,8,0,0">
-            <Grid>
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="Auto" />
-                    <ColumnDefinition Width="*" />
-                </Grid.ColumnDefinitions>
-                <TextBlock Grid.Column="0" Text="Output file:" VerticalAlignment="Center" Margin="0,0,6,0" />
-                <TextBox Grid.Column="1"
-                         Text="{Binding OutputPath, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
-            </Grid>
+            <ListBox x:Name="ClipList"
+                     Grid.Row="1"
+                     ItemsSource="{Binding Items}"
+                     AllowDrop="True"
+                     PreviewMouseLeftButtonDown="OnClipListPreviewMouseLeftButtonDown"
+                     PreviewMouseMove="OnClipListPreviewMouseMove"
+                     Drop="OnClipListDrop">
+                <ListBox.ItemTemplate>
+                    <DataTemplate DataType="{x:Type vm:JoinItemViewModel}">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
 
-            <CheckBox Content="Overwrite existing output"
-                      Margin="0,6,0,0"
-                      IsChecked="{Binding Overwrite, Mode=TwoWay}" />
+                            <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                                <TextBlock Text="{Binding Display}" FontWeight="SemiBold" />
+                                <TextBlock Text="{Binding InfoText}"
+                                           FontFamily="{StaticResource MonoFontFamily}"
+                                           FontSize="{StaticResource FontSizeSmall}"
+                                           Foreground="{StaticResource TextMutedBrush}"
+                                           Visibility="{Binding InfoText, Converter={StaticResource NullToCollapsed}}" />
+                            </StackPanel>
 
-            <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
-                <Button Style="{StaticResource AccentButton}"
-                        Content="Run join"
-                        Padding="16,5"
-                        Command="{Binding RunJoinCommand}" />
-                <Button Content="Cancel"
-                        Margin="6,0,0,0"
-                        Padding="10,4"
-                        Command="{Binding CancelCommand}"
-                        Visibility="{Binding Operation.CanCancel, Converter={StaticResource BoolToVisibility}}" />
-            </StackPanel>
+                            <StackPanel Grid.Column="1" Orientation="Horizontal">
+                                <Button Content="▲"
+                                        Padding="6,1"
+                                        ToolTip="Move up"
+                                        Command="{Binding DataContext.MoveUpCommand, RelativeSource={RelativeSource AncestorType=ListBox}}"
+                                        CommandParameter="{Binding}" />
+                                <Button Content="▼"
+                                        Margin="4,0,0,0"
+                                        Padding="6,1"
+                                        ToolTip="Move down"
+                                        Command="{Binding DataContext.MoveDownCommand, RelativeSource={RelativeSource AncestorType=ListBox}}"
+                                        CommandParameter="{Binding}" />
+                                <Button Content="Remove"
+                                        Margin="6,0,0,0"
+                                        Padding="6,1"
+                                        Command="{Binding DataContext.RemoveCommand, RelativeSource={RelativeSource AncestorType=ListBox}}"
+                                        CommandParameter="{Binding}" />
+                            </StackPanel>
+                        </Grid>
+                    </DataTemplate>
+                </ListBox.ItemTemplate>
+            </ListBox>
 
-            <ProgressBar Height="16"
-                         Margin="0,8,0,0"
-                         Minimum="0"
-                         Maximum="100"
-                         IsIndeterminate="{Binding Operation.IsIndeterminate, Mode=OneWay}"
-                         Value="{Binding Operation.Progress, Mode=OneWay, Converter={StaticResource FractionToPercent}}"
-                         Visibility="{Binding Operation.IsRunning, Converter={StaticResource BoolToVisibility}}" />
-
-            <!-- Running status line + ETA ("Joining… (2 clips)   ~40s left") — visible while running (T-042/T-045) -->
-            <StackPanel Orientation="Horizontal"
-                        Margin="0,6,0,0"
-                        Visibility="{Binding Operation.IsRunning, Converter={StaticResource BoolToVisibility}}">
-                <TextBlock TextWrapping="Wrap"
-                           Foreground="{StaticResource TextPrimaryBrush}"
-                           Text="{Binding Operation.StatusText}" />
-                <!-- ETA — small, muted, shown next to the status (T-045) -->
-                <TextBlock Margin="10,0,0,0"
-                           VerticalAlignment="Center"
-                           FontSize="{StaticResource FontSizeSmall}"
-                           Foreground="{StaticResource TextMutedBrush}"
-                           Text="{Binding Operation.EtaText}"
-                           Visibility="{Binding Operation.EtaText, Converter={StaticResource NullToCollapsed}}" />
-            </StackPanel>
-
-            <!-- Error headline + hint + copyable, selectable full-log details (T-037) — danger role on dark. -->
-            <Border Margin="0,6,0,0"
-                    Padding="8"
-                    Background="{StaticResource SurfaceBrush}"
-                    BorderBrush="{StaticResource DangerBrush}"
-                    BorderThickness="1"
-                    CornerRadius="{StaticResource RadiusSm}"
-                    Visibility="{Binding Operation.Error, Converter={StaticResource NullToCollapsed}}">
-                <StackPanel>
-                    <TextBlock Text="{Binding Operation.Error.Message}" FontWeight="Bold" Foreground="{StaticResource DangerBrush}" TextWrapping="Wrap" />
-                    <TextBlock Text="{Binding Operation.Error.Hint}"
-                               Margin="0,2,0,0"
-                               TextWrapping="Wrap"
-                               Foreground="{StaticResource TextPrimaryBrush}"
-                               Visibility="{Binding Operation.Error.Hint, Converter={StaticResource NullToCollapsed}}" />
-
-                    <!-- Action row: copy the full error, open the saved full log -->
-                    <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
-                        <Button Content="Copy error"
-                                Padding="8,2"
-                                ToolTip="Copy the full error (message + full log) to the clipboard"
-                                Click="OnCopyErrorClicked" />
-                        <Button Content="Open log file"
-                                Margin="6,0,0,0"
-                                Padding="8,2"
-                                ToolTip="Reveal the saved full log in Explorer"
-                                Click="OnOpenLogClicked"
-                                Visibility="{Binding Operation.Error.HasLogFile, Converter={StaticResource BoolToVisibility}}" />
-                    </StackPanel>
-
-                    <Expander Header="Details (full log — selectable)" Margin="0,4,0,0" IsExpanded="True">
-                        <TextBox Text="{Binding Operation.Error.DetailText, Mode=OneWay}"
-                                 IsReadOnly="True"
-                                 AcceptsReturn="True"
-                                 IsReadOnlyCaretVisible="True"
-                                 FontFamily="Consolas"
-                                 TextWrapping="Wrap"
-                                 MaxHeight="180"
-                                 VerticalScrollBarVisibility="Auto"
-                                 HorizontalScrollBarVisibility="Auto" />
-                    </Expander>
+            <!-- Empty-state hint when no clips are queued (T-059) -->
+            <Border Grid.Row="1"
+                    IsHitTestVisible="False"
+                    Background="Transparent"
+                    Visibility="{Binding HasClips, Converter={StaticResource BoolToCollapsed}}">
+                <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+                    <TextBlock Text="No clips queued"
+                               HorizontalAlignment="Center"
+                               FontFamily="{StaticResource SansFontFamily}"
+                               FontSize="{StaticResource FontSizeTitle}"
+                               Foreground="{StaticResource TextSecondaryBrush}" />
+                    <TextBlock Text="Add two or more compatible clips, or drop them here."
+                               Margin="0,4,0,0"
+                               HorizontalAlignment="Center"
+                               Foreground="{StaticResource TextMutedBrush}" />
                 </StackPanel>
             </Border>
+        </Grid>
 
-            <!-- Result line -->
-            <StackPanel Orientation="Horizontal"
-                        Margin="0,6,0,0"
-                        Visibility="{Binding LastResult, Converter={StaticResource NullToCollapsed}}">
-                <TextBlock Text="Joined →" FontWeight="Bold" VerticalAlignment="Center" />
-                <TextBlock Margin="6,0,0,0"
-                           VerticalAlignment="Center"
-                           FontFamily="Consolas"
-                           TextTrimming="CharacterEllipsis"
-                           Text="{Binding LastResult.OutputPath}" />
-                <Button Content="Open folder"
-                        Margin="8,0,0,0"
-                        Padding="6,1"
-                        Command="{Binding OpenFolderCommand}" />
-            </StackPanel>
-        </StackPanel>
+        <!-- ================= Draggable divider between the clip list and the tool panel ================= -->
+        <GridSplitter Grid.Column="1"
+                      Width="6"
+                      HorizontalAlignment="Center"
+                      VerticalAlignment="Stretch"
+                      ResizeBehavior="PreviousAndNext"
+                      ResizeDirection="Columns"
+                      ToolTip="Drag to resize the tool panel" />
 
-        <!-- ================= MIDDLE: ordered clip list ================= -->
-        <ListBox x:Name="ClipList"
-                 ItemsSource="{Binding Items}"
-                 MinHeight="140"
-                 AllowDrop="True"
-                 PreviewMouseLeftButtonDown="OnClipListPreviewMouseLeftButtonDown"
-                 PreviewMouseMove="OnClipListPreviewMouseMove"
-                 Drop="OnClipListDrop">
-            <ListBox.ItemTemplate>
-                <DataTemplate DataType="{x:Type vm:JoinItemViewModel}">
+        <!-- ================= RIGHT COLUMN: tool panel, scrollable ================= -->
+        <Border Grid.Column="2"
+                Background="{StaticResource SurfaceBrush}"
+                BorderBrush="{StaticResource BorderBrush}"
+                BorderThickness="1"
+                CornerRadius="{StaticResource RadiusMd}">
+            <ScrollViewer VerticalScrollBarVisibility="Auto"
+                          HorizontalScrollBarVisibility="Disabled"
+                          Padding="12">
+                <StackPanel>
+
+                    <!-- ===== Add / clear ===== -->
+                    <StackPanel Orientation="Horizontal">
+                        <Button x:Name="AddFilesButton"
+                                Content="Add files…"
+                                Padding="14,5"
+                                Click="OnAddFilesClicked" />
+                        <Button x:Name="ClearAllButton"
+                                Content="Clear all"
+                                Margin="6,0,0,0"
+                                Padding="14,5"
+                                ToolTip="Remove all queued clips and reset the Join screen"
+                                Command="{Binding ClearCommand}" />
+                    </StackPanel>
+
+                    <!-- Compat banner (green when compatible, red otherwise) — dark-tuned via the converter. -->
+                    <Border Margin="0,10,0,0"
+                            Padding="8"
+                            BorderThickness="1"
+                            CornerRadius="{StaticResource RadiusSm}"
+                            Background="{Binding IsCompatible, Converter={StaticResource BoolToCompatBrush}, ConverterParameter=bg}"
+                            BorderBrush="{Binding IsCompatible, Converter={StaticResource BoolToCompatBrush}, ConverterParameter=border}">
+                        <TextBlock Text="{Binding CompatSummary}"
+                                   TextWrapping="Wrap"
+                                   FontWeight="Bold"
+                                   Foreground="{Binding IsCompatible, Converter={StaticResource BoolToCompatBrush}, ConverterParameter=fg}" />
+                    </Border>
+
+                    <!-- ===== Estimated result panel (T-059) ===== -->
+                    <TextBlock Text="Estimated result" Style="{StaticResource SectionHeader}" Margin="0,14,0,4" />
+                    <Border Padding="10"
+                            Background="{StaticResource Surface2Brush}"
+                            BorderBrush="{StaticResource BorderBrush}"
+                            BorderThickness="1"
+                            CornerRadius="{StaticResource RadiusSm}">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+                            <TextBlock Grid.Row="0" Grid.Column="0" Text="Total duration" Style="{StaticResource FieldLabel}" Margin="0,0,10,4" />
+                            <TextBlock Grid.Row="0" Grid.Column="1" Margin="0,0,0,4"
+                                       HorizontalAlignment="Right"
+                                       FontFamily="{StaticResource MonoFontFamily}"
+                                       Foreground="{StaticResource TextPrimaryBrush}"
+                                       Text="{Binding EstimatedDuration}" />
+                            <TextBlock Grid.Row="1" Grid.Column="0" Text="Approx. size" Style="{StaticResource FieldLabel}" Margin="0,0,10,0" />
+                            <TextBlock Grid.Row="1" Grid.Column="1"
+                                       HorizontalAlignment="Right"
+                                       FontFamily="{StaticResource MonoFontFamily}"
+                                       Foreground="{StaticResource TextPrimaryBrush}"
+                                       Text="{Binding EstimatedSize}" />
+                        </Grid>
+                    </Border>
+
+                    <!-- ===== Output section (mono FILE field) ===== -->
+                    <TextBlock Text="Output" Style="{StaticResource SectionHeader}" Margin="0,14,0,4" />
                     <Grid>
                         <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
                         </Grid.ColumnDefinitions>
-
-                        <StackPanel Grid.Column="0" VerticalAlignment="Center">
-                            <TextBlock Text="{Binding Display}" FontWeight="SemiBold" />
-                            <TextBlock Text="{Binding InfoText}"
-                                       FontFamily="Consolas"
-                                       FontSize="{StaticResource FontSizeSmall}"
-                                       Foreground="{StaticResource TextMutedBrush}"
-                                       Visibility="{Binding InfoText, Converter={StaticResource NullToCollapsed}}" />
-                        </StackPanel>
-
-                        <StackPanel Grid.Column="1" Orientation="Horizontal">
-                            <Button Content="▲"
-                                    Padding="6,1"
-                                    ToolTip="Move up"
-                                    Command="{Binding DataContext.MoveUpCommand, RelativeSource={RelativeSource AncestorType=ListBox}}"
-                                    CommandParameter="{Binding}" />
-                            <Button Content="▼"
-                                    Margin="4,0,0,0"
-                                    Padding="6,1"
-                                    ToolTip="Move down"
-                                    Command="{Binding DataContext.MoveDownCommand, RelativeSource={RelativeSource AncestorType=ListBox}}"
-                                    CommandParameter="{Binding}" />
-                            <Button Content="Remove"
-                                    Margin="6,0,0,0"
-                                    Padding="6,1"
-                                    Command="{Binding DataContext.RemoveCommand, RelativeSource={RelativeSource AncestorType=ListBox}}"
-                                    CommandParameter="{Binding}" />
-                        </StackPanel>
+                        <TextBlock Grid.Column="0" Text="FILE" Style="{StaticResource FieldLabel}" Margin="0,0,8,0" />
+                        <TextBox Grid.Column="1"
+                                 Text="{Binding OutputPath, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
                     </Grid>
-                </DataTemplate>
-            </ListBox.ItemTemplate>
-        </ListBox>
-    </DockPanel>
+
+                    <CheckBox Content="Overwrite existing output"
+                              Margin="0,10,0,0"
+                              IsChecked="{Binding Overwrite, Mode=TwoWay}" />
+
+                    <!-- ===== Primary Run (gold, count-aware) + Cancel ===== -->
+                    <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
+                        <Button Style="{StaticResource AccentButton}"
+                                Content="{Binding RunLabel}"
+                                Padding="16,6"
+                                Command="{Binding RunJoinCommand}" />
+                        <Button Content="Cancel"
+                                Margin="6,0,0,0"
+                                Padding="10,5"
+                                Command="{Binding CancelCommand}"
+                                Visibility="{Binding Operation.CanCancel, Converter={StaticResource BoolToVisibility}}" />
+                    </StackPanel>
+
+                    <ProgressBar Height="16"
+                                 Margin="0,10,0,0"
+                                 Minimum="0"
+                                 Maximum="100"
+                                 IsIndeterminate="{Binding Operation.IsIndeterminate, Mode=OneWay}"
+                                 Value="{Binding Operation.Progress, Mode=OneWay, Converter={StaticResource FractionToPercent}}"
+                                 Visibility="{Binding Operation.IsRunning, Converter={StaticResource BoolToVisibility}}" />
+
+                    <!-- Running status line + ETA ("Joining… (2 clips)   ~40s left") — visible while running (T-042/T-045) -->
+                    <StackPanel Orientation="Horizontal"
+                                Margin="0,6,0,0"
+                                Visibility="{Binding Operation.IsRunning, Converter={StaticResource BoolToVisibility}}">
+                        <TextBlock TextWrapping="Wrap"
+                                   Foreground="{StaticResource TextPrimaryBrush}"
+                                   Text="{Binding Operation.StatusText}" />
+                        <TextBlock Margin="10,0,0,0"
+                                   VerticalAlignment="Center"
+                                   FontSize="{StaticResource FontSizeSmall}"
+                                   Foreground="{StaticResource TextMutedBrush}"
+                                   Text="{Binding Operation.EtaText}"
+                                   Visibility="{Binding Operation.EtaText, Converter={StaticResource NullToCollapsed}}" />
+                    </StackPanel>
+
+                    <!-- Error headline + hint + copyable, selectable full-log details (T-037) — danger role on dark. -->
+                    <Border Margin="0,6,0,0"
+                            Padding="8"
+                            Background="{StaticResource Surface2Brush}"
+                            BorderBrush="{StaticResource DangerBrush}"
+                            BorderThickness="1"
+                            CornerRadius="{StaticResource RadiusSm}"
+                            Visibility="{Binding Operation.Error, Converter={StaticResource NullToCollapsed}}">
+                        <StackPanel>
+                            <TextBlock Text="{Binding Operation.Error.Message}" FontWeight="Bold" Foreground="{StaticResource DangerBrush}" TextWrapping="Wrap" />
+                            <TextBlock Text="{Binding Operation.Error.Hint}"
+                                       Margin="0,2,0,0"
+                                       TextWrapping="Wrap"
+                                       Foreground="{StaticResource TextPrimaryBrush}"
+                                       Visibility="{Binding Operation.Error.Hint, Converter={StaticResource NullToCollapsed}}" />
+
+                            <!-- Action row: copy the full error, open the saved full log -->
+                            <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
+                                <Button Content="Copy error"
+                                        Padding="8,2"
+                                        ToolTip="Copy the full error (message + full log) to the clipboard"
+                                        Click="OnCopyErrorClicked" />
+                                <Button Content="Open log file"
+                                        Margin="6,0,0,0"
+                                        Padding="8,2"
+                                        ToolTip="Reveal the saved full log in Explorer"
+                                        Click="OnOpenLogClicked"
+                                        Visibility="{Binding Operation.Error.HasLogFile, Converter={StaticResource BoolToVisibility}}" />
+                            </StackPanel>
+
+                            <Expander Header="Details (full log — selectable)" Margin="0,4,0,0" IsExpanded="True">
+                                <TextBox Text="{Binding Operation.Error.DetailText, Mode=OneWay}"
+                                         IsReadOnly="True"
+                                         AcceptsReturn="True"
+                                         IsReadOnlyCaretVisible="True"
+                                         FontFamily="{StaticResource MonoFontFamily}"
+                                         TextWrapping="Wrap"
+                                         MaxHeight="180"
+                                         VerticalScrollBarVisibility="Auto"
+                                         HorizontalScrollBarVisibility="Auto" />
+                            </Expander>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- Result line -->
+                    <StackPanel Orientation="Horizontal"
+                                Margin="0,6,0,0"
+                                Visibility="{Binding LastResult, Converter={StaticResource NullToCollapsed}}">
+                        <TextBlock Text="Joined →" FontWeight="Bold" VerticalAlignment="Center" />
+                        <TextBlock Margin="6,0,0,0"
+                                   VerticalAlignment="Center"
+                                   FontFamily="{StaticResource MonoFontFamily}"
+                                   TextTrimming="CharacterEllipsis"
+                                   Text="{Binding LastResult.OutputPath}" />
+                        <Button Content="Open folder"
+                                Margin="8,0,0,0"
+                                Padding="6,1"
+                                Command="{Binding OpenFolderCommand}" />
+                    </StackPanel>
+                </StackPanel>
+            </ScrollViewer>
+        </Border>
 
         <!-- ================= Drag-drop highlight overlay (T-016) ================= -->
         <Border x:Name="DropHighlight"
+                Grid.Column="0"
+                Grid.ColumnSpan="3"
                 IsHitTestVisible="False"
                 Visibility="Collapsed"
-                Margin="8"
                 BorderBrush="{StaticResource AccentBrush}"
                 BorderThickness="3"
                 Background="{StaticResource AccentMutedBrush}"

@@ -38,4 +38,16 @@ public sealed class JoinItemViewModel : ObservableObject
         get => _infoText;
         set => SetProperty(ref _infoText, value);
     }
+
+    /// <summary>
+    /// The clip's probed duration, or null until probed / if the probe failed. Feeds the Join screen's
+    /// "Estimated result" total-duration sum (T-059). Set once by the VM after a successful probe.
+    /// </summary>
+    public TimeSpan? Duration { get; set; }
+
+    /// <summary>
+    /// The clip's on-disk byte size, or 0 if it could not be read. Feeds the Join screen's
+    /// "Estimated result" approximate-size sum (T-059). Set once by the VM when the clip is added.
+    /// </summary>
+    public long SizeBytes { get; set; }
 }

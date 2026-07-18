@@ -33,6 +33,7 @@ public sealed class SplitViewModel : ObservableObject
     private readonly IAppSettings _settings;
 
     private string? _inputPath;
+    private long _inputSizeBytes;
     private MediaInfo? _info;
     private IReadOnlyList<TimeSpan> _keyframes = Array.Empty<TimeSpan>();
     private string? _keyframeWarning;
@@ -126,6 +127,7 @@ public sealed class SplitViewModel : ObservableObject
             if (SetProperty(ref _inputPath, value))
             {
                 OnPropertyChanged(nameof(HasFile));
+                OnPropertyChanged(nameof(FileName));
                 OnPropertyChanged(nameof(KeyframesReady));
                 OnPropertyChanged(nameof(CanRunSplit));
                 OnPropertyChanged(nameof(CanSetCutAtPlayhead));
@@ -144,9 +146,30 @@ public sealed class SplitViewModel : ObservableObject
             {
                 // Duration becoming known (or cleared) re-projects the selectable parts (T-049).
                 RebuildSegments();
+                OnPropertyChanged(nameof(MetaLine));
+                OnPropertyChanged(nameof(Badge));
             }
         }
     }
+
+    /// <summary>
+    /// The loaded file's display name (filename only), for the info-card header (T-059). Null when
+    /// no file is loaded.
+    /// </summary>
+    public string? FileName => InputPath is null ? null : Path.GetFileName(InputPath);
+
+    /// <summary>
+    /// The mono meta line under the file name in the info card (T-059), e.g.
+    /// <c>"matroska · 10:00 · 1.4 GB"</c> — container · duration · size, from <see cref="Info"/> and the
+    /// loaded file's on-disk size. Null when no file is loaded.
+    /// </summary>
+    public string? MetaLine => Info is null ? null : MediaFormat.MetaLine(Info, _inputSizeBytes);
+
+    /// <summary>
+    /// The header format/status badge for the loaded file (T-059), e.g. <c>"HEVC · MKV"</c> — first
+    /// video codec + short container. Null when no file is loaded (badge hidden).
+    /// </summary>
+    public string? Badge => MediaFormat.Badge(Info);
 
     /// <summary>Video keyframe timestamps of the loaded file (drives snapping).</summary>
     public IReadOnlyList<TimeSpan> Keyframes
@@ -431,6 +454,10 @@ public sealed class SplitViewModel : ObservableObject
 
         // Success — the probe returned, so the preview + info can appear AT ONCE, before any
         // keyframe scan. Commit the loaded state and clear prior markers immediately.
+        // Best-effort on-disk size for the info-card meta line (T-059). A missing/inaccessible file
+        // just leaves size 0 → the meta line drops the size segment rather than crashing. Set BEFORE
+        // Info so the MetaLine raised by the Info setter already sees the size.
+        _inputSizeBytes = SafeFileSize(path);
         Info = loadedInfo;
         Keyframes = Array.Empty<TimeSpan>();
         InputPath = path;
@@ -822,6 +849,7 @@ public sealed class SplitViewModel : ObservableObject
         // command guards (CanRunSplit / CanSetCutAtPlayhead / CanClear via RaiseCommandStates).
         Markers.Clear();
         Keyframes = Array.Empty<TimeSpan>();
+        _inputSizeBytes = 0;
         Info = null;
         LastResult = null;
         KeyframeWarning = null;
@@ -1032,4 +1060,18 @@ public sealed class SplitViewModel : ObservableObject
         d.TotalHours >= 1
             ? d.ToString(@"h\:mm\:ss", CultureInfo.InvariantCulture)
             : d.ToString(@"m\:ss", CultureInfo.InvariantCulture);
+
+    /// <summary>On-disk byte size of <paramref name="path"/>, or 0 if it can't be read. Never throws.</summary>
+    private static long SafeFileSize(string path)
+    {
+        try
+        {
+            var fi = new FileInfo(path);
+            return fi.Exists ? fi.Length : 0;
+        }
+        catch
+        {
+            return 0;
+        }
+    }
 }

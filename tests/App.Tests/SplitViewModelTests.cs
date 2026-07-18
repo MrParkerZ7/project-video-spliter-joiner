@@ -142,6 +142,54 @@ public sealed class SplitViewModelTests
         vm.StatusText.Should().NotBeNullOrEmpty();
     }
 
+    // ---- Info card / badge (T-059) ----------------------------------------------------------
+
+    [Fact]
+    public async Task Load_PopulatesFileNameMetaLineAndBadge()
+    {
+        var (vm, probe, _) = Build();
+        var info = new MediaInfo(
+            TimeSpan.FromMinutes(10),
+            "matroska",
+            new[] { new StreamInfo(0, "hevc", "video", 3840, 2160, "yuv420p", null, null, "1/30") },
+            Array.Empty<StreamInfo>());
+        probe.ProbeResultToReturn = ProbeResult.Success(info);
+
+        await vm.LoadAsync(FakePath);
+
+        vm.FileName.Should().Be("clip.mp4");
+        // The fake path isn't a real file → size unknown → meta line is "container · duration" only.
+        vm.MetaLine.Should().Be("matroska · 10:00");
+        vm.Badge.Should().Be("HEVC · MATROSKA");
+    }
+
+    [Fact]
+    public void NoFile_InfoCardValuesAreNull()
+    {
+        var (vm, _, _) = Build();
+        vm.FileName.Should().BeNull();
+        vm.MetaLine.Should().BeNull();
+        vm.Badge.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task Clear_ResetsInfoCardValues()
+    {
+        var (vm, probe, _) = Build();
+        probe.ProbeResultToReturn = ProbeResult.Success(
+            new MediaInfo(TimeSpan.FromMinutes(5), "matroska",
+                new[] { new StreamInfo(0, "h264", "video", 1920, 1080, "yuv420p", null, null, "1/30") },
+                Array.Empty<StreamInfo>()));
+        await vm.LoadAsync(FakePath);
+        vm.Badge.Should().NotBeNull();
+
+        vm.Clear();
+
+        vm.FileName.Should().BeNull();
+        vm.MetaLine.Should().BeNull();
+        vm.Badge.Should().BeNull();
+    }
+
     // ---- Markers + snap ---------------------------------------------------------------------
 
     [Fact]

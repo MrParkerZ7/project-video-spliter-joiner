@@ -109,6 +109,53 @@ public sealed class JoinViewModelTests
         engine.CompatCheckCount.Should().BeGreaterThan(0, "compat is checked on add");
     }
 
+    // ---- Estimated result + run label (T-059) -----------------------------------------------
+
+    [Fact]
+    public async Task AddFiles_SetsProbedDurationOnItems_AndSumsEstimatedDuration()
+    {
+        var (vm, _, _) = Build(); // FakeProbe returns a 10s clip
+
+        await vm.AddFilesAsync(new[] { Clip1, Clip2 });
+
+        vm.Items.Should().OnlyContain(i => i.Duration == TimeSpan.FromSeconds(10));
+        // Two 10s clips → 20s total, formatted M:SS.
+        vm.EstimatedDuration.Should().Be("0:20");
+        vm.HasClips.Should().BeTrue();
+    }
+
+    [Fact]
+    public void NoClips_EstimatesAreZero_AndPanelHidden()
+    {
+        var (vm, _, _) = Build();
+        vm.HasClips.Should().BeFalse();
+        vm.EstimatedDuration.Should().Be("0:00");
+        vm.EstimatedSize.Should().Be("0 B");
+    }
+
+    [Fact]
+    public async Task RunLabel_IsCountAware()
+    {
+        var (vm, _, _) = Build();
+        vm.RunLabel.Should().Be("Join");
+
+        await vm.AddFilesAsync(new[] { Clip1, Clip2, Clip3 });
+        vm.RunLabel.Should().Be("Join 3 clips");
+    }
+
+    [Fact]
+    public async Task Clear_ResetsEstimateAndLabel()
+    {
+        var (vm, _, _) = Build();
+        await vm.AddFilesAsync(new[] { Clip1, Clip2 });
+
+        vm.Clear();
+
+        vm.HasClips.Should().BeFalse();
+        vm.EstimatedDuration.Should().Be("0:00");
+        vm.RunLabel.Should().Be("Join");
+    }
+
     [Fact]
     public async Task AddFiles_Compatible_SetsGreenSummaryAndIsCompatible()
     {
