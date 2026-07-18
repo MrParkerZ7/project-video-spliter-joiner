@@ -1,8 +1,10 @@
 using System;
 using System.Globalization;
+using System.IO;
 using System.Windows;
 using System.Windows.Data;
 using System.Windows.Media;
+using System.Windows.Media.Imaging;
 
 namespace VideoSplitJoiner.App.Views;
 
@@ -57,6 +59,45 @@ public sealed class TimeSpanToSecondsConverter : IValueConverter
 
     public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
         => value is double d ? TimeSpan.FromSeconds(d) : TimeSpan.Zero;
+}
+
+/// <summary>
+/// Loads a temp jpg PATH (string) into a FROZEN <see cref="BitmapImage"/> for the scrub-bar hover
+/// thumbnail (T-078). Uses <see cref="BitmapCacheOption.OnLoad"/> so the file is read fully at load
+/// time and NOT kept locked (the service may delete/overwrite the temp file behind us), then
+/// <see cref="System.Windows.Freezable.Freeze"/>s the result so it is safe to hand to the UI even
+/// though it was decoded off a background-produced path. A null / empty / missing path yields null
+/// (the bound <c>Image</c> simply shows nothing). Best-effort — any decode failure also yields null.
+/// </summary>
+public sealed class PathToBitmapConverter : IValueConverter
+{
+    public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
+    {
+        if (value is not string path || string.IsNullOrEmpty(path) || !File.Exists(path))
+        {
+            return null;
+        }
+
+        try
+        {
+            var bitmap = new BitmapImage();
+            bitmap.BeginInit();
+            bitmap.CacheOption = BitmapCacheOption.OnLoad;      // read now → don't lock the temp file
+            bitmap.CreateOptions = BitmapCreateOptions.IgnoreImageCache; // a re-grabbed bucket path re-reads
+            bitmap.UriSource = new Uri(path, UriKind.Absolute);
+            bitmap.EndInit();
+            bitmap.Freeze();                                    // cross-thread-safe, immutable
+            return bitmap;
+        }
+        catch
+        {
+            // Best-effort — a mid-delete / corrupt frame shows nothing rather than crashing.
+            return null;
+        }
+    }
+
+    public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
+        => throw new NotSupportedException();
 }
 
 /// <summary>Scales a 0..1 progress fraction to a 0..100 percentage for a <c>ProgressBar</c>.</summary>

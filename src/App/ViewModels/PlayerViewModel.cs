@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
 using VideoSplitJoiner.App.Media;
+using VideoSplitJoiner.Core.Thumbnails;
 
 namespace VideoSplitJoiner.App.ViewModels;
 
@@ -89,7 +90,17 @@ public sealed class PlayerViewModel : ObservableObject
 
     /// <summary>Create the player VM over <paramref name="player"/> and subscribe to its events.</summary>
     public PlayerViewModel(IMediaPlayer player)
-        : this(player, DefaultClock())
+        : this(player, DefaultClock(), thumbnails: null)
+    {
+    }
+
+    /// <summary>
+    /// Create the player VM over <paramref name="player"/> with the scrub-bar hover
+    /// <see cref="Thumbnail"/> preview backed by <paramref name="thumbnails"/> (T-078). Uses the real
+    /// Stopwatch clock for the live-scrub throttle.
+    /// </summary>
+    public PlayerViewModel(IMediaPlayer player, IThumbnailService? thumbnails)
+        : this(player, DefaultClock(), thumbnails)
     {
     }
 
@@ -98,9 +109,22 @@ public sealed class PlayerViewModel : ObservableObject
     /// live-scrub throttle (T-051). Production uses the parameterless ctor (a real Stopwatch).
     /// </summary>
     public PlayerViewModel(IMediaPlayer player, Func<long> nowMs)
+        : this(player, nowMs, thumbnails: null)
+    {
+    }
+
+    /// <summary>
+    /// Full ctor (T-078): also wires the scrub-bar hover <see cref="Thumbnail"/> preview over an
+    /// <see cref="IThumbnailService"/>. The composition root passes the real
+    /// <see cref="FfmpegThumbnailService"/>; when <paramref name="thumbnails"/> is null (existing
+    /// tests / no-preview constructions) hover is backed by a no-op service so nothing is fetched.
+    /// </summary>
+    public PlayerViewModel(IMediaPlayer player, Func<long> nowMs, IThumbnailService? thumbnails)
     {
         _nowMs = nowMs ?? throw new ArgumentNullException(nameof(nowMs));
         _player = player ?? throw new ArgumentNullException(nameof(player));
+
+        Thumbnail = new ThumbnailPreviewViewModel(thumbnails ?? NullThumbnailService.Instance);
 
         _player.PositionChanged += OnPositionChanged;
         _player.Seeked += OnSeeked;
@@ -174,6 +198,13 @@ public sealed class PlayerViewModel : ObservableObject
     /// never touches WPF types — this is only the attach seam.
     /// </summary>
     public IMediaPlayer PlayerControl => _player;
+
+    /// <summary>
+    /// The scrub-bar hover thumbnail preview (T-078). The view feeds it hover samples from the
+    /// timeline's <c>MouseMove</c> and binds a popup (image + <c>mm:ss</c> label) to its state. Fed the
+    /// loaded file (path + duration) on <see cref="Open"/> and cleared on <see cref="Unload"/>.
+    /// </summary>
+    public ThumbnailPreviewViewModel Thumbnail { get; }
 
     /// <summary>True while the underlying player is playing.</summary>
     public bool IsPlaying
@@ -342,6 +373,11 @@ public sealed class PlayerViewModel : ObservableObject
         ResetScrubState();
         _isUserScrubbing = false;
         SetPositionFromPlayer(TimeSpan.Zero);
+
+        // T-078: point the hover preview at the new file (sweeps the prior file's temp cache + hides the
+        // popup). Duration is not known yet — it arrives via OnDurationAvailable, which forwards it.
+        Thumbnail.SetInput(path, _duration);
+
         _player.Open(path);
     }
 
@@ -368,6 +404,9 @@ public sealed class PlayerViewModel : ObservableObject
         ResetScrubState();
         _isUserScrubbing = false;
         SetPositionFromPlayer(TimeSpan.Zero);
+
+        // T-078: clear the hover preview (sweeps the temp cache + hides the popup) for the unloaded file.
+        Thumbnail.Clear();
     }
 
     /// <summary>Toggle transport: play when paused, pause when playing. No-op until ready.</summary>
@@ -631,6 +670,9 @@ public sealed class PlayerViewModel : ObservableObject
         Duration = _player.Duration;
         PreviewFailed = false;
         PreviewFailedReason = null;
+
+        // T-078: the hover preview needs the duration to map cursor-X → time; forward it once known.
+        Thumbnail.SetDuration(_player.Duration);
     }
 
     private void OnEnded(object? sender, EventArgs e) => IsPlaying = false;

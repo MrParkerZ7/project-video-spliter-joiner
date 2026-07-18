@@ -6,6 +6,7 @@
              Loaded="OnLoaded">
     <UserControl.Resources>
         <conv:BoolToVisibilityConverter x:Key="BoolToVisibility" />
+        <conv:PathToBitmapConverter x:Key="PathToBitmap" />
 
         <!-- Compact square-ish jog button: small, tooltip-labelled, wraps at pane min width.
              Inherits the themed implicit Button (dark surface, TextPrimary, gold hover); only
@@ -53,17 +54,66 @@
              click point (one Value change to the clicked time) instead of page-stepping toward it, so
              a click seeks to exactly where the user clicked. The VM dedupes the click Value-change
              seek against the drag-completed seek so a click yields one converged seek, not two. -->
-        <Slider x:Name="ScrubSlider"
-                Grid.Row="1"
-                Margin="0,6,0,0"
-                Minimum="0"
-                Maximum="{Binding DurationSeconds, Mode=OneWay}"
-                Value="{Binding PositionSeconds, Mode=TwoWay}"
-                IsEnabled="{Binding IsReady}"
-                IsMoveToPointEnabled="True"
-                Thumb.DragStarted="OnScrubDragStarted"
-                Thumb.DragDelta="OnScrubDragDelta"
-                Thumb.DragCompleted="OnScrubDragCompleted" />
+        <!-- Grid.Row 1 hosts the scrub slider + its hover-thumbnail popup (T-078). The popup is anchored
+             to the slider and placed ABOVE it, following the cursor via HorizontalOffset (clamped in
+             code-behind so it never clips off either end). MouseMove is PASSIVE — it only feeds the
+             hover VM; it never handles/suppresses the click, so click-to-seek (G-028) + drag scrub
+             (T-033/T-051) are untouched. -->
+        <Grid Grid.Row="1" Margin="0,6,0,0">
+            <Slider x:Name="ScrubSlider"
+                    Minimum="0"
+                    Maximum="{Binding DurationSeconds, Mode=OneWay}"
+                    Value="{Binding PositionSeconds, Mode=TwoWay}"
+                    IsEnabled="{Binding IsReady}"
+                    IsMoveToPointEnabled="True"
+                    MouseEnter="OnScrubMouseEnter"
+                    MouseLeave="OnScrubMouseLeave"
+                    MouseMove="OnScrubMouseMove"
+                    Thumb.DragStarted="OnScrubDragStarted"
+                    Thumb.DragDelta="OnScrubDragDelta"
+                    Thumb.DragCompleted="OnScrubDragCompleted" />
+
+            <!-- Hover thumbnail: dark surface card (IBM Plex tokens) with the frame image + mm:ss label,
+                 floated above the bar at the cursor. StaysOpen so it never steals focus; IsHitTestVisible
+                 off so it never intercepts a click through to the slider. -->
+            <Popup x:Name="HoverThumbPopup"
+                   PlacementTarget="{Binding ElementName=ScrubSlider}"
+                   Placement="Top"
+                   HorizontalOffset="{Binding Thumbnail.HoverOffsetX, Mode=OneWay}"
+                   VerticalOffset="-8"
+                   AllowsTransparency="True"
+                   StaysOpen="True"
+                   IsHitTestVisible="False"
+                   IsOpen="{Binding Thumbnail.IsThumbnailVisible, Mode=OneWay}">
+                <Border Background="{StaticResource Surface0Brush}"
+                        BorderBrush="{StaticResource BorderStrongBrush}"
+                        BorderThickness="1"
+                        CornerRadius="{StaticResource RadiusSm}"
+                        Padding="3"
+                        SnapsToDevicePixels="True">
+                    <StackPanel Width="160">
+                        <!-- Frame image (frozen BitmapImage via the path converter). Fixed 160-wide box;
+                             90px tall (16:9) letterbox so the popup doesn't jump as frames vary. Only
+                             shown once a path is available; otherwise the label alone floats. -->
+                        <Border Height="90"
+                                Background="{StaticResource VideoBgBrush}"
+                                CornerRadius="{StaticResource RadiusSm}"
+                                ClipToBounds="True"
+                                Visibility="{Binding Thumbnail.HasThumbnail, Converter={StaticResource BoolToVisibility}}">
+                            <Image Source="{Binding Thumbnail.HoverThumbnailPath, Converter={StaticResource PathToBitmap}}"
+                                   Stretch="Uniform" />
+                        </Border>
+
+                        <TextBlock Text="{Binding Thumbnail.HoverTimeText, Mode=OneWay}"
+                                   HorizontalAlignment="Center"
+                                   Margin="0,3,0,1"
+                                   FontFamily="{StaticResource MonoFontFamily}"
+                                   FontSize="{StaticResource FontSizeSmall}"
+                                   Foreground="{StaticResource TextPrimaryBrush}" />
+                    </StackPanel>
+                </Border>
+            </Popup>
+        </Grid>
 
         <!-- Skip / jog / frame-step / jump-to-ends (T-028) — wraps so it stays readable at min width.
              Layout: |◄start  −5m −1m −20s −10s −5s −1s  ⏴frame  ▶/⏸  frame⏵  +1s +5s +10s +20s +1m +5m  end►| -->

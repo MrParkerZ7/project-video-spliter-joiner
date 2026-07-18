@@ -7,6 +7,7 @@ using VideoSplitJoiner.Core.Ffmpeg;
 using VideoSplitJoiner.Core.Join;
 using VideoSplitJoiner.Core.Media;
 using VideoSplitJoiner.Core.Split;
+using VideoSplitJoiner.Core.Thumbnails;
 
 namespace VideoSplitJoiner.App.ViewModels;
 
@@ -42,13 +43,18 @@ public sealed class MainViewModel : ObservableObject
         var splitEngine = new SplitEngine(ffmpegRunner, probe);
         var joinEngine = new JoinEngine(ffmpegRunner, probe);
 
+        // T-077/T-078: the scrub-bar hover thumbnail source — a separate ffmpeg CLI process per frame
+        // (own bucket-cached temp files), independent of the FFME preview. Shared into the Split screen's
+        // player VM, which debounces hover + shows the popup.
+        var thumbnailService = new FfmpegThumbnailService(ffmpegRunner);
+
         // Cross-session folder memory (T-038) — one shared file-backed store so both screens read/write
         // the same %APPDATA%/VideoSplitJoiner/settings.json (last input + last output folders).
         var settings = new AppSettings();
 
         // The in-app preview player is FFME-backed (FfmeMediaPlayer, decodes via ffmpeg); PlayerView
         // attaches its FFME MediaElement on Loaded. Unattached here, so construction stays render-free.
-        Split = new SplitViewModel(probe, splitEngine, new FfmeMediaPlayer(), settings);
+        Split = new SplitViewModel(probe, splitEngine, new FfmeMediaPlayer(), settings, thumbnailService);
         Join = new JoinViewModel(joinEngine, probe, settings);
 
         HookOperations();

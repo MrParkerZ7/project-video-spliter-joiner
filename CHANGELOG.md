@@ -15,6 +15,12 @@ re-encode — the player only previews; every cut continues to keyframe-snap thr
 
 ### Added
 
+- **Scrub-bar hover thumbnail — hovering the timeline shows a frame preview at that time (G-030).**
+  Hovering the player scrub bar shows a small frame image at the hovered time, following the cursor with
+  an `mm:ss` label, so you can find a split point by sight without moving the main player. Frames come
+  from a separate ffmpeg CLI process (bucket-cached temp jpgs, kept apart from the FFME preview); hover
+  is debounced + coalesced latest-wins so a fast sweep stays smooth, best-effort (a failed grab shows
+  nothing, never blocks), and the temp cache is swept on new load / clear.
 - **Per-part split progress (G-025)** — splitting into N parts now shows each part's row in "Parts to
   export" advancing **Pending → Writing (live %) → Done (✓)** as it's written, not just one overall bar.
   A dedicated `IProgress<PartProgress>` channel drives it: the per-segment subset path reports its part

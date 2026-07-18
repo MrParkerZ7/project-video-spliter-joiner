@@ -13,6 +13,7 @@ using VideoSplitJoiner.Core.Errors;
 using VideoSplitJoiner.Core.Ffmpeg;
 using VideoSplitJoiner.Core.Media;
 using VideoSplitJoiner.Core.Split;
+using VideoSplitJoiner.Core.Thumbnails;
 
 namespace VideoSplitJoiner.App.ViewModels;
 
@@ -80,7 +81,8 @@ public sealed class SplitViewModel : ObservableObject
         IMediaProbe probe,
         ISplitEngine splitEngine,
         IMediaPlayer? player = null,
-        IAppSettings? settings = null)
+        IAppSettings? settings = null,
+        IThumbnailService? thumbnails = null)
     {
         _probe = probe ?? throw new ArgumentNullException(nameof(probe));
         _splitEngine = splitEngine ?? throw new ArgumentNullException(nameof(splitEngine));
@@ -91,7 +93,7 @@ public sealed class SplitViewModel : ObservableObject
         // to the new file's folder on every subsequent load). LastOutputDir is no longer read as a
         // default. (LastInputDir — the file-picker InitialDirectory memory — is untouched, T-038.)
 
-        Player = new PlayerViewModel(player ?? NullMediaPlayer.Instance);
+        Player = new PlayerViewModel(player ?? NullMediaPlayer.Instance, thumbnails);
 
         Operation = new OperationViewModel();
 

@@ -123,6 +123,19 @@ A .NET 8 WPF app that splits and joins video **without re-encoding**. See [READM
   transport (skip/frame-step/jump/volume/mute/speed) behind `IMediaPlayer` too. The jog row's skip
   buttons pass signed-seconds `CommandParameter`s to one `SkipCommand` (±1/±5/±10/±20/±60/±300/±600/
   ±1200 — the ±10m/±20m being ±600/±1200); add new skips as buttons, not new commands.
+- **Scrub-bar hover thumbnails come from Core `IThumbnailService` (G-030).** Hovering the timeline shows
+  a frame preview at the hovered time. Frames are extracted by a **separate ffmpeg CLI process** (Core
+  `FfmpegThumbnailService`: `-ss <t>` fast-seek → `-frames:v 1 -vf scale=W:-1` → a temp jpg, returning
+  a **PATH**, best-effort/never-throws, bucket-cached LRU) — deliberately kept **apart from the FFME
+  preview** so the two don't fight. The App side stays WPF-free in the VM: `ThumbnailPreviewViewModel`
+  (owned by `PlayerViewModel` as `Thumbnail`) **debounces** hover (~60ms) then **coalesces latest-wins**
+  (each hover cancels the prior request's CTS; a superseded grab never clobbers a newer one), awaits off
+  the UI thread, and marshals the result back via `Progress<T>`. The view (`PlayerView`) feeds hover
+  samples from the slider's **passive** `MouseMove` (never `Handled` — click-seek/drag are untouched) and
+  binds a `Popup` above the bar (cursor-following, clamped on-screen at the ends) showing the frame + an
+  `mm:ss` label; the path is loaded into a **frozen** `BitmapImage` (`OnLoad` cache option so the temp
+  file isn't locked). The temp cache is swept on new load / clear (`SetInput`/`Clear` → `IThumbnailService.Clear`).
+  Keep frame extraction on the Core (CLI) side of the seam and the hover state WPF-free.
 - **All cuts funnel through `AddCutAt` — one snap path.** Every way of placing a cut (manual add,
   "set cut at playhead", clicking the timeline strip) routes through `SplitViewModel.AddCutAt`, which
   keyframe-snaps and dedupes. Do not add a second snap/dedupe implementation for a new cut-entry
