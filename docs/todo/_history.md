@@ -401,3 +401,8 @@
 - **Docs (T-060 + T-062) done** (this commit): CHANGELOG [0.2.0] += G-019 + G-020; CLAUDE.md conventions fixed (output-dir default rewritten — old "defaults to LastOutputDir" was stale; added IBM Plex fonts + two-column layout conventions).
 - **G-021/T-063 filed (backlog):** `StagedStatusWiringTests.RunSplit_StatusTextTransitionsThroughStages` fails 4/5 — verified PRE-EXISTING (test last touched T-044 `50cbfc1`; drain never touched OperationViewModel or the test). Logged for diagnosis per the "don't dismiss flaky as infra — could be a real race" lesson; not blocking.
 - Suite now 418/419 (one flaky as above); build 0-warning. Rebuild Release + relaunch pending for visual verify.
+
+## 2026-07-18 · G-022 planned (todo-goal) — post-relayout feature parity
+- **Symptom:** user can add a cut position only once after the T-059 two-column relayout.
+- **Grounding (recorded in G-022 so build won't re-tread):** T-059 dropped NO command binding (diffed old `5c8f611^` vs new SplitView — all 8 identical); timeline click-to-add (`OnTrackClicked`, Track-relative mapping) intact; add commands' CanExecute don't latch off; `AddCutAt` dedupes on snapped/requested position → a second add at the SAME source position is intentionally dropped. So the cause is behavioral (source position not advancing) — needs live repro, not visible headless.
+- **Plan:** G-022 = T-064 (reproduce + root-cause add-once across suspects S1 field-not-reseeding / S2 playhead-frozen / S3 Track zero-width / S4 pre-existing; fix at true layer, don't weaken dedup) → T-065 (full parity sweep of every Split/Join/player action). Plan-only; STOPPED per todo-goal.
