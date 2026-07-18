@@ -432,3 +432,8 @@
 - **Ask:** split positions ordered by time, not add order.
 - **Grounding:** the split OUTPUT is already time-ordered (SplitPlan sorts cuts `SplitPlan.cs:91`; segments list sorts by Snapped `SplitViewModel.cs:1008-1011`) — parts already numbered by time. Only the `Markers` ObservableCollection is append-order (`Markers.Add` at :702/:758), so the "Cut markers" LIST shows add-order. This is a display fix, not correctness.
 - **Plan:** G-026 = T-071 — order Markers by time via sorted-insert OR a live-sorted CollectionView (key: Snapped, fallback Requested while pending); handle T-041 pending→resolved re-position + removal; verify parts byte-identical; docs folded in. Plan-only; STOPPED per todo-goal.
+
+## 2026-07-18 · G-027 planned (todo-goal) — scrollbar + clear op states
+- **Ask:** improve the primitive scrollbar; make in-progress/done clear to the user.
+- **Grounding:** no custom ScrollBar style (default WPF light chrome). OperationState enum = Idle/Running/Completed/Cancelled/Failed, but the progress/status UI is bound to IsRunning → it VANISHES on Completed (no ✓ done confirmation; Cancelled has no surface; only Failed has a red block).
+- **Plan:** G-027 = T-072 (implicit themed ScrollBar style in Controls.xaml, app-wide, both orientations, gold-on-hover thumb) → T-073 (state-driven surface: Running / Completed=✓ green + result summary + open folder / Cancelled=muted / Failed=red; VM IsCompleted/IsCancelled/ResultSummary, unit-tested, resets on new run/load/clear; Split + Join) → T-074 docs. Plan-only; STOPPED per todo-goal.
