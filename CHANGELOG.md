@@ -143,6 +143,11 @@ re-encode — the player only previews; every cut continues to keyframe-snap thr
   new `IMediaPlayer.Seeked` completion event, with a ~250ms tolerance and a bounded-tick anti-freeze
   backstop so the slider can never get stuck. The scrub slider also suppresses echoes while the thumb
   is being dragged (seek on release).
+- **Responsive scrub (G-016)** — the video now follows the pin **live while you drag** it, instead of
+  staying frozen until release. Seeks are **coalesced** (only one seek is in flight at a time; while it
+  runs, only the *latest* pin position is kept and issued on completion — stale intermediate positions
+  are dropped) and **throttled** (~70ms), so a fast drag converges to where the pin is now with no
+  backlog/lag. Routes through the same seek-target hold, so the pop-back protection above still holds.
 
 ### Notes
 

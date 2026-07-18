@@ -2,6 +2,20 @@
 
 <!-- latest on top; entries are never deleted -->
 
+## 2026-07-18 — ✅ G-016 done (scrub) · todo-goal PLANNED: G-017 theme
+
+- **G-016 ✅** — T-051 `c211810` live coalesced+throttled scrub (video follows the pin; one-in-flight + latest-target via Seeked; 70ms throttle; T-033 hold preserved; 379 tests) + T-052 CHANGELOG. Sealed done.
+- **G-017 PLANNED (todo-goal, plan-only):** apply the user's redesign — **premium dark + gold** theme, token-driven. Archived the reference `docs/design/references/2026-07-18_redesign-standalone.html` (a self-extracting HTML bundle; palette extracted from its preview SVG: bg #0d0f13 · surface #15181e · surface2 #1a1e25 · video #000 · accent gold #e0a83a). Tasks: T-053 `Tokens.xaml` + base control styles (UI-Designer, token-first) · T-054 restyle all screens + UX/UI review · T-055 docs. NOTE: full mockup detail is in a JS bundle → render it in a browser to confirm exact spacing/type before finalizing. `proceed G-017`.
+
+## 2026-07-18 — todo-next-all: draining G-016 (responsive scrub)
+
+- **T-051 🔵** live throttled + coalesced scrub dispatched. Then T-052 docs → converge.
+
+## 2026-07-18 — todo-goal PLANNED: G-016 responsive scrub (pin lag)
+
+- User: dragging the video time pin still lags. Diagnosis (grounded): current scrub is **seek-on-release** (PlayerView `DragStarted→BeginUserScrub` suppresses, `DragCompleted→EndUserScrub` seeks once) → video frozen under the finger during drag + no seek coalescing. Feels delayed.
+- **G-016** "Responsive scrub" — T-051 live throttled+coalesced scrub (video follows the pin during drag; coalesce = one in-flight seek + latest-target-only via the T-033 `Seeked` signal; throttle; keep pop-back protection) · T-052 docs. Plan-only; `proceed G-016`.
+
 ## 2026-07-18 — ✅ G-012→G-015 DONE — todo-next-all backlog converged (10/10)
 
 - **T-049 ✅** selectable segments `d1659f3` — `SplitSegmentViewModel` + `SelectedSegmentIndices` (full→muxer, subset→per-segment `-c copy`, only selected written); real-ffmpeg verified; fixed a latent per-segment `-to` bug. 372 tests.
