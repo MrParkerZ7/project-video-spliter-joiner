@@ -454,3 +454,8 @@
 
 ## 2026-07-18 · G-028 done — scrub-bar click seek
 - **T-075 done** (`0f2806b`, +6 tests → 481): TWO stacked bugs. (1) `ScrubSlider` had no `IsMoveToPointEnabled` → track click page-stepped instead of jumping to the click point. (2) With move-to-point on, one click fired BeginSeek TWICE — Seek#1 via Value→PositionSeconds→Position setter, Seek#2 via the zero-distance thumb drag → EndUserScrub → same target = the warp. Fix: IsMoveToPointEnabled=True + BeginSeek dedupe (skip a 2nd seek to the same target within SeekTolerance while one is in-flight) → exactly one converged seek through the T-033 pop-back hold. Drag scrub (distinct converging targets) + timeline-strip click unaffected.
+
+## 2026-07-18 · G-029 (todo-goal-next) — crisp caption icons
+- **Ask:** improve the min/maximize/close icons top-right.
+- **Grounding:** caption buttons draw Segoe MDL2 glyphs (E921 min / E922-E923 max-restore via converter / E8BB close) at FontSize 10 — small/generic vs the IBM Plex dark+gold look. CaptionButton style pins FontFamily=Segoe MDL2 Assets.
+- **Plan (T-076):** replace with crisp vector Path icons (min=line, maximize=square, restore=double-square, close=X), 1px pixel-aligned stroke, TextPrimary; DataTrigger swaps max↔restore on WindowState; close hovers red with a light icon; drop the Segoe MDL2 FontFamily. Keep 46×34 hit area, hit-test-in-chrome, click handlers, WM_GETMINMAXINFO clamp. Building now.
