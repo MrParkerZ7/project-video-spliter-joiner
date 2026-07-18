@@ -20,12 +20,19 @@ public interface ISplitEngine
     /// <paramref name="status"/> (optional, T-044) receives a stage transition as the engine enters
     /// each real phase: Preparing → Splitting → Finalizing → Done — synced to the actual work, never
     /// a timer. The numeric <paramref name="progress"/> channel is unchanged.
+    /// <paramref name="partProgress"/> (optional, T-069) receives per-part samples as each part is
+    /// written — the current 1-based part index, the total part count, and that part's local 0..1
+    /// fraction. Both split paths report it: the per-segment subset path from its natural loop, the
+    /// fast single-pass muxer path DERIVED from the ffmpeg time it already parses (no extra passes).
+    /// Additive — the overall <paramref name="progress"/> and staged <paramref name="status"/>
+    /// channels are unchanged.
     /// </summary>
     Task<SplitResult> SplitAsync(
         SplitRequest req,
         IProgress<double>? progress = null,
         CancellationToken ct = default,
-        IProgress<OperationStatus>? status = null);
+        IProgress<OperationStatus>? status = null,
+        IProgress<PartProgress>? partProgress = null);
 }
 
 /// <inheritdoc cref="ISplitEngine" />
@@ -57,7 +64,8 @@ public sealed class SplitEngine : ISplitEngine
         SplitRequest req,
         IProgress<double>? progress = null,
         CancellationToken ct = default,
-        IProgress<OperationStatus>? status = null)
+        IProgress<OperationStatus>? status = null,
+        IProgress<PartProgress>? partProgress = null)
     {
         ArgumentNullException.ThrowIfNull(req);
         ValidateRequestShape(req);
@@ -133,8 +141,8 @@ public sealed class SplitEngine : ISplitEngine
             // path). A strict SUBSET → the per-segment -ss/-to copy path, one ffmpeg run per selected
             // part, so ONLY the chosen ranges are written.
             var produced = isFullSet
-                ? await ExtractAllViaSegmentMuxer(req, plan, duration, tempDir, progress, ct).ConfigureAwait(false)
-                : await ExtractSelectedPerSegment(req, selected, fileDuration, tempDir, progress, ct).ConfigureAwait(false);
+                ? await ExtractAllViaSegmentMuxer(req, plan, duration, tempDir, progress, partProgress, ct).ConfigureAwait(false)
+                : await ExtractSelectedPerSegment(req, selected, plan.Segments.Count, fileDuration, tempDir, progress, partProgress, ct).ConfigureAwait(false);
 
             // T-044: ffmpeg finished — entering the finalize phase (temp→move + verify each segment).
             status?.Report(new OperationStatus("Finalizing"));
@@ -221,6 +229,7 @@ public sealed class SplitEngine : ISplitEngine
         TimeSpan duration,
         string tempDir,
         IProgress<double>? progress,
+        IProgress<PartProgress>? partProgress,
         CancellationToken ct)
     {
         var ext = GetOutputExtension(req);
@@ -229,8 +238,31 @@ public sealed class SplitEngine : ISplitEngine
         var args = SplitArgsBuilder.SegmentMuxer(req.InputPath, plan.InteriorSnappedCuts, tempPattern);
         AssertCopyInvariant(args);
 
-        var result = await _runner.RunAsync(args, duration, progress, ct).ConfigureAwait(false);
+        // T-069: the muxer stays a SINGLE ffmpeg pass. The runner reports one monotonic overall
+        // fraction (elapsed/duration); DERIVE the per-part sample from it — no extra ffmpeg runs.
+        // Wrap the overall reporter so each fraction both drives the overall bar (forwarded verbatim)
+        // AND is mapped through the pure PartAt(time, boundaries, duration) function to a PartProgress.
+        var partCount = plan.Segments.Count;
+        var boundaries = plan.InteriorSnappedCuts;
+        IProgress<double>? runnerProgress = progress is null && partProgress is null
+            ? null
+            : new SyncProgress<double>(fraction =>
+            {
+                progress?.Report(fraction);
+                if (partProgress is not null)
+                {
+                    var time = TimeSpan.FromSeconds(fraction * duration.TotalSeconds);
+                    var (partIndex, partFraction) = PartMapping.PartAt(time, boundaries, duration);
+                    partProgress.Report(new PartProgress(partIndex, partCount, partFraction));
+                }
+            });
+
+        var result = await _runner.RunAsync(args, duration, runnerProgress, ct).ConfigureAwait(false);
         ThrowIfFailed(result, args);
+
+        // Ensure every written part lands as Done even if ffmpeg's last time= sample stopped short of
+        // the final boundary (the overall bar is set to 1.0 by the caller after the move phase).
+        partProgress?.Report(new PartProgress(partCount, partCount, 1.0));
 
         var produced = new List<(PlannedSegment, string)>(plan.Segments.Count);
         for (var i = 0; i < plan.Segments.Count; i++)
@@ -252,9 +284,11 @@ public sealed class SplitEngine : ISplitEngine
     private async Task<IReadOnlyList<(PlannedSegment Planned, string TempFile)>> ExtractSelectedPerSegment(
         SplitRequest req,
         IReadOnlyList<SelectedSegment> selected,
+        int planPartCount,
         TimeSpan fileDuration,
         string tempDir,
         IProgress<double>? progress,
+        IProgress<PartProgress>? partProgress,
         CancellationToken ct)
     {
         var ext = GetOutputExtension(req);
@@ -277,9 +311,26 @@ public sealed class SplitEngine : ISplitEngine
             var args = SplitArgsBuilder.PerSegment(req.InputPath, planned.SnappedStart, end, tempFile);
             AssertCopyInvariant(args);
 
-            var result = await _runner.RunAsync(args, reportedDuration, null, ct).ConfigureAwait(false);
+            // T-069: per-part progress is NATURAL here — one ffmpeg run == one part. Wrap this run's
+            // fraction so it drives BOTH the overall bar (mapped across all selected parts: base + local
+            // share) AND the per-part channel (this part's ORIGINAL 1-based index + the run's own local
+            // fraction). The overall base advances one selected slot per completed part.
+            var completedSlots = i;
+            var totalSlots = selected.Count;
+            var oneBasedIndex = sel.OneBasedIndex;
+            IProgress<double>? runProgress = progress is null && partProgress is null
+                ? null
+                : new SyncProgress<double>(local =>
+                {
+                    progress?.Report((completedSlots + local) / totalSlots);
+                    partProgress?.Report(new PartProgress(oneBasedIndex, planPartCount, local));
+                });
+
+            var result = await _runner.RunAsync(args, reportedDuration, runProgress, ct).ConfigureAwait(false);
             ThrowIfFailed(result, args);
 
+            // This part is fully written → mark it Done, and advance the overall bar to the slot mark.
+            partProgress?.Report(new PartProgress(oneBasedIndex, planPartCount, 1.0));
             progress?.Report((double)(i + 1) / selected.Count);
             produced.Add((planned, tempFile));
         }
@@ -498,6 +549,23 @@ public sealed class SplitEngine : ISplitEngine
         // Plain index.
         result = result.Replace("{index}", index.ToString(CultureInfo.InvariantCulture), StringComparison.Ordinal);
         return result;
+    }
+
+    /// <summary>
+    /// A minimal SYNCHRONOUS <see cref="IProgress{T}"/> — invokes the handler inline on the reporting
+    /// thread (the ffmpeg stderr reader), unlike <see cref="Progress{T}"/> which posts to a captured
+    /// synchronization context. Core has no UI context to marshal to, and the muxer per-part derivation
+    /// (T-069) must run in-order on the same thread that parsed each ffmpeg <c>time=</c> line, so a
+    /// straight synchronous relay is what we want here (the outer UI reporter the App passes is itself a
+    /// context-marshalling <c>Progress&lt;T&gt;</c>, so UI-thread affinity is still honoured downstream).
+    /// </summary>
+    private sealed class SyncProgress<T> : IProgress<T>
+    {
+        private readonly Action<T> _handler;
+
+        public SyncProgress(Action<T> handler) => _handler = handler;
+
+        public void Report(T value) => _handler(value);
     }
 
     private static void TryDeleteDirectory(string dir)

@@ -289,13 +289,61 @@
                                 ToolTip="Deselect every part"
                                 Command="{Binding SelectNoSegmentsCommand}" />
                     </Grid>
-                    <ListBox ItemsSource="{Binding Segments}" MaxHeight="150">
+                    <ListBox ItemsSource="{Binding Segments}" MaxHeight="150"
+                             HorizontalContentAlignment="Stretch">
                         <ListBox.ItemTemplate>
                             <DataTemplate DataType="{x:Type vm:SplitSegmentViewModel}">
-                                <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay}"
-                                          Content="{Binding Display}"
-                                          FontFamily="{StaticResource MonoFontFamily}"
-                                          ToolTip="Uncheck to exclude this part from the export" />
+                                <!-- T-069: row = selection checkbox (flexes) + inline per-part progress
+                                     affordance. The affordance shows the row's live write state:
+                                     Writing → a thin gold bar + % ; Done → a green ✓ ; Pending → nothing. -->
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+
+                                    <CheckBox Grid.Column="0"
+                                              IsChecked="{Binding IsSelected, Mode=TwoWay}"
+                                              Content="{Binding Display}"
+                                              FontFamily="{StaticResource MonoFontFamily}"
+                                              VerticalAlignment="Center"
+                                              ToolTip="Uncheck to exclude this part from the export" />
+
+                                    <!-- WRITING: gold live-fill bar + % (active row) -->
+                                    <StackPanel Grid.Column="1"
+                                                Orientation="Horizontal"
+                                                VerticalAlignment="Center"
+                                                Margin="8,0,0,0"
+                                                Visibility="{Binding IsWriting, Converter={StaticResource BoolToVisibility}}">
+                                        <ProgressBar Width="52"
+                                                     Height="6"
+                                                     Minimum="0"
+                                                     Maximum="100"
+                                                     Foreground="{StaticResource AccentBrush}"
+                                                     Background="{StaticResource Surface2Brush}"
+                                                     BorderThickness="0"
+                                                     VerticalAlignment="Center"
+                                                     Value="{Binding PartFraction, Mode=OneWay, Converter={StaticResource FractionToPercent}}" />
+                                        <TextBlock Margin="6,0,0,0"
+                                                   MinWidth="30"
+                                                   TextAlignment="Right"
+                                                   FontFamily="{StaticResource MonoFontFamily}"
+                                                   FontSize="{StaticResource FontSizeSmall}"
+                                                   Foreground="{StaticResource AccentBrush}"
+                                                   Text="{Binding PartFraction, Mode=OneWay, Converter={StaticResource FractionToPercent}, StringFormat={}{0:0}%}" />
+                                    </StackPanel>
+
+                                    <!-- DONE: green check -->
+                                    <TextBlock Grid.Column="1"
+                                               Margin="8,0,4,0"
+                                               VerticalAlignment="Center"
+                                               FontFamily="{StaticResource MonoFontFamily}"
+                                               FontSize="{StaticResource FontSizeSmall}"
+                                               FontWeight="SemiBold"
+                                               Foreground="{StaticResource OkBrush}"
+                                               Text="✓ done"
+                                               Visibility="{Binding IsDone, Converter={StaticResource BoolToVisibility}}" />
+                                </Grid>
                             </DataTemplate>
                         </ListBox.ItemTemplate>
                     </ListBox>

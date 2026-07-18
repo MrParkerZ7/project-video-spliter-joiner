@@ -825,17 +825,28 @@ public sealed class SplitViewModel : ObservableObject
         LastResult = null;
         SplitResult? result = null;
 
+        // T-069: reset every part row to Pending before the run so a re-run starts clean.
+        foreach (var seg in Segments)
+        {
+            seg.ResetProgress();
+        }
+
+        _activePartIndex = 0;
+        _lastPartFraction = -1d;
+
         await Operation.RunWithResultAsync(
-            work: async (progress, status, ct) =>
+            work: async (progress, status, partProgress, ct) =>
             {
                 // T-044: pass the stage reporter so Operation.StatusText tracks each real phase
                 // (Preparing → Splitting (M parts) → Finalizing → Done) as the engine progresses.
-                result = await _splitEngine.SplitAsync(request, progress, ct, status).ConfigureAwait(true);
+                // T-069: pass the per-part reporter so the "Parts to export" rows animate.
+                result = await _splitEngine.SplitAsync(request, progress, ct, status, partProgress).ConfigureAwait(true);
                 return result;
             },
             // The engine reports genuine failures as SplitException (mapped by OperationViewModel);
             // a returned SplitResult is a success, so there is no per-result failure to select.
             failureSelector: _ => null,
+            onPartProgress: ApplyPartProgress,
             runningStatus: "Splitting…").ConfigureAwait(true);
 
         if (Operation.State == OperationState.Completed && result is not null)
@@ -845,12 +856,98 @@ public sealed class SplitViewModel : ObservableObject
                 ? $"Split complete with {result.Warnings.Count} warning(s)."
                 : "Split complete.";
 
+            // T-069: on success, every SELECTED part is written — mark them all Done so no row is
+            // left mid-Writing if the final progress sample undershot the last part's boundary.
+            foreach (var seg in Segments)
+            {
+                if (seg.IsSelected)
+                {
+                    seg.MarkDone();
+                }
+            }
+
             // Remember the output folder we just wrote to (T-038) so it becomes next load's default.
             if (!string.IsNullOrWhiteSpace(OutputDir))
             {
                 _settings.LastOutputDir = OutputDir;
             }
         }
+    }
+
+    // ---- Per-part progress (T-069) ----------------------------------------------------------
+
+    // The last part index we drove Writing (0 = none yet). Used to promote every earlier SELECTED
+    // part to Done on a forward transition (ffmpeg can jump past a part's final sample) and to
+    // throttle per-row fraction churn (only push a fraction change once it moves meaningfully).
+    private int _activePartIndex;
+    private double _lastPartFraction;
+
+    // Only push a row fraction update when it advances by at least this much — keeps a fast split
+    // from thrashing the bound rows on every ffmpeg time= tick.
+    private const double PartFractionEpsilon = 0.01;
+
+    /// <summary>
+    /// Apply one <see cref="PartProgress"/> sample to the part rows (T-069): the reported part
+    /// (matched by its ORIGINAL 1-based <see cref="SplitSegmentViewModel.Index"/>) becomes
+    /// <see cref="PartRowState.Writing"/> at its local fraction; every SELECTED part before it becomes
+    /// <see cref="PartRowState.Done"/>; parts after it stay <see cref="PartRowState.Pending"/>.
+    /// Unselected parts (subset export) are never written, so they are left Pending/neutral. A part
+    /// reported at fraction 1 is promoted straight to Done. Runs on the UI thread (marshalled by the
+    /// Operation's <see cref="System.Progress{T}"/>); fraction updates are throttled to avoid churn.
+    /// </summary>
+    private void ApplyPartProgress(PartProgress p)
+    {
+        // Forward transition to a new active part → finalize the parts we're leaving behind.
+        if (p.PartIndex != _activePartIndex)
+        {
+            foreach (var seg in Segments)
+            {
+                // Every SELECTED part strictly before the new active one is finished.
+                if (seg.IsSelected && seg.Index < p.PartIndex)
+                {
+                    seg.MarkDone();
+                }
+            }
+
+            _activePartIndex = p.PartIndex;
+            _lastPartFraction = -1d; // force the first fraction of the new part through the throttle
+        }
+
+        var row = FindSegmentByIndex(p.PartIndex);
+        if (row is null)
+        {
+            return;
+        }
+
+        // A part reported complete → Done outright (covers the engine's per-part completion signal
+        // and the muxer's final "all done" sample).
+        if (p.PartFraction >= 1.0)
+        {
+            row.MarkDone();
+            _lastPartFraction = 1d;
+            return;
+        }
+
+        // Throttle: only push a mid-write fraction once it has moved meaningfully (or the state is
+        // not yet Writing — always push the first sample so the row starts animating immediately).
+        if (!row.IsWriting || Math.Abs(p.PartFraction - _lastPartFraction) >= PartFractionEpsilon)
+        {
+            row.MarkWriting(p.PartFraction);
+            _lastPartFraction = p.PartFraction;
+        }
+    }
+
+    private SplitSegmentViewModel? FindSegmentByIndex(int oneBasedIndex)
+    {
+        foreach (var seg in Segments)
+        {
+            if (seg.Index == oneBasedIndex)
+            {
+                return seg;
+            }
+        }
+
+        return null;
     }
 
     // ---- Clear ------------------------------------------------------------------------------

@@ -127,7 +127,8 @@ public sealed class StagedStatusWiringTests
             SplitRequest req,
             IProgress<double>? progress = null,
             CancellationToken ct = default,
-            IProgress<OperationStatus>? status = null)
+            IProgress<OperationStatus>? status = null,
+            IProgress<PartProgress>? partProgress = null)
         {
             status?.Report(new OperationStatus("Preparing"));
             status?.Report(new OperationStatus("Splitting", "3 parts"));

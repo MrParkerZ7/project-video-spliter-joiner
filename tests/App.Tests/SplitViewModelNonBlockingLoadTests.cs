@@ -107,7 +107,7 @@ public sealed class SplitViewModelNonBlockingLoadTests
 
     private sealed class NoOpSplitEngine : ISplitEngine
     {
-        public Task<SplitResult> SplitAsync(SplitRequest req, IProgress<double>? progress = null, CancellationToken ct = default, IProgress<VideoSplitJoiner.Core.Ffmpeg.OperationStatus>? status = null)
+        public Task<SplitResult> SplitAsync(SplitRequest req, IProgress<double>? progress = null, CancellationToken ct = default, IProgress<VideoSplitJoiner.Core.Ffmpeg.OperationStatus>? status = null, IProgress<VideoSplitJoiner.Core.Split.PartProgress>? partProgress = null)
             => Task.FromResult(new SplitResult(Array.Empty<SplitSegment>(), Array.Empty<string>()));
     }
 

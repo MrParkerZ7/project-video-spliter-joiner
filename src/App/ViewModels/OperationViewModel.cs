@@ -224,6 +224,59 @@ public sealed class OperationViewModel : ObservableObject
         }
     }
 
+    /// <summary>
+    /// T-069 overload that ALSO hands the work an <see cref="IProgress{PartProgress}"/> for per-part
+    /// split reporting, alongside the numeric progress and staged status channels. Each reported
+    /// <see cref="PartProgress"/> is forwarded to <paramref name="onPartProgress"/>, marshalled onto the
+    /// captured synchronization context exactly like the numeric progress — so a real UI updates the
+    /// bound part rows on the UI thread while tests observe them after awaiting. The part channel does
+    /// NOT touch <see cref="Progress"/> / <see cref="StatusText"/> — it is purely additive; the overall
+    /// bar and staged status behave identically to the T-044 overload.
+    /// </summary>
+    public async Task RunWithResultAsync<T>(
+        Func<IProgress<double>, IProgress<OperationStatus>, IProgress<PartProgress>, CancellationToken, Task<T>> work,
+        Func<T, UserFacingError?> failureSelector,
+        Action<PartProgress> onPartProgress,
+        string runningStatus)
+    {
+        ArgumentNullException.ThrowIfNull(work);
+        ArgumentNullException.ThrowIfNull(failureSelector);
+        ArgumentNullException.ThrowIfNull(onPartProgress);
+
+        BeginRun(runningStatus, out var progress, out var status, out var token);
+
+        // Marshal per-part samples onto the captured context, like the numeric/staged channels.
+        var partProgress = new Progress<PartProgress>(onPartProgress);
+
+        try
+        {
+            var result = await work(progress, status, partProgress, token).ConfigureAwait(true);
+            var failure = failureSelector(result);
+            if (failure is not null)
+            {
+                Error = failure;
+                State = OperationState.Failed;
+            }
+            else
+            {
+                Complete();
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            State = OperationState.Cancelled;
+        }
+        catch (Exception ex)
+        {
+            Error = MapException(ex);
+            State = OperationState.Failed;
+        }
+        finally
+        {
+            EndRun();
+        }
+    }
+
     /// <summary>Resets the VM back to <see cref="OperationState.Idle"/> for reuse.</summary>
     public void Reset()
     {

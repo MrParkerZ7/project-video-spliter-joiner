@@ -76,7 +76,7 @@ public sealed class SplitViewModelTests
 
         public Func<SplitRequest, Task<SplitResult>>? Handler { get; set; }
 
-        public Task<SplitResult> SplitAsync(SplitRequest req, IProgress<double>? progress = null, CancellationToken ct = default, IProgress<VideoSplitJoiner.Core.Ffmpeg.OperationStatus>? status = null)
+        public Task<SplitResult> SplitAsync(SplitRequest req, IProgress<double>? progress = null, CancellationToken ct = default, IProgress<VideoSplitJoiner.Core.Ffmpeg.OperationStatus>? status = null, IProgress<VideoSplitJoiner.Core.Split.PartProgress>? partProgress = null)
         {
             LastRequest = req;
             progress?.Report(0.5);
