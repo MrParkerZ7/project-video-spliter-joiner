@@ -41,6 +41,22 @@ retained in the accompanying `LICENSE` file (where present) and in this notice.
 > the shared `*.dll` set (~+40 MB) to the distributable, because the DLLs the FFME preview
 > P/Invokes now ship alongside the tool exes.
 
+## IBM Plex (fonts)
+
+This product bundles the **IBM Plex Mono** and **IBM Plex Sans** typefaces (the `.ttf`
+files under `src/App/Fonts/`, embedded as WPF Resources) — used for the application UI
+(mono readouts/labels + sans headings). The fonts are referenced via pack URI from
+`src/App/Themes/Tokens.xaml`.
+
+- Project: https://github.com/IBM/plex
+- License: **SIL Open Font License, Version 1.1** (OFL-1.1).
+  - Copyright © 2017 IBM Corp. with Reserved Font Name "Plex".
+  - Full license text: https://github.com/IBM/plex/blob/master/LICENSE.txt
+- The OFL permits bundling and redistribution of the fonts (including embedded in an
+  application) provided the copyright/license notice is retained (this notice) and the
+  fonts are not sold by themselves. The Reserved Font Name "Plex" must not be used on any
+  derivative/modified version of the fonts. VideoSplitJoiner ships the fonts unmodified.
+
 ## Licensing
 
 > **IMPORTANT — read before public distribution.**

@@ -43,4 +43,13 @@
     <PackageReference Include="FFME.Windows" Version="7.0.361-beta.1" />
   </ItemGroup>
 
+  <!--
+    T-058 — bundle IBM Plex Mono + IBM Plex Sans (SIL OFL 1.1) as WPF Resources.
+    Referenced from Themes/Tokens.xaml via pack URIs (pack://application:,,,/Fonts/#IBM Plex Mono).
+    See THIRD-PARTY-NOTICES.md for attribution.
+  -->
+  <ItemGroup>
+    <Resource Include="Fonts\*.ttf" />
+  </ItemGroup>
+
 </Project>

@@ -3,50 +3,92 @@
                     xmlns:sys="clr-namespace:System;assembly=mscorlib">
 
     <!--
-      T-053 — Design tokens for the dark + gold redesign.
-      Palette source: user mockup. This dictionary defines ONLY tokens
+      T-058 — Design tokens tuned to the Claude design sample (IBM Plex Mono/Sans,
+      full dark-surface + text + semantic + gold scale, tight 6–12px radii, dense type).
+      Refines the G-017/T-053 tokens. This dictionary defines ONLY tokens
       (colors, brushes, radii, spacing, type). Control styles live in Controls.xaml.
-      Views are NOT restyled here (that is T-054).
+      Views are NOT restyled here (that is T-059).
+
+      Token KEYS referenced by Controls.xaml + Views are preserved verbatim — values
+      are remapped to the sample palette, keys are never renamed. New keys are additive.
     -->
 
     <!-- ============================ COLORS ============================ -->
-    <Color x:Key="BgColor">#FF0D0F13</Color>          <!-- window background, near-black -->
-    <Color x:Key="SurfaceColor">#FF15181E</Color>     <!-- panels / cards -->
-    <Color x:Key="Surface2Color">#FF1A1E25</Color>    <!-- controls bar / secondary surface -->
-    <Color x:Key="VideoBgColor">#FF000000</Color>     <!-- video area -->
+    <!-- Surface scale (darkest → lightest), from the sample's extracted set. -->
+    <Color x:Key="Surface0Color">#FF0A0B0D</Color>   <!-- deepest well / video letterbox -->
+    <Color x:Key="BgColor">#FF0D0F13</Color>         <!-- window background, near-black -->
+    <Color x:Key="Surface1Color">#FF101215</Color>   <!-- inset / sunken -->
+    <Color x:Key="SurfaceColor">#FF15181E</Color>    <!-- panels / cards -->
+    <Color x:Key="Surface2Color">#FF181C22</Color>   <!-- controls bar / secondary surface -->
+    <Color x:Key="Surface3Color">#FF1C2028</Color>   <!-- elevated card / hover surface -->
+    <Color x:Key="Surface4Color">#FF232935</Color>   <!-- highest elevation / pressed chip -->
+    <Color x:Key="VideoBgColor">#FF000000</Color>    <!-- video area -->
+
+    <!-- Accent (gold) -->
     <Color x:Key="AccentColor">#FFE0A83A</Color>      <!-- GOLD primary accent -->
+    <Color x:Key="AccentHoverColorRaw">#FFF0BC55</Color> <!-- gold hover (lighter) -->
     <Color x:Key="AccentMutedColor">#40E0A83A</Color> <!-- accent @ ~25% opacity -->
-    <Color x:Key="TextPrimaryColor">#FFEDEDED</Color> <!-- body text on dark -->
-    <Color x:Key="TextMutedColor">#FF9AA0A8</Color>   <!-- labels / secondary text -->
-    <Color x:Key="BorderColor">#FF2A2F38</Color>      <!-- subtle dark border -->
-    <Color x:Key="DangerColor">#FFE5484D</Color>      <!-- readable red on dark -->
-    <Color x:Key="OkColor">#FF3FB950</Color>          <!-- readable green on dark -->
-    <Color x:Key="AccentTextColor">#FF16130A</Color>  <!-- dark text on gold accent -->
+
+    <!-- Text -->
+    <Color x:Key="TextPrimaryColor">#FFEEF0F3</Color>   <!-- brightest heading text -->
+    <Color x:Key="TextSecondaryColor">#FF9AA0AB</Color> <!-- secondary / labels -->
+    <Color x:Key="TextMutedColor">#FF767C88</Color>     <!-- faint / captions -->
+    <Color x:Key="AccentTextColor">#FF16130A</Color>    <!-- dark text on gold accent -->
+
+    <!-- Borders -->
+    <Color x:Key="BorderColor">#FF2A2E37</Color>       <!-- subtle dark border -->
+    <Color x:Key="BorderStrongColor">#FF3A4250</Color> <!-- emphasized border -->
+
+    <!-- Semantic -->
+    <Color x:Key="OkColor">#FF5FCF8E</Color>       <!-- readable green on dark -->
+    <Color x:Key="InfoColor">#FF5B9CF0</Color>     <!-- blue -->
+    <Color x:Key="AccentAltColor">#FFC77DFF</Color><!-- purple -->
+    <Color x:Key="DangerColor">#FFE5646B</Color>   <!-- readable red on dark -->
 
     <!-- ============================ BRUSHES ============================ -->
+    <!-- Surface tiers -->
+    <SolidColorBrush x:Key="Surface0Brush" Color="{StaticResource Surface0Color}" />
     <SolidColorBrush x:Key="BgBrush" Color="{StaticResource BgColor}" />
+    <SolidColorBrush x:Key="Surface1Brush" Color="{StaticResource Surface1Color}" />
     <SolidColorBrush x:Key="SurfaceBrush" Color="{StaticResource SurfaceColor}" />
     <SolidColorBrush x:Key="Surface2Brush" Color="{StaticResource Surface2Color}" />
+    <SolidColorBrush x:Key="Surface3Brush" Color="{StaticResource Surface3Color}" />
+    <SolidColorBrush x:Key="Surface4Brush" Color="{StaticResource Surface4Color}" />
     <SolidColorBrush x:Key="VideoBgBrush" Color="{StaticResource VideoBgColor}" />
+
+    <!-- Accent -->
     <SolidColorBrush x:Key="AccentBrush" Color="{StaticResource AccentColor}" />
     <SolidColorBrush x:Key="AccentMutedBrush" Color="{StaticResource AccentMutedColor}" />
-    <SolidColorBrush x:Key="TextPrimaryBrush" Color="{StaticResource TextPrimaryColor}" />
-    <SolidColorBrush x:Key="TextMutedBrush" Color="{StaticResource TextMutedColor}" />
-    <SolidColorBrush x:Key="BorderBrush" Color="{StaticResource BorderColor}" />
-    <SolidColorBrush x:Key="DangerBrush" Color="{StaticResource DangerColor}" />
-    <SolidColorBrush x:Key="OkBrush" Color="{StaticResource OkColor}" />
     <SolidColorBrush x:Key="AccentTextBrush" Color="{StaticResource AccentTextColor}" />
 
+    <!-- Text -->
+    <SolidColorBrush x:Key="TextPrimaryBrush" Color="{StaticResource TextPrimaryColor}" />
+    <SolidColorBrush x:Key="TextSecondaryBrush" Color="{StaticResource TextSecondaryColor}" />
+    <!-- TextMutedBrush kept as the faint tier (was #9AA0A8 in G-017; remapped to the
+         sample's faint #767C88). Existing bindings continue to resolve. -->
+    <SolidColorBrush x:Key="TextMutedBrush" Color="{StaticResource TextMutedColor}" />
+
+    <!-- Borders -->
+    <SolidColorBrush x:Key="BorderBrush" Color="{StaticResource BorderColor}" />
+    <SolidColorBrush x:Key="BorderStrongBrush" Color="{StaticResource BorderStrongColor}" />
+
+    <!-- Semantic -->
+    <SolidColorBrush x:Key="OkBrush" Color="{StaticResource OkColor}" />
+    <SolidColorBrush x:Key="InfoBrush" Color="{StaticResource InfoColor}" />
+    <SolidColorBrush x:Key="AccentAltBrush" Color="{StaticResource AccentAltColor}" />
+    <SolidColorBrush x:Key="DangerBrush" Color="{StaticResource DangerColor}" />
+
     <!-- hover / pressed helpers (kept subtle over Surface) -->
-    <SolidColorBrush x:Key="SurfaceHoverBrush" Color="#FF20252E" />
-    <SolidColorBrush x:Key="SurfacePressedBrush" Color="#FF10131A" />
-    <SolidColorBrush x:Key="AccentHoverBrush" Color="#FFECB94F" />
+    <SolidColorBrush x:Key="SurfaceHoverBrush" Color="{StaticResource Surface3Color}" />
+    <SolidColorBrush x:Key="SurfacePressedBrush" Color="{StaticResource Surface1Color}" />
+    <SolidColorBrush x:Key="AccentHoverBrush" Color="{StaticResource AccentHoverColorRaw}" />
     <SolidColorBrush x:Key="AccentPressedBrush" Color="#FFC8912E" />
 
     <!-- ============================ CORNER RADII ============================ -->
-    <CornerRadius x:Key="RadiusSm">8</CornerRadius>
-    <CornerRadius x:Key="RadiusMd">12</CornerRadius>
-    <CornerRadius x:Key="RadiusLg">24</CornerRadius>
+    <!-- Tight 6–12px per the sample (retightened from 8/12/24). -->
+    <CornerRadius x:Key="RadiusSm">6</CornerRadius>
+    <CornerRadius x:Key="RadiusMd">8</CornerRadius>
+    <CornerRadius x:Key="RadiusLg">12</CornerRadius>
 
     <!-- ============================ SPACING (Thickness) ============================ -->
     <sys:Double x:Key="SpaceXs">4</sys:Double>
@@ -60,9 +102,20 @@
     <Thickness x:Key="PaddingLg">16,12</Thickness>
 
     <!-- ============================ TYPE ============================ -->
-    <FontFamily x:Key="AppFontFamily">Segoe UI</FontFamily>
-    <sys:Double x:Key="FontSizeTitle">18</sys:Double>
+    <!--
+      Fonts bundled under src/App/Fonts (Resource) — referenced by pack URI with a
+      system fallback so the app still renders if a face fails to resolve.
+      AppFontFamily = the app-wide default (mono, per the sample's technical identity).
+      SansFontFamily / MonoFontFamily let styles pick the specific face explicitly.
+    -->
+    <FontFamily x:Key="MonoFontFamily">pack://application:,,,/Fonts/#IBM Plex Mono, Consolas, Cascadia Mono</FontFamily>
+    <FontFamily x:Key="SansFontFamily">pack://application:,,,/Fonts/#IBM Plex Sans, Segoe UI, Arial</FontFamily>
+    <FontFamily x:Key="AppFontFamily">pack://application:,,,/Fonts/#IBM Plex Mono, Consolas, Cascadia Mono</FontFamily>
+
+    <!-- Dense type scale (8–18px); mono readouts sit at 11–13px. -->
+    <sys:Double x:Key="FontSizeTitle">16</sys:Double>
     <sys:Double x:Key="FontSizeBody">13</sys:Double>
     <sys:Double x:Key="FontSizeSmall">11</sys:Double>
+    <sys:Double x:Key="FontSizeMicro">9</sys:Double>
 
 </ResourceDictionary>
