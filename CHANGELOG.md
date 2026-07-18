@@ -15,6 +15,12 @@ re-encode — the player only previews; every cut continues to keyframe-snap thr
 
 ### Added
 
+- **Cut markers list is ordered by time position, not the order added.** When you place cuts out of
+  chronological order (a cut at 5:00, then one at 2:00), the "Cut markers" list now reads top-to-bottom
+  in time order (2:00 above 5:00) instead of add order. A marker placed while the keyframe scan is still
+  running settles into its correct time slot once its snap resolves, and removing a marker keeps the rest
+  ordered. The split output was already time-ordered (the plan and the "Parts to export" segments sort by
+  time) — this is a marker-list display fix only.
 - **Two-column layout matching the design sample (G-019)** — both screens now split into a **left
   visual column** (the preview player + timeline/scrubber) and a **right tool panel** (Load / Clear
   and everything below — file-info, cut markers, parts-to-export, output, Run) behind a **draggable

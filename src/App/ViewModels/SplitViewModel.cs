@@ -699,7 +699,10 @@ public sealed class SplitViewModel : ObservableObject
         }
 
         var marker = new CutMarkerViewModel(_probe, () => Keyframes, position, snapPending: true);
-        Markers.Add(marker);
+        // T-071: insert at the time-sorted index (by the provisional Snapped == Requested key while
+        // pending) instead of appending, so the marker list reads chronologically even mid-scan. It
+        // re-settles on resolve (ResolvePendingMarkerAsync) once the real snap arrives.
+        InsertMarkerSorted(marker);
 
         // Capture the CTS of the scan this marker is riding on, so we can detect a newer load: if the
         // current index CTS changed (or the file went away) by the time keyframes arrive, this pending
@@ -740,7 +743,14 @@ public sealed class SplitViewModel : ObservableObject
         if (Markers.Any(m => !ReferenceEquals(m, marker) && !m.IsSnapPending && m.Snapped == marker.Snapped))
         {
             Markers.Remove(marker);
+            return;
         }
+
+        // T-071: the resolved snap may differ from the provisional (requested-time) position the
+        // marker was inserted at, so re-position it into its correct time-sorted slot (remove +
+        // sorted-insert). Guarded above by the file-staleness and removed-by-user checks, so this
+        // only re-orders a marker that still belongs to the current file's list.
+        RepositionMarkerSorted(marker);
     }
 
     /// <summary>Build a snapping marker at <paramref name="position"/> and add it (dedup on snapped time).</summary>
@@ -755,7 +765,59 @@ public sealed class SplitViewModel : ObservableObject
             return;
         }
 
-        Markers.Add(marker);
+        // T-071: insert at the time-sorted index (by Snapped) instead of appending, so the marker
+        // list reads chronologically regardless of add order.
+        InsertMarkerSorted(marker);
+    }
+
+    /// <summary>
+    /// The time key a marker sorts on (T-071): its <see cref="CutMarkerViewModel.Snapped"/> time.
+    /// While a marker is pending (T-041) its snap is an identity of <see cref="CutMarkerViewModel.Requested"/>,
+    /// so this is the provisional requested time until the background scan resolves it.
+    /// </summary>
+    private static TimeSpan MarkerSortKey(CutMarkerViewModel marker) => marker.Snapped;
+
+    /// <summary>
+    /// Insert <paramref name="marker"/> into <see cref="Markers"/> at the index that keeps the
+    /// collection ascending by <see cref="MarkerSortKey"/> (T-071). Stable: a marker with an equal
+    /// key is placed AFTER existing equal-key markers, preserving add order among ties.
+    /// </summary>
+    private void InsertMarkerSorted(CutMarkerViewModel marker)
+    {
+        var key = MarkerSortKey(marker);
+        var index = 0;
+        while (index < Markers.Count && MarkerSortKey(Markers[index]) <= key)
+        {
+            index++;
+        }
+
+        Markers.Insert(index, marker);
+    }
+
+    /// <summary>
+    /// Move an already-present <paramref name="marker"/> to its correct time-sorted slot (T-071) —
+    /// used after a pending marker's snap resolves and its key changes. Skips the move when the
+    /// marker is already correctly placed so no redundant collection events fire.
+    /// </summary>
+    private void RepositionMarkerSorted(CutMarkerViewModel marker)
+    {
+        var current = Markers.IndexOf(marker);
+        if (current < 0)
+        {
+            return;
+        }
+
+        var key = MarkerSortKey(marker);
+        var neighbourBefore = current == 0 || MarkerSortKey(Markers[current - 1]) <= key;
+        var neighbourAfter = current == Markers.Count - 1 || key <= MarkerSortKey(Markers[current + 1]);
+        if (neighbourBefore && neighbourAfter)
+        {
+            // Already in a valid sorted position — leave it (avoids a spurious remove/insert churn).
+            return;
+        }
+
+        Markers.RemoveAt(current);
+        InsertMarkerSorted(marker);
     }
 
     /// <summary>Capture a cut at the preview player's current playhead position (T-013).</summary>

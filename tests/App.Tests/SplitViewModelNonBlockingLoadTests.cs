@@ -497,6 +497,67 @@ public sealed class SplitViewModelNonBlockingLoadTests
         });
     }
 
+    // ---- Marker list stays time-ordered through pending→resolved (T-071) --------------------
+
+    [Fact]
+    public void PendingCutsAddedOutOfOrder_SettleIntoTimeOrder_OnResolve()
+    {
+        WithPump(pump =>
+        {
+            var (vm, probe, _) = Build();
+            var load = vm.LoadAsync(PathA);
+            pump.RunUntil(() => load.IsCompleted);
+            vm.IsIndexingKeyframes.Should().BeTrue();
+
+            // Add cuts out of chronological order WHILE indexing (all pending, provisional identity
+            // snap → sorted by requested time for now: 2.6, 7.4, 5.1).
+            vm.AddCutAt(TimeSpan.FromSeconds(7.4));
+            vm.AddCutAt(TimeSpan.FromSeconds(2.6));
+            vm.AddCutAt(TimeSpan.FromSeconds(5.1));
+
+            // Even while pending, the provisional (requested-time) sort holds.
+            vm.Markers.Select(m => m.Snapped).Should().BeInAscendingOrder("provisional order while pending");
+
+            // Release whole-second keyframes → 7.4→7, 2.6→3, 5.1→5. The resolve re-positions each
+            // marker so the final list is ascending by SNAPPED time.
+            probe.Release(PathA, Enumerable.Range(0, 11).Select(i => TimeSpan.FromSeconds(i)).ToArray());
+            pump.RunUntil(() => vm.Markers.All(m => !m.IsSnapPending));
+
+            vm.Markers.Should().HaveCount(3);
+            vm.Markers.Select(m => m.Snapped).Should().ContainInOrder(
+                TimeSpan.FromSeconds(3), TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(7));
+            vm.Markers.Select(m => m.Snapped).Should().BeInAscendingOrder(
+                "each pending marker re-settled into its snapped-time slot");
+        });
+    }
+
+    [Fact]
+    public void PendingCut_ResolvingPastLaterMarkers_RepositionsToCorrectSlot()
+    {
+        WithPump(pump =>
+        {
+            var (vm, probe, _) = Build();
+            var load = vm.LoadAsync(PathA);
+            pump.RunUntil(() => load.IsCompleted);
+
+            // Added while indexing: a marker requested at 4.6 lands mid-list by provisional time, but
+            // its snapped time (5) must sit AFTER the 2 and 4 markers once every marker resolves —
+            // exercises the remove+sorted-insert re-position, not just a stable no-op.
+            vm.AddCutAt(TimeSpan.FromSeconds(4.6));
+            vm.AddCutAt(TimeSpan.FromSeconds(2.1));
+            vm.AddCutAt(TimeSpan.FromSeconds(3.9));
+
+            probe.Release(PathA, Enumerable.Range(0, 11).Select(i => TimeSpan.FromSeconds(i)).ToArray());
+            pump.RunUntil(() => vm.Markers.All(m => !m.IsSnapPending));
+
+            // 2.1→2, 3.9→4, 4.6→5 (distinct keyframes → no dedupe).
+            vm.Markers.Should().HaveCount(3);
+            vm.Markers.Select(m => m.Snapped).Should().ContainInOrder(
+                TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(4), TimeSpan.FromSeconds(5));
+            vm.Markers.Select(m => m.Snapped).Should().BeInAscendingOrder("list stays sorted after resolve");
+        });
+    }
+
     // ---- Failure path unchanged -------------------------------------------------------------
 
     [Fact]

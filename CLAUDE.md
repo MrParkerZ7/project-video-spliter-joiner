@@ -116,6 +116,12 @@ A .NET 8 WPF app that splits and joins video **without re-encoding**. See [READM
   (shows "snapping…"), then resolves in place to its nearest keyframe once the same in-flight scan
   finishes (`ResolveSnap`, re-dedupe on the final snapped time, stale-file guard). Don't re-block cut
   placement on keyframes; the keyframes-ready path stays synchronous.
+- **The cut-markers list is time-ordered (T-071).** New markers are inserted into `Markers` at their
+  time-sorted index (`InsertMarkerSorted`, key = `Snapped`, provisionally `Requested` while pending),
+  and a pending marker re-settles into its slot when its snap resolves — so the list reads chronologically
+  regardless of add order. The split plan and the "Parts to export" segments were already time-ordered
+  (both sort independently); keep marker display order == chronological, and don't rely on a marker's
+  list index meaning "Nth part".
 - **Operations are never silent — visible progress + stage + ETA.** A running split/join must always
   show a progress bar and a status line. `OperationViewModel.IsIndeterminate` drives a busy bar until a
   real fraction (>0) arrives (ffmpeg `time=` is sparse); the engines report an `IProgress<OperationStatus>`

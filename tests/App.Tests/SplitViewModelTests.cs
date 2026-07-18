@@ -245,6 +245,65 @@ public sealed class SplitViewModelTests
         vm.Markers.Should().BeEmpty();
     }
 
+    // ---- Marker list is time-ordered (T-071) ------------------------------------------------
+
+    [Fact]
+    public async Task AddMarkers_OutOfOrder_MarkerListEnumeratesAscendingByTime()
+    {
+        var (vm, probe, _) = Build();
+        probe.KeyframesToReturn = Enumerable.Range(0, 61).Select(i => TimeSpan.FromSeconds(i)).ToArray();
+        await vm.LoadAsync(FakePath);
+
+        // Add out of order: 5:00 then 2:00 then 8:00 then 3:30 (all on 1s keyframes → snap to self).
+        vm.AddMarker(TimeSpan.FromSeconds(50));
+        vm.AddMarker(TimeSpan.FromSeconds(20));
+        vm.AddMarker(TimeSpan.FromSeconds(8));
+        vm.AddMarker(TimeSpan.FromSeconds(35));
+
+        vm.Markers.Select(m => m.Snapped).Should().ContainInOrder(
+            TimeSpan.FromSeconds(8),
+            TimeSpan.FromSeconds(20),
+            TimeSpan.FromSeconds(35),
+            TimeSpan.FromSeconds(50));
+        vm.Markers.Select(m => m.Snapped).Should().BeInAscendingOrder("the list is time-ordered, not add-ordered");
+    }
+
+    [Fact]
+    public async Task AddMarkers_FiveThenTwo_TwoSortsAboveFive()
+    {
+        // The headline acceptance case: add a cut at 5:00 then 2:00 → list shows 2:00 above 5:00.
+        var (vm, probe, _) = Build();
+        // 1s keyframe grid out to 10 minutes so 2:00 / 5:00 snap to themselves.
+        probe.KeyframesToReturn = Enumerable.Range(0, 601).Select(i => TimeSpan.FromSeconds(i)).ToArray();
+        await vm.LoadAsync(FakePath);
+
+        vm.AddMarker(TimeSpan.FromMinutes(5));
+        vm.AddMarker(TimeSpan.FromMinutes(2));
+
+        vm.Markers[0].Snapped.Should().Be(TimeSpan.FromMinutes(2), "2:00 sorts to the top");
+        vm.Markers[1].Snapped.Should().Be(TimeSpan.FromMinutes(5));
+    }
+
+    [Fact]
+    public async Task RemoveMiddleMarker_RemainingListStaysOrdered()
+    {
+        var (vm, probe, _) = Build();
+        probe.KeyframesToReturn = Enumerable.Range(0, 61).Select(i => TimeSpan.FromSeconds(i)).ToArray();
+        await vm.LoadAsync(FakePath);
+
+        vm.AddMarker(TimeSpan.FromSeconds(40));
+        vm.AddMarker(TimeSpan.FromSeconds(10));
+        vm.AddMarker(TimeSpan.FromSeconds(25));
+
+        // Remove the middle-by-time marker (25s).
+        var middle = vm.Markers.Single(m => m.Snapped == TimeSpan.FromSeconds(25));
+        vm.RemoveMarkerCommand.Execute(middle);
+
+        vm.Markers.Select(m => m.Snapped).Should().ContainInOrder(
+            TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(40));
+        vm.Markers.Select(m => m.Snapped).Should().BeInAscendingOrder();
+    }
+
     // ---- CanRunSplit ------------------------------------------------------------------------
 
     [Fact]
