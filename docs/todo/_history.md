@@ -2,6 +2,11 @@
 
 <!-- latest on top; entries are never deleted -->
 
+## 2026-07-18 — todo-goal PLANNED: G-019 match UX/UI to the sample (design EXTRACTED)
+
+- Decoded the sample bundle (`docs/design/references/2026-07-18_redesign-standalone.html`) via a 🚫 python extractor — got the REAL design (not just palette): **font IBM Plex Mono + Plex Sans** (G-017 used Segoe UI = wrong), full dark surface scale `#0a0b0d→#232935`, text `#eef0f3`/`#9aa0ab`/`#767c88`, gold `#e0a83a`+`#f0bc55`, semantic green/blue/purple, **tight radii 6–12px** (not 24), dense 8–18px type; LAYOUT: header + "lossless · no re-encode" tagline + format badge · file-info cards ("matroska · 10:00 · 1.4 GB") · "Cut markers" · "Parts to export (All/None)" · DIR/NAME/FILE mono labels · Join "Estimated result" panel.
+- **G-019** "Match UX/UI to sample" — T-058 refine tokens (bundle IBM Plex fonts + full palette + tight radii + type) · T-059 restructure screens to the sample layout (header/badge/cards/panels/mono labels + UX/UI review) · T-060 docs. NOTE D1: confirm exact spacing from a browser RENDER/screenshot before finalizing layout. Plan-only; `proceed G-019`.
+
 ## 2026-07-18 — ✅ G-018 DONE — themed window frame
 
 - **T-056 ✅** `ae6d09a` custom WindowChrome dark title bar (title + gold accent + min/max/close, close=red; WM_GETMINMAXINFO taskbar clamp + maximized content margin). 379 tests.
