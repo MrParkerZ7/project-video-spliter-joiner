@@ -459,3 +459,6 @@
 - **Ask:** improve the min/maximize/close icons top-right.
 - **Grounding:** caption buttons draw Segoe MDL2 glyphs (E921 min / E922-E923 max-restore via converter / E8BB close) at FontSize 10 — small/generic vs the IBM Plex dark+gold look. CaptionButton style pins FontFamily=Segoe MDL2 Assets.
 - **Plan (T-076):** replace with crisp vector Path icons (min=line, maximize=square, restore=double-square, close=X), 1px pixel-aligned stroke, TextPrimary; DataTrigger swaps max↔restore on WindowState; close hovers red with a light icon; drop the Segoe MDL2 FontFamily. Keep 46×34 hit area, hit-test-in-chrome, click handlers, WM_GETMINMAXINFO clamp. Building now.
+
+## 2026-07-18 · G-029 done — crisp vector caption icons
+- **T-076 done** (`942292a`, +6 tests → 487): replaced Segoe MDL2 caption glyphs with vector Path icons (min=line, maximize=square, restore=double-square, close=X) on a pixel-aligned 10×10 field (.5 offsets, 1px stroke, SnapsToDevicePixels/UseLayoutRounding). Max↔restore swap = pure-XAML DataTriggers on WindowState (two Paths, visibility toggle). Close hover = DangerBrush red bg + X binds to Foreground→#FFF (light-on-red). Retired FontFamily=Segoe MDL2 Assets + WindowStateToMaxRestoreGlyphConverter. Click handlers/clamp/drag untouched.
