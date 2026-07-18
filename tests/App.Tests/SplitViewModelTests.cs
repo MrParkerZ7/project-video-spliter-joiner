@@ -639,6 +639,157 @@ public sealed class SplitViewModelTests
         vm.ClearCommand.CanExecute(null).Should().BeFalse();
     }
 
+    // ---- Add-at-playhead is the primary add gesture (T-064 regression) ----------------------
+
+    /// <summary>
+    /// A player fake whose playhead can be MOVED between adds (raising PositionChanged so the VM's
+    /// PlayerViewModel tracks it) and that reports a duration so <see cref="SplitViewModel.CanSetCutAtPlayhead"/>
+    /// is enabled. Models the real "scrub, then Add" loop the primary gesture depends on.
+    /// </summary>
+    private sealed class MovablePlayer : VideoSplitJoiner.App.Media.IMediaPlayer
+    {
+        private TimeSpan _position;
+
+        public TimeSpan Position
+        {
+            get => _position;
+            set
+            {
+                _position = value;
+                PositionChanged?.Invoke(this, EventArgs.Empty);
+            }
+        }
+
+        public TimeSpan? Duration { get; private set; }
+
+        public bool IsPlaying => false;
+
+        public double Volume { get; set; } = 1.0;
+
+        public bool IsMuted { get; set; }
+
+        public double SpeedRatio { get; set; } = 1.0;
+
+        /// <summary>Report a known duration → drives the VM's IsReady true (enables set-cut-at-playhead).</summary>
+        public void SignalReady(TimeSpan duration)
+        {
+            Duration = duration;
+            DurationAvailable?.Invoke(this, EventArgs.Empty);
+        }
+
+        /// <summary>Move the playhead to <paramref name="t"/> and raise PositionChanged, as playback/seek would.</summary>
+        public void MoveTo(TimeSpan t) => Position = t;
+
+        public void Open(string path) { }
+
+        public void Play() { }
+
+        public void Pause() { }
+
+        public void Stop() { }
+
+        public void Seek(TimeSpan t) => Position = t;
+
+        public void Unload() { }
+
+        public void StepFrame(int direction) { }
+
+        public event EventHandler? PositionChanged;
+
+        public event EventHandler? DurationAvailable;
+
+#pragma warning disable CS0067
+        public event EventHandler? Seeked;
+
+        public event EventHandler? Ended;
+
+        public event EventHandler<string>? Failed;
+#pragma warning restore CS0067
+    }
+
+    private static async Task<(SplitViewModel Vm, MovablePlayer Player)> BuildWithMovablePlayerAsync()
+    {
+        var probe = new FakeProbe
+        {
+            ProbeResultToReturn = ProbeResult.Success(new MediaInfo(
+                TimeSpan.FromMinutes(15), "mp4", Array.Empty<StreamInfo>(), Array.Empty<StreamInfo>())),
+            // 1s-GOP grid so distinct playhead positions snap to distinct keyframes.
+            KeyframesToReturn = Enumerable.Range(0, 901).Select(i => TimeSpan.FromSeconds(i)).ToArray(),
+        };
+        var player = new MovablePlayer();
+        var vm = new SplitViewModel(probe, new FakeSplitEngine(), player);
+        await vm.LoadAsync(FakePath);
+        player.SignalReady(TimeSpan.FromMinutes(15));
+        return (vm, player);
+    }
+
+    [Fact]
+    public async Task SetCutAtPlayhead_AtThreeDistinctPositions_AddsThreeMarkers()
+    {
+        // The reported "add cut only once" bug (post-T-059): the primary Add must add at the LIVE,
+        // moving playhead so repeated adds at distinct spots each land — not re-submit one static time.
+        var (vm, player) = await BuildWithMovablePlayerAsync();
+
+        player.MoveTo(TimeSpan.FromMinutes(2));
+        vm.SetCutAtPlayheadCommand.Execute(null);
+
+        player.MoveTo(TimeSpan.FromMinutes(5));
+        vm.SetCutAtPlayheadCommand.Execute(null);
+
+        player.MoveTo(TimeSpan.FromMinutes(9));
+        vm.SetCutAtPlayheadCommand.Execute(null);
+
+        vm.Markers.Should().HaveCount(3, "three adds at three distinct playhead positions → three markers");
+        vm.Markers.Select(m => m.Snapped).Should().OnlyHaveUniqueItems();
+    }
+
+    [Fact]
+    public async Task SetCutAtPlayhead_SamePositionTwice_DedupsToOne()
+    {
+        // The dedup on the same snapped keyframe MUST still hold (two cuts can't share one keyframe).
+        var (vm, player) = await BuildWithMovablePlayerAsync();
+
+        player.MoveTo(TimeSpan.FromMinutes(4));
+        vm.SetCutAtPlayheadCommand.Execute(null);
+        vm.SetCutAtPlayheadCommand.Execute(null); // same playhead → deduped
+
+        vm.Markers.Should().HaveCount(1, "two adds at the SAME playhead keyframe collapse to one cut");
+    }
+
+    [Fact]
+    public async Task NewMarkerPosition_FollowsPlayhead_UntilUserTypesAnExactTime()
+    {
+        // T-064: the typed-position field advances with the playhead by default (so the field-based add
+        // isn't stuck on one value), but a user's exact-time entry is not stomped by the next tick.
+        var (vm, player) = await BuildWithMovablePlayerAsync();
+
+        player.MoveTo(TimeSpan.FromSeconds(30));
+        vm.NewMarkerPosition.Should().Be(TimeSpan.FromSeconds(30), "the field follows the live playhead");
+
+        player.MoveTo(TimeSpan.FromSeconds(45));
+        vm.NewMarkerPosition.Should().Be(TimeSpan.FromSeconds(45), "still following");
+
+        // User types an exact time → follow turns off.
+        vm.NewMarkerPosition = TimeSpan.FromSeconds(120);
+        player.MoveTo(TimeSpan.FromSeconds(60));
+        vm.NewMarkerPosition.Should().Be(TimeSpan.FromSeconds(120),
+            "a manual exact-time entry is not overwritten by a later playhead tick");
+    }
+
+    [Fact]
+    public async Task NewMarkerPosition_ReFollowsPlayhead_AfterReload()
+    {
+        // Re-arming on load: after the user pins the field then reloads, the fresh file follows again.
+        var (vm, player) = await BuildWithMovablePlayerAsync();
+        vm.NewMarkerPosition = TimeSpan.FromSeconds(200); // pin it (turns follow off)
+
+        await vm.LoadAsync(FakePath); // reload re-arms follow
+        player.SignalReady(TimeSpan.FromMinutes(15));
+        player.MoveTo(TimeSpan.FromSeconds(15));
+
+        vm.NewMarkerPosition.Should().Be(TimeSpan.FromSeconds(15), "a reload re-arms playhead-follow");
+    }
+
     [Fact]
     public async Task Clear_CanExecute_True_WhenFileLoaded()
     {

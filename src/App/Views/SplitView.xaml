@@ -199,26 +199,31 @@
                     <!-- ===== Cut markers section ===== -->
                     <TextBlock Text="Cut markers" Style="{StaticResource SectionHeader}" Margin="0,14,0,4" />
 
-                    <!-- Add-marker input: Position field + Add + capture-at-playhead -->
-                    <StackPanel Orientation="Horizontal">
+                    <!-- PRIMARY add gesture (T-064): drop a cut at the LIVE playhead. Each click adds at
+                         the player's CURRENT position, so "position the video, click Add, repeat" just
+                         works — no static field to re-edit between adds. -->
+                    <Button Content="Add cut at playhead"
+                            HorizontalAlignment="Left"
+                            Padding="12,4"
+                            ToolTip="Drop a cut at the preview player's current position (snaps to the nearest keyframe). Scrub, then click again to add the next cut."
+                            Command="{Binding SetCutAtPlayheadCommand}" />
+
+                    <!-- SECONDARY add-at-exact-time (T-064): the typed-position field remains available for
+                         precise entry. The field auto-follows the playhead (see NewMarkerPosition seeding),
+                         so it advances naturally too; edit it to add at an exact time instead. -->
+                    <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
                         <TextBlock Text="POSITION" Style="{StaticResource FieldLabel}" />
                         <TextBox x:Name="PositionBox"
                                  Width="86"
                                  Margin="8,0,0,0"
                                  Text="{Binding NewMarkerPosition, Mode=TwoWay}"
-                                 ToolTip="Time from start, e.g. 00:01:23.5" />
-                        <Button Content="Add"
+                                 ToolTip="Time from start, e.g. 00:01:23.5 — follows the playhead; type to override" />
+                        <Button Content="Add at time"
                                 Margin="6,0,0,0"
                                 Padding="10,3"
-                                ToolTip="Add a cut marker at the position above"
+                                ToolTip="Add a cut marker at the exact position typed above"
                                 Command="{Binding AddMarkerCommand}" />
                     </StackPanel>
-                    <Button Content="Set cut point at playhead"
-                            Margin="0,6,0,0"
-                            HorizontalAlignment="Left"
-                            Padding="10,3"
-                            ToolTip="Drop a cut at the preview player's current position (snaps to the nearest keyframe)"
-                            Command="{Binding SetCutAtPlayheadCommand}" />
 
                     <!-- Marker list -->
                     <ListBox ItemsSource="{Binding Markers}"

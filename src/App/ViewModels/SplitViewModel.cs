@@ -49,6 +49,19 @@ public sealed class SplitViewModel : ObservableObject
     // result can never overwrite the newer file's keyframes.
     private CancellationTokenSource? _keyframeIndexCts;
     private TimeSpan _newMarkerPosition;
+
+    // T-064: when true, NewMarkerPosition is written by the VM to follow the live playhead (a
+    // "seed"), so the secondary typed-position field advances with the video instead of being a
+    // static value that silently re-submits the same time. Set false the moment the USER types into
+    // the field (an external set that differs from the last seeded value) so a manual exact-time
+    // entry is never stomped by a playhead tick; re-armed after a load (Clear/LoadAsync) so a fresh
+    // file follows the playhead again from the start.
+    private bool _positionFollowsPlayhead = true;
+
+    // The last value the VM itself seeded into NewMarkerPosition from the playhead — used to tell a
+    // VM-driven seed apart from a genuine user edit in the public setter.
+    private TimeSpan _lastSeededPosition;
+
     private string _outputDir = string.Empty;
     private string _namingPattern = SplitRequest.DefaultNamingPattern;
     private bool _overwrite;
@@ -220,11 +233,28 @@ public sealed class SplitViewModel : ObservableObject
         private set => SetProperty(ref _statusText, value);
     }
 
-    /// <summary>The position (from a numeric input) a new marker is added at.</summary>
+    /// <summary>
+    /// The position the secondary "Add at time" affordance adds a marker at (T-064). The VM seeds this
+    /// from the live playhead (see <see cref="SeedNewMarkerPositionFromPlayhead"/>) so the field
+    /// advances with the video; a USER set (typing into the bound field a value other than the last
+    /// seeded one) turns that auto-follow OFF so a manual exact-time entry is never overwritten by the
+    /// next playhead tick. The primary add gesture uses the live playhead directly
+    /// (<see cref="SetCutAtPlayheadCommand"/>) and does not depend on this field at all.
+    /// </summary>
     public TimeSpan NewMarkerPosition
     {
         get => _newMarkerPosition;
-        set => SetProperty(ref _newMarkerPosition, value);
+        set
+        {
+            // A user edit (a set that isn't the VM's own playhead seed) pins the field: stop auto-
+            // following the playhead so the typed exact time stands until it's used or the file reloads.
+            if (value != _lastSeededPosition)
+            {
+                _positionFollowsPlayhead = false;
+            }
+
+            SetProperty(ref _newMarkerPosition, value);
+        }
     }
 
     /// <summary>Directory the segments are written into.</summary>
@@ -468,6 +498,11 @@ public sealed class SplitViewModel : ObservableObject
         LastResult = null;
         // No keyframes yet → clear any stale warning until the background scan reports.
         KeyframeWarning = null;
+
+        // T-064: re-arm the playhead-follow on the typed-position field for the new file — Open reset
+        // the player to 00:00, so seed the field there now and let subsequent ticks advance it.
+        _positionFollowsPlayhead = true;
+        SeedNewMarkerPositionFromPlayhead();
 
         // Remember the folder the input file was chosen from (T-038) so next session's picker opens
         // there. Best-effort — a persistence failure is swallowed inside the settings store.
@@ -861,6 +896,12 @@ public sealed class SplitViewModel : ObservableObject
         // Blank the preview surface + reset the player VM (Duration → null → IsReady false).
         Player.Unload();
 
+        // T-064: reset the typed-position field back to the start and re-arm playhead-follow for the
+        // next load (Unload set the player to 00:00).
+        _positionFollowsPlayhead = true;
+        _lastSeededPosition = TimeSpan.Zero;
+        NewMarkerPosition = TimeSpan.Zero;
+
         InputPath = null;
 
         // Re-raise every derived command guard (RaiseCommandStates covers Run/Add/Cut/OpenFolder/Clear;
@@ -1033,6 +1074,35 @@ public sealed class SplitViewModel : ObservableObject
             OnPropertyChanged(nameof(CanSetCutAtPlayhead));
             SetCutAtPlayheadCommand.RaiseCanExecuteChanged();
         }
+
+        // T-064: keep the secondary typed-position field following the live playhead so it advances
+        // with the video (until the user types an explicit exact time). The primary add path is
+        // playhead-based already; this just makes the field-based path advance naturally too.
+        if (e.PropertyName == nameof(PlayerViewModel.Position))
+        {
+            SeedNewMarkerPositionFromPlayhead();
+        }
+    }
+
+    /// <summary>
+    /// Seed <see cref="NewMarkerPosition"/> from the live playhead (T-064) so the typed-position field
+    /// advances with the video. No-op once the user has typed an explicit value into the field
+    /// (<see cref="_positionFollowsPlayhead"/> false) — a manual exact-time entry is never stomped by a
+    /// playhead tick. Records the seeded value so the field setter can tell this VM-driven seed apart
+    /// from a genuine user edit.
+    /// </summary>
+    private void SeedNewMarkerPositionFromPlayhead()
+    {
+        if (!_positionFollowsPlayhead)
+        {
+            return;
+        }
+
+        var pos = Player.Position;
+        _lastSeededPosition = pos;
+        // Assigning the public property is safe: the setter sees value == _lastSeededPosition and so
+        // does NOT flip _positionFollowsPlayhead off (only a genuine user edit does that).
+        NewMarkerPosition = pos;
     }
 
     private void OnOperationChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
