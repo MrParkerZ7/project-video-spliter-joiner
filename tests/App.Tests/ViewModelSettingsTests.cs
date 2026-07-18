@@ -17,9 +17,11 @@ namespace VideoSplitJoiner.App.Tests;
 /// <summary>
 /// Tests for the T-038 cross-session folder memory wiring in <see cref="SplitViewModel"/> and
 /// <see cref="JoinViewModel"/>: a successful load remembers the input folder; a successful split/join
-/// remembers the output folder; and the Split output-dir default prefers a remembered
-/// <see cref="IAppSettings.LastOutputDir"/> over the "input file's folder" fallback. A fake
-/// <see cref="IAppSettings"/> keeps the tests off the real APPDATA and lets us assert exact writes.
+/// remembers the output folder. T-061 revised the Split output-dir default: it now re-anchors to the
+/// LOADED FILE'S folder on every load (and is NO LONGER seeded from the remembered
+/// <see cref="IAppSettings.LastOutputDir"/>) — see the re-anchor tests below. <see cref="IAppSettings.LastInputDir"/>
+/// (the file-picker memory) is untouched. A fake <see cref="IAppSettings"/> keeps the tests off the
+/// real APPDATA and lets us assert exact writes.
 /// </summary>
 public sealed class ViewModelSettingsTests : IDisposable
 {
@@ -97,44 +99,63 @@ public sealed class ViewModelSettingsTests : IDisposable
     }
 
     [Fact]
-    public async Task Split_Load_OutputDirDefault_PrefersRememberedLastOutputDir()
+    public async Task Split_Load_OutputDirDefault_IsLoadedFileFolder_IgnoringRememberedLastOutputDir()
     {
-        // A remembered output folder that exists on disk → the load default uses it, NOT the input folder.
+        // T-061: a remembered output folder is IGNORED as the default — the loaded file's folder wins.
         var otherDir = Path.Combine(_existingDir, "prev-out");
         Directory.CreateDirectory(otherDir);
         var settings = new FakeSettings { LastOutputDir = otherDir };
 
         var vm = new SplitViewModel(new FakeProbe(), new NoOpSplitEngine(), player: null, settings);
-        vm.OutputDir.Should().Be(otherDir, "ctor seeds OutputDir from the remembered LastOutputDir");
+        vm.OutputDir.Should().BeEmpty("T-061: the ctor no longer seeds OutputDir from LastOutputDir");
 
         await vm.LoadAsync(_inputFile);
 
-        vm.OutputDir.Should().Be(otherDir, "the remembered output dir wins over the input-file-folder fallback");
+        vm.OutputDir.Should().Be(_existingDir, "T-061: the default is the loaded file's folder, not the remembered output dir");
     }
 
     [Fact]
-    public async Task Split_Load_OutputDirDefault_FallsBackToInputFolder_WhenNoRememberedOutput()
+    public async Task Split_Load_OutputDirDefault_IsInputFolder_WhenNoRememberedOutput()
     {
         var settings = new FakeSettings(); // no LastOutputDir
         var vm = new SplitViewModel(new FakeProbe(), new NoOpSplitEngine(), player: null, settings);
 
         await vm.LoadAsync(_inputFile);
 
-        vm.OutputDir.Should().Be(_existingDir, "with no remembered output, the default is the input file's folder");
+        vm.OutputDir.Should().Be(_existingDir, "the default is the loaded file's folder");
     }
 
     [Fact]
-    public async Task Split_Load_IgnoresStaleRememberedOutputDir_ThatNoLongerExists()
+    public async Task Split_OutputDir_StaysEditable_ThenReAnchorsOnNextLoad()
     {
-        var settings = new FakeSettings { LastOutputDir = @"D:\this\does\not\exist-vsj" };
-        var vm = new SplitViewModel(new FakeProbe(), new NoOpSplitEngine(), player: null, settings);
+        // T-061: OutputDir defaults to file X's folder, stays editable (set to Y), then RE-ANCHORS
+        // to a new file Z's folder on the next load — the manual Y value is discarded.
+        var folderX = Path.Combine(_existingDir, "x");
+        Directory.CreateDirectory(folderX);
+        var fileX = Path.Combine(folderX, "clipX.mp4");
+        File.WriteAllText(fileX, "x");
 
-        // A stale remembered dir must NOT seed OutputDir at construction.
-        vm.OutputDir.Should().BeEmpty("a non-existent remembered output dir is ignored");
+        var folderZ = Path.Combine(_existingDir, "z");
+        Directory.CreateDirectory(folderZ);
+        var fileZ = Path.Combine(folderZ, "clipZ.mp4");
+        File.WriteAllText(fileZ, "z");
 
-        await vm.LoadAsync(_inputFile);
+        var editedDir = Path.Combine(_existingDir, "y-manual");
+        Directory.CreateDirectory(editedDir);
 
-        vm.OutputDir.Should().Be(_existingDir, "falls back to the input folder when the remembered dir is stale");
+        var vm = new SplitViewModel(new FakeProbe(), new NoOpSplitEngine(), player: null, new FakeSettings());
+
+        // Load file X → OutputDir == X's folder.
+        await vm.LoadAsync(fileX);
+        vm.OutputDir.Should().Be(folderX, "load re-anchors OutputDir to the loaded file's folder");
+
+        // Edit it → stays editable.
+        vm.OutputDir = editedDir;
+        vm.OutputDir.Should().Be(editedDir, "OutputDir stays a normal editable property");
+
+        // Load a NEW file Z → OutputDir re-anchors to Z's folder; the manual Y value is discarded.
+        await vm.LoadAsync(fileZ);
+        vm.OutputDir.Should().Be(folderZ, "T-061: every new load resets OutputDir to the new file's folder");
     }
 
     [Fact]

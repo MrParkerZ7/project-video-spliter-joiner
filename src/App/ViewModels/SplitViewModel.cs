@@ -72,13 +72,10 @@ public sealed class SplitViewModel : ObservableObject
         _splitEngine = splitEngine ?? throw new ArgumentNullException(nameof(splitEngine));
         _settings = settings ?? new AppSettings();
 
-        // Seed the output dir from the remembered last-output folder (T-038) — but only if it still
-        // exists on disk. A stale/missing remembered folder falls back to the per-load default
-        // (the input file's folder) applied in LoadAsync.
-        if (DirectoryExists(_settings.LastOutputDir))
-        {
-            _outputDir = _settings.LastOutputDir!;
-        }
+        // T-061: OutputDir is NOT seeded from a remembered folder anymore. It stays empty until a
+        // file is loaded, at which point LoadAsync re-anchors it to that file's folder (and resets it
+        // to the new file's folder on every subsequent load). LastOutputDir is no longer read as a
+        // default. (LastInputDir — the file-picker InitialDirectory memory — is untouched, T-038.)
 
         Player = new PlayerViewModel(player ?? NullMediaPlayer.Instance);
 
@@ -453,18 +450,13 @@ public sealed class SplitViewModel : ObservableObject
             _settings.LastInputDir = inputDir;
         }
 
-        // Default the output dir when none is set yet: prefer the remembered last-output folder
-        // (T-038, when it still exists on disk), else fall back to the input file's folder.
-        if (string.IsNullOrWhiteSpace(OutputDir))
+        // T-061: re-anchor the output dir to THIS file's folder on EVERY load — unconditionally —
+        // discarding any prior manual or remembered value. The loaded file's folder is the default
+        // now (no longer the remembered LastOutputDir). Guard: a null/empty directory (drive-root or
+        // odd path) leaves the previous OutputDir untouched rather than blanking it — no crash.
+        if (!string.IsNullOrEmpty(inputDir))
         {
-            if (DirectoryExists(_settings.LastOutputDir))
-            {
-                OutputDir = _settings.LastOutputDir!;
-            }
-            else if (!string.IsNullOrEmpty(inputDir))
-            {
-                OutputDir = inputDir;
-            }
+            OutputDir = inputDir;
         }
 
         StatusText = $"Loaded {Path.GetFileName(path)} — {FormatDuration(loadedInfo.Duration)}.";
@@ -1034,25 +1026,6 @@ public sealed class SplitViewModel : ObservableObject
         SetCutAtPlayheadCommand.RaiseCanExecuteChanged();
         OpenFolderCommand.RaiseCanExecuteChanged();
         ClearCommand.RaiseCanExecuteChanged();
-    }
-
-    /// <summary>True when <paramref name="dir"/> is a non-blank path that exists on disk (guards a stale
-    /// remembered folder so we never set a bad default / picker directory). Never throws.</summary>
-    private static bool DirectoryExists(string? dir)
-    {
-        if (string.IsNullOrWhiteSpace(dir))
-        {
-            return false;
-        }
-
-        try
-        {
-            return Directory.Exists(dir);
-        }
-        catch
-        {
-            return false;
-        }
     }
 
     private static string FormatDuration(TimeSpan d) =>
