@@ -31,6 +31,22 @@ A .NET 8 WPF app that splits and joins video **without re-encoding**. See [READM
   (300–520 range). Match the sample's structure — header + "lossless · no re-encode" tagline, gold
   format badge, file-info card, section headers, mono DIR/NAME fields, Join "Estimated result" panel.
   Formatting/estimate helpers are pure and unit-tested in `Core/Media/MediaFormat.cs`.
+- **Scrollbars are themed app-wide (G-027).** An implicit `ScrollBar` style (no `x:Key`) lives in
+  `Themes/Controls.xaml` — thin, dark track, rounded `BorderStrong` thumb that goes `AccentBrush` gold on
+  hover/drag, both orientations. Don't reintroduce the default light Windows scrollbar or per-view overrides.
+- **The operation lifecycle has four distinct surfaces (G-027).** Running / Completed / Cancelled / Failed
+  each render distinctly and mutually-exclusively, driven by `OperationViewModel` (`IsRunning`,
+  `IsCompleted`, `IsCancelled`, `Error`) + `ResultSummary`. Completed shows ✓ + summary + Open folder;
+  Cancelled is muted (not red); Failed is the red error block. `BeginRun`/`Reset` clear `Error` +
+  `ResultSummary` so a new run/load/Clear never shows a stale "done". Don't tie the whole progress block to
+  `IsRunning` alone (that hid completion).
+- **Progress is reported on three additive channels — don't collapse them (G-025).** `IProgress<double>`
+  (overall 0..1), `IProgress<OperationStatus>` (staged text), and `IProgress<PartProgress>` (per-part).
+  Per-part row state (Pending/Writing/Done) rides the last one. **The fast single-pass segment-muxer path
+  stays single-pass** — per-part for it is DERIVED from ffmpeg time via the pure `PartMapping.PartAt(time,
+  boundaries)` function (unit-tested); do NOT switch that path to per-segment just to report parts. The
+  taskbar button (`TaskbarItemInfo` → `Operation.TaskbarProgressState`/`Progress`) + the window-title ETA
+  (`MainViewModel.WindowTitle`, caption kept separate via `CaptionTitle`) surface the overall progress.
 - **The window uses a custom `WindowChrome` title bar** (`MainWindow.xaml` caption row + caption-button
   styles in `Themes/Controls.xaml` + `WindowStateConverters.cs`), not the native chrome. Keep the
   `WM_GETMINMAXINFO` work-area clamp + the maximized content margin — they stop a maximized window from

@@ -437,3 +437,12 @@
 - **Ask:** improve the primitive scrollbar; make in-progress/done clear to the user.
 - **Grounding:** no custom ScrollBar style (default WPF light chrome). OperationState enum = Idle/Running/Completed/Cancelled/Failed, but the progress/status UI is bound to IsRunning → it VANISHES on Completed (no ✓ done confirmation; Cancelled has no surface; only Failed has a red block).
 - **Plan:** G-027 = T-072 (implicit themed ScrollBar style in Controls.xaml, app-wide, both orientations, gold-on-hover thumb) → T-073 (state-driven surface: Running / Completed=✓ green + result summary + open folder / Cancelled=muted / Failed=red; VM IsCompleted/IsCancelled/ResultSummary, unit-tested, resets on new run/load/clear; Split + Join) → T-074 docs. Plan-only; STOPPED per todo-goal.
+
+## 2026-07-18 · todo-next-all drained G-025 + G-026 + G-027 (8/8)
+- **T-072** (`e7596ad`): themed ScrollBar style (implicit, app-wide, gold thumb on hover/drag).
+- **T-069** (`94bb99e`, +19 tests): per-part split progress — PartProgress channel; pure PartAt mapping (12 tests); muxer path stays single-pass (RunCount==1 verified), subset path natural; per-row Pending→Writing→Done UI.
+- **T-071** (`39db802`, +5): cut markers time-ordered via sorted-insert; T-041 pending markers re-settle on resolve; split output unchanged.
+- **T-068** (`a88d944`, +12): TaskbarItemInfo bound to CurrentOperation (follows active tab); TaskbarProgressState (tested); window-title ETA with caption decoupled.
+- **T-073** (`c027e45`, +16): four op-state surfaces (Running/Completed=✓+summary+open-folder/Cancelled=muted/Failed=red), mutually exclusive; ResultSummary cleared in BeginRun/Reset; Split + Join.
+- **Docs (T-070+T-074):** CHANGELOG [0.2.0] += per-part, taskbar+ETA, op-states, scrollbar; CLAUDE.md conventions += scrollbar, op-lifecycle-4-surfaces, three-progress-channels + muxer-derivation invariant.
+- Suite 423 → **475/475**. All three goals converged.

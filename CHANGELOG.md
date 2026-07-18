@@ -15,6 +15,28 @@ re-encode — the player only previews; every cut continues to keyframe-snap thr
 
 ### Added
 
+- **Per-part split progress (G-025)** — splitting into N parts now shows each part's row in "Parts to
+  export" advancing **Pending → Writing (live %) → Done (✓)** as it's written, not just one overall bar.
+  A dedicated `IProgress<PartProgress>` channel drives it: the per-segment subset path reports its part
+  index naturally, and the **fast single-pass segment-muxer path is preserved** — the current part is
+  *derived* from ffmpeg's reported time via a pure, unit-tested `PartAt(time, boundaries)` mapping (no
+  extra ffmpeg passes). The active row shows a gold live-fill; completed rows a green ✓.
+- **Windows taskbar-button progress + ETA in the title (G-025)** — a running split/join shows a live
+  progress fill on the **Windows taskbar button** (green while running, indeterminate pulse while
+  preparing, red on failure, clearing cleanly when done), via `TaskbarItemInfo` bound to the active
+  screen's operation. Because the taskbar button can't render text, the **ETA + %** ride in the window
+  **title** (`"Splitting 45% · ~1m 20s — Video Split / Join"`, visible on taskbar hover / alt-tab); the
+  in-app caption keeps showing the app name.
+- **Clear operation states — done / cancelled are no longer invisible (G-027)** — the progress UI used
+  to vanish silently on completion. Now the operation lifecycle has four distinct surfaces: **Running**
+  (gold bar + status + ETA + Cancel), **Completed** (green ✓ + a result line — "Split into 3 parts" /
+  "Joined 4 clips → joined.mkv" — plus **Open folder**), **Cancelled** (a muted note, not red), and
+  **Failed** (the red error block with Copy error / Open log). Exactly one shows at a time and it resets
+  on the next run / load / Clear (no stale "done"). On both Split and Join.
+- **Themed scrollbars (G-027)** — scrollbars now use a thin dark-and-gold style consistent with the
+  IBM Plex design (track on a low surface tier, a rounded `BorderStrong` thumb that turns **gold on
+  hover/drag**), applied app-wide via an implicit `ScrollBar` style — replacing the default light
+  Windows scrollbar chrome.
 - **Cut markers list is ordered by time position, not the order added.** When you place cuts out of
   chronological order (a cut at 5:00, then one at 2:00), the "Cut markers" list now reads top-to-bottom
   in time order (2:00 above 5:00) instead of add order. A marker placed while the keyframe scan is still
