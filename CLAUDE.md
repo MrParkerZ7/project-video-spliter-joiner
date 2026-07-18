@@ -21,6 +21,16 @@ A .NET 8 WPF app that splits and joins video **without re-encoding**. See [READM
   — do not add hardcoded hex/`Colors.*` in a view (a code-behind converter that can't use `StaticResource`
   is the only exception, and it uses the same token color values). Gold `AccentBrush` = primary actions /
   timeline pins / playhead / focus. The redesign reference is `docs/design/references/`.
+- **Typography is IBM Plex, bundled — not system fonts (G-019).** `IBM Plex Mono` (primary/mono readouts,
+  `MonoFontFamily`) + `IBM Plex Sans` (`SansFontFamily`) ship as `Resource` TTFs in `src/App/Fonts/`
+  (SIL OFL-1.1 — see `THIRD-PARTY-NOTICES.md`) and are referenced via pack URI with system fallbacks
+  (`…#IBM Plex Mono, Consolas, Cascadia Mono`). Reference the font tokens, don't name a face directly.
+- **Both screens are two-column: visual left / tools right (G-019).** Split and Join use a Grid with a
+  draggable `GridSplitter` — LEFT is the preview + timeline (Split) / clip list (Join), RIGHT is a
+  scrollable tool panel (Load, Clear, and every control below). The right panel is 360px by default
+  (300–520 range). Match the sample's structure — header + "lossless · no re-encode" tagline, gold
+  format badge, file-info card, section headers, mono DIR/NAME fields, Join "Estimated result" panel.
+  Formatting/estimate helpers are pure and unit-tested in `Core/Media/MediaFormat.cs`.
 - **The window uses a custom `WindowChrome` title bar** (`MainWindow.xaml` caption row + caption-button
   styles in `Themes/Controls.xaml` + `WindowStateConverters.cs`), not the native chrome. Keep the
   `WM_GETMINMAXINFO` work-area clamp + the maximized content margin — they stop a maximized window from
@@ -44,10 +54,15 @@ A .NET 8 WPF app that splits and joins video **without re-encoding**. See [READM
   (a logging failure never crashes the run). The `App` layer's `ErrorActions` copies to the clipboard
   and reveals the log in Explorer (Copy error / Open log file buttons on Split + Join). Keep log
   writing best-effort and the copy text unit-testable on `UserFacingError`.
-- **Last folders persist via `AppSettings`.** `LastInputDir`/`LastOutputDir` are saved to
+- **Last input folder persists via `AppSettings`.** `LastInputDir`/`LastOutputDir` are saved to
   `%APPDATA%/VideoSplitJoiner/settings.json` (temp-then-rename, robust to missing/corrupt/unwritable —
-  never throws). The file picker opens at the last input folder and the split output dir defaults to
-  the last output folder. Keep settings failures non-fatal (in-memory fallback).
+  never throws). The file picker opens at the last input folder. Keep settings failures non-fatal
+  (in-memory fallback).
+- **The split output dir defaults to the loaded file's folder and re-anchors on every load (G-020).**
+  `SplitViewModel.LoadAsync` sets `OutputDir = Path.GetDirectoryName(path)` unconditionally on each load
+  (drag or picker), so exports default next to the source. It stays user-editable, but a new load
+  discards the previous manual value and re-anchors to the new file's folder. Do **not** reinstate the
+  old "default to remembered `LastOutputDir`" behavior — the file's folder wins.
 - **The `-c copy` no-re-encode invariant is sacred (split + join).** Split and join must never emit
   an encoder flag. The args-builders forbid encoder tokens and require a bare `copy`; the invariant
   is re-asserted at runtime before launch and by unit tests on the token list. Do not add a

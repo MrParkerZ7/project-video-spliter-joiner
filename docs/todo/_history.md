@@ -393,3 +393,11 @@
 - **T-061 done** (`1dc07bc`): `SplitViewModel.LoadAsync` sets `OutputDir` = loaded file's folder unconditionally on every load (drag + picker), still editable, re-anchors per file; stopped defaulting from `LastOutputDir`; T-038 tests updated; 379/379 green, 0 warnings. Closes G-020 core (T-062 docs remain).
 - **New user todo-goal** (folded, not a new goal): "move the tool from load/clear and below to right side tab same as claude design sample." Captured into **T-059** as the ★ two-column layout requirement (video/preview + timeline LEFT; Load/Clear + all tools RIGHT panel) + acceptance criterion; also noted in G-019 design spec. Avoided a redundant G-021 that would fight T-059 over the same views.
 - Drain (G-019/G-020) **paused** by the interrupt — resume with `todo-next-all`.
+
+## 2026-07-18 · todo-next-all drained G-019 + G-020 (4/4)
+- **T-058 done** (`54ee92b`): IBM Plex Mono/Sans bundled (6 TTFs, OFL-1.1 → THIRD-PARTY-NOTICES), full sample palette, radii tightened to 6/8/12, type scale. Tokens-only; keys preserved; 379/379 green.
+- **T-059 done** (`5c8f611`): two-column relayout — LEFT video/timeline (Split) / clip list (Join), RIGHT scrollable tool panel via draggable GridSplitter (360px default). Added header + tagline + gold format badge, file-info card, section headers, mono DIR/NAME, Join estimated-result panel. Pure helpers in Core/Media/MediaFormat.cs + 28 new tests. All bindings preserved.
+- **T-061 done** (`1dc07bc`, from prior turn): output dir re-anchors to loaded file's folder per load, still editable.
+- **Docs (T-060 + T-062) done** (this commit): CHANGELOG [0.2.0] += G-019 + G-020; CLAUDE.md conventions fixed (output-dir default rewritten — old "defaults to LastOutputDir" was stale; added IBM Plex fonts + two-column layout conventions).
+- **G-021/T-063 filed (backlog):** `StagedStatusWiringTests.RunSplit_StatusTextTransitionsThroughStages` fails 4/5 — verified PRE-EXISTING (test last touched T-044 `50cbfc1`; drain never touched OperationViewModel or the test). Logged for diagnosis per the "don't dismiss flaky as infra — could be a real race" lesson; not blocking.
+- Suite now 418/419 (one flaky as above); build 0-warning. Rebuild Release + relaunch pending for visual verify.

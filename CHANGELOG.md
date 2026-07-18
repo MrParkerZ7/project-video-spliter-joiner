@@ -15,6 +15,22 @@ re-encode — the player only previews; every cut continues to keyframe-snap thr
 
 ### Added
 
+- **Two-column layout matching the design sample (G-019)** — both screens now split into a **left
+  visual column** (the preview player + timeline/scrubber) and a **right tool panel** (Load / Clear
+  and everything below — file-info, cut markers, parts-to-export, output, Run) behind a **draggable
+  column splitter** (right panel 360px default, 300–520 range). The app adopts the sample's identity:
+  **IBM Plex Mono / Sans** bundled (OFL-1.1, in `src/App/Fonts/`), the full dark surface + gold +
+  semantic palette, and tight 6–12px radii. New sample structure — an app header with the
+  "lossless · no re-encode" tagline, a gold **format badge** (`HEVC · MATROSKA`), a Split **file-info
+  card** (`container · duration · size`), **"Cut markers"** and **"Parts to export"** section headers,
+  mono **DIR / NAME** output fields, and a Join **"Estimated result"** panel (total duration + approx
+  size). Pure formatting/estimate helpers extracted to `Core/Media/MediaFormat.cs` (fully unit-tested);
+  all existing bindings/commands preserved — a relayout + restyle, not a rewire.
+- **Output folder defaults to the loaded file's folder (G-020)** — the split output directory now
+  **defaults to wherever the loaded file lives** and **re-anchors on every new load** (drag or picker),
+  so exports land next to the source by default. It stays fully editable for the one-off case; a manual
+  change is discarded the next time you load a file. The file-picker's remembered *input* folder is
+  unchanged.
 - **Selectable split parts (G-015)** — after you set cut points, the Split screen lists the resulting
   parts as a checklist (`Part 2 · 05:00–10:00 · 5:00`) with **All / None** toggles, and **only the
   parts you check are written** (`SplitSegmentViewModel` + `SplitRequest.SelectedSegmentIndices`).
