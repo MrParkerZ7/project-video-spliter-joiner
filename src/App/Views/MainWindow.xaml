@@ -6,15 +6,90 @@
         Height="600"
         Width="900"
         MinHeight="400"
-        MinWidth="600">
-    <Grid>
-        <TabControl Margin="8">
-            <TabItem Header="Split">
-                <views:SplitView DataContext="{Binding Split}" />
-            </TabItem>
-            <TabItem Header="Join">
-                <views:JoinView DataContext="{Binding Join}" />
-            </TabItem>
-        </TabControl>
+        MinWidth="600"
+        WindowStyle="SingleBorderWindow"
+        ResizeMode="CanResize">
+
+    <!-- T-056 — custom themed dark+gold caption via WindowChrome. -->
+    <WindowChrome.WindowChrome>
+        <WindowChrome CaptionHeight="34"
+                      ResizeBorderThickness="6"
+                      GlassFrameThickness="0"
+                      CornerRadius="0"
+                      UseAeroCaptionButtons="False" />
+    </WindowChrome.WindowChrome>
+
+    <Window.Resources>
+        <views:WindowStateToMaxRestoreGlyphConverter x:Key="MaxRestoreGlyph" />
+        <views:WindowStateToContentMarginConverter x:Key="ContentMargin" />
+    </Window.Resources>
+
+    <!-- Root: caption row (34) on top, existing content below. Margin only
+         insets in the Maximized state (invisible resize border). -->
+    <Grid Margin="{Binding WindowState, RelativeSource={RelativeSource AncestorType=Window},
+                           Converter={StaticResource ContentMargin}}">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="34" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <!-- ===================== Caption row ===================== -->
+        <Grid Grid.Row="0"
+              Background="{DynamicResource BgBrush}"
+              MouseLeftButtonDown="Caption_MouseLeftButtonDown">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+
+            <!-- Left: gold accent mark + app title -->
+            <StackPanel Grid.Column="0" Orientation="Horizontal"
+                        VerticalAlignment="Center" Margin="12,0,0,0">
+                <Rectangle Width="3" Height="15" RadiusX="1.5" RadiusY="1.5"
+                           Fill="{DynamicResource AccentBrush}"
+                           VerticalAlignment="Center" />
+                <TextBlock Text="{Binding Title, RelativeSource={RelativeSource AncestorType=Window}}"
+                           Foreground="{DynamicResource TextPrimaryBrush}"
+                           FontSize="13"
+                           VerticalAlignment="Center"
+                           Margin="8,0,0,0" />
+            </StackPanel>
+
+            <!-- Middle column (Column 1) is empty draggable caption. -->
+
+            <!-- Right: min / max-restore / close caption buttons -->
+            <StackPanel Grid.Column="2" Orientation="Horizontal"
+                        VerticalAlignment="Top">
+                <Button x:Name="MinimizeButton"
+                        Style="{StaticResource CaptionButton}"
+                        ToolTip="Minimize"
+                        Click="Minimize_Click"
+                        Content="&#xE921;" />
+                <Button x:Name="MaxRestoreButton"
+                        Style="{StaticResource CaptionButton}"
+                        ToolTip="Maximize"
+                        Click="MaxRestore_Click"
+                        Content="{Binding WindowState, RelativeSource={RelativeSource AncestorType=Window},
+                                          Converter={StaticResource MaxRestoreGlyph}}" />
+                <Button x:Name="CloseButton"
+                        Style="{StaticResource CloseCaptionButton}"
+                        ToolTip="Close"
+                        Click="Close_Click"
+                        Content="&#xE8BB;" />
+            </StackPanel>
+        </Grid>
+
+        <!-- ===================== Content (unchanged) ===================== -->
+        <Grid Grid.Row="1">
+            <TabControl Margin="8">
+                <TabItem Header="Split">
+                    <views:SplitView DataContext="{Binding Split}" />
+                </TabItem>
+                <TabItem Header="Join">
+                    <views:JoinView DataContext="{Binding Join}" />
+                </TabItem>
+            </TabControl>
+        </Grid>
     </Grid>
 </Window>
