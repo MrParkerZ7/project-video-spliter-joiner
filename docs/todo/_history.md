@@ -446,3 +446,8 @@
 - **T-073** (`c027e45`, +16): four op-state surfaces (Running/Completed=✓+summary+open-folder/Cancelled=muted/Failed=red), mutually exclusive; ResultSummary cleared in BeginRun/Reset; Split + Join.
 - **Docs (T-070+T-074):** CHANGELOG [0.2.0] += per-part, taskbar+ETA, op-states, scrollbar; CLAUDE.md conventions += scrollbar, op-lifecycle-4-surfaces, three-progress-channels + muxer-derivation invariant.
 - Suite 423 → **475/475**. All three goals converged.
+
+## 2026-07-18 · G-028 (todo-goal-next) — scrub-bar click seek
+- **Symptom:** clicking the play/scrub bar sometimes doesn't seek to the click point; delayed; warps back/forward.
+- **Root cause found:** `ScrubSlider` in PlayerView.xaml has NO `IsMoveToPointEnabled` → defaults False → a track click PAGE-STEPS (Value += LargeChange toward click), firing several partial seeks instead of jumping to the click point. The T-033/T-051 pop-back + live-scrub machinery only covers thumb DRAG, not a plain click.
+- **Fix (T-075):** IsMoveToPointEnabled=True so a click jumps to the point; verify the click yields exactly one converged seek through the pop-back-guarded path (handle click-without-drag; dedupe double-seek); keep drag scrub + timeline-strip click intact. Building now.
