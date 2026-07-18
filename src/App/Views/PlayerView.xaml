@@ -34,8 +34,9 @@
                                Stretch="Uniform" />
         </Border>
 
-        <!-- Scrubbable timeline. Thumb.DragStarted/DragCompleted gate position echoes while the user
-             drags so playback ticks can't fight the drag; seek fires on release (T-033). -->
+        <!-- Scrubbable timeline. DragStarted/DragDelta/DragCompleted drive a LIVE scrub (T-051): the
+             frame follows the pin during the drag via ScrubPreview (coalesced + throttled), and the
+             final exact seek fires on release. The T-033 seek-target hold gates stale echoes. -->
         <Slider x:Name="ScrubSlider"
                 Grid.Row="1"
                 Margin="0,6,0,0"
@@ -44,6 +45,7 @@
                 Value="{Binding PositionSeconds, Mode=TwoWay}"
                 IsEnabled="{Binding IsReady}"
                 Thumb.DragStarted="OnScrubDragStarted"
+                Thumb.DragDelta="OnScrubDragDelta"
                 Thumb.DragCompleted="OnScrubDragCompleted" />
 
         <!-- Skip / jog / frame-step / jump-to-ends (T-028) — wraps so it stays readable at min width.

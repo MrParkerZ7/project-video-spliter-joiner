@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Globalization;
 using VideoSplitJoiner.App.Media;
 
@@ -51,12 +52,54 @@ public sealed class PlayerViewModel : ObservableObject
     private int _heldTicks;
 
     // True while the user is actively dragging the scrub thumb (PlayerView Thumb.DragStarted..
-    // DragCompleted). While dragging we suppress position echoes entirely; the seek fires on release.
+    // DragCompleted). While dragging the live-scrub feed (ScrubPreview) seeks continuously so the
+    // frame follows the pin; the FINAL exact seek still fires on release (EndUserScrub).
     private bool _isUserScrubbing;
+
+    // ---- Live scrub coalesce + throttle (T-051) ---------------------------------------------
+    // Live scrubbing fires ScrubPreview continuously (Thumb.DragDelta). Two guards keep the player
+    // from lagging behind a fast drag:
+    //   • COALESCE — only ONE seek is ever in flight. While one is running, a new preview target is
+    //     stashed in _pendingScrubTarget (overwriting any earlier stash — intermediate targets are
+    //     dropped, no backlog). When the in-flight seek completes (Seeked), the NEWEST stashed target
+    //     is issued, so the player always converges on the latest pin position.
+    //   • THROTTLE — issued seeks are capped to one per _scrubThrottle window; a preview arriving too
+    //     soon after the last issue is stashed as pending (not lost — coalesce picks it up) instead of
+    //     issuing immediately.
+    // A dead-band skips a preview whose target ≈ the last-issued target, avoiding redundant seeks.
+
+    /// <summary>Minimum gap between ISSUED live-scrub seeks (throttle window).</summary>
+    private static readonly TimeSpan ScrubThrottle = TimeSpan.FromMilliseconds(70);
+
+    /// <summary>A new target within this of the last-issued target is treated as "same" and skipped.</summary>
+    private static readonly TimeSpan ScrubDeadBand = TimeSpan.FromMilliseconds(5);
+
+    private bool _seekInFlight;
+    private TimeSpan? _pendingScrubTarget;
+    private TimeSpan _lastIssuedTarget;
+    private bool _hasIssuedTarget;
+    private long _lastIssueTicksMs;
+
+    /// <summary>
+    /// Monotonic millisecond time source for the throttle window. Defaults to a shared
+    /// <see cref="Stopwatch"/> in production; tests inject a controllable clock so throttle behavior is
+    /// deterministic without real wall-clock waits.
+    /// </summary>
+    private readonly Func<long> _nowMs;
 
     /// <summary>Create the player VM over <paramref name="player"/> and subscribe to its events.</summary>
     public PlayerViewModel(IMediaPlayer player)
+        : this(player, DefaultClock())
     {
+    }
+
+    /// <summary>
+    /// Testable ctor: <paramref name="nowMs"/> is the monotonic millisecond clock used by the
+    /// live-scrub throttle (T-051). Production uses the parameterless ctor (a real Stopwatch).
+    /// </summary>
+    public PlayerViewModel(IMediaPlayer player, Func<long> nowMs)
+    {
+        _nowMs = nowMs ?? throw new ArgumentNullException(nameof(nowMs));
         _player = player ?? throw new ArgumentNullException(nameof(player));
 
         _player.PositionChanged += OnPositionChanged;
@@ -296,6 +339,7 @@ public sealed class PlayerViewModel : ObservableObject
         IsMuted = false;
         SpeedRatio = 1.0;
         ClearSeekHold();
+        ResetScrubState();
         _isUserScrubbing = false;
         SetPositionFromPlayer(TimeSpan.Zero);
         _player.Open(path);
@@ -321,6 +365,7 @@ public sealed class PlayerViewModel : ObservableObject
         IsMuted = false;
         SpeedRatio = 1.0;
         ClearSeekHold();
+        ResetScrubState();
         _isUserScrubbing = false;
         SetPositionFromPlayer(TimeSpan.Zero);
     }
@@ -351,6 +396,7 @@ public sealed class PlayerViewModel : ObservableObject
         _player.Stop();
         IsPlaying = false;
         ClearSeekHold();
+        ResetScrubState();
         SetPositionFromPlayer(TimeSpan.Zero);
     }
 
@@ -382,8 +428,81 @@ public sealed class PlayerViewModel : ObservableObject
     public void EndUserScrub(double finalSeconds)
     {
         _isUserScrubbing = false;
-        // Setting Position (not _suppressSeek) arms BeginSeek and issues the seek to the final value.
-        Position = TimeSpan.FromSeconds(finalSeconds);
+
+        // The release supersedes any coalesced/throttled preview still pending: drop the pending
+        // target and issue the FINAL exact seek to the released position unconditionally (bypassing
+        // the dead-band/throttle — the user let go here and this is the position that must stick).
+        _pendingScrubTarget = null;
+        var final = Clamp(TimeSpan.FromSeconds(finalSeconds));
+        IssueScrubSeek(final);
+    }
+
+    /// <summary>
+    /// Live-scrub feed (T-051): the current drag position, called continuously from the view's
+    /// <c>Thumb.DragDelta</c> so the frame follows the pin while dragging. Coalesced + throttled so a
+    /// fast drag never backs up a queue of seeks:
+    /// <list type="bullet">
+    /// <item>If a seek is already in flight, the newest target is stashed as pending (overwriting any
+    /// earlier stash) and no seek is issued now — the pending target is issued when the in-flight seek
+    /// completes (<see cref="OnSeeked"/>), so the player converges on the latest pin.</item>
+    /// <item>If the target ≈ the last-issued target (dead-band), it is skipped as redundant.</item>
+    /// <item>If less than the throttle window has elapsed since the last issued seek, the target is
+    /// stashed as pending rather than issued.</item>
+    /// </list>
+    /// Every issued seek routes through the T-033 seek-target hold, so echoes can't pop the playhead.
+    /// </summary>
+    public void ScrubPreview(TimeSpan t)
+    {
+        var target = Clamp(t);
+
+        // Dead-band: skip a target that barely differs from the one we last issued.
+        if (_hasIssuedTarget && Within(target, _lastIssuedTarget, ScrubDeadBand))
+        {
+            return;
+        }
+
+        // Coalesce: with a seek in flight, only remember the newest target — don't issue another.
+        if (_seekInFlight)
+        {
+            _pendingScrubTarget = target;
+            return;
+        }
+
+        // Throttle: too soon after the last issued seek → stash as pending (picked up by the next
+        // completion window), don't issue now.
+        if (_hasIssuedTarget && (_nowMs() - _lastIssueTicksMs) < ScrubThrottle.TotalMilliseconds)
+        {
+            _pendingScrubTarget = target;
+            return;
+        }
+
+        IssueScrubSeek(target);
+    }
+
+    /// <summary>
+    /// Issue exactly one live-scrub seek to <paramref name="target"/> via the shared
+    /// <see cref="BeginSeek"/> hold path, and mark a seek in flight so <see cref="ScrubPreview"/>
+    /// coalesces further previews until <see cref="OnSeeked"/> fires. Records the throttle timestamp.
+    /// </summary>
+    private void IssueScrubSeek(TimeSpan target)
+    {
+        _seekInFlight = true;
+        _lastIssuedTarget = target;
+        _hasIssuedTarget = true;
+        _lastIssueTicksMs = _nowMs();
+        BeginSeek(target);
+    }
+
+    /// <summary>True when <paramref name="a"/> and <paramref name="b"/> are within <paramref name="tol"/>.</summary>
+    private static bool Within(TimeSpan a, TimeSpan b, TimeSpan tol)
+    {
+        var d = a - b;
+        if (d < TimeSpan.Zero)
+        {
+            d = d.Negate();
+        }
+
+        return d <= tol;
     }
 
     /// <summary>
@@ -480,6 +599,22 @@ public sealed class PlayerViewModel : ObservableObject
     /// </summary>
     private void OnSeeked(object? sender, EventArgs e)
     {
+        // The in-flight live-scrub seek (if any) has completed — allow the next one to issue.
+        _seekInFlight = false;
+
+        // Coalesce follow-up: if a newer scrub target was stashed while this seek was in flight, and it
+        // meaningfully differs from where we landed, issue ONE seek to it now — the player converges on
+        // the NEWEST pin, intermediate targets are dropped (no backlog). Clear pending either way.
+        if (_pendingScrubTarget is { } pending)
+        {
+            _pendingScrubTarget = null;
+            if (!Within(pending, _player.Position, ScrubDeadBand))
+            {
+                IssueScrubSeek(pending);
+                return; // BeginSeek re-armed the hold + pinned the display; done.
+            }
+        }
+
         if (!_seeking)
         {
             return;
@@ -537,6 +672,14 @@ public sealed class PlayerViewModel : ObservableObject
         _heldTicks = 0;
     }
 
+    /// <summary>Reset the live-scrub coalesce/throttle state (T-051) — called on Open/Unload/Stop.</summary>
+    private void ResetScrubState()
+    {
+        _seekInFlight = false;
+        _pendingScrubTarget = null;
+        _hasIssuedTarget = false;
+    }
+
     /// <summary>Apply a player-originated position without re-seeking (breaks the feedback loop).</summary>
     private void SetPositionFromPlayer(TimeSpan value)
     {
@@ -583,6 +726,13 @@ public sealed class PlayerViewModel : ObservableObject
         string s when double.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out var v) => v,
         _ => 0d,
     };
+
+    /// <summary>A monotonic millisecond clock backed by a process-lifetime <see cref="Stopwatch"/>.</summary>
+    private static Func<long> DefaultClock()
+    {
+        var sw = Stopwatch.StartNew();
+        return () => sw.ElapsedMilliseconds;
+    }
 
     /// <summary>Format a time as <c>mm:ss.f</c> (or <c>h:mm:ss.f</c> past an hour).</summary>
     private static string FormatClock(TimeSpan t)

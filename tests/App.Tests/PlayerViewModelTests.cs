@@ -139,6 +139,23 @@ public sealed class PlayerViewModelTests
         return (vm, player);
     }
 
+    /// <summary>A controllable monotonic millisecond clock for the live-scrub throttle tests (T-051).</summary>
+    private sealed class FakeClock
+    {
+        public long NowMs { get; set; }
+
+        public void Advance(long ms) => NowMs += ms;
+    }
+
+    /// <summary>Build a ready VM whose throttle clock the test drives via <paramref name="clock"/> (T-051).</summary>
+    private static (PlayerViewModel Vm, FakeMediaPlayer Player) BuildReadyWithClock(FakeClock clock, double durationSeconds = 60)
+    {
+        var player = new FakeMediaPlayer();
+        var vm = new PlayerViewModel(player, () => clock.NowMs);
+        player.RaiseDurationAvailable(TimeSpan.FromSeconds(durationSeconds));
+        return (vm, player);
+    }
+
     // ---- Readiness --------------------------------------------------------------------------
 
     [Fact]
@@ -329,6 +346,128 @@ public sealed class PlayerViewModelTests
 
         player.RaisePositionChanged(TimeSpan.FromSeconds(9)); // stale echo after release → held
         vm.Position.Should().Be(TimeSpan.FromSeconds(35));
+    }
+
+    // ---- Live coalesced + throttled scrub (T-051) -------------------------------------------
+
+    [Fact]
+    public void ScrubPreview_NotInFlight_SeeksImmediately()
+    {
+        var clock = new FakeClock();
+        var (vm, player) = BuildReadyWithClock(clock);
+
+        vm.ScrubPreview(TimeSpan.FromSeconds(10));
+
+        player.Seeks.Should().ContainSingle().Which.Should().Be(TimeSpan.FromSeconds(10));
+    }
+
+    [Fact]
+    public void ScrubPreview_Coalesces_OneNowThenLatestOnSeeked()
+    {
+        // The KEY anti-lag behavior: three rapid previews while a seek is in flight → exactly ONE seek
+        // now, and after the in-flight seek settles → exactly ONE more, to the LAST target (t3). The
+        // intermediate target (t2) is dropped — no backlog of three seeks.
+        var clock = new FakeClock();
+        var (vm, player) = BuildReadyWithClock(clock);
+
+        vm.ScrubPreview(TimeSpan.FromSeconds(10)); // t1 → issued now (in flight)
+        vm.ScrubPreview(TimeSpan.FromSeconds(20)); // t2 → coalesced (pending), dropped by t3
+        vm.ScrubPreview(TimeSpan.FromSeconds(30)); // t3 → coalesced (pending, overwrites t2)
+
+        player.Seeks.Should().ContainSingle().Which.Should().Be(TimeSpan.FromSeconds(10),
+            "with a seek in flight, only the first target is issued; the rest are coalesced");
+
+        player.RaiseSeeked(TimeSpan.FromSeconds(10)); // in-flight seek settles
+
+        player.Seeks.Should().HaveCount(2, "the coalesced follow-up issues exactly one more seek");
+        player.Seeks[^1].Should().Be(TimeSpan.FromSeconds(30), "it converges on the NEWEST pin (t3), not t2");
+    }
+
+    [Fact]
+    public void ScrubPreview_PendingClears_NoFurtherSeekWithoutNewPreview()
+    {
+        var clock = new FakeClock();
+        var (vm, player) = BuildReadyWithClock(clock);
+
+        vm.ScrubPreview(TimeSpan.FromSeconds(10)); // issued
+        vm.ScrubPreview(TimeSpan.FromSeconds(30)); // pending
+        player.RaiseSeeked(TimeSpan.FromSeconds(10)); // → issues follow-up to 30
+        player.Seeks.Should().HaveCount(2);
+
+        // The follow-up seek settles; pending is already cleared → no third seek fires on its own.
+        player.RaiseSeeked(TimeSpan.FromSeconds(30));
+
+        player.Seeks.Should().HaveCount(2, "with pending cleared, no seek issues without a new preview");
+    }
+
+    [Fact]
+    public void ScrubPreview_DeadBand_SkipsRedundantSeek()
+    {
+        var clock = new FakeClock();
+        var (vm, player) = BuildReadyWithClock(clock);
+
+        vm.ScrubPreview(TimeSpan.FromSeconds(10)); // issued (in flight)
+        player.RaiseSeeked(TimeSpan.FromSeconds(10)); // settle → last-issued target = 10
+        player.Seeks.Should().ContainSingle();
+
+        clock.Advance(1000); // past the throttle window so only the dead-band can gate it
+
+        // A target essentially equal to the last-issued one → skipped as redundant.
+        vm.ScrubPreview(TimeSpan.FromSeconds(10).Add(TimeSpan.FromMilliseconds(2)));
+
+        player.Seeks.Should().ContainSingle("a target within the dead-band of the last issue is redundant");
+    }
+
+    [Fact]
+    public void ScrubPreview_Throttles_TooSoonBecomesPendingNotIssued()
+    {
+        var clock = new FakeClock();
+        var (vm, player) = BuildReadyWithClock(clock);
+
+        vm.ScrubPreview(TimeSpan.FromSeconds(10)); // issued at t=0
+        player.RaiseSeeked(TimeSpan.FromSeconds(10)); // settle → not in flight
+        player.Seeks.Should().ContainSingle();
+
+        clock.Advance(20); // 20ms < 70ms throttle window
+        vm.ScrubPreview(TimeSpan.FromSeconds(30)); // too soon → stashed as pending, NOT issued
+
+        player.Seeks.Should().ContainSingle("a preview inside the throttle window is not issued immediately");
+
+        // A later completion window drains the pending target (here via a fresh preview past the window).
+        clock.Advance(100); // now past the throttle window
+        vm.ScrubPreview(TimeSpan.FromSeconds(30));
+        player.Seeks.Should().HaveCount(2);
+        player.Seeks[^1].Should().Be(TimeSpan.FromSeconds(30));
+    }
+
+    [Fact]
+    public void ScrubPreview_RoutesThroughHold_NoPopBack()
+    {
+        // T-051 must not regress T-033: a live-scrub seek arms the seek-target hold, so a stale echo
+        // arriving before the seek lands must not pop the playhead off the target.
+        var clock = new FakeClock();
+        var (vm, player) = BuildReadyWithClock(clock);
+
+        vm.ScrubPreview(TimeSpan.FromSeconds(40));
+        vm.Position.Should().Be(TimeSpan.FromSeconds(40), "the live-scrub seek pins the display at the target");
+
+        player.RaisePositionChanged(TimeSpan.FromSeconds(12)); // stale echo far from 40
+        vm.Position.Should().Be(TimeSpan.FromSeconds(40), "the hold blocks the stale echo (T-033 preserved)");
+    }
+
+    [Fact]
+    public void EndUserScrub_AfterLivePreviews_IssuesFinalExactSeek()
+    {
+        var clock = new FakeClock();
+        var (vm, player) = BuildReadyWithClock(clock);
+
+        vm.BeginUserScrub();
+        vm.ScrubPreview(TimeSpan.FromSeconds(10)); // live seek during drag
+        clock.Advance(1000);
+        vm.EndUserScrub(35);                        // release at 35 → final exact seek
+
+        vm.Position.Should().Be(TimeSpan.FromSeconds(35));
+        player.Seeks[^1].Should().Be(TimeSpan.FromSeconds(35), "release issues the final exact seek");
     }
 
     // ---- User scrub (Position setter → Seek) ------------------------------------------------

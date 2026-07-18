@@ -1,3 +1,4 @@
+using System;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
@@ -46,8 +47,8 @@ public partial class PlayerView : UserControl
     }
 
     /// <summary>
-    /// The user grabbed the scrub thumb — tell the VM to suppress position echoes for the duration
-    /// of the drag (T-033). Seek fires on release, not on every intermediate drag tick.
+    /// The user grabbed the scrub thumb — enter live-scrub mode (T-033/T-051). Playback echoes are
+    /// suppressed while dragging; the frame instead follows the pin via <c>OnScrubDragDelta</c>.
     /// </summary>
     private void OnScrubDragStarted(object sender, DragStartedEventArgs e)
     {
@@ -58,8 +59,21 @@ public partial class PlayerView : UserControl
     }
 
     /// <summary>
-    /// The user released the scrub thumb — seek to the slider's final value and arm the seek-target
-    /// hold so a stale echo can't pop the playhead back (T-033).
+    /// The scrub thumb moved (fires continuously during the drag) — feed the current slider value to
+    /// the VM's live-scrub path so the video frame follows the pin. Seeks are coalesced + throttled in
+    /// the VM so a fast drag never backs up a seek queue (T-051).
+    /// </summary>
+    private void OnScrubDragDelta(object sender, DragDeltaEventArgs e)
+    {
+        if (DataContext is PlayerViewModel vm)
+        {
+            vm.ScrubPreview(TimeSpan.FromSeconds(ScrubSlider.Value));
+        }
+    }
+
+    /// <summary>
+    /// The user released the scrub thumb — issue the final exact seek to the slider's final value and
+    /// arm the seek-target hold so a stale echo can't pop the playhead back (T-033).
     /// </summary>
     private void OnScrubDragCompleted(object sender, DragCompletedEventArgs e)
     {
