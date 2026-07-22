@@ -95,4 +95,82 @@ public sealed class ErrorLogWriterTests : IDisposable
         body.Should().Contain("the full stderr");
         body.Should().Contain("with two lines");
     }
+
+    // ---- TryWriteCrash / BuildCrashBody (T-079 global crash safety net) ----
+
+    [Fact]
+    public void TryWriteCrash_WritesFile_WithType_Message_AndStack()
+    {
+        var writer = new ErrorLogWriter(_dir);
+        Exception caught;
+        try
+        {
+            throw new InvalidOperationException("boom on the UI thread");
+        }
+        catch (Exception ex)
+        {
+            caught = ex; // captured with a real stack trace.
+        }
+
+        var path = writer.TryWriteCrash("Dispatcher", caught);
+
+        path.Should().NotBeNull();
+        File.Exists(path!).Should().BeTrue();
+        Path.GetFileName(path).Should().StartWith("crash-dispatcher-").And.EndWith(".log");
+
+        var content = File.ReadAllText(path!);
+        content.Should().Contain("Dispatcher", "the crash source is recorded");
+        content.Should().Contain("System.InvalidOperationException", "the exception type is logged");
+        content.Should().Contain("boom on the UI thread", "the exception message is logged");
+        content.Should().Contain("Stack", "the stack trace section is present");
+        content.Should().Contain("TryWriteCrash_WritesFile", "the captured stack frame is logged");
+        content.Should().Contain("Timestamp", "a timestamp is recorded");
+    }
+
+    [Fact]
+    public void BuildCrashBody_IncludesInnerExceptionChain()
+    {
+        var inner = new FormatException("the inner cause");
+        var outer = new InvalidOperationException("the outer wrapper", inner);
+
+        var body = ErrorLogWriter.BuildCrashBody("AppDomain", outer);
+
+        body.Should().Contain("AppDomain");
+        body.Should().Contain("System.InvalidOperationException").And.Contain("the outer wrapper");
+        body.Should().Contain("inner exception").And.Contain("System.FormatException").And.Contain("the inner cause");
+    }
+
+    [Fact]
+    public void BuildCrashBody_NullException_DoesNotThrow_AndNotes_NoException()
+    {
+        string body = string.Empty;
+        Action act = () => body = ErrorLogWriter.BuildCrashBody("AppDomain", null);
+
+        act.Should().NotThrow("a null AppDomain payload must be handled gracefully");
+        body.Should().Contain("no Exception object");
+    }
+
+    [Fact]
+    public void TryWriteCrash_UnwritableDir_IsSwallowed_ReturnsNull()
+    {
+        // Point the writer at a path that is actually a FILE, so CreateDirectory throws internally.
+        var blocker = Path.Combine(Path.GetTempPath(), "vsj-crash-blocker-" + Guid.NewGuid().ToString("N"));
+        File.WriteAllText(blocker, "I am a file, not a directory");
+
+        try
+        {
+            var logDirUnderAFile = Path.Combine(blocker, "logs");
+            var writer = new ErrorLogWriter(logDirUnderAFile);
+
+            string? path = null;
+            Action act = () => path = writer.TryWriteCrash("Dispatcher", new InvalidOperationException("x"));
+
+            act.Should().NotThrow("a crash-logging failure must never crash the crash handler");
+            path.Should().BeNull("a failed write returns null, not a path");
+        }
+        finally
+        {
+            try { File.Delete(blocker); } catch { /* best-effort */ }
+        }
+    }
 }

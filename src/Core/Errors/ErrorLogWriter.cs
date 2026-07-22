@@ -112,6 +112,85 @@ public sealed class ErrorLogWriter
         }
     }
 
+    /// <summary>
+    /// Render the full crash-log <b>body</b> (deterministic, no file I/O) for an unhandled exception:
+    /// the source label, a UTC timestamp, then the exception's type, message, and stack — repeated for
+    /// every inner exception in the chain. Exposed so the format is unit-testable without touching disk.
+    /// </summary>
+    /// <param name="source">Where the crash was caught (e.g. <c>Dispatcher</c>, <c>AppDomain</c>).</param>
+    /// <param name="ex">The unhandled exception (may be <c>null</c> — e.g. a non-Exception AppDomain payload).</param>
+    public static string BuildCrashBody(string source, Exception? ex)
+    {
+        var sb = new StringBuilder();
+        sb.Append("VideoSplitJoiner — unhandled exception (").Append(source ?? string.Empty).Append(')').AppendLine();
+        sb.Append("Timestamp : ")
+            .Append(DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss'Z'", CultureInfo.InvariantCulture))
+            .AppendLine();
+        sb.AppendLine();
+
+        if (ex is null)
+        {
+            sb.AppendLine("(no Exception object was available)");
+            return sb.ToString();
+        }
+
+        var current = ex;
+        var level = 0;
+        while (current is not null)
+        {
+            sb.Append(level == 0 ? "---- exception ----" : "---- inner exception (level " + level.ToString(CultureInfo.InvariantCulture) + ") ----")
+                .AppendLine();
+            sb.Append("Type    : ").Append(current.GetType().FullName).AppendLine();
+            sb.Append("Message : ").Append(current.Message).AppendLine();
+            sb.AppendLine("Stack   :");
+            sb.Append(current.StackTrace ?? "(no stack trace)").AppendLine();
+            sb.AppendLine();
+
+            current = current.InnerException;
+            level++;
+        }
+
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// Write a crash log for an unhandled exception and return the written file path, or <c>null</c> if
+    /// writing failed for any reason (best-effort — <b>never throws</b>, safe to call from inside a global
+    /// crash handler). The file lands in the same logs dir as ffmpeg logs, named
+    /// <c>crash-&lt;source&gt;-&lt;yyyyMMdd-HHmmss&gt;.log</c>, and contains the exception's type, message,
+    /// and stack for the whole inner-exception chain.
+    /// </summary>
+    /// <param name="source">Where the crash was caught (e.g. <c>Dispatcher</c>, <c>AppDomain</c>, <c>UnobservedTask</c>).</param>
+    /// <param name="ex">The unhandled exception (may be <c>null</c>).</param>
+    public string? TryWriteCrash(string source, Exception? ex)
+    {
+        try
+        {
+            Directory.CreateDirectory(_logDirectory);
+
+            var safeSource = SanitizeOp(source);
+            var stamp = DateTime.UtcNow.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture);
+            var fileName = $"crash-{safeSource}-{stamp}.log";
+            var path = Path.Combine(_logDirectory, fileName);
+
+            // Avoid clobbering a same-second sibling (two crashes within one second).
+            if (File.Exists(path))
+            {
+                fileName = $"crash-{safeSource}-{stamp}-{Guid.NewGuid():N}.log";
+                path = Path.Combine(_logDirectory, fileName);
+            }
+
+            var body = BuildCrashBody(source, ex);
+            File.WriteAllText(path, body, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+            return path;
+        }
+        catch
+        {
+            // Best-effort: a logging failure must never crash the crash handler (no recursion).
+            return null;
+        }
+    }
+
     private static string SanitizeOp(string operation)
     {
         if (string.IsNullOrWhiteSpace(operation))
