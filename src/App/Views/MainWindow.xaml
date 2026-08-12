@@ -228,15 +228,49 @@
                            VerticalAlignment="Center" />
             </StackPanel>
 
-            <TabControl Grid.Row="1" Margin="8,4,8,8"
-                        SelectedIndex="{Binding SelectedTabIndex, Mode=TwoWay}">
-                <TabItem Header="Split">
-                    <views:SplitView DataContext="{Binding Split}" />
-                </TabItem>
-                <TabItem Header="Join">
-                    <views:JoinView DataContext="{Binding Join}" />
-                </TabItem>
-            </TabControl>
+            <!-- T-088 — the Split/Join tab strip with a right-aligned Load / Clear button group
+                 overlaid on the tab-header band. The buttons act on the CURRENTLY-ACTIVE screen:
+                 labels/tooltips follow the tab (Split "Load…"/"Clear", Join "Add files…"/"Clear all")
+                 via the MainViewModel's Current* routing; Clear binds to CurrentClearCommand (self-
+                 guarded — disabled while an op runs); Load is a code-behind Click that dispatches to the
+                 active view's file picker (drag-drop load is unchanged, still on each view's RootGrid).
+                 Approach: OVERLAY (a) — the TabControl + an aligned button panel share one Grid cell;
+                 the panel is right/top-aligned to sit on the header band, so no TabControl retemplate. -->
+            <Grid Grid.Row="1">
+                <TabControl x:Name="ScreenTabs" Margin="8,4,8,8"
+                            SelectedIndex="{Binding SelectedTabIndex, Mode=TwoWay}">
+                    <TabItem Header="Split">
+                        <views:SplitView x:Name="SplitScreen" DataContext="{Binding Split}" />
+                    </TabItem>
+                    <TabItem Header="Join">
+                        <views:JoinView x:Name="JoinScreen" DataContext="{Binding Join}" />
+                    </TabItem>
+                </TabControl>
+
+                <!-- Right-aligned Load / Clear on the tab-header line. Top+Right aligned, its margin
+                     accounts for the TabControl's own 8,4 inset so the buttons sit inside the header
+                     band (Border height ≈ tab Padding 16,8 + FontSizeBody). Height-matched to the tabs. -->
+                <StackPanel Orientation="Horizontal"
+                            HorizontalAlignment="Right"
+                            VerticalAlignment="Top"
+                            Margin="0,7,14,0">
+                    <Button x:Name="TabStripLoadButton"
+                            Content="{Binding CurrentLoadLabel}"
+                            ToolTip="{Binding CurrentLoadTooltip}"
+                            Height="28"
+                            Padding="14,0"
+                            VerticalContentAlignment="Center"
+                            Click="Load_Click" />
+                    <Button x:Name="TabStripClearButton"
+                            Content="{Binding CurrentClearLabel}"
+                            ToolTip="{Binding CurrentClearTooltip}"
+                            Height="28"
+                            Margin="6,0,0,0"
+                            Padding="14,0"
+                            VerticalContentAlignment="Center"
+                            Command="{Binding CurrentClearCommand}" />
+                </StackPanel>
+            </Grid>
         </Grid>
     </Grid>
     </Border>

@@ -126,22 +126,13 @@
                           Padding="12">
                 <StackPanel>
 
-                    <!-- ===== File load + info card ===== -->
-                    <StackPanel Orientation="Horizontal">
-                        <Button x:Name="LoadButton"
-                                Content="Load…"
-                                Padding="14,5"
-                                Click="OnLoadClicked" />
-                        <Button x:Name="ClearButton"
-                                Content="Clear"
-                                Margin="6,0,0,0"
-                                Padding="14,5"
-                                ToolTip="Unload the current file and reset the Split screen"
-                                Command="{Binding ClearCommand}" />
-                    </StackPanel>
-
+                    <!-- ===== File-info card =====
+                         T-088 — the Load / Clear buttons moved OUT of this panel and onto the shared
+                         Split/Join tab-strip line (MainWindow), reclaiming this top row. The file-info
+                         card is now the first thing in the tool panel; drag-drop load still works on
+                         the RootGrid, and the moved buttons drive this screen via CurrentLoad/Clear. -->
                     <!-- File-info card: name + mono meta line (container · duration · size) + badge (T-059) -->
-                    <Border Margin="0,10,0,0"
+                    <Border Margin="0,0,0,0"
                             Padding="10"
                             Background="{StaticResource Surface2Brush}"
                             BorderBrush="{StaticResource BorderBrush}"

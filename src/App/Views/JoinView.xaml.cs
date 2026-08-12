@@ -127,7 +127,13 @@ public partial class JoinView : UserControl
         return (source as ListBoxItem)?.DataContext as JoinItemViewModel;
     }
 
-    private void OnAddFilesClicked(object sender, RoutedEventArgs e)
+    /// <summary>
+    /// Open the Join multiselect file picker and add the chosen clips (T-088). Public so the shared
+    /// tab-strip Load button on the MainWindow can drive the active screen's picker without a duplicate
+    /// dialog (the old in-panel "Add files…" button was removed). Same behavior the removed
+    /// <c>OnAddFilesClicked</c> had.
+    /// </summary>
+    public void ShowAddFilesPicker()
     {
         if (DataContext is not JoinViewModel vm)
         {

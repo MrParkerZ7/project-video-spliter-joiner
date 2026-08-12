@@ -34,7 +34,12 @@ public partial class SplitView : UserControl
         }
     }
 
-    private void OnLoadClicked(object sender, RoutedEventArgs e)
+    /// <summary>
+    /// Open the Split file picker and load the chosen file (T-088). Public so the shared tab-strip
+    /// Load button on the MainWindow can drive the active screen's picker without a duplicate dialog
+    /// (the old in-panel Load button was removed). Same behavior the removed <c>OnLoadClicked</c> had.
+    /// </summary>
+    public void ShowLoadPicker()
     {
         if (DataContext is not SplitViewModel vm)
         {

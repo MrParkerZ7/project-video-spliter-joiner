@@ -135,6 +135,12 @@ public sealed class MainViewModel : ObservableObject
             if (SetProperty(ref _selectedTabIndex, value))
             {
                 OnPropertyChanged(nameof(CurrentOperation));
+                // T-088 — the shared tab-strip Load/Clear buttons follow the active screen.
+                OnPropertyChanged(nameof(CurrentClearCommand));
+                OnPropertyChanged(nameof(CurrentLoadLabel));
+                OnPropertyChanged(nameof(CurrentClearLabel));
+                OnPropertyChanged(nameof(CurrentLoadTooltip));
+                OnPropertyChanged(nameof(CurrentClearTooltip));
                 RaiseWindowTitle();
             }
         }
@@ -147,6 +153,42 @@ public sealed class MainViewModel : ObservableObject
     /// </summary>
     public OperationViewModel CurrentOperation
         => (SelectedTabIndex == 1 && Join is not null) ? Join.Operation : Split.Operation;
+
+    /// <summary>
+    /// True when the Join screen is the active tab (tab 1) — the single source of truth the
+    /// current-load/clear routing below reads. Falls back to Split when Join is absent (test ctor).
+    /// </summary>
+    private bool IsJoinActive => SelectedTabIndex == 1 && Join is not null;
+
+    /// <summary>
+    /// The Clear command of the CURRENTLY-ACTIVE screen — Split's <c>ClearCommand</c> on tab 0, Join's
+    /// "Clear all" on tab 1 (T-088). The shared tab-strip "Clear" button binds here so it resets
+    /// whichever screen the user is on. Each screen's <c>ClearCommand</c> is self-guarded (<c>CanClear</c>:
+    /// file/clips present AND no op running), so the shared button disables during a running op
+    /// automatically. Re-raised when <see cref="SelectedTabIndex"/> flips.
+    /// </summary>
+    public ICommand CurrentClearCommand => IsJoinActive ? Join.ClearCommand : Split.ClearCommand;
+
+    /// <summary>
+    /// The label for the tab-strip "Load" button, following the active screen: "Load…" on Split,
+    /// "Add files…" on Join (T-088). The load picker itself is invoked from a thin MainWindow-level
+    /// handler that dispatches to the active view's existing <c>OpenFileDialog</c> logic — the button
+    /// is a code-behind <c>Click</c>, not a bound command, since the picker lives in the view.
+    /// </summary>
+    public string CurrentLoadLabel => IsJoinActive ? "Add files…" : "Load…";
+
+    /// <summary>The label for the tab-strip "Clear" button: "Clear" on Split, "Clear all" on Join (T-088).</summary>
+    public string CurrentClearLabel => IsJoinActive ? "Clear all" : "Clear";
+
+    /// <summary>Tooltip for the tab-strip Load button, following the active screen (T-088).</summary>
+    public string CurrentLoadTooltip => IsJoinActive
+        ? "Add one or more video clips to the join queue"
+        : "Open a video file to split";
+
+    /// <summary>Tooltip for the tab-strip Clear button, following the active screen (T-088).</summary>
+    public string CurrentClearTooltip => IsJoinActive
+        ? "Remove all queued clips and reset the Join screen"
+        : "Unload the current file and reset the Split screen";
 
     /// <summary>
     /// The OS <c>Window.Title</c> (shown on the taskbar hover / alt-tab). While the active screen's

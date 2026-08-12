@@ -137,22 +137,13 @@
                           Padding="12">
                 <StackPanel>
 
-                    <!-- ===== Add / clear ===== -->
-                    <StackPanel Orientation="Horizontal">
-                        <Button x:Name="AddFilesButton"
-                                Content="Add files…"
-                                Padding="14,5"
-                                Click="OnAddFilesClicked" />
-                        <Button x:Name="ClearAllButton"
-                                Content="Clear all"
-                                Margin="6,0,0,0"
-                                Padding="14,5"
-                                ToolTip="Remove all queued clips and reset the Join screen"
-                                Command="{Binding ClearCommand}" />
-                    </StackPanel>
-
+                    <!-- ===== Compat banner =====
+                         T-088 — the Add files… / Clear all buttons moved OUT of this panel and onto the
+                         shared Split/Join tab-strip line (MainWindow), reclaiming this top row. The compat
+                         banner is now the first thing in the tool panel; drag-drop add still works on the
+                         RootGrid, and the moved buttons drive this screen via CurrentLoad/Clear. -->
                     <!-- Compat banner (green when compatible, red otherwise) — dark-tuned via the converter. -->
-                    <Border Margin="0,10,0,0"
+                    <Border Margin="0,0,0,0"
                             Padding="8"
                             BorderThickness="1"
                             CornerRadius="{StaticResource RadiusSm}"

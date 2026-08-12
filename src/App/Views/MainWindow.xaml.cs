@@ -48,6 +48,31 @@ public partial class MainWindow : Window
 
     private void Close_Click(object sender, RoutedEventArgs e) => Close();
 
+    // ---------------- Tab-strip Load (T-088) ----------------
+
+    /// <summary>
+    /// The shared tab-strip "Load" button (T-088). Dispatches to the ACTIVE screen's file picker so
+    /// one button on the tab line loads whichever screen the user is on. The pickers stay in each
+    /// view's code-behind (GUI concern); this only routes by the selected tab. Clear is handled by a
+    /// bound command (<c>CurrentClearCommand</c>), so it needs no code-behind here.
+    /// </summary>
+    private void Load_Click(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is not MainViewModel vm)
+        {
+            return;
+        }
+
+        if (vm.SelectedTabIndex == 1)
+        {
+            JoinScreen.ShowAddFilesPicker();
+        }
+        else
+        {
+            SplitScreen.ShowLoadPicker();
+        }
+    }
+
     private void ToggleMaxRestore()
         => WindowState = WindowState == WindowState.Maximized
             ? WindowState.Normal
