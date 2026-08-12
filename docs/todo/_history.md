@@ -508,3 +508,7 @@
 ## 2026-07-19 · T-089 — fix T-087 layout (Cut markers on top; Position + Parts side-by-side below)
 - Root cause of the back-and-forth: I read "Position" as the marker LIST; the user meant the POSITION field. User-confirmed target: Cut markers (marker list) full-width on TOP; Position (field + Add-at-time) + Parts-to-export side by side BELOW (the original "share horizontal size", correctly paired).
 - **T-089 done** (`46f8c8d`): restructured SplitView.xaml — cut-markers block full-width top; 2-column Grid (*|12|*) below with a new "Position" section header + field column and the Parts-to-export column. WrapPanel undone (single-line fits the wider column). All bindings re-parented, none rewired. 593/593. Supersedes T-087's arrangement.
+
+## 2026-08-13 · G-035 done (todo-next-all) — D-003 50/50 tool-panel built
+- **T-090 done** (`064e1a9`): SplitView.xaml — tool-panel container ScrollViewer→StackPanel replaced with a bounded 8-row Grid; marker ListBox + segments ListBox are the two `*` rows (50/50 split, MinHeight 90, internal scroll); "Add cut at playhead" + POSITION field + "Add at time" merged onto one WrapPanel row; Parts-to-export full-width below markers; Run row stays reachable. All bindings re-parented, none rewired; OrientedSplitPanel/D-001 untouched (SecondChild-only edit). CHANGELOG entry added. 593/593.
+- D-003 (design) → G-035 (build) complete.
