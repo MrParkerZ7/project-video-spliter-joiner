@@ -48,6 +48,22 @@ public sealed class BoolToCollapsedConverter : IValueConverter
 }
 
 /// <summary>
+/// Inverts a bool (true → false, false → true). Used to drive a nested
+/// <see cref="OrientedSplitPanel"/>'s <c>IsVertical</c> from the INVERSE of the main axis (T-091):
+/// in horizontal MODE (Main.IsVertical=false) the markers/parts pair stacks (inner IsVertical=true),
+/// and in vertical MODE (Main.IsVertical=true) it sits side by side (inner IsVertical=false). A
+/// non-bool value inverts its truthiness (null → true), so a stray binding never throws.
+/// </summary>
+public sealed class InverseBoolConverter : IValueConverter
+{
+    public object Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
+        => !(value is true);
+
+    public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
+        => !(value is true);
+}
+
+/// <summary>
 /// Two-way maps a <see cref="TimeSpan"/> to its total seconds (double) — used so a
 /// <c>Slider</c> whose Value is a double can bind against the player's TimeSpan
 /// <c>Position</c>/<c>Duration</c> directly.

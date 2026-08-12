@@ -8,6 +8,7 @@
         <conv:NullToCollapsedConverter x:Key="NullToCollapsed" />
         <conv:BoolToVisibilityConverter x:Key="BoolToVisibility" />
         <conv:BoolToCollapsedConverter x:Key="BoolToCollapsed" />
+        <conv:InverseBoolConverter x:Key="InverseBool" />
         <conv:FractionToPercentConverter x:Key="FractionToPercent" />
 
         <!-- Small mono section-header label, e.g. "Cut markers" / "Parts to export" (T-059). -->
@@ -128,12 +129,9 @@
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />  <!-- 0: file-info card -->
                         <RowDefinition Height="Auto" />  <!-- 1: keyframe warning -->
-                        <RowDefinition Height="Auto" />  <!-- 2: Cut-markers header + Add-cut/Position wrapping row -->
-                        <RowDefinition Height="*" MinHeight="90" />  <!-- 3: marker ListBox — 50% -->
-                        <RowDefinition Height="Auto" />  <!-- 4: Parts-to-export header (title + count + All/None) -->
-                        <RowDefinition Height="*" MinHeight="90" />  <!-- 5: segments ListBox — 50% -->
-                        <RowDefinition Height="Auto" />  <!-- 6: Output section -->
-                        <RowDefinition Height="Auto" />  <!-- 7: Run / progress / op-state surfaces -->
+                        <RowDefinition Height="*" MinHeight="180" />  <!-- 2: Cut markers ‖ Parts nested OrientedSplitPanel (T-091) -->
+                        <RowDefinition Height="Auto" />  <!-- 3: Output section -->
+                        <RowDefinition Height="Auto" />  <!-- 4: Run / progress / op-state surfaces -->
                     </Grid.RowDefinitions>
 
                     <!-- ===== File-info card =====
@@ -201,182 +199,213 @@
                                    Foreground="{StaticResource TextPrimaryBrush}" />
                     </Border>
 
-                    <!-- ===== Cut markers (Row 2 header+add-row · Row 3 list *) ‖ Parts to export (Row 4 header · Row 5 list *) — D-003 / T-090 =====
-                         Layout-only re-parent of the T-089 area. Corrects T-089's 2-column Position|Parts split.
-                         User-confirmed target (D-003 decisions D1–D6):
-                           D1 — the Cut-markers section's first row is ONE horizontal group: "Add cut at playhead"
-                                button · POSITION label · time field · "Add at time" button. A WrapPanel so it wraps
-                                gracefully at the ~360px narrow horizontal width and stays single-line when roomy.
-                           D4 — Parts to export is FULL-WIDTH now (no longer a side column beside Position).
-                           D5 — the two lists are the two * rows (3 & 5) of this bounded Grid → each ~50% of the
-                                leftover height, growing with the window; each scrolls internally.
-                           D6 — each list has MinHeight ~90 so controls stay usable on short windows; no per-list
-                                MaxHeight anymore (the * rows bound them). Run stays reachable (see fallback note).
-                         Every command/binding is untouched — pure re-parent. -->
+                    <!-- ===== Cut markers ‖ Parts to export — MODE-AWARE nested OrientedSplitPanel (T-091) =====
+                         Row 2 is now the single * region of the tool-panel Grid; it hosts a NESTED
+                         OrientedSplitPanel whose two regions are the Cut-markers block (FirstChild) and the
+                         Parts-to-export block (SecondChild), each a self-contained Grid: an Auto header row
+                         over a * list row (the ListBox stretches to fill and scrolls internally).
 
-                    <!-- Row 2 · Cut-markers header + Add-cut / Position wrapping row (D1) -->
-                    <StackPanel Grid.Row="2" Margin="0,14,0,0">
-                        <TextBlock Text="Cut markers" Style="{StaticResource SectionHeader}" Margin="0,0,0,4" />
+                         The nested panel's IsVertical is the INVERSE of the main axis (via InverseBool), so it
+                         flips OPPOSITE to the outer video/tools split (corrects the D-003 miss where the pair
+                         was permanently stacked):
+                           Main.IsVertical=false (horizontal MODE, narrow panel) → inner IsVertical=true  → ROWS   → markers stacked ABOVE parts (50/50 height)
+                           Main.IsVertical=true  (vertical MODE,   wide  panel) → inner IsVertical=false → COLUMNS → markers | parts SIDE BY SIDE (50/50 width)
+                         HorizontalRatio/VerticalRatio pinned to 0.5 for a true 50/50 in both axes (session-only
+                         DP values — bound to nothing, no AppSettings churn). The themed GridSplitter between the
+                         two blocks is draggable in both modes.
+                         Pure re-parent — every command/binding below is carried over verbatim from D-003. The
+                         OUTER OrientedSplitPanel (D-001) and its IsVertical/HorizontalSplitRatio/VerticalSplitRatio
+                         bindings are untouched. -->
+                    <views:OrientedSplitPanel Grid.Row="2"
+                            Margin="0,14,0,0"
+                            IsVertical="{Binding DataContext.IsVertical, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource InverseBool}}"
+                            HorizontalRatio="0.5"
+                            VerticalRatio="0.5">
 
-                        <!-- D1 · both add gestures on one wrapping line:
-                             PRIMARY (T-064) "Add cut at playhead" — drops a cut at the LIVE playhead each click, so
-                             "position the video, click Add, repeat" just works;
-                             SECONDARY (T-064) the typed POSITION field + "Add at time" — precise entry; the field
-                             auto-follows the playhead (NewMarkerPosition seeding), edit to override.
-                             WrapPanel so the busy row (button + label + 86px field + button) wraps at the ~360px
-                             narrow horizontal width and stays single-line when roomy (vertical mode). -->
-                        <WrapPanel Orientation="Horizontal">
-                            <Button Content="Add cut at playhead"
-                                    Padding="12,4"
-                                    Margin="0,0,8,4"
-                                    VerticalAlignment="Center"
-                                    ToolTip="Drop a cut at the preview player's current position (snaps to the nearest keyframe). Scrub, then click again to add the next cut."
-                                    Command="{Binding SetCutAtPlayheadCommand}" />
-                            <TextBlock Text="POSITION" Style="{StaticResource FieldLabel}" Margin="0,0,0,4" />
-                            <TextBox x:Name="PositionBox"
-                                     Width="86"
-                                     Margin="8,0,0,4"
-                                     VerticalAlignment="Center"
-                                     Text="{Binding NewMarkerPosition, Mode=TwoWay}"
-                                     ToolTip="Time from start, e.g. 00:01:23.5 — follows the playhead; type to override" />
-                            <Button Content="Add at time"
-                                    Margin="8,0,0,4"
-                                    Padding="10,3"
-                                    VerticalAlignment="Center"
-                                    ToolTip="Add a cut marker at the exact position typed above"
-                                    Command="{Binding AddMarkerCommand}" />
-                        </WrapPanel>
-                    </StackPanel>
+                        <!-- FirstChild: Cut-markers block (header + Add-cut/Position wrap-row + marker list) -->
+                        <views:OrientedSplitPanel.FirstChild>
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />  <!-- header + Add-cut / Position wrapping row -->
+                                    <RowDefinition Height="*" MinHeight="90" />  <!-- marker list — fills, scrolls internally -->
+                                </Grid.RowDefinitions>
 
-                    <!-- Row 3 · Marker list — 50% star row, scrolls internally (D5). MinHeight keeps it usable (D6). -->
-                    <ListBox Grid.Row="3"
-                             ItemsSource="{Binding Markers}"
-                             Margin="0,6,0,0"
-                             MinHeight="90">
-                        <ListBox.ItemTemplate>
-                            <DataTemplate DataType="{x:Type vm:CutMarkerViewModel}">
-                                <Grid>
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="Auto" />
-                                        <ColumnDefinition Width="Auto" />
-                                    </Grid.ColumnDefinitions>
-                                    <TextBlock Grid.Column="0"
-                                               VerticalAlignment="Center"
-                                               Text="{Binding Display}"
-                                               FontFamily="{StaticResource MonoFontFamily}" />
-                                    <Button Grid.Column="1"
-                                            Content="▶ seek"
-                                            Padding="6,1"
-                                            Margin="0,0,4,0"
-                                            ToolTip="Seek the preview player to this cut's snapped time"
-                                            Command="{Binding DataContext.SeekToMarkerCommand,
-                                                      RelativeSource={RelativeSource AncestorType=ListBox}}"
-                                            CommandParameter="{Binding}" />
-                                    <Button Grid.Column="2"
-                                            Content="Remove"
-                                            Padding="6,1"
-                                            Command="{Binding DataContext.RemoveMarkerCommand,
-                                                      RelativeSource={RelativeSource AncestorType=ListBox}}"
-                                            CommandParameter="{Binding}" />
-                                </Grid>
-                            </DataTemplate>
-                        </ListBox.ItemTemplate>
-                    </ListBox>
+                                <!-- Cut-markers header + Add-cut / Position wrapping row (D1) -->
+                                <StackPanel Grid.Row="0">
+                                    <TextBlock Text="Cut markers" Style="{StaticResource SectionHeader}" Margin="0,0,0,4" />
 
-                    <!-- Row 4 · Parts-to-export header (full width, D4): title + "(N selected)" + All/None chips -->
-                    <Grid Grid.Row="4" Margin="0,14,0,4">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="Auto" />
-                            <ColumnDefinition Width="Auto" />
-                        </Grid.ColumnDefinitions>
-                        <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
-                            <TextBlock Text="Parts to export" Style="{StaticResource SectionHeader}" Margin="0" />
-                            <TextBlock Margin="8,0,0,0"
-                                       VerticalAlignment="Center"
-                                       FontFamily="{StaticResource MonoFontFamily}"
-                                       FontSize="{StaticResource FontSizeSmall}"
-                                       Foreground="{StaticResource TextMutedBrush}"
-                                       Text="{Binding SelectedSegmentCount, StringFormat={}({0} selected)}" />
-                        </StackPanel>
-                        <Button Grid.Column="1"
-                                Content="All"
-                                Style="{StaticResource ChipButton}"
-                                Margin="0,0,4,0"
-                                ToolTip="Select every part for export"
-                                Command="{Binding SelectAllSegmentsCommand}" />
-                        <Button Grid.Column="2"
-                                Content="None"
-                                Style="{StaticResource ChipButton}"
-                                ToolTip="Deselect every part"
-                                Command="{Binding SelectNoSegmentsCommand}" />
-                    </Grid>
-
-                    <!-- Row 5 · Parts list (T-049 select) — 50% star row, scrolls internally (D5). MinHeight keeps it usable (D6). -->
-                    <ListBox Grid.Row="5"
-                             ItemsSource="{Binding Segments}"
-                             MinHeight="90"
-                             HorizontalContentAlignment="Stretch">
-                        <ListBox.ItemTemplate>
-                            <DataTemplate DataType="{x:Type vm:SplitSegmentViewModel}">
-                                <!-- T-069: row = selection checkbox (flexes) + inline per-part progress
-                                     affordance. The affordance shows the row's live write state:
-                                     Writing → a thin gold bar + % ; Done → a green ✓ ; Pending → nothing. -->
-                                <Grid>
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="Auto" />
-                                    </Grid.ColumnDefinitions>
-
-                                    <CheckBox Grid.Column="0"
-                                              IsChecked="{Binding IsSelected, Mode=TwoWay}"
-                                              Content="{Binding Display}"
-                                              FontFamily="{StaticResource MonoFontFamily}"
-                                              VerticalAlignment="Center"
-                                              ToolTip="Uncheck to exclude this part from the export" />
-
-                                    <!-- WRITING: gold live-fill bar + % (active row) -->
-                                    <StackPanel Grid.Column="1"
-                                                Orientation="Horizontal"
+                                    <!-- D1 · both add gestures on one wrapping line:
+                                         PRIMARY (T-064) "Add cut at playhead" — drops a cut at the LIVE playhead each click, so
+                                         "position the video, click Add, repeat" just works;
+                                         SECONDARY (T-064) the typed POSITION field + "Add at time" — precise entry; the field
+                                         auto-follows the playhead (NewMarkerPosition seeding), edit to override.
+                                         WrapPanel so the busy row (button + label + 86px field + button) wraps when narrow
+                                         and stays single-line when roomy. -->
+                                    <WrapPanel Orientation="Horizontal">
+                                        <Button Content="Add cut at playhead"
+                                                Padding="12,4"
+                                                Margin="0,0,8,4"
                                                 VerticalAlignment="Center"
-                                                Margin="8,0,0,0"
-                                                Visibility="{Binding IsWriting, Converter={StaticResource BoolToVisibility}}">
-                                        <ProgressBar Width="52"
-                                                     Height="6"
-                                                     Minimum="0"
-                                                     Maximum="100"
-                                                     Foreground="{StaticResource AccentBrush}"
-                                                     Background="{StaticResource Surface2Brush}"
-                                                     BorderThickness="0"
-                                                     VerticalAlignment="Center"
-                                                     Value="{Binding PartFraction, Mode=OneWay, Converter={StaticResource FractionToPercent}}" />
-                                        <TextBlock Margin="6,0,0,0"
-                                                   MinWidth="30"
-                                                   TextAlignment="Right"
+                                                ToolTip="Drop a cut at the preview player's current position (snaps to the nearest keyframe). Scrub, then click again to add the next cut."
+                                                Command="{Binding SetCutAtPlayheadCommand}" />
+                                        <TextBlock Text="POSITION" Style="{StaticResource FieldLabel}" Margin="0,0,0,4" />
+                                        <TextBox x:Name="PositionBox"
+                                                 Width="86"
+                                                 Margin="8,0,0,4"
+                                                 VerticalAlignment="Center"
+                                                 Text="{Binding NewMarkerPosition, Mode=TwoWay}"
+                                                 ToolTip="Time from start, e.g. 00:01:23.5 — follows the playhead; type to override" />
+                                        <Button Content="Add at time"
+                                                Margin="8,0,0,4"
+                                                Padding="10,3"
+                                                VerticalAlignment="Center"
+                                                ToolTip="Add a cut marker at the exact position typed above"
+                                                Command="{Binding AddMarkerCommand}" />
+                                    </WrapPanel>
+                                </StackPanel>
+
+                                <!-- Marker list — fills its region, scrolls internally. MinHeight keeps it usable (D6). -->
+                                <ListBox Grid.Row="1"
+                                         ItemsSource="{Binding Markers}"
+                                         Margin="0,6,0,0"
+                                         MinHeight="90">
+                                    <ListBox.ItemTemplate>
+                                        <DataTemplate DataType="{x:Type vm:CutMarkerViewModel}">
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+                                                <TextBlock Grid.Column="0"
+                                                           VerticalAlignment="Center"
+                                                           Text="{Binding Display}"
+                                                           FontFamily="{StaticResource MonoFontFamily}" />
+                                                <Button Grid.Column="1"
+                                                        Content="▶ seek"
+                                                        Padding="6,1"
+                                                        Margin="0,0,4,0"
+                                                        ToolTip="Seek the preview player to this cut's snapped time"
+                                                        Command="{Binding DataContext.SeekToMarkerCommand,
+                                                                  RelativeSource={RelativeSource AncestorType=ListBox}}"
+                                                        CommandParameter="{Binding}" />
+                                                <Button Grid.Column="2"
+                                                        Content="Remove"
+                                                        Padding="6,1"
+                                                        Command="{Binding DataContext.RemoveMarkerCommand,
+                                                                  RelativeSource={RelativeSource AncestorType=ListBox}}"
+                                                        CommandParameter="{Binding}" />
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ListBox.ItemTemplate>
+                                </ListBox>
+                            </Grid>
+                        </views:OrientedSplitPanel.FirstChild>
+
+                        <!-- SecondChild: Parts-to-export block (header + (N selected) + All/None + segments list) -->
+                        <views:OrientedSplitPanel.SecondChild>
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />  <!-- header: title + count + All/None chips -->
+                                    <RowDefinition Height="*" MinHeight="90" />  <!-- segments list — fills, scrolls internally -->
+                                </Grid.RowDefinitions>
+
+                                <!-- Parts-to-export header (full width, D4): title + "(N selected)" + All/None chips -->
+                                <Grid Grid.Row="0" Margin="0,0,0,4">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+                                        <TextBlock Text="Parts to export" Style="{StaticResource SectionHeader}" Margin="0" />
+                                        <TextBlock Margin="8,0,0,0"
+                                                   VerticalAlignment="Center"
                                                    FontFamily="{StaticResource MonoFontFamily}"
                                                    FontSize="{StaticResource FontSizeSmall}"
-                                                   Foreground="{StaticResource AccentBrush}"
-                                                   Text="{Binding PartFraction, Mode=OneWay, Converter={StaticResource FractionToPercent}, StringFormat={}{0:0}%}" />
+                                                   Foreground="{StaticResource TextMutedBrush}"
+                                                   Text="{Binding SelectedSegmentCount, StringFormat={}({0} selected)}" />
                                     </StackPanel>
-
-                                    <!-- DONE: green check -->
-                                    <TextBlock Grid.Column="1"
-                                               Margin="8,0,4,0"
-                                               VerticalAlignment="Center"
-                                               FontFamily="{StaticResource MonoFontFamily}"
-                                               FontSize="{StaticResource FontSizeSmall}"
-                                               FontWeight="SemiBold"
-                                               Foreground="{StaticResource OkBrush}"
-                                               Text="✓ done"
-                                               Visibility="{Binding IsDone, Converter={StaticResource BoolToVisibility}}" />
+                                    <Button Grid.Column="1"
+                                            Content="All"
+                                            Style="{StaticResource ChipButton}"
+                                            Margin="0,0,4,0"
+                                            ToolTip="Select every part for export"
+                                            Command="{Binding SelectAllSegmentsCommand}" />
+                                    <Button Grid.Column="2"
+                                            Content="None"
+                                            Style="{StaticResource ChipButton}"
+                                            ToolTip="Deselect every part"
+                                            Command="{Binding SelectNoSegmentsCommand}" />
                                 </Grid>
-                            </DataTemplate>
-                        </ListBox.ItemTemplate>
-                    </ListBox>
 
-                    <!-- Row 6 · Output section (mono DIR / NAME fields + overwrite toggle) — Auto -->
-                    <StackPanel Grid.Row="6">
+                                <!-- Parts list (T-049 select) — fills its region, scrolls internally. MinHeight keeps it usable (D6). -->
+                                <ListBox Grid.Row="1"
+                                         ItemsSource="{Binding Segments}"
+                                         MinHeight="90"
+                                         HorizontalContentAlignment="Stretch">
+                                    <ListBox.ItemTemplate>
+                                        <DataTemplate DataType="{x:Type vm:SplitSegmentViewModel}">
+                                            <!-- T-069: row = selection checkbox (flexes) + inline per-part progress
+                                                 affordance. The affordance shows the row's live write state:
+                                                 Writing → a thin gold bar + % ; Done → a green ✓ ; Pending → nothing. -->
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+
+                                                <CheckBox Grid.Column="0"
+                                                          IsChecked="{Binding IsSelected, Mode=TwoWay}"
+                                                          Content="{Binding Display}"
+                                                          FontFamily="{StaticResource MonoFontFamily}"
+                                                          VerticalAlignment="Center"
+                                                          ToolTip="Uncheck to exclude this part from the export" />
+
+                                                <!-- WRITING: gold live-fill bar + % (active row) -->
+                                                <StackPanel Grid.Column="1"
+                                                            Orientation="Horizontal"
+                                                            VerticalAlignment="Center"
+                                                            Margin="8,0,0,0"
+                                                            Visibility="{Binding IsWriting, Converter={StaticResource BoolToVisibility}}">
+                                                    <ProgressBar Width="52"
+                                                                 Height="6"
+                                                                 Minimum="0"
+                                                                 Maximum="100"
+                                                                 Foreground="{StaticResource AccentBrush}"
+                                                                 Background="{StaticResource Surface2Brush}"
+                                                                 BorderThickness="0"
+                                                                 VerticalAlignment="Center"
+                                                                 Value="{Binding PartFraction, Mode=OneWay, Converter={StaticResource FractionToPercent}}" />
+                                                    <TextBlock Margin="6,0,0,0"
+                                                               MinWidth="30"
+                                                               TextAlignment="Right"
+                                                               FontFamily="{StaticResource MonoFontFamily}"
+                                                               FontSize="{StaticResource FontSizeSmall}"
+                                                               Foreground="{StaticResource AccentBrush}"
+                                                               Text="{Binding PartFraction, Mode=OneWay, Converter={StaticResource FractionToPercent}, StringFormat={}{0:0}%}" />
+                                                </StackPanel>
+
+                                                <!-- DONE: green check -->
+                                                <TextBlock Grid.Column="1"
+                                                           Margin="8,0,4,0"
+                                                           VerticalAlignment="Center"
+                                                           FontFamily="{StaticResource MonoFontFamily}"
+                                                           FontSize="{StaticResource FontSizeSmall}"
+                                                           FontWeight="SemiBold"
+                                                           Foreground="{StaticResource OkBrush}"
+                                                           Text="✓ done"
+                                                           Visibility="{Binding IsDone, Converter={StaticResource BoolToVisibility}}" />
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ListBox.ItemTemplate>
+                                </ListBox>
+                            </Grid>
+                        </views:OrientedSplitPanel.SecondChild>
+                    </views:OrientedSplitPanel>
+
+                    <!-- Row 3 · Output section (mono DIR / NAME fields + overwrite toggle) — Auto -->
+                    <StackPanel Grid.Row="3">
                         <TextBlock Text="Output" Style="{StaticResource SectionHeader}" Margin="0,14,0,4" />
                         <Grid>
                             <Grid.ColumnDefinitions>
@@ -399,11 +428,11 @@
                                   IsChecked="{Binding Overwrite, Mode=TwoWay}" />
                     </StackPanel>
 
-                    <!-- Row 7 · Run / progress / op-state surfaces (Auto) — the Run button always sits at the bottom of
+                    <!-- Row 4 · Run / progress / op-state surfaces (Auto) — the Run button always sits at the bottom of
                          the bounded Grid and stays reachable: the two lists absorb overflow via their internal scroll,
                          so this Auto row is never pushed off-panel. (Fallback outer ScrollViewer was NOT needed — the
                          plain bounded Grid + internal list scroll keeps Run reachable per D6.) -->
-                    <StackPanel Grid.Row="7">
+                    <StackPanel Grid.Row="4">
 
                     <!-- ===== Primary Run (gold, count-aware) + Cancel ===== -->
                     <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
