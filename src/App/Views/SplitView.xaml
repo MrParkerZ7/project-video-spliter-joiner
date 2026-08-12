@@ -189,14 +189,69 @@
                                    Foreground="{StaticResource TextPrimaryBrush}" />
                     </Border>
 
-                    <!-- ===== Cut markers  ‖  Parts to export — two equal-width columns (T-087) =====
-                         Layout-only re-parent: the former stacked "Cut markers" and "Parts to export"
-                         sections now sit side by side in a 2-column Grid (col0 * | 12px gap | col1 *),
-                         each column keeping its OWN header + controls + list stacked vertically. Every
-                         command/binding is untouched. In horizontal mode the tool panel is ~360px so each
-                         column is ~165px (tight but workable — the POSITION row is a WrapPanel so it wraps
-                         rather than clips); in D-001 vertical mode the panel is full-window-width and roomy.
-                         The two lists share MaxHeight="180" so the columns balance. -->
+                    <!-- ===== Cut markers (full width, TOP) ‖ Position | Parts to export (2-col, BELOW) — T-089 =====
+                         Layout-only re-parent of the T-087 area. Corrects T-087, which wrongly paired the
+                         MARKER LIST side-by-side with Parts-to-export. User-confirmed target (sketch, 2026-07-19):
+                           (1) Cut markers — header + "Add cut at playhead" + marker list — as ONE full-width
+                               block on top (NOT in a column).
+                           (2) Below it, a 2-column Grid (* | 12px gap | *, equal shared width): col0 = Position
+                               (a small "Position" header + the POSITION add-at-time field row), col1 = the
+                               existing "Parts to export" header + segments list.
+                         Every command/binding is untouched — pure re-parent. The POSITION row is a full column
+                         wide now (was ~165px under T-087), so the T-087 WrapPanel is undone back to a single-line
+                         horizontal StackPanel. -->
+
+                    <!-- (1) Cut markers — full-width block on top -->
+                    <StackPanel Margin="0,14,0,0">
+                        <TextBlock Text="Cut markers" Style="{StaticResource SectionHeader}" Margin="0,0,0,4" />
+
+                        <!-- PRIMARY add gesture (T-064): drop a cut at the LIVE playhead. Each click adds at
+                             the player's CURRENT position, so "position the video, click Add, repeat" just
+                             works — no static field to re-edit between adds. -->
+                        <Button Content="Add cut at playhead"
+                                HorizontalAlignment="Left"
+                                Padding="12,4"
+                                ToolTip="Drop a cut at the preview player's current position (snaps to the nearest keyframe). Scrub, then click again to add the next cut."
+                                Command="{Binding SetCutAtPlayheadCommand}" />
+
+                        <!-- Marker list -->
+                        <ListBox ItemsSource="{Binding Markers}"
+                                 Margin="0,6,0,0"
+                                 MinHeight="90"
+                                 MaxHeight="200">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate DataType="{x:Type vm:CutMarkerViewModel}">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0"
+                                                   VerticalAlignment="Center"
+                                                   Text="{Binding Display}"
+                                                   FontFamily="{StaticResource MonoFontFamily}" />
+                                        <Button Grid.Column="1"
+                                                Content="▶ seek"
+                                                Padding="6,1"
+                                                Margin="0,0,4,0"
+                                                ToolTip="Seek the preview player to this cut's snapped time"
+                                                Command="{Binding DataContext.SeekToMarkerCommand,
+                                                          RelativeSource={RelativeSource AncestorType=ListBox}}"
+                                                CommandParameter="{Binding}" />
+                                        <Button Grid.Column="2"
+                                                Content="Remove"
+                                                Padding="6,1"
+                                                Command="{Binding DataContext.RemoveMarkerCommand,
+                                                          RelativeSource={RelativeSource AncestorType=ListBox}}"
+                                                CommandParameter="{Binding}" />
+                                    </Grid>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+                    </StackPanel>
+
+                    <!-- (2) Position | Parts to export — 2-column Grid, equal shared width, below the markers -->
                     <Grid Margin="0,14,0,0">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*" />
@@ -204,76 +259,34 @@
                             <ColumnDefinition Width="*" />
                         </Grid.ColumnDefinitions>
 
-                        <!-- Column 0: Cut markers -->
-                        <StackPanel Grid.Column="0">
-                            <TextBlock Text="Cut markers" Style="{StaticResource SectionHeader}" Margin="0,0,0,4" />
+                        <!-- Column 0: Position (add-at-exact-time field) — top-aligned; the compact control
+                             leaves empty space below (user-confirmed acceptable). -->
+                        <StackPanel Grid.Column="0" VerticalAlignment="Top">
+                            <TextBlock Text="Position" Style="{StaticResource SectionHeader}" Margin="0,0,0,4" />
 
-                            <!-- PRIMARY add gesture (T-064): drop a cut at the LIVE playhead. Each click adds at
-                                 the player's CURRENT position, so "position the video, click Add, repeat" just
-                                 works — no static field to re-edit between adds. -->
-                            <Button Content="Add cut at playhead"
-                                    HorizontalAlignment="Left"
-                                    Padding="12,4"
-                                    ToolTip="Drop a cut at the preview player's current position (snaps to the nearest keyframe). Scrub, then click again to add the next cut."
-                                    Command="{Binding SetCutAtPlayheadCommand}" />
-
-                            <!-- SECONDARY add-at-exact-time (T-064): the typed-position field remains available for
-                                 precise entry. The field auto-follows the playhead (see NewMarkerPosition seeding),
-                                 so it advances naturally too; edit it to add at an exact time instead.
-                                 T-087: a WrapPanel (was a horizontal StackPanel) so the label/field/button wrap
-                                 onto a second line rather than clip in the ~165px column. -->
-                            <WrapPanel Orientation="Horizontal" Margin="0,6,0,0">
-                                <TextBlock Text="POSITION" Style="{StaticResource FieldLabel}" Margin="0,0,0,2" />
+                            <!-- SECONDARY add-at-exact-time (T-064): the typed-position field for precise entry.
+                                 The field auto-follows the playhead (see NewMarkerPosition seeding), so it advances
+                                 naturally too; edit it to add at an exact time instead.
+                                 T-089: a full column is wider than T-087's ~165px, so the row fits on one line —
+                                 the T-087 WrapPanel is undone back to a horizontal StackPanel. -->
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="POSITION" Style="{StaticResource FieldLabel}" Margin="0,0,0,0" />
                                 <TextBox x:Name="PositionBox"
                                          Width="86"
-                                         Margin="8,0,0,2"
+                                         Margin="8,0,0,0"
+                                         VerticalAlignment="Center"
                                          Text="{Binding NewMarkerPosition, Mode=TwoWay}"
                                          ToolTip="Time from start, e.g. 00:01:23.5 — follows the playhead; type to override" />
                                 <Button Content="Add at time"
-                                        Margin="8,0,0,2"
+                                        Margin="8,0,0,0"
                                         Padding="10,3"
+                                        VerticalAlignment="Center"
                                         ToolTip="Add a cut marker at the exact position typed above"
                                         Command="{Binding AddMarkerCommand}" />
-                            </WrapPanel>
-
-                            <!-- Marker list -->
-                            <ListBox ItemsSource="{Binding Markers}"
-                                     Margin="0,6,0,0"
-                                     MinHeight="90"
-                                     MaxHeight="180">
-                                <ListBox.ItemTemplate>
-                                    <DataTemplate DataType="{x:Type vm:CutMarkerViewModel}">
-                                        <Grid>
-                                            <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="*" />
-                                                <ColumnDefinition Width="Auto" />
-                                                <ColumnDefinition Width="Auto" />
-                                            </Grid.ColumnDefinitions>
-                                            <TextBlock Grid.Column="0"
-                                                       VerticalAlignment="Center"
-                                                       Text="{Binding Display}"
-                                                       FontFamily="{StaticResource MonoFontFamily}" />
-                                            <Button Grid.Column="1"
-                                                    Content="▶ seek"
-                                                    Padding="6,1"
-                                                    Margin="0,0,4,0"
-                                                    ToolTip="Seek the preview player to this cut's snapped time"
-                                                    Command="{Binding DataContext.SeekToMarkerCommand,
-                                                              RelativeSource={RelativeSource AncestorType=ListBox}}"
-                                                    CommandParameter="{Binding}" />
-                                            <Button Grid.Column="2"
-                                                    Content="Remove"
-                                                    Padding="6,1"
-                                                    Command="{Binding DataContext.RemoveMarkerCommand,
-                                                              RelativeSource={RelativeSource AncestorType=ListBox}}"
-                                                    CommandParameter="{Binding}" />
-                                        </Grid>
-                                    </DataTemplate>
-                                </ListBox.ItemTemplate>
-                            </ListBox>
+                            </StackPanel>
                         </StackPanel>
 
-                        <!-- Column 1: Parts to export (T-049 select) -->
+                        <!-- Column 2: Parts to export (T-049 select) -->
                         <StackPanel Grid.Column="2">
                             <Grid Margin="0,0,0,4">
                                 <Grid.ColumnDefinitions>
@@ -304,7 +317,7 @@
                             </Grid>
                             <ListBox ItemsSource="{Binding Segments}"
                                      MinHeight="90"
-                                     MaxHeight="180"
+                                     MaxHeight="200"
                                      HorizontalContentAlignment="Stretch">
                                 <ListBox.ItemTemplate>
                                     <DataTemplate DataType="{x:Type vm:SplitSegmentViewModel}">
