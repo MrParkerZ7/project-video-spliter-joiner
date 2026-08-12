@@ -504,3 +504,7 @@
 - **T-087** (`c623d48`): Cut-markers list + Parts-to-export list → 2-column Grid (*|12|*) sharing horizontal width; POSITION row → WrapPanel (wraps at ~165px narrow, single-line when roomy); all bindings intact. Built the "Position=marker list" reading (⚠ flip if user meant the field row).
 - **T-088** (`eea0cca`, +4 tests): Load/Clear moved onto the Split/Join tab-strip row (right-aligned overlay), routed to the active screen via MainViewModel CurrentLoad/ClearCommand + labels/tooltips (SelectedTabIndex, mirrors CurrentOperation T-068); old in-panel button rows removed from both tool panels; drag-drop + Clear-guard preserved.
 - G-034 done + T-086 done. Convergence → auto cycle-push (classic-mode default).
+
+## 2026-07-19 · T-089 — fix T-087 layout (Cut markers on top; Position + Parts side-by-side below)
+- Root cause of the back-and-forth: I read "Position" as the marker LIST; the user meant the POSITION field. User-confirmed target: Cut markers (marker list) full-width on TOP; Position (field + Add-at-time) + Parts-to-export side by side BELOW (the original "share horizontal size", correctly paired).
+- **T-089 done** (`46f8c8d`): restructured SplitView.xaml — cut-markers block full-width top; 2-column Grid (*|12|*) below with a new "Position" section header + field column and the Parts-to-export column. WrapPanel undone (single-line fits the wider column). All bindings re-parented, none rewired. 593/593. Supersedes T-087's arrangement.
