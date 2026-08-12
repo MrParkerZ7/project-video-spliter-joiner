@@ -512,3 +512,7 @@
 ## 2026-08-13 · G-035 done (todo-next-all) — D-003 50/50 tool-panel built
 - **T-090 done** (`064e1a9`): SplitView.xaml — tool-panel container ScrollViewer→StackPanel replaced with a bounded 8-row Grid; marker ListBox + segments ListBox are the two `*` rows (50/50 split, MinHeight 90, internal scroll); "Add cut at playhead" + POSITION field + "Add at time" merged onto one WrapPanel row; Parts-to-export full-width below markers; Run row stays reachable. All bindings re-parented, none rewired; OrientedSplitPanel/D-001 untouched (SecondChild-only edit). CHANGELOG entry added. 593/593.
 - D-003 (design) → G-035 (build) complete.
+
+## 2026-08-13 · T-091 — mode-aware Cut markers / Parts split (fix the D-003 miss)
+- Miss: user's "share 50/50 on vertical" meant vertical MODE (side by side, 50/50 width), not the vertical axis. D-003 built always-stacked.
+- **T-091 done** (`3f9c143`, +4 → 597): nested OrientedSplitPanel for the two sections (FirstChild=Cut markers block, SecondChild=Parts block), IsVertical bound to the INVERSE of Main.IsVertical (new InverseBoolConverter) + 50/50 ratios both axes. → horizontal mode = stacked 50/50 height; vertical mode = side-by-side 50/50 width; live flip on toggle; inner splitter draggable. Outer panel/D-001 untouched; all bindings re-parented. Session-only 0.5 ratios (no settings churn).
