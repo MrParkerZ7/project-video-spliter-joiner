@@ -498,3 +498,9 @@
 - **T-087** (M): cut-positions (Cut-markers/marker) list + Parts-to-export list share horizontal size (side-by-side equal columns). ⚠ interpretation flagged — "Position" read as the marker LIST (not the POSITION field row); flip at review if wrong. Design risk: ~165px each in the 360px horizontal panel (roomy in vertical mode). serves G-034.
 - **T-088** (M): move Load/Clear onto the Split/Join tab-strip line (top-right), bound to the active screen via MainViewModel CurrentLoad/ClearCommand (SelectedTabIndex, like CurrentOperation T-068); reclaims a line in each tool panel. serves G-034.
 - Both ready; UI Designer lens. Composition with D-001 vertical mode noted in each.
+
+## 2026-07-19 · todo-next-all drove T-086 + G-034 (3 tasks → 593 tests)
+- **T-086** (`70eaaac`): layout-toggle icon → two-pane split GeometryGroups (stacked panes / side-by-side panes, target-mode per D5).
+- **T-087** (`c623d48`): Cut-markers list + Parts-to-export list → 2-column Grid (*|12|*) sharing horizontal width; POSITION row → WrapPanel (wraps at ~165px narrow, single-line when roomy); all bindings intact. Built the "Position=marker list" reading (⚠ flip if user meant the field row).
+- **T-088** (`eea0cca`, +4 tests): Load/Clear moved onto the Split/Join tab-strip row (right-aligned overlay), routed to the active screen via MainViewModel CurrentLoad/ClearCommand + labels/tooltips (SelectedTabIndex, mirrors CurrentOperation T-068); old in-panel button rows removed from both tool panels; drag-drop + Clear-guard preserved.
+- G-034 done + T-086 done. Convergence → auto cycle-push (classic-mode default).
