@@ -479,3 +479,8 @@
 
 ## 2026-07-19 · G-031 converged (todo-next-all) — app self-close fixed
 - **T-080 done** (`e44e5e7`, +11 tests → 532): root cause = FFME Open-after-Close. `Clear()`→`Unload()`→`_element.Close()` is FIRE-AND-FORGET; the next load's `_element.Open(uri)` fired while the element was still IsClosing → NATIVE AccessViolation (bypasses T-079's managed handler → silent vanish, no log). Fix: new `MediaReopenGuard` (WPF-free) + `IReopenTarget` seam — Open waits for the element to settle out of IsClosing/IsOpening/IsChanging before proceeding, returns Superseded (newer Open/Unload) or Timeout (recoverable Failed banner, never the crash); NotifySuperseded on Unload/Detach. Suspects (b) stale bg continuations + (c) handler leaks audited — already safe. Regression: MediaReopenGuardTests(8) + SplitViewModelReloadAfterClearTests(3), incl. 3× clear→load cycles. G-031 done (T-079 safety net + T-080 true fix).
+
+## 2026-07-19 · G-032 done (todo-next-all) — vertical-monitor mode built (implements D-001)
+- **T-081 done** (`0440ab5`, +12 tests → 544): OrientedSplitPanel (Grid subclass, one region instance, flips RowDefs↔ColDefs + child placement + GridSplitter orientation on IsVertical) on both Split+Join; MainViewModel.IsVertical + ToggleLayoutCommand backed by AppSettings.LayoutMode (persisted); title-bar toggle button (G-029 vector style, target-mode icon D5); per-axis split ratio (D6, HorizontalSplitRatio/VerticalSplitRatio). Every binding/command intact; hover thumbnail + scrub-click unaffected.
+- **T-082 done** (this commit): CHANGELOG [0.2.0] += vertical-mode; CLAUDE.md convention for the OrientedSplitPanel/IsVertical pattern; D-001 marked built.
+- D-001 (design) → G-032 (build) complete. D-002 (waveform) still draft — not built.

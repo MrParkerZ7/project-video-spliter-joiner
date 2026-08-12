@@ -15,6 +15,13 @@ re-encode — the player only previews; every cut continues to keyframe-snap thr
 
 ### Added
 
+- **Vertical-monitor mode (G-032, implements design D-001)** — a **toggle button in the title bar** flips the
+  whole app between the horizontal two-column layout and a **vertical stacked layout** for portrait monitors:
+  video + timeline on top (full width), the tool panel stacked below (scrollable), with the divider rotated to a
+  horizontal splitter. One toggle flips **both Split and Join**; the chosen **`LayoutMode` persists** across launches
+  (`settings.json`), and the horizontal and vertical splitter positions are remembered **independently per axis**.
+  Built as a reusable `OrientedSplitPanel` (one instance of each region, column↔row flip driven by `IsVertical`) so
+  every existing control/binding — and the hover thumbnail + scrub click — is unchanged.
 - **Scrub-bar hover thumbnail — hovering the timeline shows a frame preview at that time (G-030).**
   Hovering the player scrub bar shows a small frame image at the hovered time, following the cursor with
   an `mm:ss` label, so you can find a split point by sight without moving the main player. Frames come

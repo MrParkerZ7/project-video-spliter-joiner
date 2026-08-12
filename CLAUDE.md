@@ -31,6 +31,12 @@ A .NET 8 WPF app that splits and joins video **without re-encoding**. See [READM
   (300–520 range). Match the sample's structure — header + "lossless · no re-encode" tagline, gold
   format badge, file-info card, section headers, mono DIR/NAME fields, Join "Estimated result" panel.
   Formatting/estimate helpers are pure and unit-tested in `Core/Media/MediaFormat.cs`.
+- **Layout has a horizontal ⇄ vertical mode toggle (G-032 / D-001).** `MainViewModel.IsVertical` (backed by
+  `AppSettings.LayoutMode`, persisted) drives a title-bar toggle; both Split and Join host their three regions in a
+  reusable `Views/OrientedSplitPanel` (a `Grid` subclass that flips its RowDefinitions↔ColumnDefinitions + child
+  placement + the `GridSplitter` orientation on `IsVertical`) — **one instance of each region, no duplicated markup**.
+  Split ratios are remembered **per-axis** (`HorizontalSplitRatio`/`VerticalSplitRatio`). Don't re-duplicate region
+  markup per mode or tie layout to a hardcoded axis; add regions to the panel. See `docs/design/D-001-vertical-monitor-mode.md`.
 - **Scrollbars are themed app-wide (G-027).** An implicit `ScrollBar` style (no `x:Key`) lives in
   `Themes/Controls.xaml` — thin, dark track, rounded `BorderStrong` thumb that goes `AccentBrush` gold on
   hover/drag, both orientations. Don't reintroduce the default light Windows scrollbar or per-view overrides.
