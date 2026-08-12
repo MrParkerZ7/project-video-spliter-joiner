@@ -15,6 +15,13 @@ re-encode — the player only previews; every cut continues to keyframe-snap thr
 
 ### Added
 
+- **Audio waveform above the timeline (G-033, implements design D-002)** — the Split screen now shows the
+  loaded video's **audio waveform** as a band above the timeline, aligned to the same time axis, so you can
+  *see* speech vs silence and place cut points on natural boundaries. It's **vector-drawn + themed**, and
+  **fused with the mark bar** — the playhead line and cut-marker ticks run continuously through both the wave
+  and the timeline, and **clicking the wave seeks**. Peaks are extracted in the background on load (a new Core
+  `IWaveformService` — ffmpeg → downsampled mono PCM → normalized peak array, LRU-cached, best-effort) and never
+  block the load; a **silent / no-audio** video hides the band. Stacks with vertical mode.
 - **Vertical-monitor mode (G-032, implements design D-001)** — a **toggle button in the title bar** flips the
   whole app between the horizontal two-column layout and a **vertical stacked layout** for portrait monitors:
   video + timeline on top (full width), the tool panel stacked below (scrollable), with the divider rotated to a

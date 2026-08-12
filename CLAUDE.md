@@ -31,6 +31,13 @@ A .NET 8 WPF app that splits and joins video **without re-encoding**. See [READM
   (300–520 range). Match the sample's structure — header + "lossless · no re-encode" tagline, gold
   format badge, file-info card, section headers, mono DIR/NAME fields, Join "Estimated result" panel.
   Formatting/estimate helpers are pure and unit-tested in `Core/Media/MediaFormat.cs`.
+- **The Split timeline shows an audio waveform (G-033 / D-002).** A Core `IWaveformService` /
+  `FfmpegWaveformService` extracts a normalized peak array (ffmpeg → downsampled **mono PCM to a temp file** —
+  the `FfmpegRunner` reads stdout as text, so PCM can't be piped — → max-abs buckets, LRU-cached, best-effort
+  `null` on no-audio/failure). `SplitViewModel` runs it in the **background on load, stale-guarded** like the
+  keyframe scan (never blocks). `TimelineView` draws a themed vector waveform band **above the `Track`, sharing
+  its `0..duration` x-axis**, with the playhead + marker ticks + click-to-seek **fused across both** (one aligned
+  unit — it stacks together in vertical mode). No-audio → band hidden. Mirrors the `IThumbnailService` pattern.
 - **Layout has a horizontal ⇄ vertical mode toggle (G-032 / D-001).** `MainViewModel.IsVertical` (backed by
   `AppSettings.LayoutMode`, persisted) drives a title-bar toggle; both Split and Join host their three regions in a
   reusable `Views/OrientedSplitPanel` (a `Grid` subclass that flips its RowDefinitions↔ColumnDefinitions + child

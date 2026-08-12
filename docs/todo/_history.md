@@ -484,3 +484,9 @@
 - **T-081 done** (`0440ab5`, +12 tests → 544): OrientedSplitPanel (Grid subclass, one region instance, flips RowDefs↔ColDefs + child placement + GridSplitter orientation on IsVertical) on both Split+Join; MainViewModel.IsVertical + ToggleLayoutCommand backed by AppSettings.LayoutMode (persisted); title-bar toggle button (G-029 vector style, target-mode icon D5); per-axis split ratio (D6, HorizontalSplitRatio/VerticalSplitRatio). Every binding/command intact; hover thumbnail + scrub-click unaffected.
 - **T-082 done** (this commit): CHANGELOG [0.2.0] += vertical-mode; CLAUDE.md convention for the OrientedSplitPanel/IsVertical pattern; D-001 marked built.
 - D-001 (design) → G-032 (build) complete. D-002 (waveform) still draft — not built.
+
+## 2026-07-19 · G-033 done (todo-next-all) — audio waveform built (implements D-002)
+- **T-083 done** (`e3def61`, +29): Core IWaveformService/FfmpegWaveformService — ffmpeg `-vn -ac 1 -ar 4000 -f s16le` → temp PCM → max-abs bucket peaks (normalized 0..1), (path|mtime|len|buckets) LRU cache, best-effort null (no-audio/fail), cancellable. Mirrors IThumbnailService.
+- **T-084 done** (`1bc9c43`, +16 → 589): WaveformViewModel + SplitViewModel background/stale-guard wiring (T-084 completed after a transient rate-limit killed the first attempt ~40% in — resumed on top of the compiling partial VM layer); TimelineView Wave canvas band above Track (mirrored StreamGeometry, re-bucketed on SizeChanged), fused playhead+ticks+click across wave+track, MainViewModel DI reg, Row2 MinHeight 130, muted-surface+gold-muted theme tokens. No regression to G-006/G-028/G-030/D-001.
+- **T-085 done** (this commit): CHANGELOG [0.2.0] += audio waveform; CLAUDE.md convention for the IWaveformService/TimelineView-band pattern; D-002 marked built.
+- D-002 (design) → G-033 (build) complete. Convergence → auto cycle-push (new classic-mode default).
