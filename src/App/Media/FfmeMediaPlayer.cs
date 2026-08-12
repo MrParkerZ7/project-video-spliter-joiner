@@ -2,6 +2,7 @@ using System;
 using System.Diagnostics;
 using System.Linq;
 using System.Runtime.CompilerServices;
+using System.Threading.Tasks;
 using Unosquare.FFME;
 using Unosquare.FFME.Common;
 
@@ -23,7 +24,7 @@ namespace VideoSplitJoiner.App.Media;
 /// and cannot run headlessly, so it is NOT unit-tested; it only has to compile. Playback is verified
 /// live on a real desktop via <c>app-run</c>.
 /// </remarks>
-public sealed class FfmeMediaPlayer : IMediaPlayer
+public sealed class FfmeMediaPlayer : IMediaPlayer, IReopenTarget
 {
     /// <summary>
     /// Cap the on-screen preview to ~1080p tall (T-024). A 4K source is decoded/rendered at this
@@ -36,13 +37,27 @@ public sealed class FfmeMediaPlayer : IMediaPlayer
     private TimeSpan? _duration;
     private bool _isPlaying;
 
+    // ---- Close→Open lifecycle guard (T-080) -------------------------------------------------
+    // FFME's Open/Close are async commands. Calling Open() while a prior Close() (or Open()) is
+    // still in flight — the element is IsClosing / IsOpening / IsChanging — is a known NATIVE crash
+    // spot (AccessViolation that bypasses managed handlers). The reproduction is: split → Clear
+    // (fire-and-forget Close) → immediately drag a new video (Open) before the close settled.
+    //
+    // The guard (MediaReopenGuard, WPF-free + unit-tested) sequences it: every Open registers a
+    // lifecycle generation and awaits this element out of any transitional state (via IReopenTarget,
+    // implemented below) before issuing _element.Open(...). A newer Open/Unload supersedes an older
+    // pending open. This class feeds the element's state; the guard owns the decision.
+    private readonly MediaReopenGuard _reopenGuard;
+
     /// <summary>Create an unattached player; call <see cref="Attach"/> once the element exists.</summary>
     public FfmeMediaPlayer()
     {
+        _reopenGuard = new MediaReopenGuard(this);
     }
 
     /// <summary>Create a player already bound to <paramref name="element"/>.</summary>
     public FfmeMediaPlayer(MediaElement element)
+        : this()
     {
         Attach(element);
     }
@@ -78,6 +93,10 @@ public sealed class FfmeMediaPlayer : IMediaPlayer
     {
         if (_element is not null)
         {
+            // T-080: supersede any pending open bound to the outgoing element so a stale settle-then-
+            // open can never fire against a swapped/detached element.
+            _reopenGuard.NotifySuperseded();
+
             _element.MediaOpening -= OnMediaOpening;
             _element.MediaOpened -= OnMediaOpened;
             _element.MediaEnded -= OnMediaEnded;
@@ -159,10 +178,82 @@ public sealed class FfmeMediaPlayer : IMediaPlayer
 
         _isPlaying = false;
         _duration = null;
-        // LoadedBehavior=Manual means Open loads + shows the first frame without playing; the
-        // MediaOpened event then supplies the duration. No explicit Play/Pause nudge is needed.
-        Run(() => _element.Open(new Uri(path, UriKind.RelativeOrAbsolute)));
+
+        // T-080: register this open with the lifecycle guard (superseding any earlier pending open),
+        // then sequence Close→Open safely — the actual _element.Open(...) runs only once the element
+        // has left any transitional (IsClosing/IsOpening/IsChanging) state. This is the crash fix: a
+        // fresh Open right after Clear's fire-and-forget Close must not hit the element mid-close.
+        var gen = _reopenGuard.RequestOpen();
+        _ = OpenWhenSettledAsync(path, gen);
     }
+
+    /// <summary>
+    /// Open <paramref name="path"/> once the lifecycle guard reports the element is settled (T-080).
+    /// The guard awaits the element out of any transitional state — a prior <see cref="Unload"/>'s
+    /// async Close, or an in-flight Open — on the UI dispatcher so the thread is never blocked. A
+    /// newer <see cref="Open"/> / <see cref="Unload"/> supersedes this request (it drops without
+    /// opening); a settle timeout surfaces a friendly failure rather than risk the native
+    /// Open-while-closing crash. Any managed fault is routed to <see cref="Failed"/>, mirroring
+    /// <see cref="Run"/>.
+    /// </summary>
+    private async Task OpenWhenSettledAsync(string path, long gen)
+    {
+        try
+        {
+            var decision = await _reopenGuard.WaitUntilReopenableAsync(gen).ConfigureAwait(true);
+
+            switch (decision)
+            {
+                case ReopenDecision.Superseded:
+                    // A newer Open/Unload now owns the element → drop this stale open silently.
+                    return;
+
+                case ReopenDecision.Timeout:
+                    // The prior close never settled → opening is unsafe. Surface a recoverable failure.
+                    RaiseFailed("The previous video is still closing — please try loading again.");
+                    return;
+
+                case ReopenDecision.Open:
+                    if (_element is null)
+                    {
+                        return;
+                    }
+
+                    // LoadedBehavior=Manual means Open loads + shows the first frame without playing;
+                    // the MediaOpened event then supplies the duration.
+                    Run(() => _element!.Open(new Uri(path, UriKind.RelativeOrAbsolute)));
+                    return;
+            }
+        }
+        catch (Exception ex)
+        {
+            RaiseFailed(ex.Message);
+        }
+    }
+
+    // ---- IReopenTarget (T-080): the element-state seam the guard reads --------------------------
+
+    /// <summary>
+    /// True when the FFME element is safe to (re)open: it is not mid-close, mid-open, or changing
+    /// components. The guard polls this between its settle waits; a null element reads as reopenable
+    /// (nothing to close), and a detached element is handled by <see cref="IsDetached"/>.
+    /// </summary>
+    bool IReopenTarget.IsReopenable
+    {
+        get
+        {
+            var element = _element;
+            if (element is null)
+            {
+                return true;
+            }
+
+            return !element.IsClosing && !element.IsOpening && !element.IsChanging;
+        }
+    }
+
+    /// <summary>True when no element is attached — the guard stops waiting on a detached player.</summary>
+    bool IReopenTarget.IsDetached => _element is null;
 
     public void Play()
     {
@@ -227,6 +318,11 @@ public sealed class FfmeMediaPlayer : IMediaPlayer
         // Reset our own transport state first so IsPlaying/Duration read blank immediately.
         _isPlaying = false;
         _duration = null;
+
+        // T-080: supersede any pending open so a stale Open queued before this Unload never fires
+        // against the now-closing element (the crash window works the other way too: Open then a fast
+        // Clear). The next real Open will register a fresh generation and wait for THIS close to settle.
+        _reopenGuard.NotifySuperseded();
 
         // Close the media (async, like the other transport calls) so the decode stops and the
         // preview surface goes blank. FFME's Source DP is read-only (driven by Open/Close), so Close
