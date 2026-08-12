@@ -493,3 +493,8 @@
 
 ## 2026-07-19 · todo-task — T-086 planned (layout-toggle icon → two-pane glyph)
 - Requirement: update the horizontal/vertical layout-toggle icon. Clarified → **two-pane split glyph** (two stacked panes while horizontal = switch-to-vertical; two side-by-side panes while vertical = switch-to-horizontal; keeps D-001 D5 target-mode convention). Right-sized to ONE reviewed task (pure Controls.xaml GeometryGroup swap, no VM/logic). serves G-032. Ready to proceed.
+
+## 2026-07-19 · todo-task ×2 — G-034 planned (Split tool-panel layout refinements)
+- **T-087** (M): cut-positions (Cut-markers/marker) list + Parts-to-export list share horizontal size (side-by-side equal columns). ⚠ interpretation flagged — "Position" read as the marker LIST (not the POSITION field row); flip at review if wrong. Design risk: ~165px each in the 360px horizontal panel (roomy in vertical mode). serves G-034.
+- **T-088** (M): move Load/Clear onto the Split/Join tab-strip line (top-right), bound to the active screen via MainViewModel CurrentLoad/ClearCommand (SelectedTabIndex, like CurrentOperation T-068); reclaims a line in each tool panel. serves G-034.
+- Both ready; UI Designer lens. Composition with D-001 vertical mode noted in each.
