@@ -48,6 +48,9 @@ public sealed class ViewModelSettingsTests : IDisposable
     {
         public string? LastInputDir { get; set; }
         public string? LastOutputDir { get; set; }
+        public LayoutMode LayoutMode { get; set; } = LayoutMode.Horizontal;
+        public double? HorizontalSplitRatio { get; set; }
+        public double? VerticalSplitRatio { get; set; }
     }
 
     private sealed class FakeProbe : IMediaProbe

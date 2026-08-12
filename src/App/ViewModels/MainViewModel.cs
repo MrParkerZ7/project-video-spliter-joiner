@@ -1,6 +1,7 @@
 using System;
 using System.ComponentModel;
 using System.Globalization;
+using System.Windows.Input;
 using VideoSplitJoiner.App.Media;
 using VideoSplitJoiner.App.Settings;
 using VideoSplitJoiner.Core.Ffmpeg;
@@ -29,6 +30,23 @@ public sealed class MainViewModel : ObservableObject
 
     private int _selectedTabIndex;
 
+    /// <summary>
+    /// The persisted-settings write-through for the layout toggle (D-001 / T-081). Non-null in the
+    /// production ctor; null in the test ctor (which injects screen VMs directly and has no settings
+    /// store) — the toggle then flips <see cref="IsVertical"/> in memory only, which is all the tests
+    /// assert. The initial <see cref="IsVertical"/> is seeded from this store so the app reopens in
+    /// the last-used mode.
+    /// </summary>
+    private readonly IAppSettings? _settings;
+
+    /// <summary>Fallback split ratios when nothing is persisted (D-001 recommendation: 62% top in vertical).</summary>
+    private const double DefaultHorizontalRatio = 0.7;
+    private const double DefaultVerticalRatio = 0.62;
+
+    private bool _isVertical;
+    private double _horizontalSplitRatio = DefaultHorizontalRatio;
+    private double _verticalSplitRatio = DefaultVerticalRatio;
+
     /// <summary>Production composition root — builds the real ffmpeg-backed Core service graph.</summary>
     public MainViewModel()
     {
@@ -49,22 +67,44 @@ public sealed class MainViewModel : ObservableObject
         var thumbnailService = new FfmpegThumbnailService(ffmpegRunner);
 
         // Cross-session folder memory (T-038) — one shared file-backed store so both screens read/write
-        // the same %APPDATA%/VideoSplitJoiner/settings.json (last input + last output folders).
+        // the same %APPDATA%/VideoSplitJoiner/settings.json (last input + last output folders). The same
+        // store also carries the D-001 layout mode + per-axis split ratios (T-081).
         var settings = new AppSettings();
+        _settings = settings;
+        _isVertical = settings.LayoutMode == LayoutMode.Vertical;   // restore last-used axis on startup
+        _horizontalSplitRatio = settings.HorizontalSplitRatio ?? DefaultHorizontalRatio;
+        _verticalSplitRatio = settings.VerticalSplitRatio ?? DefaultVerticalRatio;
 
         // The in-app preview player is FFME-backed (FfmeMediaPlayer, decodes via ffmpeg); PlayerView
         // attaches its FFME MediaElement on Loaded. Unattached here, so construction stays render-free.
         Split = new SplitViewModel(probe, splitEngine, new FfmeMediaPlayer(), settings, thumbnailService);
         Join = new JoinViewModel(joinEngine, probe, settings);
 
+        ToggleLayoutCommand = new RelayCommand(ToggleLayout);
+
         HookOperations();
     }
 
-    /// <summary>Test-friendly ctor: inject already-composed screen view models (join optional).</summary>
-    public MainViewModel(SplitViewModel splitViewModel, JoinViewModel? joinViewModel = null)
+    /// <summary>
+    /// Test-friendly ctor: inject already-composed screen view models (join optional) and, optionally,
+    /// a settings store so the layout toggle's write-through + startup restore can be exercised without
+    /// the production ffmpeg graph. When <paramref name="settings"/> is null the toggle flips
+    /// <see cref="IsVertical"/> in memory only.
+    /// </summary>
+    public MainViewModel(SplitViewModel splitViewModel, JoinViewModel? joinViewModel = null, IAppSettings? settings = null)
     {
         Split = splitViewModel ?? throw new ArgumentNullException(nameof(splitViewModel));
         Join = joinViewModel!;
+
+        _settings = settings;
+        if (settings is not null)
+        {
+            _isVertical = settings.LayoutMode == LayoutMode.Vertical;
+            _horizontalSplitRatio = settings.HorizontalSplitRatio ?? DefaultHorizontalRatio;
+            _verticalSplitRatio = settings.VerticalSplitRatio ?? DefaultVerticalRatio;
+        }
+
+        ToggleLayoutCommand = new RelayCommand(ToggleLayout);
 
         HookOperations();
     }
@@ -117,6 +157,92 @@ public sealed class MainViewModel : ObservableObject
     /// Instance property (not the <see cref="BaseTitle"/> const) so it is XAML-bindable.
     /// </summary>
     public string CaptionTitle => BaseTitle;
+
+    /// <summary>
+    /// The app-wide layout axis (D-001 / T-081): <c>false</c> = the original horizontal two-column
+    /// layout, <c>true</c> = the vertical stacked layout (video/timeline on top, tools below). Both
+    /// the Split and Join views observe this (they bind up to the owning <see cref="MainViewModel"/>)
+    /// so the single caption toggle flips both screens together. Setting it writes through to
+    /// <see cref="IAppSettings.LayoutMode"/> so the choice persists across launches, and re-raises the
+    /// icon/tooltip helpers. Seeded from the persisted setting on startup.
+    /// </summary>
+    public bool IsVertical
+    {
+        get => _isVertical;
+        set
+        {
+            if (SetProperty(ref _isVertical, value))
+            {
+                // Persist through to settings (write-through), best-effort — the store never throws.
+                if (_settings is not null)
+                {
+                    _settings.LayoutMode = value ? LayoutMode.Vertical : LayoutMode.Horizontal;
+                }
+
+                OnPropertyChanged(nameof(LayoutToggleTooltip));
+            }
+        }
+    }
+
+    /// <summary>
+    /// The caption toggle command (D5) — flips <see cref="IsVertical"/> and, in production, writes the
+    /// new mode through to settings. Bound to the title-bar toggle button.
+    /// </summary>
+    public ICommand ToggleLayoutCommand { get; }
+
+    /// <summary>
+    /// Tooltip for the caption toggle button — names the mode the click will switch <em>to</em> (D5),
+    /// matching the target-orientation icon: "Switch to vertical layout" while horizontal, "Switch to
+    /// horizontal layout" while vertical.
+    /// </summary>
+    public string LayoutToggleTooltip =>
+        IsVertical ? "Switch to horizontal layout" : "Switch to vertical layout";
+
+    /// <summary>
+    /// The remembered split position for the HORIZONTAL layout — the video column's fraction of the
+    /// total width (0..1). Two-way bound from both screens' split panels so a drag in either axis
+    /// persists here (write-through to <see cref="IAppSettings.HorizontalSplitRatio"/>). Kept separate
+    /// from <see cref="VerticalSplitRatio"/> so a flip never distorts the other axis (D6).
+    /// </summary>
+    public double HorizontalSplitRatio
+    {
+        get => _horizontalSplitRatio;
+        set
+        {
+            var clamped = Math.Clamp(value, 0.05, 0.95);
+            if (SetProperty(ref _horizontalSplitRatio, clamped))
+            {
+                if (_settings is not null)
+                {
+                    _settings.HorizontalSplitRatio = clamped;
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// The remembered split position for the VERTICAL layout — the video/timeline block's fraction of
+    /// the total height (0..1, default ≈0.62). Two-way bound + write-through to
+    /// <see cref="IAppSettings.VerticalSplitRatio"/>. Independent of <see cref="HorizontalSplitRatio"/> (D6).
+    /// </summary>
+    public double VerticalSplitRatio
+    {
+        get => _verticalSplitRatio;
+        set
+        {
+            var clamped = Math.Clamp(value, 0.05, 0.95);
+            if (SetProperty(ref _verticalSplitRatio, clamped))
+            {
+                if (_settings is not null)
+                {
+                    _settings.VerticalSplitRatio = clamped;
+                }
+            }
+        }
+    }
+
+    /// <summary>Flip the layout axis (invoked by <see cref="ToggleLayoutCommand"/>).</summary>
+    private void ToggleLayout() => IsVertical = !IsVertical;
 
     /// <summary>
     /// Composes the running-title overlay from an operation's status/progress/ETA, or the plain

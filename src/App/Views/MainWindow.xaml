@@ -77,9 +77,59 @@
 
             <!-- Middle column (Column 1) is empty draggable caption. -->
 
-            <!-- Right: min / max-restore / close caption buttons -->
+            <!-- Right: layout toggle · min / max-restore / close caption buttons -->
             <StackPanel Grid.Column="2" Orientation="Horizontal"
                         VerticalAlignment="Top">
+                <!-- T-081 / D-001 — layout-axis toggle. A layout control (distinct from the
+                     window min/max/close cluster), so a small gap separates it. The icon shows
+                     the mode the click switches TO (D5): a TALL rect while horizontal ("switch to
+                     vertical"), a WIDE rect while vertical ("switch to horizontal"); the tooltip
+                     tracks via LayoutToggleTooltip. Bound to ToggleLayoutCommand on the MainViewModel;
+                     WindowChrome.IsHitTestVisibleInChrome comes from the CaptionButton style. -->
+                <Button x:Name="LayoutToggleButton"
+                        Style="{StaticResource CaptionButton}"
+                        Margin="0,0,10,0"
+                        ToolTip="{Binding LayoutToggleTooltip}"
+                        Command="{Binding ToggleLayoutCommand}">
+                    <Grid>
+                        <!-- Horizontal mode → show the TALL (target = vertical) rectangle. -->
+                        <Path x:Name="LayoutVerticalIcon"
+                              Data="{StaticResource LayoutVerticalCaptionGeometry}"
+                              Stroke="{DynamicResource TextPrimaryBrush}"
+                              StrokeThickness="1"
+                              SnapsToDevicePixels="True"
+                              UseLayoutRounding="True">
+                            <Path.Style>
+                                <Style TargetType="Path">
+                                    <Setter Property="Visibility" Value="Visible" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsVertical}" Value="True">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Path.Style>
+                        </Path>
+                        <!-- Vertical mode → show the WIDE (target = horizontal) rectangle. -->
+                        <Path x:Name="LayoutHorizontalIcon"
+                              Data="{StaticResource LayoutHorizontalCaptionGeometry}"
+                              Stroke="{DynamicResource TextPrimaryBrush}"
+                              StrokeThickness="1"
+                              SnapsToDevicePixels="True"
+                              UseLayoutRounding="True">
+                            <Path.Style>
+                                <Style TargetType="Path">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsVertical}" Value="True">
+                                            <Setter Property="Visibility" Value="Visible" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Path.Style>
+                        </Path>
+                    </Grid>
+                </Button>
                 <!-- T-076 — crisp vector caption icons (min / max↔restore / close). -->
                 <Button x:Name="MinimizeButton"
                         Style="{StaticResource CaptionButton}"

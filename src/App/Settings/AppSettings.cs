@@ -40,6 +40,9 @@ public sealed class AppSettings : IAppSettings
 
     private string? _lastInputDir;
     private string? _lastOutputDir;
+    private LayoutMode _layoutMode = LayoutMode.Horizontal;
+    private double? _horizontalSplitRatio;
+    private double? _verticalSplitRatio;
 
     /// <summary>Create a settings store over the default per-user file, loading any existing state.</summary>
     public AppSettings()
@@ -88,6 +91,48 @@ public sealed class AppSettings : IAppSettings
         }
     }
 
+    /// <inheritdoc />
+    public LayoutMode LayoutMode
+    {
+        get => _layoutMode;
+        set
+        {
+            if (_layoutMode != value)
+            {
+                _layoutMode = value;
+                Save();
+            }
+        }
+    }
+
+    /// <inheritdoc />
+    public double? HorizontalSplitRatio
+    {
+        get => _horizontalSplitRatio;
+        set
+        {
+            if (!Nullable.Equals(_horizontalSplitRatio, value))
+            {
+                _horizontalSplitRatio = value;
+                Save();
+            }
+        }
+    }
+
+    /// <inheritdoc />
+    public double? VerticalSplitRatio
+    {
+        get => _verticalSplitRatio;
+        set
+        {
+            if (!Nullable.Equals(_verticalSplitRatio, value))
+            {
+                _verticalSplitRatio = value;
+                Save();
+            }
+        }
+    }
+
     /// <summary>
     /// The default per-user settings file: <c>%APPDATA%/VideoSplitJoiner/settings.json</c>. Falls back
     /// to the OS temp folder when the app-data path cannot be resolved (rare — headless / restricted).
@@ -127,6 +172,9 @@ public sealed class AppSettings : IAppSettings
             {
                 _lastInputDir = NullIfBlank(dto.LastInputDir);
                 _lastOutputDir = NullIfBlank(dto.LastOutputDir);
+                _layoutMode = ParseLayoutMode(dto.LayoutMode);
+                _horizontalSplitRatio = ClampRatio(dto.HorizontalSplitRatio);
+                _verticalSplitRatio = ClampRatio(dto.VerticalSplitRatio);
             }
         }
         catch
@@ -134,7 +182,33 @@ public sealed class AppSettings : IAppSettings
             // Corrupt / unreadable settings must never crash the app — fall back to defaults.
             _lastInputDir = null;
             _lastOutputDir = null;
+            _layoutMode = LayoutMode.Horizontal;
+            _horizontalSplitRatio = null;
+            _verticalSplitRatio = null;
         }
+    }
+
+    /// <summary>
+    /// Parse the persisted layout string case-insensitively; anything missing/unknown → the
+    /// <see cref="LayoutMode.Horizontal"/> default (first launch / legacy file / typo never crashes).
+    /// </summary>
+    private static LayoutMode ParseLayoutMode(string? value) =>
+        string.Equals(value, nameof(LayoutMode.Vertical), StringComparison.OrdinalIgnoreCase)
+            ? LayoutMode.Vertical
+            : LayoutMode.Horizontal;
+
+    /// <summary>
+    /// Keep a persisted split-ratio inside a sane band (0.05..0.95) so a corrupt/out-of-range value can
+    /// never wedge a pane to zero. Null / NaN / infinity → null (use the default).
+    /// </summary>
+    private static double? ClampRatio(double? value)
+    {
+        if (value is not double v || double.IsNaN(v) || double.IsInfinity(v))
+        {
+            return null;
+        }
+
+        return Math.Clamp(v, 0.05, 0.95);
     }
 
     /// <summary>
@@ -155,6 +229,9 @@ public sealed class AppSettings : IAppSettings
             {
                 LastInputDir = _lastInputDir,
                 LastOutputDir = _lastOutputDir,
+                LayoutMode = _layoutMode.ToString(),
+                HorizontalSplitRatio = _horizontalSplitRatio,
+                VerticalSplitRatio = _verticalSplitRatio,
             };
 
             var json = JsonSerializer.Serialize(dto, SerializerOptions);
@@ -198,7 +275,11 @@ public sealed class AppSettings : IAppSettings
     private static string? NullIfBlank(string? value) =>
         string.IsNullOrWhiteSpace(value) ? null : value;
 
-    /// <summary>On-disk shape: <c>{ "lastInputDir": "...", "lastOutputDir": "..." }</c> (both nullable).</summary>
+    /// <summary>
+    /// On-disk shape: <c>{ "lastInputDir": "...", "lastOutputDir": "...", "layoutMode": "Horizontal",
+    /// "horizontalSplitRatio": 0.7, "verticalSplitRatio": 0.62 }</c>. Every field is nullable so an
+    /// older file (missing the newer keys) round-trips to the documented defaults.
+    /// </summary>
     private sealed class SettingsDto
     {
         [JsonPropertyName("lastInputDir")]
@@ -206,5 +287,14 @@ public sealed class AppSettings : IAppSettings
 
         [JsonPropertyName("lastOutputDir")]
         public string? LastOutputDir { get; set; }
+
+        [JsonPropertyName("layoutMode")]
+        public string? LayoutMode { get; set; }
+
+        [JsonPropertyName("horizontalSplitRatio")]
+        public double? HorizontalSplitRatio { get; set; }
+
+        [JsonPropertyName("verticalSplitRatio")]
+        public double? VerticalSplitRatio { get; set; }
     }
 }

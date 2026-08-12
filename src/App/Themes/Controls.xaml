@@ -562,6 +562,16 @@
     <!-- Close: two diagonals (an X) across the 10×10 field.                 -->
     <Geometry x:Key="CloseCaptionGeometry">M0.5,0.5 L10.5,10.5 M10.5,0.5 L0.5,10.5</Geometry>
 
+    <!-- T-081 / D-001 layout-toggle icons (D5: the icon shows the mode the   -->
+    <!-- click switches TO). Both are rectangle outlines on the same 10×10    -->
+    <!-- .5-aligned field, matching the min/max caption-icon language.        -->
+    <!-- LayoutVertical: a TALL (portrait) rectangle — shown while horizontal  -->
+    <!-- ("switch to vertical"). 6 wide × 10 tall, horizontally centered.     -->
+    <RectangleGeometry x:Key="LayoutVerticalCaptionGeometry" Rect="2.5,0.5,6,10" />
+    <!-- LayoutHorizontal: a WIDE (landscape) rectangle — shown while vertical -->
+    <!-- ("switch to horizontal"). 10 wide × 6 tall, vertically centered.     -->
+    <RectangleGeometry x:Key="LayoutHorizontalCaptionGeometry" Rect="0.5,2.5,10,6" />
+
     <Style x:Key="CaptionButton" TargetType="Button">
         <Setter Property="Width" Value="46" />
         <Setter Property="Height" Value="34" />

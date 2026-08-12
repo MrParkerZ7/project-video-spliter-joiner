@@ -41,15 +41,20 @@
           PreviewDragOver="OnDragOver"
           DragLeave="OnDragLeave"
           Drop="OnDrop">
-        <!-- ★ T-059 two-column body: LEFT = video/preview + timeline (flexes), RIGHT = tool panel. -->
-        <Grid.ColumnDefinitions>
-            <ColumnDefinition Width="*" MinWidth="320" />
-            <ColumnDefinition Width="6" />
-            <ColumnDefinition Width="360" MinWidth="300" MaxWidth="520" />
-        </Grid.ColumnDefinitions>
+        <!-- ★ D-001 / T-081 axis-aware body: the SAME two regions — video/timeline block +
+             tool panel — laid out side-by-side (horizontal) or stacked (vertical) from the
+             MainViewModel's IsVertical. One instance of each region; the OrientedSplitPanel
+             owns the themed splitter and the per-axis remembered ratios. IsVertical + the two
+             ratios come from the Window's DataContext (MainViewModel); this UserControl's own
+             DataContext stays the SplitViewModel. -->
+        <views:OrientedSplitPanel
+                IsVertical="{Binding DataContext.IsVertical, RelativeSource={RelativeSource AncestorType=Window}}"
+                HorizontalRatio="{Binding DataContext.HorizontalSplitRatio, RelativeSource={RelativeSource AncestorType=Window}, Mode=TwoWay}"
+                VerticalRatio="{Binding DataContext.VerticalSplitRatio, RelativeSource={RelativeSource AncestorType=Window}, Mode=TwoWay}">
+            <views:OrientedSplitPanel.FirstChild>
 
-        <!-- ================= LEFT COLUMN: video preview + timeline ================= -->
-        <Grid Grid.Column="0" Margin="0,0,6,0">
+        <!-- ================= REGION 1: video preview + timeline (left / top) ================= -->
+        <Grid>
             <Grid.RowDefinitions>
                 <!-- Row 0: resizable video preview pane (T-027) -->
                 <RowDefinition Height="*" MinHeight="140" />
@@ -104,17 +109,13 @@
                                              Converter={StaticResource BoolToVisibility}}" />
         </Grid>
 
-        <!-- ================= Draggable divider between the video area and the tool panel ================= -->
-        <GridSplitter Grid.Column="1"
-                      Width="6"
-                      HorizontalAlignment="Center"
-                      VerticalAlignment="Stretch"
-                      ResizeBehavior="PreviousAndNext"
-                      ResizeDirection="Columns"
-                      ToolTip="Drag to resize the tool panel" />
+            </views:OrientedSplitPanel.FirstChild>
 
-        <!-- ================= RIGHT COLUMN: tool panel (Load → Run), scrollable ================= -->
-        <Border Grid.Column="2"
+        <!-- ================= REGION 2: tool panel (Load → Run), scrollable (right / bottom) =================
+             The splitter between regions is provided by OrientedSplitPanel. MinHeight keeps the panel
+             (and its Run button) reachable in vertical mode on a short window — the ScrollViewer scrolls. -->
+            <views:OrientedSplitPanel.SecondChild>
+        <Border MinHeight="120"
                 Background="{StaticResource SurfaceBrush}"
                 BorderBrush="{StaticResource BorderBrush}"
                 BorderThickness="1"
@@ -531,11 +532,13 @@
                 </StackPanel>
             </ScrollViewer>
         </Border>
+            </views:OrientedSplitPanel.SecondChild>
+        </views:OrientedSplitPanel>
 
-        <!-- ================= Drag-drop highlight overlay (T-016) ================= -->
+        <!-- ================= Drag-drop highlight overlay (T-016) =================
+             Overlays the whole body (RootGrid has a single implicit cell now that the
+             axis-aware split lives inside OrientedSplitPanel). -->
         <Border x:Name="DropHighlight"
-                Grid.Column="0"
-                Grid.ColumnSpan="3"
                 IsHitTestVisible="False"
                 Visibility="Collapsed"
                 BorderBrush="{StaticResource AccentBrush}"

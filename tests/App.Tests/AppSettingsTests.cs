@@ -129,4 +129,78 @@ public sealed class AppSettingsTests : IDisposable
         Path.GetFileName(path).Should().Be("settings.json");
         path.Should().Contain("VideoSplitJoiner");
     }
+
+    // ---- T-081 / D-001: LayoutMode + per-axis split ratios ----------------------------------
+
+    [Fact]
+    public void LayoutMode_DefaultsToHorizontal_WhenMissing()
+    {
+        // A brand-new store (no file) and a legacy file (only the folder keys) both default to Horizontal.
+        var fresh = new AppSettings(_file);
+        fresh.LayoutMode.Should().Be(LayoutMode.Horizontal, "first launch / missing setting → Horizontal (today's behavior)");
+
+        Directory.CreateDirectory(_dir);
+        File.WriteAllText(_file, "{ \"lastInputDir\": \"D:\\\\in\" }");
+        var legacy = new AppSettings(_file);
+        legacy.LayoutMode.Should().Be(LayoutMode.Horizontal, "a legacy file with no layoutMode key falls back to the default");
+    }
+
+    [Fact]
+    public void LayoutMode_RoundTrips_ToDiskAndReloads()
+    {
+        var settings = new AppSettings(_file);
+        settings.LayoutMode = LayoutMode.Vertical;
+
+        File.Exists(_file).Should().BeTrue("setting the mode persists immediately");
+        File.ReadAllText(_file).Should().Contain("\"layoutMode\": \"Vertical\"", "the mode is stored as a stable string");
+
+        var reloaded = new AppSettings(_file);
+        reloaded.LayoutMode.Should().Be(LayoutMode.Vertical, "the persisted mode is restored on the next launch");
+    }
+
+    [Fact]
+    public void LayoutMode_UnknownStringInFile_FallsBackToHorizontal_NoThrow()
+    {
+        Directory.CreateDirectory(_dir);
+        File.WriteAllText(_file, "{ \"layoutMode\": \"Diagonal\" }");
+
+        AppSettings? settings = null;
+        Action act = () => settings = new AppSettings(_file);
+
+        act.Should().NotThrow();
+        settings!.LayoutMode.Should().Be(LayoutMode.Horizontal, "an unknown mode string degrades to the default");
+    }
+
+    [Fact]
+    public void SplitRatios_RoundTrip_Independently_PerAxis()
+    {
+        var settings = new AppSettings(_file);
+        settings.HorizontalSplitRatio = 0.68;
+        settings.VerticalSplitRatio = 0.55;
+
+        var reloaded = new AppSettings(_file);
+        reloaded.HorizontalSplitRatio.Should().Be(0.68);
+        reloaded.VerticalSplitRatio.Should().Be(0.55, "the two axes persist to separate keys (D6)");
+    }
+
+    [Fact]
+    public void SplitRatios_DefaultToNull_WhenMissing()
+    {
+        var settings = new AppSettings(_file);
+
+        settings.HorizontalSplitRatio.Should().BeNull("a never-set ratio means 'use the default'");
+        settings.VerticalSplitRatio.Should().BeNull();
+    }
+
+    [Fact]
+    public void SplitRatio_OutOfRangeInFile_IsClampedOnLoad()
+    {
+        Directory.CreateDirectory(_dir);
+        File.WriteAllText(_file, "{ \"horizontalSplitRatio\": 9.0, \"verticalSplitRatio\": -3.0 }");
+
+        var settings = new AppSettings(_file);
+
+        settings.HorizontalSplitRatio.Should().BeLessThanOrEqualTo(0.95, "a corrupt/out-of-range ratio is clamped so no pane wedges to zero");
+        settings.VerticalSplitRatio.Should().BeGreaterThanOrEqualTo(0.05);
+    }
 }
