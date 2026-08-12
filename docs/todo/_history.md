@@ -490,3 +490,6 @@
 - **T-084 done** (`1bc9c43`, +16 → 589): WaveformViewModel + SplitViewModel background/stale-guard wiring (T-084 completed after a transient rate-limit killed the first attempt ~40% in — resumed on top of the compiling partial VM layer); TimelineView Wave canvas band above Track (mirrored StreamGeometry, re-bucketed on SizeChanged), fused playhead+ticks+click across wave+track, MainViewModel DI reg, Row2 MinHeight 130, muted-surface+gold-muted theme tokens. No regression to G-006/G-028/G-030/D-001.
 - **T-085 done** (this commit): CHANGELOG [0.2.0] += audio waveform; CLAUDE.md convention for the IWaveformService/TimelineView-band pattern; D-002 marked built.
 - D-002 (design) → G-033 (build) complete. Convergence → auto cycle-push (new classic-mode default).
+
+## 2026-07-19 · todo-task — T-086 planned (layout-toggle icon → two-pane glyph)
+- Requirement: update the horizontal/vertical layout-toggle icon. Clarified → **two-pane split glyph** (two stacked panes while horizontal = switch-to-vertical; two side-by-side panes while vertical = switch-to-horizontal; keeps D-001 D5 target-mode convention). Right-sized to ONE reviewed task (pure Controls.xaml GeometryGroup swap, no VM/logic). serves G-032. Ready to proceed.
