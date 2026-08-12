@@ -9,6 +9,7 @@ using VideoSplitJoiner.Core.Join;
 using VideoSplitJoiner.Core.Media;
 using VideoSplitJoiner.Core.Split;
 using VideoSplitJoiner.Core.Thumbnails;
+using VideoSplitJoiner.Core.Waveform;
 
 namespace VideoSplitJoiner.App.ViewModels;
 
@@ -66,6 +67,12 @@ public sealed class MainViewModel : ObservableObject
         // player VM, which debounces hover + shows the popup.
         var thumbnailService = new FfmpegThumbnailService(ffmpegRunner);
 
+        // T-084/D-002: the audio-waveform source — a separate ffmpeg CLI pass that extracts a downsampled
+        // mono PCM temp file and reduces it to a normalized peak array (own per-file LRU cache), built over
+        // the same runner as the thumbnail/split services. Threaded into the Split screen so LoadAsync can
+        // extract the wave in the background; a null-audio / failed extraction simply hides the band.
+        var waveformService = new FfmpegWaveformService(ffmpegRunner);
+
         // Cross-session folder memory (T-038) — one shared file-backed store so both screens read/write
         // the same %APPDATA%/VideoSplitJoiner/settings.json (last input + last output folders). The same
         // store also carries the D-001 layout mode + per-axis split ratios (T-081).
@@ -77,7 +84,7 @@ public sealed class MainViewModel : ObservableObject
 
         // The in-app preview player is FFME-backed (FfmeMediaPlayer, decodes via ffmpeg); PlayerView
         // attaches its FFME MediaElement on Loaded. Unattached here, so construction stays render-free.
-        Split = new SplitViewModel(probe, splitEngine, new FfmeMediaPlayer(), settings, thumbnailService);
+        Split = new SplitViewModel(probe, splitEngine, new FfmeMediaPlayer(), settings, thumbnailService, waveformService);
         Join = new JoinViewModel(joinEngine, probe, settings);
 
         ToggleLayoutCommand = new RelayCommand(ToggleLayout);

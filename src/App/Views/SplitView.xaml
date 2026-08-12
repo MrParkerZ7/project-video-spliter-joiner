@@ -60,8 +60,9 @@
                 <RowDefinition Height="*" MinHeight="140" />
                 <!-- Row 1: drag handle to resize the preview vs the timeline below -->
                 <RowDefinition Height="Auto" />
-                <!-- Row 2: timeline overlay -->
-                <RowDefinition Height="Auto" MinHeight="80" />
+                <!-- Row 2: timeline overlay — wave band (T-084, ~48px, shown only with audio) +
+                     34px track + legend; MinHeight lifted so the fused unit is never clipped. -->
+                <RowDefinition Height="Auto" MinHeight="130" />
             </Grid.RowDefinitions>
 
             <!-- In-app video preview (T-012), user-resizable (T-027) -->

@@ -31,6 +31,8 @@ public sealed class TimelineViewModel : ObservableObject
     {
         _owner = owner ?? throw new ArgumentNullException(nameof(owner));
 
+        Waveform = new WaveformViewModel();
+
         _owner.Markers.CollectionChanged += OnCollectionChanged;
         _owner.Player.PropertyChanged += OnPlayerChanged;
 
@@ -58,6 +60,16 @@ public sealed class TimelineViewModel : ObservableObject
 
     /// <summary>True once a file is loaded and the player duration is known — gates track clicks.</summary>
     public bool HasFile => _owner.HasFile;
+
+    /// <summary>
+    /// The audio waveform band drawn ABOVE the <c>Track</c> (T-084 / D-002). Shares this timeline's
+    /// exact <c>x = time/duration · width</c> coordinate system so a peak's horizontal position is the
+    /// same moment as the playhead + marker ticks below it. Populated in the background from the Core
+    /// waveform service by the owning <see cref="SplitViewModel"/>; the <c>TimelineView</c> code-behind
+    /// reads its <see cref="WaveformViewModel.Peaks"/> to render the filled wave, and hides the band
+    /// when <see cref="WaveformViewModel.HasAudio"/> is false.
+    /// </summary>
+    public WaveformViewModel Waveform { get; }
 
     // ---- Commands ---------------------------------------------------------------------------
 

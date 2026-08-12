@@ -2,7 +2,29 @@
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
     <StackPanel>
-        <!-- The track: fixed-height strip; ticks + playhead are drawn onto Track in code-behind. -->
+        <!-- ===== Audio waveform band (T-084 / D-002) — drawn ABOVE the Track, sharing its exact
+             width + x = time/duration · width mapping. Collapsed when the loaded file has no audio
+             (Waveform.HasAudio false). The wave itself + a full-height playhead/marker overlay are
+             drawn onto the Wave canvas in code-behind; a click here seeks via the SAME OnTrackClicked
+             path so the wave + track are one fused audio+timeline unit. -->
+        <Border x:Name="WaveBand"
+                BorderBrush="{StaticResource BorderBrush}"
+                BorderThickness="1,1,1,0"
+                Background="{StaticResource Surface1Brush}"
+                CornerRadius="6,6,0,0"
+                Height="48"
+                Cursor="Hand"
+                ToolTip="Audio waveform — click to seek; the playhead + cut markers line up with the timeline below.">
+            <Canvas x:Name="Wave"
+                    ClipToBounds="True"
+                    Background="Transparent"
+                    SizeChanged="OnWaveSizeChanged"
+                    MouseLeftButtonUp="OnTrackClicked" />
+        </Border>
+
+        <!-- The track: fixed-height strip; ticks + playhead are drawn onto Track in code-behind.
+             When the wave band is visible its bottom corners square up against the track (the wave
+             border above already drops its bottom edge) so the two read as one seamless unit. -->
         <Border BorderBrush="{StaticResource BorderBrush}"
                 BorderThickness="1"
                 Background="{StaticResource Surface2Brush}"

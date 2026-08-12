@@ -14,6 +14,7 @@ using VideoSplitJoiner.Core.Ffmpeg;
 using VideoSplitJoiner.Core.Media;
 using VideoSplitJoiner.Core.Split;
 using VideoSplitJoiner.Core.Thumbnails;
+using VideoSplitJoiner.Core.Waveform;
 
 namespace VideoSplitJoiner.App.ViewModels;
 
@@ -32,6 +33,15 @@ public sealed class SplitViewModel : ObservableObject
     private readonly IMediaProbe _probe;
     private readonly ISplitEngine _splitEngine;
     private readonly IAppSettings _settings;
+    private readonly IWaveformService _waveforms;
+
+    // Number of waveform columns (peak buckets) requested from the Core service (D-002: ~1500–2000).
+    // Re-bucketed to the actual pixel width by the view; this is the extraction resolution.
+    private const int WaveformBuckets = 1800;
+
+    // Cancels the previous file's background waveform extraction when a new file is loaded / Clear is
+    // pressed, so a stale extraction result can never overwrite a newer file's waveform.
+    private CancellationTokenSource? _waveformCts;
 
     private string? _inputPath;
     private long _inputSizeBytes;
@@ -76,17 +86,26 @@ public sealed class SplitViewModel : ObservableObject
     /// opened in the preview. <paramref name="settings"/> is the cross-session folder memory (T-038):
     /// the composition root shares the real <see cref="AppSettings"/>, tests pass a fake; when omitted
     /// a real file-backed store is used so existing constructions keep working.
+    /// <paramref name="waveforms"/> is the Core audio-waveform source (T-084): the composition root
+    /// passes the real <see cref="FfmpegWaveformService"/>, tests pass a fake; when omitted the inert
+    /// <see cref="NullWaveformService"/> is used so the band simply stays hidden.
     /// </summary>
     public SplitViewModel(
         IMediaProbe probe,
         ISplitEngine splitEngine,
         IMediaPlayer? player = null,
         IAppSettings? settings = null,
-        IThumbnailService? thumbnails = null)
+        IThumbnailService? thumbnails = null,
+        IWaveformService? waveforms = null)
     {
         _probe = probe ?? throw new ArgumentNullException(nameof(probe));
         _splitEngine = splitEngine ?? throw new ArgumentNullException(nameof(splitEngine));
         _settings = settings ?? new AppSettings();
+
+        // T-084: the audio-waveform source (Core, ffmpeg-backed). A null service falls back to the
+        // inert NullWaveformService so existing constructions / tests behave as no-audio (band hidden),
+        // mirroring the NullThumbnailService default above.
+        _waveforms = waveforms ?? NullWaveformService.Instance;
 
         // T-061: OutputDir is NOT seeded from a remembered folder anymore. It stays empty until a
         // file is loaded, at which point LoadAsync re-anchors it to that file's folder (and resets it
@@ -356,6 +375,13 @@ public sealed class SplitViewModel : ObservableObject
     /// </summary>
     public TimelineViewModel Timeline { get; }
 
+    /// <summary>
+    /// The audio-waveform band VM (T-084 / D-002) — Peaks / HasAudio / IsLoading — drawn above the
+    /// timeline Track. Owned by <see cref="Timeline"/> (so the single <c>TimelineView</c> DataContext
+    /// reaches both), surfaced here for the load/clear background wiring below.
+    /// </summary>
+    public WaveformViewModel Waveform => Timeline.Waveform;
+
     /// <summary>True once a file is loaded (gates marker actions).</summary>
     public bool HasFile => InputPath is not null;
 
@@ -448,6 +474,10 @@ public sealed class SplitViewModel : ObservableObject
         StatusText = null;
         MediaInfo? loadedInfo = null;
 
+        // T-084: remember the OUTGOING file so its waveform temp PCM can be swept when the new file's
+        // extraction starts (a load-over-load without an explicit Clear must not leak the prior cache).
+        var previousInput = _inputPath;
+
         // Route the load through Operation so a bad file yields a friendly error + details expander
         // exactly like a run does. T-030: the PROBE is now the only gating async step — the
         // keyframe scan no longer blocks the load; it runs in the background after this returns.
@@ -528,6 +558,10 @@ public sealed class SplitViewModel : ObservableObject
         // Now index keyframes IN THE BACKGROUND (T-030). Cancel any previous file's index so a
         // stale result can't overwrite this file's keyframes, then start a fresh one.
         StartKeyframeIndex(path);
+
+        // T-084: extract the audio waveform IN THE BACKGROUND too — parallel to the keyframe scan and
+        // NEVER blocking the load/preview. Cancels + sweeps the prior file's extraction, stale-guarded.
+        StartWaveformExtraction(path, previousInput);
     }
 
     /// <summary>
@@ -649,6 +683,64 @@ public sealed class SplitViewModel : ObservableObject
         {
             KeyframeWarning = null;
         }
+    }
+
+    // ---- Waveform (T-084) -------------------------------------------------------------------
+
+    /// <summary>
+    /// Cancel + sweep any in-flight background waveform extraction, then start a fresh one for
+    /// <paramref name="path"/> (T-084 / D-002). Runs the ffmpeg peak extraction OFF the load path —
+    /// parallel to the keyframe scan, never blocking the preview. Cancellable + stale-guarded exactly
+    /// like <see cref="StartKeyframeIndex"/>: a newer load cancels the prior extraction's CTS, sweeps
+    /// its temp PCM, and only a result whose CTS is still current is applied. A non-null peak array →
+    /// <see cref="WaveformViewModel.ApplyPeaks"/> (band drawn); a null result (no audio / best-effort
+    /// failure) → the band stays hidden. Best-effort: the service never throws.
+    /// </summary>
+    private void StartWaveformExtraction(string path, string? previousInput)
+    {
+        // Cancel the previous file's extraction (stale-result guard).
+        _waveformCts?.Cancel();
+        _waveformCts?.Dispose();
+        _waveformCts = null;
+
+        // Sweep the OUTGOING file's temp PCM so a load-over-load (no Clear) never leaks the prior cache.
+        if (!string.IsNullOrEmpty(previousInput) && !string.Equals(previousInput, path, StringComparison.Ordinal))
+        {
+            _waveforms.Clear(previousInput);
+        }
+
+        var cts = new CancellationTokenSource();
+        _waveformCts = cts;
+
+        // Enter the loading state (faint baseline, no stale wave from the previous file).
+        Waveform.BeginLoad();
+
+        // Marshal the resolved result back onto the captured context (the WPF dispatcher in the app;
+        // the test's pump under xUnit) so the VM state mutation is single-threaded — same pattern the
+        // keyframe scan uses. No context (xUnit default) → the default scheduler; the body only
+        // touches VM state, which those tests read after awaiting anyway.
+        var completionScheduler = SynchronizationContext.Current is not null
+            ? TaskScheduler.FromCurrentSynchronizationContext()
+            : TaskScheduler.Default;
+
+        var extractTask = _waveforms.GetPeaksAsync(path, WaveformBuckets, cts.Token);
+
+        _ = extractTask.ContinueWith(
+            t =>
+            {
+                // A newer load (or Clear) already superseded this extraction → drop the result silently.
+                if (!ReferenceEquals(_waveformCts, cts))
+                {
+                    return;
+                }
+
+                // RanToCompletion with a non-null array → draw; null / faulted / cancelled → hide.
+                var peaks = t.Status == TaskStatus.RanToCompletion ? t.Result : null;
+                Waveform.ApplyPeaks(peaks);
+            },
+            CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously,
+            completionScheduler);
     }
 
     // ---- Markers ----------------------------------------------------------------------------
@@ -1050,6 +1142,18 @@ public sealed class SplitViewModel : ObservableObject
         _keyframeIndexCts = null;
         _keyframeIndexTask = null;
         IsIndexingKeyframes = false;
+
+        // T-084: cancel the in-flight waveform extraction (nulling the CTS trips its staleness guard so
+        // a late result is dropped), sweep the current file's temp PCM, and hide/reset the band.
+        _waveformCts?.Cancel();
+        _waveformCts?.Dispose();
+        _waveformCts = null;
+        if (_inputPath is { } clearedInput)
+        {
+            _waveforms.Clear(clearedInput);
+        }
+
+        Waveform.Reset();
 
         // Wipe the loaded-file state. Clear markers/results BEFORE nulling InputPath so no derived
         // guard observes a half-cleared state; InputPath last flips HasFile → false and re-raises the
