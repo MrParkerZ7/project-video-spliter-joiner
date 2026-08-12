@@ -15,6 +15,13 @@ re-encode — the player only previews; every cut continues to keyframe-snap thr
 
 ### Added
 
+- **Split tool-panel 50/50 layout (G-035, implements design D-003)** — the Split screen's tool panel is now a
+  **bounded 50/50 star-row layout**: the **Cut markers** list and the **Parts to export** list each take ~half of
+  the panel's height and grow with the window, and each scrolls internally when it overflows its half. "Add cut at
+  playhead" now shares **one wrapping row** with the POSITION time field + "Add at time" (both add gestures on a
+  single line that wraps gracefully when narrow), and **Parts to export is full-width** below the markers. The Run
+  button stays reachable on short windows (the lists' internal scroll absorbs overflow), and the split is
+  axis-agnostic so it works in both horizontal and vertical (D-001) modes.
 - **Audio waveform above the timeline (G-033, implements design D-002)** — the Split screen now shows the
   loaded video's **audio waveform** as a band above the timeline, aligned to the same time axis, so you can
   *see* speech vs silence and place cut points on natural boundaries. It's **vector-drawn + themed**, and
