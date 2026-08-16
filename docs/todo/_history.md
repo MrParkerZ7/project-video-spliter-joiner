@@ -519,3 +519,6 @@
 
 ## 2026-08-13 · todo-task — T-092 planned ("Add cut at playhead" extra-highlight style)
 - The primary cut gesture renders in the plain default button style (surface grey) — doesn't read as the main action. Plan: an "extra highlight" treatment (gold AccentBrush fill + dark accent text + bolder + larger + a cut/plus icon + a subtle gold glow/elevation), distinctly more prominent than a normal button. Applied as a new keyed style (e.g. HeroButton); tokens only, no VM change. Tunable after review. Ready.
+
+## 2026-08-13 · T-092 done — "Add cut at playhead" hero-button style
+- **T-092 done** (`630e545`): new keyed HeroButton style (BasedOn AccentButton) — gold fill + dark text + Bold + font 14 + padding 16,8 + a ✚ vector-Path icon + a soft gold DropShadow glow (AccentColor, 0.35, blur 8, depth 0); hover→AccentHoverBrush; disabled fades the glow with the button. Moved to its own line above the POSITION row (too prominent for the shared WrapPanel). Tokens only, command/tooltip intact. 597/597.
