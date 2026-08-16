@@ -71,9 +71,14 @@ public sealed class SplitEngine : ISplitEngine
         ValidateRequestShape(req);
 
         // T-044: entering the prepare phase — probe + cut-point planning/snapping.
-        status?.Report(new OperationStatus("Preparing"));
+        // T-093: enrich the detail so the Preparing stage reads "Preparing — scanning keyframes…"
+        // rather than a bare "Preparing…". No numeric fraction is reported here, so the operation VM
+        // keeps IsIndeterminate = true and the bar shows the busy pulse (never a frozen 0%).
+        status?.Report(new OperationStatus("Preparing", "scanning keyframes…"));
 
         // --- Probe the input for duration + keyframes (via T-003, which uses T-002). ---
+        // T-093: ProbeAsync is a metadata-only query (-show_streams/-show_format, no packet or frame
+        // decode) so it is cheap; it is NOT the heavy cost this ticket targets and is left as-is.
         var probeResult = await _probe.ProbeAsync(req.InputPath, ct).ConfigureAwait(false);
         if (probeResult is not ProbeResult.ProbeSucceeded ok)
         {
@@ -82,6 +87,12 @@ public sealed class SplitEngine : ISplitEngine
         }
 
         var duration = ok.Info.Duration;
+
+        // T-093: the heavy keyframe scan. With MediaProbe's in-flight dedup + shared cache (see
+        // MediaProbe.GetKeyframesAsync), the load-time background scan the UI already kicked off is
+        // REUSED here — this call awaits that running scan or hits its cached result rather than
+        // launching a SECOND full ffprobe pass. Zero redundant scan when the UI already has (or is
+        // computing) the keyframes.
         var keyframes = await _probe.GetKeyframesAsync(req.InputPath, ct).ConfigureAwait(false);
         var averageGop = _probe.AverageGop(keyframes);
 

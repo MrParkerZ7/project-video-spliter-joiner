@@ -990,6 +990,11 @@ public sealed class SplitViewModel : ObservableObject
         _activePartIndex = 0;
         _lastPartFraction = -1d;
 
+        // T-093: seed the run's total duration so the ETA can fall back to a duration-based estimate
+        // before ffmpeg reports a usable fraction — the cure for "estimating…" sitting stuck through a
+        // sparse -c copy pass. Best-effort: a null/zero duration just leaves the fallback disabled.
+        Operation.SeedEstimatedDuration(Info?.Duration);
+
         await Operation.RunWithResultAsync(
             work: async (progress, status, partProgress, ct) =>
             {

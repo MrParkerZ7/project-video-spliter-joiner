@@ -52,6 +52,15 @@ public sealed class MediaProbe : IMediaProbe
     private readonly IFfprobeRunner _ffprobe;
     private readonly ConcurrentDictionary<string, IReadOnlyList<TimeSpan>> _keyframeCache = new();
 
+    // T-093: in-flight dedup. A keyframe scan for a given file (keyed exactly like _keyframeCache)
+    // registers its running Task here so a SECOND concurrent caller for the same key awaits the
+    // SAME scan instead of launching a duplicate ffprobe pass. The shared scan runs on an
+    // INDEPENDENT token (not any one caller's CT), so a caller that cancels its own await can never
+    // cancel the shared scan for the other awaiters (cancellation-safety). The entry is removed on
+    // completion — success OR failure — and only SUCCESSFUL results are promoted to _keyframeCache,
+    // so a failed/cancelled shared scan leaves nothing behind and a later retry re-scans cleanly.
+    private readonly ConcurrentDictionary<string, Task<IReadOnlyList<TimeSpan>>> _inFlightScans = new();
+
     /// <summary>
     /// Which scan path the LAST <see cref="GetKeyframesAsync"/> call actually used. Internal —
     /// exposed only so tests can assert the fast packet path ran (and that the fallback fires when
@@ -156,32 +165,69 @@ public sealed class MediaProbe : IMediaProbe
             return cached;
         }
 
-        // Primary (T-031): read keyframe PACKETS at the demux level — no frame decoding, so the
-        // scan is fast even on 4K clips. Fall back to the frame-decode scan if the packet query
-        // fails or yields zero keyframes, so correctness never regresses.
-        IReadOnlyList<TimeSpan>? result = null;
+        // T-093: in-flight dedup. Get (or start) the ONE shared scan for this key. GetOrAdd's factory
+        // starts the scan on an INDEPENDENT token so no single caller's CT can tear it down for the
+        // others; this caller then awaits it through its OWN CT via WaitAsync, so cancelling here
+        // throws for THIS caller only and leaves the shared scan running for the rest.
+        var scan = _inFlightScans.GetOrAdd(cacheKey, key => RunSharedScanAsync(path, key));
+
+        // WaitAsync observes the shared task through this caller's CT: a cancellation here throws an
+        // OperationCanceledException for THIS awaiter without cancelling `scan` itself. When the CT is
+        // already default/None this is effectively a straight await.
+        return await scan.WaitAsync(ct).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// The single shared keyframe scan for one cache key (T-093). Runs on its OWN token
+    /// (<see cref="CancellationToken.None"/>) so it is not tied to any individual caller's
+    /// cancellation, promotes a SUCCESSFUL result into <see cref="_keyframeCache"/>, and ALWAYS
+    /// removes its <see cref="_inFlightScans"/> entry on completion — so a failed/cancelled scan
+    /// caches nothing and a later call re-scans from scratch.
+    /// </summary>
+    private async Task<IReadOnlyList<TimeSpan>> RunSharedScanAsync(string path, string cacheKey)
+    {
+        // Yield so GetOrAdd finishes registering this Task before the scan body runs — the first
+        // synchronous stretch then can't complete-and-remove the entry before a concurrent caller
+        // observes it (keeps the dedup window open for the second caller).
+        await Task.Yield();
+
         try
         {
-            var packetKeyframes = await ScanKeyframesFromPacketsAsync(path, ct).ConfigureAwait(false);
-            if (packetKeyframes.Count > 0)
+            // Primary (T-031): read keyframe PACKETS at the demux level — no frame decoding, so the
+            // scan is fast even on 4K clips. Fall back to the frame-decode scan if the packet query
+            // fails or yields zero keyframes, so correctness never regresses. The shared scan is not
+            // bound to a caller CT (CancellationToken.None) — see the dedup note on _inFlightScans.
+            IReadOnlyList<TimeSpan>? result = null;
+            try
             {
-                LastScanPath = KeyframeScanPath.Packets;
-                result = packetKeyframes;
+                var packetKeyframes = await ScanKeyframesFromPacketsAsync(path, CancellationToken.None).ConfigureAwait(false);
+                if (packetKeyframes.Count > 0)
+                {
+                    LastScanPath = KeyframeScanPath.Packets;
+                    result = packetKeyframes;
+                }
             }
-        }
-        catch (FfprobeException)
-        {
-            // Packet query failed outright — fall through to the frame scan below.
-        }
+            catch (FfprobeException)
+            {
+                // Packet query failed outright — fall through to the frame scan below.
+            }
 
-        if (result is null)
-        {
-            result = await ScanKeyframesFromFramesAsync(path, ct).ConfigureAwait(false);
-            LastScanPath = KeyframeScanPath.Frames;
-        }
+            if (result is null)
+            {
+                result = await ScanKeyframesFromFramesAsync(path, CancellationToken.None).ConfigureAwait(false);
+                LastScanPath = KeyframeScanPath.Frames;
+            }
 
-        _keyframeCache[cacheKey] = result;
-        return result;
+            // Success only: promote to the durable cache so repeat calls are cheap.
+            _keyframeCache[cacheKey] = result;
+            return result;
+        }
+        finally
+        {
+            // Always drop the in-flight entry (success OR failure). On success the result already
+            // lives in _keyframeCache; on failure nothing is cached, so a retry starts a fresh scan.
+            _inFlightScans.TryRemove(cacheKey, out _);
+        }
     }
 
     /// <summary>

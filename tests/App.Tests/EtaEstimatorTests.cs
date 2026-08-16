@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using FluentAssertions;
 using VideoSplitJoiner.App.ViewModels;
 using Xunit;
@@ -40,13 +41,28 @@ public sealed class EtaEstimatorTests
     // ---- Edge cases --------------------------------------------------------------------------
 
     [Fact]
-    public void Update_FractionTooEarly_ReturnsNull_FormatsAsEstimating()
+    public void Update_FractionZeroWithNoDurationSeed_ReturnsNull_FormatsAsEstimating()
     {
         var eta = new EtaEstimator();
 
-        eta.Update(TimeSpan.FromSeconds(5), 0.0).Should().BeNull("fraction 0 is too early to estimate");
-        eta.Update(TimeSpan.FromSeconds(5), 0.005).Should().BeNull("≤ ~0.01 is too early");
+        // Fraction 0 with no duration seeded → nothing to divide by, no fallback → "estimating…".
+        eta.Update(TimeSpan.FromSeconds(5), 0.0).Should().BeNull("fraction 0 with no duration seed is unknowable");
+        eta.Update(TimeSpan.FromSeconds(5), double.NaN).Should().BeNull("a NaN fraction with no seed is unknowable");
         EtaEstimator.FormatEta(null).Should().Be("estimating…");
+    }
+
+    [Fact]
+    public void Update_TinyPositiveFraction_NowSeedsAnEstimate_NoLongerStuckEstimating()
+    {
+        // T-093: MinUsableFraction lowered to a tiny epsilon so the FIRST real (small) fraction seeds a
+        // fraction-based estimate instead of being discarded as "too early" (the stuck-"estimating…" bug).
+        var eta = new EtaEstimator();
+
+        var remaining = eta.Update(TimeSpan.FromSeconds(5), 0.005);
+
+        remaining.Should().NotBeNull("a small but real fraction now yields an estimate");
+        // 5s at 0.005 → 5 × 0.995/0.005 = 995s.
+        remaining!.Value.TotalSeconds.Should().BeApproximately(995d, 1d);
     }
 
     [Fact]
@@ -112,6 +128,86 @@ public sealed class EtaEstimatorTests
 
         // After reset, the next usable sample seeds fresh (exact math again).
         eta.Update(TimeSpan.FromSeconds(10), 0.25)!.Value.TotalSeconds.Should().BeApproximately(30d, 0.001);
+    }
+
+    // ---- T-093: duration-based fallback (never "estimating…" forever) ------------------------
+
+    [Fact]
+    public void DurationFallback_RunningWithNoUsableFraction_ConvergesToDecreasingEstimate()
+    {
+        // A sparse -c copy pass: the fraction sits at ~0 for the whole run. With a seeded duration the
+        // estimator must fall back to a duration-based estimate that is non-null and DECREASES with
+        // elapsed — instead of returning null ("estimating…") the entire run.
+        var eta = new EtaEstimator();
+        eta.SeedDuration(TimeSpan.FromSeconds(40));
+
+        var first = eta.Update(TimeSpan.FromSeconds(2), 0.0);
+        var later = eta.Update(TimeSpan.FromSeconds(10), 0.0);
+
+        first.Should().NotBeNull("a running op with a seeded duration yields a fallback estimate, not null");
+        later.Should().NotBeNull();
+        later!.Value.Should().BeLessThan(first!.Value, "the fallback estimate shrinks as elapsed grows");
+        EtaEstimator.FormatEta(later).Should().NotBe("estimating…", "the label is a real ETA, never stuck estimating");
+    }
+
+    [Fact]
+    public void DurationFallback_ConvergesWithinAFewSamples_NotNullTheWholeRun()
+    {
+        // Acceptance (c): with only sparse near-zero fractions, the estimate must become non-null within
+        // a few samples (here: the very first running sample) and stay non-null, given a seeded duration.
+        var eta = new EtaEstimator();
+        eta.SeedDuration(TimeSpan.FromSeconds(30));
+
+        var estimates = new List<TimeSpan?>();
+        for (var i = 1; i <= 5; i++)
+        {
+            estimates.Add(eta.Update(TimeSpan.FromSeconds(i), 0.0));
+        }
+
+        estimates.Should().OnlyContain(e => e != null, "the seeded-duration fallback never leaves the ETA null while running");
+    }
+
+    [Fact]
+    public void DurationFallback_IsSupersededByRealFraction_WhenItArrives()
+    {
+        // The duration fallback primes an estimate; once a real usable fraction arrives, the accurate
+        // fraction-based number takes over (seeded on that first usable fraction, then EMA-blended).
+        var eta = new EtaEstimator();
+        eta.SeedDuration(TimeSpan.FromSeconds(100));
+
+        // Fallback while fraction is ~0.
+        eta.Update(TimeSpan.FromSeconds(1), 0.0).Should().NotBeNull();
+
+        // A real fraction: 10s at 0.5 → 10s remaining (fraction-based). This must dominate the ~99s
+        // the crude duration fallback would have implied.
+        var real = eta.Update(TimeSpan.FromSeconds(10), 0.5);
+
+        real.Should().NotBeNull();
+        real!.Value.TotalSeconds.Should().BeApproximately(10d, 0.001,
+            "the first usable fraction seeds the accurate estimate, replacing the crude fallback");
+    }
+
+    [Fact]
+    public void DurationFallback_NotSeeded_StaysNullUntilFraction()
+    {
+        // No SeedDuration call → fraction-only behaviour: null until a usable fraction arrives.
+        var eta = new EtaEstimator();
+
+        eta.Update(TimeSpan.FromSeconds(5), 0.0).Should().BeNull("no duration seed → no fallback");
+        eta.Update(TimeSpan.FromSeconds(10), 0.25)!.Value.TotalSeconds.Should().BeApproximately(30d, 0.001);
+    }
+
+    [Fact]
+    public void Reset_ClearsDurationSeed_AndFractionState()
+    {
+        var eta = new EtaEstimator();
+        eta.SeedDuration(TimeSpan.FromSeconds(50));
+        eta.Update(TimeSpan.FromSeconds(2), 0.0).Should().NotBeNull("seeded fallback active");
+
+        eta.Reset();
+
+        // After reset the duration seed is gone → fraction-only again (null on a 0 fraction).
+        eta.Update(TimeSpan.FromSeconds(2), 0.0).Should().BeNull("reset clears the duration seed");
     }
 
     // ---- Formatting --------------------------------------------------------------------------

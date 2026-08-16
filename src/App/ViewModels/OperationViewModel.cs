@@ -31,9 +31,29 @@ public sealed class OperationViewModel : ObservableObject
     private readonly Stopwatch _stopwatch = new();
     private readonly EtaEstimator _eta = new();
 
+    // T-093: optional total run duration the producing VM (Split/Join) sets BEFORE calling a Run*
+    // method — seeds the estimator's duration-based fallback so the ETA converges to a decreasing
+    // number even before ffmpeg reports a usable fraction (the "estimating… forever" cure). Consumed
+    // once at BeginRun and cleared afterward so it never leaks into the next run.
+    private TimeSpan? _pendingEstimatedDuration;
+
     public OperationViewModel()
     {
         CancelCommand = new RelayCommand(Cancel, () => CanCancel);
+    }
+
+    /// <summary>
+    /// T-093: seed the total run duration for the NEXT run so the ETA can fall back to a
+    /// duration-based estimate before ffmpeg reports a usable fraction (avoids "estimating…" for the
+    /// whole run on a sparse <c>-c copy</c>). Call this immediately BEFORE a <c>Run*</c> method; the
+    /// value is applied once at <see cref="BeginRun(string, out IProgress{double}, out CancellationToken)"/>
+    /// and then cleared. A non-positive / null duration simply leaves the fallback disabled
+    /// (fraction-only behaviour). Purely additive — it never changes what a fraction-based estimate
+    /// produces once real progress arrives.
+    /// </summary>
+    public void SeedEstimatedDuration(TimeSpan? totalDuration)
+    {
+        _pendingEstimatedDuration = totalDuration is { } d && d > TimeSpan.Zero ? d : null;
     }
 
     /// <summary>Current lifecycle state.</summary>
@@ -397,9 +417,15 @@ public sealed class OperationViewModel : ObservableObject
         // T-045: start timing this run and prime the estimator. State is flipped to Running BEFORE
         // touching ETA so the "estimating…" seed and any progress-driven UpdateEta see IsRunning=true.
         _eta.Reset();
+        // T-093: hand the estimator this run's total duration (if the caller seeded one) so its
+        // duration-based fallback can produce a converging estimate before a usable fraction arrives.
+        _eta.SeedDuration(_pendingEstimatedDuration ?? TimeSpan.Zero);
+        _pendingEstimatedDuration = null;
         _stopwatch.Restart();
         State = OperationState.Running;
-        // No usable fraction yet → show "estimating…" rather than nothing or a fake number.
+        // No usable fraction yet → show "estimating…" rather than nothing or a fake number. Once the
+        // first progress sample arrives the estimator (fraction-based, or duration-based fallback)
+        // replaces this with a real "~Ns left".
         EtaText = EtaEstimator.FormatEta(null);
 
         // Progress<T> captures the current SynchronizationContext (the UI thread in a real app,
@@ -415,6 +441,10 @@ public sealed class OperationViewModel : ObservableObject
     /// Format a stage transition into the one-line status label: "Stage… (detail)" — e.g.
     /// "Splitting… (4 parts)", "Preparing…", "Finalizing…". A "Done" stage collapses to a plain
     /// "Done" (no ellipsis) since it marks completion rather than ongoing work.
+    /// <para>T-093: when the detail is itself an ongoing-action phrase ending in an ellipsis (e.g.
+    /// "scanning keyframes…"), render it as "Stage — detail" instead of "Stage… (detail)" so the
+    /// active sub-status reads cleanly ("Preparing — scanning keyframes…") rather than doubling the
+    /// ellipsis and wrapping in parentheses.</para>
     /// </summary>
     private static string FormatStatus(OperationStatus s)
     {
@@ -423,11 +453,22 @@ public sealed class OperationViewModel : ObservableObject
             return string.Empty;
         }
 
-        var stage = string.Equals(s.Stage, "Done", StringComparison.Ordinal)
-            ? "Done"
-            : s.Stage + "…";
+        var isDone = string.Equals(s.Stage, "Done", StringComparison.Ordinal);
 
-        return string.IsNullOrWhiteSpace(s.Detail) ? stage : $"{stage} ({s.Detail})";
+        if (string.IsNullOrWhiteSpace(s.Detail))
+        {
+            return isDone ? "Done" : s.Stage + "…";
+        }
+
+        // A detail that is itself an "…ing…" progress phrase reads as a sub-status: "Stage — detail".
+        var detail = s.Detail.TrimEnd();
+        if (!isDone && detail.EndsWith('…'))
+        {
+            return $"{s.Stage} — {detail}";
+        }
+
+        var stage = isDone ? "Done" : s.Stage + "…";
+        return $"{stage} ({s.Detail})";
     }
 
     private void Complete()
