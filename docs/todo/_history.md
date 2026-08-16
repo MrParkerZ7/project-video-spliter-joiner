@@ -516,3 +516,6 @@
 ## 2026-08-13 · T-091 — mode-aware Cut markers / Parts split (fix the D-003 miss)
 - Miss: user's "share 50/50 on vertical" meant vertical MODE (side by side, 50/50 width), not the vertical axis. D-003 built always-stacked.
 - **T-091 done** (`3f9c143`, +4 → 597): nested OrientedSplitPanel for the two sections (FirstChild=Cut markers block, SecondChild=Parts block), IsVertical bound to the INVERSE of Main.IsVertical (new InverseBoolConverter) + 50/50 ratios both axes. → horizontal mode = stacked 50/50 height; vertical mode = side-by-side 50/50 width; live flip on toggle; inner splitter draggable. Outer panel/D-001 untouched; all bindings re-parented. Session-only 0.5 ratios (no settings churn).
+
+## 2026-08-13 · todo-task — T-092 planned ("Add cut at playhead" extra-highlight style)
+- The primary cut gesture renders in the plain default button style (surface grey) — doesn't read as the main action. Plan: an "extra highlight" treatment (gold AccentBrush fill + dark accent text + bolder + larger + a cut/plus icon + a subtle gold glow/elevation), distinctly more prominent than a normal button. Applied as a new keyed style (e.g. HeroButton); tokens only, no VM change. Tunable after review. Ready.
