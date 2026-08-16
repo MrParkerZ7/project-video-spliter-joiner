@@ -118,6 +118,32 @@
         </Setter>
     </Style>
 
+    <!-- HeroButton (keyed, T-092) — the "extra highlight" primary-gesture   -->
+    <!-- button, one notch beyond AccentButton. Inherits AccentButton's gold  -->
+    <!-- fill + dark accent text + hover→AccentHover + disabled fade, then    -->
+    <!-- adds prominence on FOUR axes (per the UI-Designer ≥2 rule):          -->
+    <!--   • size    — bigger padding (16,8) + font a touch larger than body  -->
+    <!--   • weight  — Bold (AccentButton is only SemiBold)                   -->
+    <!--   • ornament— caller puts a ✚ glyph + text in a StackPanel Content   -->
+    <!--   • elevation — a soft gold DropShadow (AccentColor, low opacity,    -->
+    <!--                  small blur, 0 depth) so it lifts off the panel.     -->
+    <!-- Tokens only (AccentColor via the shadow); no hardcoded hex. The      -->
+    <!-- shadow sits on the Style (not the template Border) so the disabled   -->
+    <!-- 0.45 opacity fades the glow with the button — stays legible + calm.  -->
+    <Style x:Key="HeroButton" TargetType="Button" BasedOn="{StaticResource AccentButton}">
+        <Setter Property="FontWeight" Value="Bold" />
+        <Setter Property="FontSize" Value="14" />
+        <Setter Property="Padding" Value="16,8" />
+        <Setter Property="Effect">
+            <Setter.Value>
+                <DropShadowEffect Color="{DynamicResource AccentColor}"
+                                  Opacity="0.35"
+                                  BlurRadius="8"
+                                  ShadowDepth="0" />
+            </Setter.Value>
+        </Setter>
+    </Style>
+
     <!-- ================================================================= -->
     <!-- TextBox (implicit) — dark surface, TextPrimary, rounded           -->
     <!-- ================================================================= -->

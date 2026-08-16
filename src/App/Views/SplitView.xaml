@@ -234,20 +234,43 @@
                                 <StackPanel Grid.Row="0">
                                     <TextBlock Text="Cut markers" Style="{StaticResource SectionHeader}" Margin="0,0,0,4" />
 
-                                    <!-- D1 · both add gestures on one wrapping line:
+                                    <!-- D1 · both add gestures for the Cut-markers section:
                                          PRIMARY (T-064) "Add cut at playhead" — drops a cut at the LIVE playhead each click, so
                                          "position the video, click Add, repeat" just works;
                                          SECONDARY (T-064) the typed POSITION field + "Add at time" — precise entry; the field
                                          auto-follows the playhead (NewMarkerPosition seeding), edit to override.
-                                         WrapPanel so the busy row (button + label + 86px field + button) wraps when narrow
-                                         and stays single-line when roomy. -->
+
+                                         T-092 · the PRIMARY gesture now uses the extra-highlight HeroButton (gold + Bold +
+                                         larger + ✚ icon + soft gold glow) and sits on ITS OWN LINE above the secondary row —
+                                         it grew too prominent to share the WrapPanel gracefully, and it IS the main action.
+                                         The secondary POSITION field + "Add at time" stay on the wrapping row below. -->
+                                    <Button Style="{StaticResource HeroButton}"
+                                            HorizontalAlignment="Left"
+                                            Margin="0,0,0,8"
+                                            ToolTip="Drop a cut at the preview player's current position (snaps to the nearest keyframe). Scrub, then click again to add the next cut."
+                                            Command="{Binding SetCutAtPlayheadCommand}">
+                                        <StackPanel Orientation="Horizontal">
+                                            <!-- ✚ add-cut glyph — 1px vector Path (crisp at 100%/150% DPI),
+                                                 strokes with the button's accent text foreground. -->
+                                            <Path Data="M6,0.5 L6,11.5 M0.5,6 L11.5,6"
+                                                  Stroke="{DynamicResource AccentTextBrush}"
+                                                  StrokeThickness="2"
+                                                  StrokeStartLineCap="Round"
+                                                  StrokeEndLineCap="Round"
+                                                  Width="12" Height="12"
+                                                  VerticalAlignment="Center"
+                                                  Margin="0,0,8,0"
+                                                  SnapsToDevicePixels="True"
+                                                  UseLayoutRounding="True" />
+                                            <TextBlock Text="Add cut at playhead"
+                                                       VerticalAlignment="Center"
+                                                       Foreground="{DynamicResource AccentTextBrush}" />
+                                        </StackPanel>
+                                    </Button>
+
+                                    <!-- Secondary add-by-time row: POSITION field + "Add at time".
+                                         WrapPanel so the label + 86px field + button wrap when narrow, single-line when roomy. -->
                                     <WrapPanel Orientation="Horizontal">
-                                        <Button Content="Add cut at playhead"
-                                                Padding="12,4"
-                                                Margin="0,0,8,4"
-                                                VerticalAlignment="Center"
-                                                ToolTip="Drop a cut at the preview player's current position (snaps to the nearest keyframe). Scrub, then click again to add the next cut."
-                                                Command="{Binding SetCutAtPlayheadCommand}" />
                                         <TextBlock Text="POSITION" Style="{StaticResource FieldLabel}" Margin="0,0,0,4" />
                                         <TextBox x:Name="PositionBox"
                                                  Width="86"
