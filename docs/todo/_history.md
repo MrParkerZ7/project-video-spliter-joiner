@@ -536,3 +536,6 @@
 - **D-004 confirmed** (open-questions resolved: outro apply-to-all = time-from-END; collision = AutoSuffix). Spec-seed skipped (no docs/specs/ in target).
 - **Auto-plan (todo-task D-004)** via workflow (5 fat-spec authors + completeness critic). Critic caught a T-095/T-096 duplication (both built the batch loop) → fixed: Core BulkTrimEngine (T-095) owns orchestration, T-096 VM DELEGATES to it; + added the missing keyframe-scan throttle (SemaphoreSlim(3)) to T-096; fixed 2 dep edges. Coverage verified complete.
 - **Epic G-036** (Build the Bulk Cut tab) + tasks **T-094..T-098** written. Critical path T-094→095→096→097→098. Only T-094 proceedable now. proceed-with: perfect-dev --auto-approve. Next: todo-next-all.
+
+## 2026-08-22 · G-036 drive — T-094 done
+- **T-094 done** (`dd3c562`, +11 → 618): Core KeptSegmentSelector.ResolveKeptIndex (runs real SplitPlanner.Plan, returns 1-based kept-middle index — 2 normally, 1 when intro snaps to ~0, SplitException if both collapse) + BuildKeptMiddleRequest ({name}_trimmed{ext}, SelectedSegmentIndices=[kept], same-folder). Purely additive, no existing file changed; end-to-end tests confirm one -c copy PerSegment (with/without -to). AutoSuffix collision left to T-095 (engine rejects pre-existing output; Overwrite=false default). T-095 now unblocked.
