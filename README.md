@@ -11,6 +11,12 @@ split/join engine can cut. **Loading is snappy** — the preview opens as soon a
 and its keyframe index builds in the background (via a fast demux-level scan), so you're never
 staring at a spinner before you can start.
 
+The app wears a **premium dark + gold theme** with a custom title bar and a **two-column layout** —
+a left visual column (preview player + timeline) beside a right tool panel (load, file info, cut
+markers, parts, output, Run) — laid out with the bundled **IBM Plex** typeface. Long operations
+report progress on the **Windows taskbar button** and in the window title, so a running split is
+never a silent window.
+
 ## Features
 
 - **Split** a video at one or more cut points. Each cut snaps to the nearest keyframe (so the
@@ -19,9 +25,21 @@ staring at a spinner before you can start.
   arrives — no waiting).
 - **Export only the parts you want** — after setting cuts, the Split screen lists the resulting parts
   (`Part 2 · 05:00–10:00 · 5:00`) with checkboxes and All / None. Only the checked parts are written,
-  so skipping parts of a long recording costs no time or disk, and the export stays lossless.
+  so skipping parts of a long recording costs no time or disk, and the export stays lossless. The Run
+  button reflects the selection ("Split 2 of 3 parts").
+- **Two-column layout with an IBM Plex look** — both screens split into a **left visual column** (the
+  preview player + timeline/scrubber) and a **right tool panel** (Load / Clear, file info, cut markers,
+  parts-to-export, output, Run) behind a **draggable column splitter**. The app ships the **IBM Plex
+  Mono / Sans** fonts and a token-driven **dark + gold** palette: an app header with a
+  "lossless · no re-encode" tagline, a gold **format badge** (`HEVC · MATROSKA`), a Split **file-info
+  card** (`container · duration · size`), and a Join **"Estimated result"** panel (total duration +
+  approximate size).
+- **Cut markers are ordered by time** — placing cuts out of order (a cut at 5:00, then one at 2:00)
+  still reads the "Cut markers" list top-to-bottom in time order. A marker placed while the keyframe
+  scan is still running settles into its correct time slot once its snap resolves.
 - **Clear / Clear all** — reset the Split screen (unload the file, blank the preview) or empty the
-  Join clip list with one button.
+  Join clip list with one button. Both are disabled while an operation is running so you can't wipe the
+  workspace mid-op.
 - **In-app video preview player + visual cut selection** — the loaded file plays right on the Split
   screen (play / pause / stop / **scrub**). Park the playhead and click **"Set cut point at
   playhead"**, or **click the timeline strip** under the player, to drop a cut visually; clicking a
@@ -30,6 +48,10 @@ staring at a spinner before you can start.
   **HEVC, MKV, and other exotic containers/codecs** that Windows' built-in codecs cannot. A file
   that still fails to preview shows a "preview unavailable, cut still works" banner and stays fully
   cuttable, but with FFmpeg decoding that banner is now rare.
+- **Hover-thumbnail scrubbing** — hover the player's scrub bar to see a small **frame preview at that
+  time**, following the cursor with an `mm:ss` label, so you can find a split point by sight without
+  moving the main playhead. Thumbnails are grabbed by a separate ffmpeg process and cached; a failed
+  grab simply shows nothing and never blocks.
 - **Full player controls** to land the exact split point — **skip** ±1s / ±5s / ±10s / ±20s / ±1m /
   ±5m / ±10m / ±20m, **frame-step** ±1 frame, **jump to start / end**, a **volume slider + mute**, and
   a **playback-speed** selector (0.25×–2×). The ±10m / ±20m skips make traversing long clips quick;
@@ -48,17 +70,36 @@ staring at a spinner before you can start.
 - Live **progress** with a **stage label** (Preparing → Splitting → Finalizing → Done for a split;
   Checking compatibility → Joining → Finalizing → Done for a join) and an **estimated time remaining**
   ("~1m 20s left") — the bar animates as a busy indicator until real progress arrives, so a run never
-  looks silent or stuck. Plus **cancel** and friendly **error** messages. Errors are **selectable** with a
-  **Copy error** button and an **Open log file** button; the full FFmpeg output (command, exit code,
-  timestamp, and complete stderr) is also saved to a per-run log under
-  `%LOCALAPPDATA%/VideoSplitJoiner/logs/`. A failed write for lack of space reports a clear
-  "not enough space" message rather than a cryptic FFmpeg warning.
+  looks silent or stuck.
+- **Per-part split progress** — splitting into N parts advances each row in "Parts to export"
+  **Pending → Writing (live %) → Done (✓)** as it's written, not just one overall bar (the active row
+  shows a gold live-fill, completed rows a green ✓).
+- **Taskbar-button progress + ETA in the title** — a running split/join shows a live progress fill on
+  the **Windows taskbar button** (green while running, indeterminate while preparing, red on failure,
+  clearing when done), and the **ETA + %** ride in the window title
+  (`"Splitting 45% · ~1m 20s — Video Split / Join"`), visible on taskbar hover / alt-tab.
+- **Clear operation outcomes** — the operation lifecycle now has four distinct surfaces so a finished
+  run is never invisible: **Running** (gold bar + status + ETA + Cancel), **Completed** (green ✓ + a
+  result line — "Split into 3 parts" / "Joined 4 clips → joined.mkv" — plus an **Open folder** button),
+  **Cancelled** (a muted note, not red), and **Failed** (the red error block). Exactly one shows at a
+  time and it resets on the next run / load / Clear.
+- Friendly **error** messages plus **cancel**. Errors are **selectable** with a **Copy error** button
+  and an **Open log file** button; the full FFmpeg output (command, exit code, timestamp, and complete
+  stderr) is also saved to a per-run log under `%LOCALAPPDATA%/VideoSplitJoiner/logs/`. A failed write
+  for lack of space reports a clear "not enough space" message rather than a cryptic FFmpeg warning.
+- **Crash safety net** — an unexpected error no longer makes the window vanish silently. A recoverable
+  UI-thread error shows a **friendly copyable dialog** (naming the saved log path, with the full detail
+  copied to your clipboard) and the app **stays open**; background and last-ditch crashes are logged to
+  `%LOCALAPPDATA%/VideoSplitJoiner/logs/` either way, so there is always a log to attach to a report.
 - **Unicode paths and `.ts` files** — files with non-ASCII paths (e.g. Japanese) and `.ts` (mpegts)
   sources split and join correctly; process output is decoded as UTF-8 so paths and error text never
   garble.
-- **Remembers your last folders** — the input file picker reopens at your last-used input folder and
-  the output directory defaults to the last one you used, persisted to
-  `%APPDATA%/VideoSplitJoiner/settings.json`.
+- **Output lands next to the source** — the split output directory **defaults to the loaded file's
+  folder** and **re-anchors on every new load** (drag or picker), so exports land beside the source by
+  default. It stays fully editable for the one-off case; a manual change is discarded the next time you
+  load a file.
+- **Remembers your last input folder** — the input file picker reopens at your last-used input folder,
+  persisted to `%APPDATA%/VideoSplitJoiner/settings.json`.
 
 ## Install & run (packaged release)
 
@@ -121,8 +162,14 @@ falls back to the "preview unavailable" banner.
 
 ## Documentation
 
-- [User Guide](docs/USER_GUIDE.md) — step-by-step for Split, the preview player, and Join.
-- [Architecture](docs/ARCHITECTURE.md) — layering, engine contracts, binary resolution, MVVM shape.
+- [User Guide](docs/USER_GUIDE.md) — step-by-step for Split, the preview player, hover-thumbnail
+  scrubbing, per-part / taskbar progress, operation outcomes, and Join.
+- [Architecture](docs/ARCHITECTURE.md) — layering, engine contracts, binary resolution, MVVM shape,
+  and the theming / two-column-layout / progress subsystems.
+- [Architecture decisions (ADRs)](docs/adr/) — the "why" behind key choices (e.g.
+  [FFME over MediaElement](docs/adr/0004-ffme-over-mediaelement.md)).
+- [Dev setup / build from source](#build-from-source) — the .NET 8 SDK path, the
+  `packaging/fetch-ffmpeg-shared.ps1` bootstrap, and `packaging/package.ps1` for the distributable.
 - [Changelog](CHANGELOG.md) — release history.
 - [Third-party notices](THIRD-PARTY-NOTICES.md) — FFmpeg attribution + licensing caveat.
 

@@ -15,6 +15,22 @@ re-encode — the player only previews; every cut continues to keyframe-snap thr
 
 ### Added
 
+- **Bulk Cut tab — batch intro/outro trim (G-036, implements design D-004)** — a **third tab** batch-trims
+  the **intro** (and an optional **outro**) off many videos at once, keeping the middle of each. Add videos
+  (multi-select or drag-drop, deduped by path) into a scrollable list; on each row's **dual-handle scrub bar**
+  mark the **gold intro-end** handle and an optional **blue outro-start** handle (the kept middle glows gold),
+  or set one row and **"apply cut points to all"** — the **outro is measured from the end**, so same-series
+  episodes of different lengths line up, and each target re-snaps + re-validates (rows the copy invalidates are
+  **reported, not silently dropped**). Every cut is **stream-copy + keyframe-snapped**, exactly like Split.
+  Output is `<name>_trimmed<ext>` **beside each source**; **originals are never touched**; a name collision
+  **auto-suffixes** (`_trimmed_2`, `_3`, …) unless you tick **Overwrite**. The batch runs **sequentially and
+  failure-isolated** (one bad row never aborts the rest; failed rows are offered for retry), with a per-row +
+  aggregate progress surface on the taskbar/title, and **Cancel keeps finished files and rolls back only the
+  in-flight one**. Architecturally this adds **no second ffmpeg path** — a bulk trim IS a Split that keeps one
+  middle segment: rows funnel through the existing `ISplitEngine.SplitAsync` per-segment `-c copy` path
+  (kept-index resolved by `KeptSegmentSelector`), orchestrated by a new UI-free Core `BulkTrimEngine`
+  (sequential batch loop, collision policy, disk pre-flight, ledger) that the WPF-free `BulkCutViewModel` /
+  `BulkItemViewModel` delegate to. See [ADR 0015](docs/adr/0015-bulk-trim-reuses-split-single-segment.md).
 - **Split tool-panel 50/50 layout (G-035, implements design D-003)** — the Split screen's tool panel is now a
   **bounded 50/50 star-row layout**: the **Cut markers** list and the **Parts to export** list each take ~half of
   the panel's height and grow with the window, and each scrolls internally when it overflows its half. "Add cut at

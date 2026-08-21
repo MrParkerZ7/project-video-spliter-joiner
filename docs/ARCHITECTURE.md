@@ -16,26 +16,29 @@ display frames on screen; it never touches the file that is cut.
  ┌───────────────────────────────────────────────────────────────┐
  │  VideoSplitJoiner.App  (WPF, net8.0-windows)                   │
  │                                                               │
- │  MainWindow ─ TabControl                                       │
- │    ├─ Split tab  → SplitView  ⇄ SplitViewModel                 │
- │    └─ Join  tab  → JoinView   ⇄ JoinViewModel                  │
+ │  MainWindow (WindowChrome dark caption + taskbar progress)     │
+ │    └─ TabControl                                              │
+ │        ├─ Split tab → SplitView  ⇄ SplitViewModel  (2-column) │
+ │        └─ Join  tab → JoinView   ⇄ JoinViewModel   (2-column) │
  │                                                               │
  │  MainViewModel = composition root (wires the Core graph)       │
- │  OperationViewModel = shared progress / cancel / error         │
+ │  OperationViewModel = 4-surface progress / cancel / error      │
+ │  Themes/ Tokens · Controls  (dark+gold token system, Plex font)│
  │  ObservableObject · RelayCommand  (hand-rolled MVVM)           │
+ │  App.xaml.cs = FFME init + global crash safety-net             │
  └───────────────┬───────────────────────────────────────────────┘
                  │  interfaces (ISplitEngine, IJoinEngine,
-                 │  IMediaProbe)
+                 │  IMediaProbe, IThumbnailService)
  ┌───────────────▼───────────────────────────────────────────────┐
  │  VideoSplitJoiner.Core  (UI-free)                             │
  │                                                               │
- │   Split/     Join/            Media/                           │
- │   SplitEngine JoinEngine      MediaProbe                       │
- │              +Compat-         (probe, keyframes,               │
- │              Checker           snap, GOP)                      │
- │        │        │                 │                           │
- │        └────────┴─────────┬───────┘                           │
- │                           ▼                                    │
+ │   Split/       Join/          Media/       Thumbnails/         │
+ │   SplitEngine  JoinEngine     MediaProbe   FfmpegThumbnail-    │
+ │   PartProgress +Compat-       (probe,      Service            │
+ │   PartMapping   Checker        keyframes,  (hover frame grab) │
+ │        │          │            snap, GOP)      │              │
+ │        └──────────┴─────────┬──────┴───────────┘              │
+ │                            ▼                                   │
  │            Ffmpeg/  FfmpegRunner · FfprobeRunner               │
  │                     (the SINGLE exec choke-point)             │
  │                     FfmpegBinaryLocator · FfmpegArgs           │
@@ -155,6 +158,105 @@ asserted by unit tests on the produced token lists.
   reports **Checking compatibility → Joining → Finalizing → Done** as it enters each phase.
 - **Output:** a `JoinResult` — success (with the written path) or refusal (with the report).
 
+## Bulk Cut tab — batch intro/outro trim (`Core/Bulk/`, `App/ViewModels/`, `App/Views/`)
+
+The **third tab** (`SelectedTabIndex == 2`, sibling to Split (0) / Join (1)) batch-trims the intro —
+and optionally the outro — off many videos at once, keeping the middle of each. Its one load-bearing
+idea is a **reuse**, recorded as **[ADR 0015](adr/0015-bulk-trim-reuses-split-single-segment.md)**:
+
+> **A bulk trim is a Split that keeps exactly one middle segment.** For a source with an intro-end at
+> `t₁` (and an optional outro-start at `t₂`), the wanted output is the single segment `[t₁ .. (t₂ |
+> EOF)]` — one of the parts a two-cut Split already produces. Bulk adds a **list**, **two cut points
+> per row**, an **apply-to-all** gesture, and a **batch runner** — it adds **no new ffmpeg path**.
+
+Every row therefore funnels through the *existing* `ISplitEngine.SplitAsync` per-segment `-c copy`
+path (the T-049 subset path), so the copy invariant, keyframe-snap, temp-then-move cancel-safety, and
+disk pre-flight are all inherited rather than re-implemented. The pieces:
+
+### The batch engine — `BulkTrimEngine` (`Core/Bulk/`)
+
+The batch loop lives in **Core**, not the view model. `BulkTrimEngine` (behind `IBulkTrimEngine`) takes
+a list of `BulkTrimItem`s (source path, requested intro-end, optional outro-start, desired output path)
+plus `BulkTrimOptions` (the collision policy), and runs them **sequentially and failure-isolated**:
+
+- **Collision pre-resolve** (per item, before any run) → an effective output path + overwrite flag +
+  skip decision. Default **`CollisionPolicy.AutoSuffix`** appends `_2`, `_3`, … until a free path is
+  found (never clobbers); a per-run **`Overwrite`** toggle replaces in place; **under every policy the
+  source path is never a write target** (a resolution that would hit the input is forced onto an
+  AutoSuffix name).
+- **Batch disk pre-flight** blocks the *whole* batch before any ffmpeg runs only on a knowable per-drive
+  shortfall (source size is a safe upper bound on each output); an unmeasurable drive skips the check —
+  never a false-positive block.
+- **Sequential run**, one row at a time. Each row's request is assembled by an `IBulkTrimRequestBuilder`
+  (`KeptMiddleRequestBuilder`) and handed to `SplitEngine.SplitAsync`. A row that throws is recorded
+  `Failed` (a mid-run ENOSPC on one large file never aborts a smaller later one); a both-boundaries-
+  collapse trim surfaces as `NoOpTrimException` → `Skipped`; **Cancel** stops before the next row,
+  classifies the in-flight row `Cancelled` (its temp already swept by the split path — no partial is
+  moved into place), and **keeps every already-finished output**.
+- **Ledger + rollup.** It returns a `BatchResult` (`Completed` / `CompletedWithFailures` / `Cancelled` /
+  `Blocked`) carrying one `BulkTrimItemResult` per row (outcome, written path, size, warnings, error),
+  and reports a `BulkTrimProgress` stream (per-item fraction + a batch overall). It is **UI-free** — BCL
+  + Core types only.
+
+### The kept-index cure — `KeptSegmentSelector` (`Core/Split/`)
+
+"Keep the middle segment" is **not always index 2**. `SplitPlanner.Plan` drops a cut that snaps to ~0
+or ~duration, merges near-duplicate cuts, and drops a snap colliding with a neighbour — so if the
+intro-end snaps to ~0 it is dropped and the kept part is segment **1** (`[0..outro]`), otherwise the
+intro survives and it is segment **2** (`[introEnd..outro|EOF]`). The shipped cure (chosen over the
+D-004 alternative of emitting a raw `PerSegment` call and bypassing `SelectedSegmentIndices`) is the
+pure `KeptSegmentSelector.ResolveKeptIndex`: it runs the **real** `SplitPlanner.Plan` (never re-deriving
+its drop/merge/snap rules) and reads back which planned segment starts at the snapped intro-end.
+`BuildKeptMiddleRequest` then assembles the single-kept-segment `SplitRequest` — `CutPoints =
+[introEnd]` or `[introEnd, outroStart]`, `NamingPattern = "{name}_trimmed{ext}"` (no `{index}` token,
+safe because exactly one segment is selected), `SelectedSegmentIndices = [keptIndex]` — which drives the
+engine's per-segment subset path to write only the kept middle. `KeptMiddleRequestBuilder` wraps this,
+probing each source (through the shared `MediaProbe` cache, so the engine's later re-probe is free) and
+translating the planner's both-collapse `SplitException` into the distinct `NoOpTrimException`.
+
+### The two view models — `BulkCutViewModel` / `BulkItemViewModel` (`App/ViewModels/`)
+
+Both are **WPF-free** (`ObservableObject` + Core/BCL types), mirroring `JoinViewModel` / `JoinItemViewModel`:
+
+- **`BulkCutViewModel`** — the tab VM: an `ObservableCollection<BulkItemViewModel>` in add order, the
+  apply-to-all gesture, and **`RunBatchAsync`**, which builds each runnable row's `BulkTrimItem` and
+  **delegates the whole batch** to `IBulkTrimEngine.RunAsync` — it owns **no** batch loop, collision
+  resolution, disk pre-flight, or cancel-sweep (all inherited from the engine). It fans the engine's
+  progress back onto the rows and holds the **aggregate `OperationViewModel`** (see below). It owns and
+  shares a single **`SemaphoreSlim(3)`** scan gate into every row, so adding N videos fires at most three
+  concurrent keyframe scans (the thundering-herd throttle). `CanRunBatch` gates on every enabled row being
+  keyframes-ready, so a request is never built on un-snapped identity times.
+- **`BulkItemViewModel`** — one row: the Join-item shape (path / duration / size), **two
+  `CutMarkerViewModel` handles** (intro-end required, outro-start optional/nullable — both created
+  optimistically `snapPending` and resolved when the row's background scan lands), a per-file keyframe
+  scan through the shared gate, computed validity (`IsValidCut` / `IsNoOpTrim` / `RowState`), its **own**
+  per-row `OperationViewModel`, and the request builders (`BuildRequest` for the preview/validity cross-
+  check via `KeptSegmentSelector`, `BuildBulkTrimItem` for the batch). Output path is the deterministic
+  `<dir>/<name>_trimmed<ext>` until a Done ledger entry supplies the collision-resolved written path.
+
+**Apply-to-all — outro measured from END.** `ApplyToAll(source)` copies the source row's requested
+cut points to every other checked, keyframes-ready row: the intro-end as an **absolute time-from-start**,
+the outro as a **time-from-end** (`Duration − outroStart`) re-anchored on each target's own duration, so
+same-series episodes of *different* lengths align. Each target **re-snaps against its own keyframes and
+re-validates**; rows the copy invalidated are returned in an `ApplyToAllReport` and **reported, never
+silently dropped**.
+
+**Aggregate-vs-per-row operation pattern.** Each row has its own `OperationViewModel` (per-row state /
+progress / error), but the Windows taskbar button and window title bind exactly **one**
+`CurrentOperation`, so the tab holds an **aggregate** `OperationViewModel` fed a weighted, monotonic-
+clamped overall fraction (`WeightedOverall`, kept-duration weighted). `MainViewModel` routes a 3-way
+`switch` on `SelectedTabIndex` (0/1/2) for `CurrentOperation`, `CurrentClearCommand`, `CurrentLoadLabel`
+("Add videos…"), and `CurrentClearLabel` ("Clear all"), re-pointed on tab switch.
+
+### The view — `BulkCutView` / `BulkRowScrubView` (`App/Views/`)
+
+The tab's XAML is **view-only**: `BulkRowScrubView` renders the per-row **dual-handle scrub bar** (a
+`Canvas` drawn in code-behind — gold `▸` intro-end handle, blue `◂` outro-start handle, the kept span
+highlighted gold, hover frame preview) and `BulkCutView` lays out the list + tool panel, but neither
+holds cut logic — all of it is on the WPF-free VMs. Keeping the batch engine, the kept-index selector,
+and the request builder in Core (referencing no WPF) is what keeps **`CoreIsUiFreeTests` green**. A new
+`DropScrimBrush` token backs the drag-drop highlight.
+
 ## In-app preview player + timeline (`App/Media/`, `App/ViewModels/`)
 
 The Split screen embeds a live video preview and a visual cut-selection strip. This layer lives
@@ -258,6 +360,16 @@ that already existed on `SplitViewModel`.
 `SetCutAtPlayhead` is guarded by `CanSetCutAtPlayhead` (`HasFile && Player.IsReady`), so it only
 enables once the preview has a real playhead to capture.
 
+**Time-ordered marker list — `InsertMarkerSorted` (T-071).** The "Cut markers" list reads
+chronologically regardless of add order (place a cut at 5:00 then one at 2:00 and 2:00 sits above).
+Rather than appending, every add funnels through `InsertMarkerSorted`, which walks to the ascending
+insertion index by the marker's sort key (`Snapped` time) and inserts there — **stable**, so equal-key
+markers keep add order. A **pending** marker (T-041) sorts on its provisional requested time; when its
+snap resolves and the key changes, `RepositionMarkerSorted` moves it (remove + sorted-insert) into its
+correct slot, skipping the move when it is already correctly placed to avoid spurious collection churn.
+This is a **marker-list display fix only** — the split output was already time-ordered (the plan and the
+"Parts to export" segments sort by time).
+
 **Instant (optimistic) markers — `IsSnapPending` (T-041).** A cut placed while the background keyframe
 index is still running does **not** wait for the scan: `AddCutAt` sees `IsIndexingKeyframes` with no
 keyframes yet and adds the marker **immediately** via `AddPendingMarker`, constructing the
@@ -353,6 +465,46 @@ decode-based scan (`ScanKeyframesFromFramesAsync`, the pre-existing `-skip_frame
 correctness never regresses. Both paths produce the same sorted-distinct output; the cache, snapping,
 and `AverageGop` are unchanged. (Which path ran is tracked internally for tests only.)
 
+## Scrub-bar hover thumbnails (`Core/Thumbnails/`, `App/ViewModels/`)
+
+Hovering the player's scrub bar shows a small frame preview at the hovered time (G-030). This is a
+**second, independent ffmpeg path** — deliberately kept apart from the FFME preview so a fast hover
+sweep never disturbs playback — split cleanly into a UI-free Core service and a WPF-free App view model.
+
+### The frame source — `IThumbnailService` / `FfmpegThumbnailService` (`Core/Thumbnails/`)
+
+`IThumbnailService.GetThumbnailAsync(inputPath, time, width, ct)` extracts one frame to a temp jpg and
+returns its **path** (never an `ImageSource` — Core stays UI-free; the App layer loads the path into a
+frozen `BitmapImage`). It is **best-effort throughout**: any failure (missing input, ffmpeg error,
+cancellation, I/O) resolves to `null` — a preview that can't be produced simply shows nothing, never
+throws. `FfmpegThumbnailService` is the production impl over the same `IFfmpegRunner` choke-point:
+
+- **Fast keyframe-accurate seek** — `-ss <t>` placed **before** `-i`, then `-frames:v 1 -vf
+  scale=<width>:-1 -y <temp.jpg>` (input-seek keeps it near-instant; keyframe accuracy is fine for a
+  hover). Args are built via the same `FfmpegArgs` builder and exposed `internal` for token-order tests.
+- **Bucketed LRU cache** — requests are keyed by `(inputPath, bucket)` where `bucket` is the hovered
+  time floored to a configurable granularity (default 1s), so repeat hovers within a bucket reuse the
+  file **without** re-running ffmpeg. The cache is LRU-bounded (default 128 entries); evicting an entry
+  deletes its temp file. Temp files live under
+  `%LOCALAPPDATA%/VideoSplitJoiner/thumb-cache/<hash-of-input>/<bucketMs>.jpg` (root injectable for tests).
+- **Cancellable, cache-swept** — the token is honored end-to-end so a superseded request never clobbers
+  a newer one; `Clear(inputPath)` sweeps one file's cache dir and `ClearAll()` the whole root (both
+  best-effort, never throw). `NullThumbnailService` is the inert no-op default (every grab → `null`) so
+  player constructions/tests that don't exercise thumbnails need no null-checks.
+
+### The hover view model — `ThumbnailPreviewViewModel` (`App/ViewModels/`)
+
+A **WPF-free** VM the view feeds hover samples (`UpdateHover(time, offsetX)` from the scrub slider's
+`MouseMove`) and enter/leave toggles. It exposes only primitives the view binds to a `Popup`: the temp
+jpg `HoverThumbnailPath`, the `HoverTimeText` (`mm:ss`) label, `HoverOffsetX` for placement, and
+`IsThumbnailVisible`. Its crux is **debounce + coalesce (latest-wins)**: each hover cancels the prior
+in-flight request (CTS swap), waits a short settle window (default 60ms) before touching ffmpeg, and
+commits a resolved grab only when it is still the newest request (monotonic id check) and the cursor is
+still over the bar — a superseded or post-leave grab is dropped. The result is marshalled back onto the
+captured sync context via `Progress<T>`, exactly like `OperationViewModel`'s progress channel. `SetInput`
+(new load) and `Clear` (unload) sweep the previous file's cache; `MouseLeave` hides without sweeping so
+cached frames are reused on the next hover.
+
 ## Errors (`Core/Errors/`)
 
 `FfmpegErrorMapper` turns a raw stderr tail + exit code into a `UserFacingError` (friendly category
@@ -397,14 +549,28 @@ The UI uses **hand-rolled MVVM**: `ObservableObject` (INotifyPropertyChanged bas
 
 - **`MainViewModel`** is the **composition root**. Its parameterless ctor builds the real Core graph
   once — `FfmpegBinaryLocator` → `FfprobeRunner`/`FfmpegRunner` → `MediaProbe` → `SplitEngine`,
-  `JoinEngine` — and shares the probe across both screens. A second, DI-style ctor lets tests inject
-  already-composed screen view models with fakes.
+  `JoinEngine`, plus the `FfmpegThumbnailService` (hover-frame source) and the shared `AppSettings` — and
+  shares the probe across both screens. A second, DI-style ctor lets tests inject already-composed screen
+  view models with fakes. It also owns the active-tab `CurrentOperation` / `WindowTitle` binding that
+  drives the taskbar + title progress (G-025, above).
 - **`SplitViewModel`** / **`JoinViewModel`** are the two screens, each constructor-injected with Core
   interfaces (so they are fully unit-testable without FFmpeg).
 - **`OperationViewModel`** is composed into both screens to give split/join a shared
   progress + cancel + friendly-error lifecycle. It is WPF-free (marshals via `Progress<T>`), so it
   runs off the UI thread under test. It maps engine failures (typed results *and* exceptions) into
-  `UserFacingError`s. It exposes three extra signals for visible progress:
+  `UserFacingError`s. **Four mutually-exclusive lifecycle surfaces (`OperationState`, G-027).** The
+  operation used to vanish silently on completion; now exactly one of four surfaces shows at a time,
+  each computed from `State` (`Idle / Running / Completed / Failed / Cancelled`) and reset on the next
+  run / load / Clear so no stale "done" ever lingers:
+  - **Running** — gold bar + `StatusText` + `EtaText` + Cancel (`IsRunning`).
+  - **Completed** — green ✓ + a **`ResultSummary`** line ("Split into 3 parts" / "Joined 4 clips →
+    joined.mkv", supplied by the producing VM since it knows the real counts/output name) + **Open
+    folder** (`IsCompleted`).
+  - **Cancelled** — a muted note, deliberately *not* error-red (`IsCancelled`).
+  - **Failed** — the red error block with Copy error / Open log (surfaced via the `Error` block, not a
+    bool). `ResultSummary` is cleared at every `BeginRun` so a prior run's line never bleeds into a new one.
+
+  It exposes these additional visible-progress signals:
   - **`IsIndeterminate` (T-042)** — true while running with no usable fraction yet, so the bar animates
     as a busy indicator instead of sitting frozen at 0% (ffmpeg's `time=` can be sparse); it flips to a
     determinate bar the instant a real fraction (>0) arrives. This cures the "-c copy split looks stuck"
@@ -419,6 +585,29 @@ The UI uses **hand-rolled MVVM**: `ObservableObject` (INotifyPropertyChanged bas
     (or "estimating…" when too early). Both are per-run — primed at `BeginRun`, cleared at `EndRun`.
     `EtaEstimator` is WPF- and wall-clock-free (fed explicit `TimeSpan` elapsed), so it is fully
     unit-tested with synthetic sequences.
+  - **`TaskbarProgressState` + the running window title (G-025).** A pure computed
+    `System.Windows.Shell.TaskbarItemProgressState` maps the operation to the Windows taskbar button:
+    Failed → `Error` (red), not-running → `None` (clears the fill), `IsIndeterminate` → `Indeterminate`
+    (the "preparing" pulse), running-with-a-fraction → `Normal` (green). `MainWindow`'s `TaskbarItemInfo`
+    binds it (plus `Progress` for the fill) to `MainViewModel.CurrentOperation` — the operation of the
+    *active tab*, re-pointed on tab switch. Because the taskbar button can't render text, the ETA + %
+    ride in the **OS window title** (`MainViewModel.WindowTitle`, a pure `ComposeWindowTitle` →
+    `"Splitting 45% · ~1m 20s — Video Split / Join"`, visible on taskbar hover / alt-tab); the in-app
+    caption stays on the fixed `CaptionTitle` so it never flickers with progress.
+
+- **Per-part split progress — `IProgress<PartProgress>` + `PartMapping.PartAt` (G-025).** Beyond the
+  overall bar, splitting into N parts advances each row in "Parts to export" **Pending → Writing (live
+  %) → Done ✓**. A third, purely-additive `IProgress<PartProgress>` channel (a `RunWithResultAsync`
+  overload) carries a `PartProgress(PartIndex, PartCount, PartFraction)` record — the part's **original**
+  1-based index (a selected middle part stays *part 2 of 3*) and its local 0..1 fraction — without ever
+  touching the overall `Progress`/`StatusText`. The per-segment subset path reports its part index
+  naturally; the **fast single-pass segment-muxer path is preserved** — the current part is *derived*
+  from ffmpeg's one monotonic `time=` via **`PartMapping.PartAt(time, boundaries, duration)`**, a pure,
+  unit-tested, I/O-free mapping of an absolute file time onto "(which part, how far into it)" using the
+  interior snapped-cut boundaries (half-open `[start,end)`, boundary belongs to the later part, clamps at
+  both ends) — so no extra ffmpeg passes are needed. `SplitViewModel.ApplyPartProgress` marks every
+  selected part before the active one Done, the active one Writing at its throttled fraction, and leaves
+  later/unselected parts Pending; the active row shows a gold live-fill, completed rows a green ✓.
 - The view models themselves are **WPF-free and constructor-injected** — the WPF dependency lives
   only in the `App` assembly's views and `App.xaml`, never in Core.
 - **`MainViewModel` composes the real player** by passing a `new FfmeMediaPlayer()` into
@@ -426,6 +615,73 @@ The UI uses **hand-rolled MVVM**: `ObservableObject` (INotifyPropertyChanged bas
   load to bind it to the view's FFME `MediaElement` (the one place WPF and the player meet). A
   `SplitViewModel` built without a player falls back to `NullMediaPlayer`, keeping tests and non-UI
   constructions working.
+
+## Window shell, theme, and two-column layout (`App/Views/`, `App/Themes/`)
+
+The 0.2.0 UI adopts the design sample's identity — a custom dark title bar, a token-driven dark+gold
+theme, bundled IBM Plex fonts, and a two-column split of each screen.
+
+### Custom themed window frame — `WindowChrome` (G-018)
+
+`MainWindow` replaces the default light Windows title bar with a **custom dark caption** via
+`WindowChrome.WindowChrome` (`CaptionHeight=34`, `ResizeBorderThickness=6`, `UseAeroCaptionButtons=False`,
+`WindowStyle=SingleBorderWindow`): the app title with a gold accent on the left, themed minimize /
+maximize-restore / close buttons (close hovers red) on the right, over the theme surface. The window
+still drags (WindowChrome, with a `DragMove` fallback), resizes on all edges, and **maximizes to the
+monitor work area without covering the taskbar** — `MainWindow.xaml.cs` hooks `WM_GETMINMAXINFO` on
+`SourceInitialized` and clamps the maximized bounds to `rcWork`, and a `WindowState`→margin/border-
+thickness converter pair collapses the 1px frame line and adds the maximized content margin so nothing
+spills off-screen.
+
+### Dark + gold theme tokens (G-017)
+
+The whole app is restyled to a **design-token system** merged in `App.xaml` from `App/Themes/`:
+`Tokens.xaml` (the sample palette — a full surface scale `#0A0B0D`→`#232935`, near-black window `#0D0F13`,
+charcoal panels `#15181E`, pure-black video area, the gold accent `#E0A83A`, text/border/semantic scales,
+tight 6–12px corner radii, typography) and `Controls.xaml` (themed control templates — buttons, the gold
+slider track/thumb, and the themed **scrollbars**). Views reference token **keys** only — no hardcoded
+colors; token keys are preserved verbatim (values remapped), new keys additive. Text uses theme tokens
+readable on dark; compat green/red and error affordances are preserved, dark-tuned.
+
+- **Bundled fonts** — IBM Plex Mono / Sans (OFL-1.1) ship in `src/App/Fonts/` (Regular / Medium /
+  SemiBold of each) and are referenced by the type tokens, so the UI renders in Plex regardless of
+  installed system fonts.
+- **Themed scrollbars (T-072)** — a thin dark-and-gold implicit `ScrollBar` style (track on a low
+  surface tier, a rounded `BorderStrong` thumb that turns **gold on hover/drag**) replaces the default
+  light Windows scrollbar chrome app-wide.
+
+### Two-column screen layout (G-019)
+
+Both screens split into a **left visual column** (the preview player + timeline/scrubber) and a **right
+tool panel** (Load / Clear and everything below — file-info, cut markers, parts-to-export, output, Run),
+separated by a **draggable `GridSplitter`**. The columns are a three-column `Grid` — `* (MinWidth 320)` /
+`6` (the splitter) / `360 (MinWidth 300, MaxWidth 520)` — so the right panel defaults to 360px and drags
+within 300–520. (Inside the left column a second `GridSplitter` keeps the earlier drag-resizable video
+pane, G-006.) The sample structure — app header with the "lossless · no re-encode" tagline, a gold
+format badge (`HEVC · MATROSKA`), the Split file-info card (`container · duration · size`), the
+"Cut markers" / "Parts to export" headers, mono DIR / NAME output fields, and the Join "Estimated result"
+panel — is a **relayout + restyle, not a rewire**: all existing bindings/commands are preserved, and the
+pure formatting/estimate helpers were extracted to `Core/Media/MediaFormat.cs` (unit-tested).
+
+## Startup + crash safety-net (`App/App.xaml.cs`)
+
+`App.OnStartup` does two things before the shell loads: **(1)** `InitializeFfmpegForPreview` points FFME
+at the shared ffmpeg build (`Library.FFmpegDirectory`, best-effort — see *Binary resolution* above), and
+**(2)** `WireGlobalExceptionHandlers` installs a **global crash safety-net (T-079)**. Without it an
+unhandled exception on the UI dispatcher, a background task, or a native path would silently kill the
+process (no dialog, no log). All three managed sinks are wired:
+
+- **`DispatcherUnhandledException`** (UI thread) — logs the crash, shows a **friendly, copyable** dialog
+  naming the saved log path (reusing the `UserFacingError` / `ErrorActions` copy affordance), and marks
+  it **`Handled = true`** so a recoverable UI error does **not** tear down the app.
+- **`AppDomain.CurrentDomain.UnhandledException`** — last-ditch synchronous log (the process is going
+  down regardless; managed handlers can't recover this).
+- **`TaskScheduler.UnobservedTaskException`** (e.g. a faulted keyframe index / thumbnail grab) — logs it
+  and calls `SetObserved()` so it never escalates to a process kill.
+
+Every crash is recorded best-effort via `ErrorLogWriter.TryWriteCrash` to
+`%LOCALAPPDATA%/VideoSplitJoiner/logs/`, and **every handler body is itself wrapped in try/catch** so a
+throw inside a crash handler can never recurse.
 
 ## Design decisions (preview player)
 
@@ -451,3 +707,37 @@ not in the unit suite. This keeps the testable logic (scrub-seam suppression, re
 speed/volume control, tick projection, click routing) fully covered while confining the untestable
 WPF surface to one class. The seam is exactly what let the player swap from `MediaElementPlayer` to
 `FfmeMediaPlayer` without any view-model or timeline change.
+
+## Key Decisions (ADRs)
+
+The architectural choices above are recorded as immutable Architecture Decision
+Records under [`docs/adr/`](adr/README.md) — see that index for the full list.
+The most load-bearing ones, each shaping a core seam of the app:
+
+- **[ADR 0001 — Stream-copy only](adr/0001-stream-copy-only.md):** the lossless
+  `-c copy` cutting invariant — no re-encode, ever — which forces keyframe-snapped
+  cut points, a join-compatibility contract, and a runtime-enforced codec denylist.
+  This is the root decision the preview, keyframe-scan, and bundling choices below
+  all build on.
+- **[ADR 0002 — Error model](adr/0002-error-model.md):** a per-subsystem error
+  contract (probe / split / join / diagnostics each define "failure" their own
+  way) rather than one uniform all-exceptions or all-results strategy.
+- **[ADR 0004 — FFME over MediaElement](adr/0004-ffme-over-mediaelement.md):**
+  the preview decodes through native FFME/ffmpeg so it plays *exactly* what the
+  engine can cut, instead of WPF `MediaElement`'s narrower Media Foundation codec set.
+- **[ADR 0010 — Shared ffmpeg bundling](adr/0010-shared-ffmpeg-bundling.md):** a
+  single shared (not static) ABI-pinned ffmpeg build serves both the CLI split/join
+  engine and the P/Invoke FFME preview from one dual-consumer bundle.
+- **[ADR 0011 — Single-file publish, no trim](adr/0011-single-file-publish-no-trim.md):**
+  self-contained single-file win-x64 + ReadyToRun with `PublishTrimmed` banned, so
+  the reflection-heavy WPF + FFME stack ships runnable on a machine with no .NET runtime.
+- **[ADR 0015 — Bulk trim reuses Split's single-segment path](adr/0015-bulk-trim-reuses-split-single-segment.md):**
+  the Bulk Cut tab expresses a batch intro/outro trim as a single-kept-segment
+  `SplitRequest` run through the existing `SplitEngine` `-c copy` path — **no second
+  ffmpeg code path** — so the copy invariant, keyframe-snap, and cancel-safety are
+  inherited; Bulk adds only orchestration (list, two cut points per row, a Core
+  `BulkTrimEngine` batch runner).
+
+The stream-copy (`-c copy`) cutting invariant — now recorded as
+[ADR 0001](adr/0001-stream-copy-only.md) above — underpins ADR 0004, 0009, and
+0010, and is described in the engine sections earlier in this document.
