@@ -67,6 +67,10 @@ public partial class MainWindow : Window
         {
             JoinScreen.ShowAddFilesPicker();
         }
+        else if (vm.SelectedTabIndex == 2)
+        {
+            BulkScreen.ShowAddFilesPicker();
+        }
         else
         {
             SplitScreen.ShowLoadPicker();

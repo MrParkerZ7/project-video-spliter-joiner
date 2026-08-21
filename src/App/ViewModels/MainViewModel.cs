@@ -87,6 +87,10 @@ public sealed class MainViewModel : ObservableObject
         Split = new SplitViewModel(probe, splitEngine, new FfmeMediaPlayer(), settings, thumbnailService, waveformService);
         Join = new JoinViewModel(joinEngine, probe, settings);
 
+        // D-004 / T-097 — the Bulk Cut screen shares the SAME probe / split engine / thumbnail service /
+        // settings instances (no second ffmpeg graph); its batch runner defaults over the shared split engine.
+        BulkCut = new BulkCutViewModel(probe, splitEngine, thumbnailService, settings);
+
         ToggleLayoutCommand = new RelayCommand(ToggleLayout);
 
         HookOperations();
@@ -98,10 +102,11 @@ public sealed class MainViewModel : ObservableObject
     /// the production ffmpeg graph. When <paramref name="settings"/> is null the toggle flips
     /// <see cref="IsVertical"/> in memory only.
     /// </summary>
-    public MainViewModel(SplitViewModel splitViewModel, JoinViewModel? joinViewModel = null, IAppSettings? settings = null)
+    public MainViewModel(SplitViewModel splitViewModel, JoinViewModel? joinViewModel = null, IAppSettings? settings = null, BulkCutViewModel? bulkCut = null)
     {
         Split = splitViewModel ?? throw new ArgumentNullException(nameof(splitViewModel));
         Join = joinViewModel!;
+        BulkCut = bulkCut!;
 
         _settings = settings;
         if (settings is not null)
@@ -122,8 +127,11 @@ public sealed class MainViewModel : ObservableObject
     /// <summary>The Join screen view model, bound by the Join tab.</summary>
     public JoinViewModel Join { get; }
 
+    /// <summary>The Bulk Cut screen view model, bound by the Bulk Cut tab (D-004 / T-097).</summary>
+    public BulkCutViewModel BulkCut { get; }
+
     /// <summary>
-    /// Which screen tab is active (0 = Split, 1 = Join). Two-way bound to the TabControl's
+    /// Which screen tab is active (0 = Split, 1 = Join, 2 = Bulk Cut). Two-way bound to the TabControl's
     /// <c>SelectedIndex</c>. Changing it re-points <see cref="CurrentOperation"/> at the newly
     /// selected screen's operation and recomputes the <see cref="WindowTitle"/>.
     /// </summary>
@@ -152,7 +160,8 @@ public sealed class MainViewModel : ObservableObject
     /// the user is on. Falls back to the Split operation when Join is absent (test ctor).
     /// </summary>
     public OperationViewModel CurrentOperation
-        => (SelectedTabIndex == 1 && Join is not null) ? Join.Operation : Split.Operation;
+        => IsBulkActive ? BulkCut.Operation
+            : (IsJoinActive ? Join.Operation : Split.Operation);
 
     /// <summary>
     /// True when the Join screen is the active tab (tab 1) — the single source of truth the
@@ -161,13 +170,21 @@ public sealed class MainViewModel : ObservableObject
     private bool IsJoinActive => SelectedTabIndex == 1 && Join is not null;
 
     /// <summary>
+    /// True when the Bulk Cut screen is the active tab (tab 2, D-004 / T-097). Falls back to Split when
+    /// <see cref="BulkCut"/> is absent (legacy 3-arg test ctor) so tab-2 routing never throws.
+    /// </summary>
+    private bool IsBulkActive => SelectedTabIndex == 2 && BulkCut is not null;
+
+    /// <summary>
     /// The Clear command of the CURRENTLY-ACTIVE screen — Split's <c>ClearCommand</c> on tab 0, Join's
     /// "Clear all" on tab 1 (T-088). The shared tab-strip "Clear" button binds here so it resets
     /// whichever screen the user is on. Each screen's <c>ClearCommand</c> is self-guarded (<c>CanClear</c>:
     /// file/clips present AND no op running), so the shared button disables during a running op
     /// automatically. Re-raised when <see cref="SelectedTabIndex"/> flips.
     /// </summary>
-    public ICommand CurrentClearCommand => IsJoinActive ? Join.ClearCommand : Split.ClearCommand;
+    public ICommand CurrentClearCommand => IsBulkActive
+        ? BulkCut.ClearCommand
+        : (IsJoinActive ? Join.ClearCommand : Split.ClearCommand);
 
     /// <summary>
     /// The label for the tab-strip "Load" button, following the active screen: "Load…" on Split,
@@ -175,20 +192,24 @@ public sealed class MainViewModel : ObservableObject
     /// handler that dispatches to the active view's existing <c>OpenFileDialog</c> logic — the button
     /// is a code-behind <c>Click</c>, not a bound command, since the picker lives in the view.
     /// </summary>
-    public string CurrentLoadLabel => IsJoinActive ? "Add files…" : "Load…";
+    public string CurrentLoadLabel => IsBulkActive ? "Add videos…" : (IsJoinActive ? "Add files…" : "Load…");
 
-    /// <summary>The label for the tab-strip "Clear" button: "Clear" on Split, "Clear all" on Join (T-088).</summary>
-    public string CurrentClearLabel => IsJoinActive ? "Clear all" : "Clear";
+    /// <summary>The label for the tab-strip "Clear" button: "Clear" on Split, "Clear all" on Join/Bulk (T-088 / T-097).</summary>
+    public string CurrentClearLabel => IsBulkActive ? "Clear all" : (IsJoinActive ? "Clear all" : "Clear");
 
-    /// <summary>Tooltip for the tab-strip Load button, following the active screen (T-088).</summary>
-    public string CurrentLoadTooltip => IsJoinActive
-        ? "Add one or more video clips to the join queue"
-        : "Open a video file to split";
+    /// <summary>Tooltip for the tab-strip Load button, following the active screen (T-088 / T-097).</summary>
+    public string CurrentLoadTooltip => IsBulkActive
+        ? "Add videos to bulk-trim their intro/outro"
+        : (IsJoinActive
+            ? "Add one or more video clips to the join queue"
+            : "Open a video file to split");
 
-    /// <summary>Tooltip for the tab-strip Clear button, following the active screen (T-088).</summary>
-    public string CurrentClearTooltip => IsJoinActive
-        ? "Remove all queued clips and reset the Join screen"
-        : "Unload the current file and reset the Split screen";
+    /// <summary>Tooltip for the tab-strip Clear button, following the active screen (T-088 / T-097).</summary>
+    public string CurrentClearTooltip => IsBulkActive
+        ? "Remove all videos and reset the Bulk Cut screen"
+        : (IsJoinActive
+            ? "Remove all queued clips and reset the Join screen"
+            : "Unload the current file and reset the Split screen");
 
     /// <summary>
     /// The OS <c>Window.Title</c> (shown on the taskbar hover / alt-tab). While the active screen's
@@ -376,6 +397,11 @@ public sealed class MainViewModel : ObservableObject
         if (Join is not null)
         {
             Join.Operation.PropertyChanged += OnOperationChanged;
+        }
+
+        if (BulkCut is not null)
+        {
+            BulkCut.Operation.PropertyChanged += OnOperationChanged;
         }
     }
 

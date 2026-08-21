@@ -1,0 +1,71 @@
+<UserControl x:Class="VideoSplitJoiner.App.Views.BulkRowScrubView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:conv="clr-namespace:VideoSplitJoiner.App.Views">
+    <!-- D-004 / T-097 — the per-row dual-handle scrub bar. VIEW-ONLY: the Canvas is drawn in
+         code-behind from the bound BulkItemViewModel's snapped offsets (modelled on TimelineView),
+         so no rendering logic leaks into any Core/VM type. The hover Popup mirrors PlayerView's
+         hover-thumbnail; its DataContext is a code-behind ThumbnailPreviewViewModel (the row VM has
+         no Preview of its own), fed from the tab VM's shared IThumbnailService. -->
+    <UserControl.Resources>
+        <conv:PathToBitmapConverter x:Key="PathToBitmap" />
+        <conv:BoolToVisibilityConverter x:Key="BoolToVisibility" />
+    </UserControl.Resources>
+
+    <Grid>
+        <!-- Sunken track; the dual-handle geometry + spans + progress are drawn onto Track. -->
+        <Border Background="{StaticResource Surface1Brush}"
+                BorderBrush="{StaticResource BorderBrush}"
+                BorderThickness="1"
+                CornerRadius="{StaticResource RadiusSm}"
+                Height="34"
+                Cursor="Hand"
+                ToolTip="Drag the gold ▸ handle (intro-end) and the blue ◂ handle (outro-start); the gold span is kept. Hover for a frame preview.">
+            <Canvas x:Name="Track"
+                    ClipToBounds="True"
+                    Background="Transparent"
+                    SizeChanged="OnSizeChanged"
+                    MouseLeftButtonDown="OnDown"
+                    MouseMove="OnMouseMove"
+                    MouseLeftButtonUp="OnUp"
+                    MouseLeave="OnLeave" />
+        </Border>
+
+        <!-- Hover thumbnail: floated above the bar at the cursor. StaysOpen + hit-test off so it
+             never steals a click. Bound to the code-behind ThumbnailPreviewViewModel (set as this
+             Popup's DataContext once the shared thumbnail service is resolved). -->
+        <Popup x:Name="HoverThumbPopup"
+               PlacementTarget="{Binding ElementName=Track}"
+               Placement="Top"
+               HorizontalOffset="{Binding HoverOffsetX, Mode=OneWay}"
+               VerticalOffset="-8"
+               AllowsTransparency="True"
+               StaysOpen="True"
+               IsHitTestVisible="False"
+               IsOpen="{Binding IsThumbnailVisible, Mode=OneWay}">
+            <Border Background="{StaticResource Surface0Brush}"
+                    BorderBrush="{StaticResource BorderStrongBrush}"
+                    BorderThickness="1"
+                    CornerRadius="{StaticResource RadiusSm}"
+                    Padding="3"
+                    SnapsToDevicePixels="True">
+                <StackPanel Width="160">
+                    <Border Height="90"
+                            Background="{StaticResource VideoBgBrush}"
+                            CornerRadius="{StaticResource RadiusSm}"
+                            ClipToBounds="True"
+                            Visibility="{Binding HasThumbnail, Converter={StaticResource BoolToVisibility}}">
+                        <Image Source="{Binding HoverThumbnailPath, Converter={StaticResource PathToBitmap}}"
+                               Stretch="Uniform" />
+                    </Border>
+                    <TextBlock Text="{Binding HoverTimeText, Mode=OneWay}"
+                               HorizontalAlignment="Center"
+                               Margin="0,3,0,1"
+                               FontFamily="{StaticResource MonoFontFamily}"
+                               FontSize="{StaticResource FontSizeSmall}"
+                               Foreground="{StaticResource TextPrimaryBrush}" />
+                </StackPanel>
+            </Border>
+        </Popup>
+    </Grid>
+</UserControl>

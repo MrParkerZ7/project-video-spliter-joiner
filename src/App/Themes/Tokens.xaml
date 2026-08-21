@@ -24,6 +24,11 @@
     <Color x:Key="Surface4Color">#FF232935</Color>   <!-- highest elevation / pressed chip -->
     <Color x:Key="VideoBgColor">#FF000000</Color>    <!-- video area -->
 
+    <!-- D-004 / T-097 — Bulk Cut dropped-span scrim: near-black Surface0 at ~70% alpha (0xB3).
+         Semi-transparent so the dropped intro/outro spans read as "removed" while the underlying
+         track tint still shows through. Additive + dark-theme-safe. -->
+    <Color x:Key="DropScrimColor">#B30A0B0D</Color>
+
     <!-- Accent (gold) -->
     <Color x:Key="AccentColor">#FFE0A83A</Color>      <!-- GOLD primary accent -->
     <Color x:Key="AccentHoverColorRaw">#FFF0BC55</Color> <!-- gold hover (lighter) -->
@@ -55,6 +60,9 @@
     <SolidColorBrush x:Key="Surface3Brush" Color="{StaticResource Surface3Color}" />
     <SolidColorBrush x:Key="Surface4Brush" Color="{StaticResource Surface4Color}" />
     <SolidColorBrush x:Key="VideoBgBrush" Color="{StaticResource VideoBgColor}" />
+
+    <!-- D-004 / T-097 — the dropped-span scrim brush painted over the trimmed-away intro/outro. -->
+    <SolidColorBrush x:Key="DropScrimBrush" Color="{StaticResource DropScrimColor}" />
 
     <!-- Accent -->
     <SolidColorBrush x:Key="AccentBrush" Color="{StaticResource AccentColor}" />

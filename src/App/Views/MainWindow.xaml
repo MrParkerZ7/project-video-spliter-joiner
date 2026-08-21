@@ -245,6 +245,9 @@
                     <TabItem Header="Join">
                         <views:JoinView x:Name="JoinScreen" DataContext="{Binding Join}" />
                     </TabItem>
+                    <TabItem Header="Bulk Cut">
+                        <views:BulkCutView x:Name="BulkScreen" DataContext="{Binding BulkCut}" />
+                    </TabItem>
                 </TabControl>
 
                 <!-- Right-aligned Load / Clear on the tab-header line. Top+Right aligned, its margin
