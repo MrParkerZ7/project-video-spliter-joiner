@@ -539,3 +539,6 @@
 
 ## 2026-08-22 · G-036 drive — T-094 done
 - **T-094 done** (`dd3c562`, +11 → 618): Core KeptSegmentSelector.ResolveKeptIndex (runs real SplitPlanner.Plan, returns 1-based kept-middle index — 2 normally, 1 when intro snaps to ~0, SplitException if both collapse) + BuildKeptMiddleRequest ({name}_trimmed{ext}, SelectedSegmentIndices=[kept], same-folder). Purely additive, no existing file changed; end-to-end tests confirm one -c copy PerSegment (with/without -to). AutoSuffix collision left to T-095 (engine rejects pre-existing output; Overwrite=false default). T-095 now unblocked.
+
+## 2026-08-22 · G-036 drive — T-095 done
+- **T-095 done** (`7dc3853`, +22 → 640): Core BulkTrimEngine.RunAsync (src/Core/Bulk/) — sequential, failure-isolated (row throws → mapped UserFacingError, loop continues), cancel-sweep (in-flight temp swept, done kept, rest NotStarted), AutoSuffix/Skip/Overwrite collision (+source-safety guard), disk pre-flight (→Blocked, zero runs). Each row = one SplitEngine.SplitAsync of its kept segment. Deviations: NoOpTrimException (ResolveKeptIndex both-collapse → Skipped), injectable IDiskSpaceProbe seam (testable), KeptMiddleRequestBuilder builds SplitRequest directly to honor collision-resolved paths (delegates index math to T-094). 16 engine + 6 builder tests w/ fake ISplitEngine. T-096 unblocked (both deps done).
