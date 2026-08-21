@@ -548,3 +548,7 @@
 
 ## 2026-08-22 · G-036 drive — T-097 done
 - **T-097 done** (`08d9735`, +8 → 671): App View + wiring. BulkCutView (row cards + editable IN/OUT + chips + lifecycle surfaces) + BulkRowScrubView (view-only dual-handle Canvas scrub, modeled on TimelineView — gold keep-span, DropScrimBrush drops, gold-▸-top intro + blue-◂-bottom outro, drag→Requested snap-on-release, hover thumbnail). New DropScrimBrush token. MainViewModel 3-way tab routing (IsBulkActive, index==2 → BulkCut.Operation + Add-videos/Clear-all labels) + HookOperations. MainWindow 3rd TabItem + Load_Click ==2 branch. Four lifecycle surfaces + Failed-some list w/ Retry. Deviations: apply-to-all per-row (VM has no selected-row), Open-folder/Retry in code-behind. T-098 unblocked.
+
+## 2026-08-22 · G-036 CONVERGED — Bulk Cut tab shipped (D-004)
+- **T-098 done** (`ef27dd8`): USER_GUIDE + ARCHITECTURE + CHANGELOG + ADR 0015 (bulk = Split keeping one middle segment); also landed the deferred todo-docs remainder (README + ADRs 0001-0015). "commit the docs" cleared.
+- **G-036 DONE** — Bulk Cut tab shipped end-to-end: T-094 KeptSegmentSelector · T-095 BulkTrimEngine · T-096 VMs · T-097 View+wiring · T-098 docs. 671 tests, all pushed. Release relaunched (Bulk Cut tab live). Deferred post-v1: IAppSettings.DefaultIntroSeconds pre-seed; auto intro/outro detection.
