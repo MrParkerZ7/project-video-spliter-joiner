@@ -446,11 +446,35 @@ public sealed class PlayerViewModel : ObservableObject
     public void ToggleMute() => IsMuted = !IsMuted;
 
     /// <summary>
-    /// Seek the player to <paramref name="t"/> (used by the timeline / T-013 capture and by every
-    /// skip/jump/frame-step jog). Pins the display at the target and arms the seek-target hold so a
-    /// stale playback echo can't pop the playhead back off the requested position (T-033).
+    /// Seek the player to <paramref name="t"/> as a FREEZE gesture (T-110): used by every jog / jump /
+    /// marker-seek (skip buttons, jump-to-start/end, click-a-cut-marker). The preview must land PAUSED
+    /// on the exact target still — the frame the user reads before "Add cut at playhead" — never a ~1s
+    /// play-burst. So, mirroring <see cref="StepFrame"/>'s pause-first, if the element is playing it is
+    /// paused BEFORE the seek (FFME's post-seek burst only happens while playing), and our own
+    /// <see cref="IsPlaying"/> is cleared so the transport label is right and a following Play still
+    /// starts playback. Then <see cref="BeginSeek"/> pins the display at the target and arms the
+    /// seek-target hold so a stale playback echo can't pop the playhead off the requested position
+    /// (T-033). The plain scrub-bar / timeline-click path is a deliberate play-from-here gesture and is
+    /// NOT frozen — it seeks through the <see cref="Position"/> setter / <see cref="ScrubPreview"/>,
+    /// which call <see cref="BeginSeek"/> directly (ordinary <see cref="IMediaPlayer.Seek"/>).
     /// </summary>
-    public void Scrub(TimeSpan t) => BeginSeek(Clamp(t));
+    public void Scrub(TimeSpan t)
+    {
+        // Pause-first (only if actually playing, exactly like StepFrame): pausing the element before
+        // the seek is what makes FFME render one still and STOP instead of decoding a ~1s play-burst.
+        // The FFME pause itself lives WPF-side in FfmeMediaPlayer.Pause(); this VM only invokes the
+        // WPF-free IMediaPlayer seam, so PlayerViewModel stays free of PresentationFramework types.
+        if (_player.IsPlaying)
+        {
+            _player.Pause();
+        }
+
+        // Reflect the freeze in our own transport flag: the button reads "Play" and a subsequent
+        // PlayPause() starts playback rather than pausing an already-stopped element.
+        IsPlaying = false;
+
+        BeginSeek(Clamp(t));
+    }
 
     /// <summary>
     /// Signal that the user has grabbed the scrub thumb. While scrubbing, position echoes are

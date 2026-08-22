@@ -805,6 +805,53 @@ public sealed class PlayerViewModelTests
         player.Seeks[^1].Should().Be(TimeSpan.FromSeconds(45));
     }
 
+    // ---- Jog freezes the preview (T-110) ----------------------------------------------------
+
+    // A jog (SkipBy / any skip button) is a FREEZE gesture: whatever the transport state, it must land
+    // the preview PAUSED on the exact target frame — pause-first THEN seek — never a ~1s play-burst.
+    // The fake records the call order, so we assert Pause precedes Seek and the player is left stopped
+    // on the exact ±Ns target (the frame "Add cut at playhead" would cut at). Reuses the existing
+    // FakeMediaPlayer (its Pause/Seek/IsPlaying model the freeze — no new IMediaPlayer method needed).
+
+    [Fact]
+    [Trait("serves-spec", "SPEC-013")]
+    public void SkipBy_WhilePlaying_Freezes_PausesThenSeeks_LeavesPlayerStopped()
+    {
+        var (vm, player) = BuildReady(60);
+        player.RaisePositionChanged(TimeSpan.FromSeconds(10)); // current position = 10 (not seeking)
+
+        vm.PlayPause();                                        // start playback
+        player.IsPlaying.Should().BeTrue();
+
+        vm.SkipBy(TimeSpan.FromSeconds(5));                    // jog +5 while playing → freeze-seek to 15
+
+        player.Calls.Should().ContainInOrder(new[] { "Pause", "Seek" }, "the jog pauses the element BEFORE seeking (freeze order)");
+        player.IsPlaying.Should().BeFalse("a jog freezes the preview — the element is paused, not left playing");
+        player.Seeks[^1].Should().Be(TimeSpan.FromSeconds(15), "the jog lands on the exact ±Ns target, not keyframe-snapped");
+        vm.Position.Should().Be(TimeSpan.FromSeconds(15), "the frozen frame equals Player.Position (what 'Add cut at playhead' cuts at)");
+        vm.IsPlaying.Should().BeFalse("the VM transport flag reflects the freeze so the Play/Pause label is correct");
+    }
+
+    [Fact]
+    [Trait("serves-spec", "SPEC-013")]
+    public void SkipBy_WhilePaused_Freezes_AndPlayStillPlaysAfterward()
+    {
+        var (vm, player) = BuildReady(60);
+        player.RaisePositionChanged(TimeSpan.FromSeconds(10)); // paused at 10
+
+        vm.SkipBy(TimeSpan.FromSeconds(5));                    // jog +5 while paused → seek to 15, stays paused
+
+        player.IsPlaying.Should().BeFalse("already paused — the jog leaves it paused on the target, no burst");
+        player.Seeks[^1].Should().Be(TimeSpan.FromSeconds(15));
+        vm.Position.Should().Be(TimeSpan.FromSeconds(15));
+
+        // Required-Fail guard: a jog-freeze must NOT disable playback — Play still plays afterward.
+        vm.PlayPause();
+        player.Calls.Should().Contain("Play");
+        player.IsPlaying.Should().BeTrue("Play still starts playback after a jog-freeze");
+        vm.IsPlaying.Should().BeTrue();
+    }
+
     // ---- Frame step (T-028) -----------------------------------------------------------------
 
     [Fact]
