@@ -1,3 +1,6 @@
+using System.Collections.Generic;
+using VideoSplitJoiner.Core.Profiles;
+
 namespace VideoSplitJoiner.App.Settings;
 
 /// <summary>
@@ -52,4 +55,28 @@ public interface IAppSettings
     /// <see cref="HorizontalSplitRatio"/> (D6). Setting it persists immediately.
     /// </summary>
     double? VerticalSplitRatio { get; set; }
+
+    /// <summary>
+    /// The saved reusable cut profiles (G-037 / T-102) — a named intro-from-start + optional
+    /// outro-from-end that can be applied to any Bulk Cut row/batch. Ordered by save order, deduped by
+    /// <see cref="CutProfile.Name"/> (case-insensitive). Empty when none are saved / on a first launch or
+    /// a legacy settings file that predates the feature. Read-only — mutate via <see cref="SaveProfile"/>
+    /// / <see cref="DeleteProfile"/>.
+    /// </summary>
+    IReadOnlyList<CutProfile> CutProfiles { get; }
+
+    /// <summary>
+    /// Upsert a cut profile by <see cref="CutProfile.Name"/> (case-insensitive): an existing profile with
+    /// the same name is replaced in place (position preserved), otherwise the profile is appended.
+    /// Persists immediately, best-effort, like the other setters (a write failure keeps the change in
+    /// memory for the session and never throws to the caller).
+    /// </summary>
+    void SaveProfile(CutProfile profile);
+
+    /// <summary>
+    /// Delete the cut profile whose <see cref="CutProfile.Name"/> matches <paramref name="name"/>
+    /// (case-insensitive). A no-op (no persist) when nothing matches / the name is blank. Persists
+    /// immediately, best-effort, like the other setters.
+    /// </summary>
+    void DeleteProfile(string name);
 }

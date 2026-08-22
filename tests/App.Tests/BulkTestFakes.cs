@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using VideoSplitJoiner.App.Settings;
 using VideoSplitJoiner.Core.Bulk;
 using VideoSplitJoiner.Core.Ffmpeg;
+using VideoSplitJoiner.Core.Profiles;
 using VideoSplitJoiner.Core.Media;
 using VideoSplitJoiner.Core.Split;
 using VideoSplitJoiner.Core.Thumbnails;
@@ -228,6 +229,8 @@ internal sealed class FakeThumbnailService : IThumbnailService
 /// <summary>In-memory settings (no disk I/O) for the VM tests.</summary>
 internal sealed class FakeSettings : IAppSettings
 {
+    private readonly List<CutProfile> _cutProfiles = new();
+
     public string? LastInputDir { get; set; }
 
     public string? LastOutputDir { get; set; }
@@ -237,4 +240,23 @@ internal sealed class FakeSettings : IAppSettings
     public double? HorizontalSplitRatio { get; set; }
 
     public double? VerticalSplitRatio { get; set; }
+
+    public IReadOnlyList<CutProfile> CutProfiles => _cutProfiles;
+
+    public void SaveProfile(CutProfile profile)
+    {
+        var index = _cutProfiles.FindIndex(
+            p => string.Equals(p.Name, profile.Name, StringComparison.OrdinalIgnoreCase));
+        if (index >= 0)
+        {
+            _cutProfiles[index] = profile;
+        }
+        else
+        {
+            _cutProfiles.Add(profile);
+        }
+    }
+
+    public void DeleteProfile(string name) =>
+        _cutProfiles.RemoveAll(p => string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase));
 }

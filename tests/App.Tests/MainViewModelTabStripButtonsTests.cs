@@ -8,6 +8,7 @@ using VideoSplitJoiner.App.ViewModels;
 using VideoSplitJoiner.Core.Ffmpeg;
 using VideoSplitJoiner.Core.Join;
 using VideoSplitJoiner.Core.Media;
+using VideoSplitJoiner.Core.Profiles;
 using VideoSplitJoiner.Core.Split;
 using Xunit;
 
@@ -33,6 +34,16 @@ public sealed class MainViewModelTabStripButtonsTests
         public LayoutMode LayoutMode { get; set; } = LayoutMode.Horizontal;
         public double? HorizontalSplitRatio { get; set; }
         public double? VerticalSplitRatio { get; set; }
+
+        private readonly List<CutProfile> _cutProfiles = new();
+        public IReadOnlyList<CutProfile> CutProfiles => _cutProfiles;
+        public void SaveProfile(CutProfile profile)
+        {
+            var i = _cutProfiles.FindIndex(p => string.Equals(p.Name, profile.Name, StringComparison.OrdinalIgnoreCase));
+            if (i >= 0) { _cutProfiles[i] = profile; } else { _cutProfiles.Add(profile); }
+        }
+        public void DeleteProfile(string name) =>
+            _cutProfiles.RemoveAll(p => string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase));
     }
 
     private sealed class FakeProbe : IMediaProbe

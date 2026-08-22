@@ -1,8 +1,11 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using VideoSplitJoiner.Core.Profiles;
 
 namespace VideoSplitJoiner.App.Settings;
 
@@ -43,6 +46,7 @@ public sealed class AppSettings : IAppSettings
     private LayoutMode _layoutMode = LayoutMode.Horizontal;
     private double? _horizontalSplitRatio;
     private double? _verticalSplitRatio;
+    private List<CutProfile> _cutProfiles = new();
 
     /// <summary>Create a settings store over the default per-user file, loading any existing state.</summary>
     public AppSettings()
@@ -133,6 +137,44 @@ public sealed class AppSettings : IAppSettings
         }
     }
 
+    /// <inheritdoc />
+    public IReadOnlyList<CutProfile> CutProfiles => _cutProfiles;
+
+    /// <inheritdoc />
+    public void SaveProfile(CutProfile profile)
+    {
+        ArgumentNullException.ThrowIfNull(profile);
+
+        var index = _cutProfiles.FindIndex(
+            p => string.Equals(p.Name, profile.Name, StringComparison.OrdinalIgnoreCase));
+        if (index >= 0)
+        {
+            _cutProfiles[index] = profile; // upsert-in-place (position preserved)
+        }
+        else
+        {
+            _cutProfiles.Add(profile);
+        }
+
+        Save();
+    }
+
+    /// <inheritdoc />
+    public void DeleteProfile(string name)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            return;
+        }
+
+        var removed = _cutProfiles.RemoveAll(
+            p => string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase));
+        if (removed > 0)
+        {
+            Save();
+        }
+    }
+
     /// <summary>
     /// The default per-user settings file: <c>%APPDATA%/VideoSplitJoiner/settings.json</c>. Falls back
     /// to the OS temp folder when the app-data path cannot be resolved (rare — headless / restricted).
@@ -175,6 +217,7 @@ public sealed class AppSettings : IAppSettings
                 _layoutMode = ParseLayoutMode(dto.LayoutMode);
                 _horizontalSplitRatio = ClampRatio(dto.HorizontalSplitRatio);
                 _verticalSplitRatio = ClampRatio(dto.VerticalSplitRatio);
+                _cutProfiles = MapProfiles(dto.CutProfiles); // missing/empty field → empty list (older files safe)
             }
         }
         catch
@@ -185,8 +228,66 @@ public sealed class AppSettings : IAppSettings
             _layoutMode = LayoutMode.Horizontal;
             _horizontalSplitRatio = null;
             _verticalSplitRatio = null;
+            _cutProfiles = new List<CutProfile>();
         }
     }
+
+    /// <summary>
+    /// Map the persisted cut-profile DTOs to validated <see cref="CutProfile"/> records. Robust by
+    /// design — a null field (older file that predates the feature) yields an empty list, and any single
+    /// malformed entry (blank name, NaN/negative offset, a value the record's own validation rejects) is
+    /// SKIPPED rather than crashing the load, so one bad row never loses the good ones. Deduped by name
+    /// (case-insensitive, first occurrence wins) to match the upsert contract.
+    /// </summary>
+    private static List<CutProfile> MapProfiles(List<CutProfileDto>? dtos)
+    {
+        var result = new List<CutProfile>();
+        if (dtos is null)
+        {
+            return result;
+        }
+
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var dto in dtos)
+        {
+            var name = NullIfBlank(dto?.Name);
+            if (name is null || !IsFiniteNonNegative(dto!.IntroSeconds))
+            {
+                continue;
+            }
+
+            TimeSpan? outro = null;
+            if (dto.OutroSeconds is double outroSeconds)
+            {
+                if (!IsFiniteNonNegative(outroSeconds))
+                {
+                    continue;
+                }
+
+                outro = TimeSpan.FromSeconds(outroSeconds);
+            }
+
+            CutProfile profile;
+            try
+            {
+                profile = new CutProfile(name, TimeSpan.FromSeconds(dto.IntroSeconds), outro);
+            }
+            catch
+            {
+                continue; // the record's own validation rejected it — skip, don't crash the load
+            }
+
+            if (seen.Add(profile.Name))
+            {
+                result.Add(profile);
+            }
+        }
+
+        return result;
+    }
+
+    private static bool IsFiniteNonNegative(double value) =>
+        !double.IsNaN(value) && !double.IsInfinity(value) && value >= 0;
 
     /// <summary>
     /// Parse the persisted layout string case-insensitively; anything missing/unknown → the
@@ -232,6 +333,16 @@ public sealed class AppSettings : IAppSettings
                 LayoutMode = _layoutMode.ToString(),
                 HorizontalSplitRatio = _horizontalSplitRatio,
                 VerticalSplitRatio = _verticalSplitRatio,
+                // Null (not an empty array) when there are none, so the key is omitted entirely
+                // (JsonIgnoreCondition.WhenWritingNull) — an older/empty file stays byte-clean.
+                CutProfiles = _cutProfiles.Count == 0
+                    ? null
+                    : _cutProfiles.Select(p => new CutProfileDto
+                    {
+                        Name = p.Name,
+                        IntroSeconds = p.IntroFromStart.TotalSeconds,
+                        OutroSeconds = p.OutroFromEnd?.TotalSeconds,
+                    }).ToList(),
             };
 
             var json = JsonSerializer.Serialize(dto, SerializerOptions);
@@ -296,5 +407,29 @@ public sealed class AppSettings : IAppSettings
 
         [JsonPropertyName("verticalSplitRatio")]
         public double? VerticalSplitRatio { get; set; }
+
+        /// <summary>
+        /// The saved cut profiles (T-102). Absent in older files → <c>null</c> → an empty list on load
+        /// (never a crash, no loss of the sibling folder/layout/ratio fields).
+        /// </summary>
+        [JsonPropertyName("cutProfiles")]
+        public List<CutProfileDto>? CutProfiles { get; set; }
+    }
+
+    /// <summary>
+    /// On-disk shape of one cut profile (T-102): the name plus the two offsets as SECONDS (double) — a
+    /// stable, human-readable JSON form (never TimeSpan ticks). <c>outroSeconds</c> is nullable
+    /// (<c>null</c> ⇒ keep runs to EOF, no tail trim).
+    /// </summary>
+    private sealed class CutProfileDto
+    {
+        [JsonPropertyName("name")]
+        public string? Name { get; set; }
+
+        [JsonPropertyName("introSeconds")]
+        public double IntroSeconds { get; set; }
+
+        [JsonPropertyName("outroSeconds")]
+        public double? OutroSeconds { get; set; }
     }
 }
