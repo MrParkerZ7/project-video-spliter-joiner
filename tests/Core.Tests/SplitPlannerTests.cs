@@ -148,4 +148,89 @@ public class SplitPlannerTests
         var s = SplitPlanner.ToSegmentTimes(new[] { TimeSpan.FromSeconds(3), TimeSpan.FromSeconds(6.5) });
         s.Should().Be("3,6.5");
     }
+
+    // ---- todo-automate gap coverage (SPEC-001) ----
+
+    // SPEC-001#I7 — a cut whose SNAPPED time lands >= duration is dropped with the distinct
+    // "snapped … outside the file bounds — dropped" warning (post-snap guard, distinct from I3's
+    // pre-snap "was ignored"). A valid 3s cut survives so the plan does not collapse (that is I11).
+    [Trait("serves-spec", "SPEC-001")]
+    [Fact]
+    public void Plan_CutSnapsOntoDuration_PostSnapDrop_WithDistinctWarning()
+    {
+        // Default keyframes include 10s (== duration). 9.6s passes the pre-snap range check (9.6 < 10)
+        // but snaps to 10s → the post-snap out-of-bounds drop branch.
+        var plan = PlanWith(new[] { TimeSpan.FromSeconds(3), TimeSpan.FromSeconds(9.6) });
+
+        plan.Segments.Should().HaveCount(2, "only the 3s cut survives; the near-end cut snaps out of bounds");
+        plan.InteriorSnappedCuts.Should().Equal(TimeSpan.FromSeconds(3));
+        plan.Warnings.Should().Contain(
+            w => w.Contains("snapped") && w.Contains("outside the file bounds") && w.Contains("dropped"),
+            "the post-snap drop uses the distinct 'snapped … outside the file bounds — dropped' warning");
+    }
+
+    // SPEC-001#I8 — an empty keyframe list leaves surviving cuts UNSNAPPED (raw requested times,
+    // StartDelta == 0); the snapper is never invoked and the split still proceeds.
+    [Trait("serves-spec", "SPEC-001")]
+    [Fact]
+    public void Plan_NoKeyframes_UsesRawTimes_ZeroDelta()
+    {
+        Func<IReadOnlyList<TimeSpan>, TimeSpan, KeyframeSnap> throwingSnap =
+            (_, _) => throw new InvalidOperationException("snapper must not run when there are no keyframes");
+
+        var plan = SplitPlanner.Plan(
+            Duration,
+            new[] { TimeSpan.FromSeconds(3), TimeSpan.FromSeconds(6) },
+            Array.Empty<TimeSpan>(),      // no probed keyframes
+            throwingSnap,
+            averageGop: TimeSpan.Zero,
+            pathFor: i => $"seg{i}.mp4");
+
+        // Raw cut times are used verbatim as the interior boundaries, with zero snap delta everywhere.
+        plan.InteriorSnappedCuts.Should().Equal(TimeSpan.FromSeconds(3), TimeSpan.FromSeconds(6));
+        plan.Segments.Should().HaveCount(3);
+        plan.Segments.Should().OnlyContain(s => s.StartDelta == TimeSpan.Zero);
+    }
+
+    // SPEC-001#I9 — a coarse GOP (averageGop > 2s) combined with a snap that moves > 0.5s raises the
+    // coarse-GOP precision warning.
+    [Trait("serves-spec", "SPEC-001")]
+    [Fact]
+    public void Plan_CoarseGop_SnapOverHalfSecond_RaisesCoarseWarning()
+    {
+        // Keyframes 5s apart (0,5,10) → averageGop 5s > 2s. A cut at 3s snaps to 5s (moves 2s > 0.5s).
+        var coarseKeyframes = new[] { TimeSpan.Zero, TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(10) };
+
+        var plan = SplitPlanner.Plan(
+            Duration,
+            new[] { TimeSpan.FromSeconds(3) },
+            coarseKeyframes,
+            Snapper.SnapToNearestKeyframe,
+            averageGop: TimeSpan.FromSeconds(5),
+            pathFor: i => $"seg{i}.mp4");
+
+        plan.InteriorSnappedCuts.Should().Equal(TimeSpan.FromSeconds(5));
+        plan.Warnings.Should().Contain(w => w.Contains("coarse GOP"));
+    }
+
+    // SPEC-001#I11 — when every surviving cut snaps onto the file bounds, the plan collapses and throws
+    // the distinct "after keyframe snapping" SplitException (vs I10's pre-snap throw).
+    [Trait("serves-spec", "SPEC-001")]
+    [Fact]
+    public void Plan_AllCutsSnapOntoBounds_ThrowsAfterKeyframeSnapping()
+    {
+        // Only two keyframes (0 and 10 == duration). Both interior cuts pass the pre-snap range check
+        // but snap onto 0 / duration → nothing survives snapping.
+        var edgeKeyframes = new[] { TimeSpan.Zero, TimeSpan.FromSeconds(10) };
+
+        var act = () => SplitPlanner.Plan(
+            Duration,
+            new[] { TimeSpan.FromSeconds(0.3), TimeSpan.FromSeconds(9.7) },
+            edgeKeyframes,
+            Snapper.SnapToNearestKeyframe,
+            averageGop: TimeSpan.FromSeconds(5),
+            pathFor: i => $"seg{i}.mp4");
+
+        act.Should().Throw<SplitException>().WithMessage("*after keyframe snapping*");
+    }
 }

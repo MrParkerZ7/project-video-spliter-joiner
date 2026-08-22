@@ -135,4 +135,74 @@ public class CompatCheckerUnitTests
         report.Mismatches.Should().Contain(m => m.Field == "pix_fmt");
         report.Mismatches.Should().Contain(m => m.Field == "codec");
     }
+
+    // ---- todo-automate gap coverage (SPEC-003) ----
+
+    // SPEC-003#I9 — a video time-base difference yields a "time_base" mismatch.
+    [Trait("serves-spec", "SPEC-003")]
+    [Fact]
+    public void DifferingTimeBase_ProducesTimeBaseMismatch()
+    {
+        var report = CompatChecker.Compare(new[] { Clip(Video(tb: "1/30")), Clip(Video(tb: "1/25")) });
+
+        report.Compatible.Should().BeFalse();
+        report.Mismatches.Should().Contain(m => m.Field == "time_base");
+    }
+
+    // SPEC-003#I10 — a video-stream presence difference yields a "video_presence" mismatch.
+    [Trait("serves-spec", "SPEC-003")]
+    [Fact]
+    public void VideoPresenceDifference_IsAMismatch()
+    {
+        // Reference has video+audio; clip 2 is audio-only → the video presence differs.
+        var report = CompatChecker.Compare(new[] { Clip(Video(), Audio()), Clip(audio: Audio()) });
+
+        report.Compatible.Should().BeFalse();
+        report.Mismatches.Should().Contain(m => m.Field == "video_presence");
+    }
+
+    // SPEC-003#I11 — an audio-codec difference yields an "audio_codec" mismatch.
+    [Trait("serves-spec", "SPEC-003")]
+    [Fact]
+    public void DifferingAudioCodec_ProducesAudioCodecMismatch()
+    {
+        var report = CompatChecker.Compare(new[]
+        {
+            Clip(Video(), Audio(codec: "aac")),
+            Clip(Video(), Audio(codec: "mp3")),
+        });
+
+        report.Compatible.Should().BeFalse();
+        report.Mismatches.Should().Contain(m => m.Field == "audio_codec" && m.Detail.Contains("mp3"));
+    }
+
+    // SPEC-003#I13 — an audio channel-count difference yields an "audio_channels" mismatch.
+    [Trait("serves-spec", "SPEC-003")]
+    [Fact]
+    public void DifferingAudioChannels_ProducesAudioChannelsMismatch()
+    {
+        var report = CompatChecker.Compare(new[]
+        {
+            Clip(Video(), Audio(channels: 2)),
+            Clip(Video(), Audio(channels: 6)),
+        });
+
+        report.Compatible.Should().BeFalse();
+        report.Mismatches.Should().Contain(m => m.Field == "audio_channels");
+    }
+
+    // SPEC-003#I17 — stream-field string comparisons are case-insensitive, so clips differing only in
+    // case (codec/pix_fmt/audio-codec) are Compatible.
+    [Trait("serves-spec", "SPEC-003")]
+    [Fact]
+    public void CaseOnlyFieldDifferences_AreCompatible()
+    {
+        var reference = Clip(Video(codec: "H264", pix: "YUV420P"), Audio(codec: "AAC"));
+        var other = Clip(Video(codec: "h264", pix: "yuv420p"), Audio(codec: "aac"));
+
+        var report = CompatChecker.Compare(new[] { reference, other });
+
+        report.Compatible.Should().BeTrue("codec/pix_fmt/audio-codec comparisons are OrdinalIgnoreCase");
+        report.Mismatches.Should().BeEmpty();
+    }
 }

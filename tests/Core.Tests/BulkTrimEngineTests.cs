@@ -44,6 +44,15 @@ public class BulkTrimEngineTests
     private static BulkTrimEngine Engine(FakeSplitEngine split, FakeRequestBuilder builder, IDiskSpaceProbe? disk = null) =>
         new(split, builder, disk ?? RoomyDisk);
 
+    /// <summary>A source file of an exact byte length + its default <c>_trimmed</c> desired output path.</summary>
+    private static BulkTrimItem MakeSizedItem(string dir, string name, long sizeBytes)
+    {
+        var input = Path.Combine(dir, name + ".mp4");
+        File.WriteAllBytes(input, new byte[sizeBytes]);
+        var desired = Path.Combine(dir, name + "_trimmed.mp4");
+        return new BulkTrimItem(input, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(8), desired);
+    }
+
     // --- required-fail: row-2 throws is isolated ----------------------------------------------
 
     [Fact]
@@ -403,6 +412,75 @@ public class BulkTrimEngineTests
 
         result.Outcome.Should().Be(BatchOutcome.Completed);
         result.Items.Should().BeEmpty();
+    }
+
+    // --- todo-automate gap coverage (SPEC-002) ---------------------------------------------------
+
+    // SPEC-002#I23 — a collision-resolution exception is isolated to its own row (Failed) and never
+    // aborts the batch. A DesiredOutputPath that Path.GetFullPath cannot resolve (embedded null char)
+    // throws inside ResolveCollision's pre-resolve loop; the surrounding row still runs.
+    [Trait("serves-spec", "SPEC-002")]
+    [Fact]
+    public async Task Collision_ResolutionThrows_RowFailed_BatchContinues()
+    {
+        var dir = NewDir();
+        try
+        {
+            // A null character makes Path.GetFullPath(DesiredOutputPath) throw ArgumentException,
+            // caught by the pre-resolve catch block → this row is Failed.
+            var badInput = Path.Combine(dir, "bad.mp4");
+            File.WriteAllText(badInput, "source-bytes");
+            var bad = new BulkTrimItem(
+                badInput, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(8), "bad" + (char)0 + "_trimmed.mp4");
+
+            var good = MakeItem(dir, "good");
+
+            var split = new FakeSplitEngine();
+            var engine = Engine(split, new FakeRequestBuilder());
+
+            var result = await engine.RunAsync(new[] { bad, good }, new BulkTrimOptions());
+
+            result.Outcome.Should().Be(BatchOutcome.CompletedWithFailures);
+            result.Items[0].Outcome.Should().Be(ItemOutcome.Failed, "the unresolvable output path fails its own row");
+            result.Items[0].Error.Should().NotBeNull();
+            result.Items[1].Outcome.Should().Be(ItemOutcome.Done, "the surrounding row still runs");
+            split.CallCount.Should().Be(1, "only the healthy row reaches the engine");
+        }
+        finally { Cleanup(dir); }
+    }
+
+    // SPEC-002#I26 — the disk pre-flight per-root size estimate EXCLUDES rows already decided at
+    // pre-resolve (collision-Skipped). With a tight free-bytes value that fits ONLY the runnable row's
+    // source (not both), the batch is NOT Blocked and the runnable row runs.
+    [Trait("serves-spec", "SPEC-002")]
+    [Fact]
+    public async Task Preflight_ExcludesPreSkippedRow_FromSizeEstimate()
+    {
+        var dir = NewDir();
+        try
+        {
+            const long oneMb = 1024 * 1024;
+            const long margin = 16L * 1024 * 1024; // BulkTrimEngine.PreflightMarginBytes
+
+            // 'skip' already has its output on disk → Skip policy pre-decides it (Skipped) so its size
+            // must NOT count toward required space. 'run' is the only runnable row.
+            var skip = MakeSizedItem(dir, "skip", oneMb);
+            File.WriteAllText(Path.Combine(dir, "skip_trimmed.mp4"), "already here");
+            var run = MakeSizedItem(dir, "run", oneMb);
+
+            // Free = 17.5 MB: enough for margin + ONE source (17 MB), NOT for margin + both (18 MB).
+            var free = margin + oneMb + (oneMb / 2);
+            var engine = Engine(new FakeSplitEngine(), new FakeRequestBuilder(), new FakeDiskSpaceProbe(free));
+
+            var result = await engine.RunAsync(new[] { skip, run }, new BulkTrimOptions(CollisionPolicy.Skip));
+
+            result.Outcome.Should().NotBe(BatchOutcome.Blocked, "the pre-skipped row's size must be excluded from the estimate");
+            var runResult = result.Items.Single(r => ReferenceEquals(r.Item, run));
+            runResult.Outcome.Should().Be(ItemOutcome.Done, "the runnable row still runs within the tight budget");
+            var skipResult = result.Items.Single(r => ReferenceEquals(r.Item, skip));
+            skipResult.Outcome.Should().Be(ItemOutcome.Skipped);
+        }
+        finally { Cleanup(dir); }
     }
 }
 

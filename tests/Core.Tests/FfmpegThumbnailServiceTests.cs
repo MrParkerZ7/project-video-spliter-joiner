@@ -297,6 +297,125 @@ public class FfmpegThumbnailServiceTests : IDisposable
         act.Should().NotThrow();
     }
 
+    // ---- todo-automate gap coverage (SPEC-005) ----
+
+    // SPEC-005#I11 — a cache HIT requires the tracked file to still exist; a tracked path whose file
+    // was deleted externally falls through to re-extraction.
+    [Trait("serves-spec", "SPEC-005")]
+    [Fact]
+    public async Task GetThumbnailAsync_TrackedFileDeletedExternally_ReExtracts()
+    {
+        var input = MakeInput();
+        var runner = new WritingFakeRunner();
+        var svc = NewService(runner, bucket: TimeSpan.FromSeconds(1));
+
+        var first = await svc.GetThumbnailAsync(input, TimeSpan.FromSeconds(3), 160, CancellationToken.None);
+        first.Should().NotBeNull();
+        runner.CallCount.Should().Be(1);
+
+        // Delete the tracked temp file out from under the service.
+        File.Delete(first!);
+
+        var second = await svc.GetThumbnailAsync(input, TimeSpan.FromSeconds(3), 160, CancellationToken.None);
+        second.Should().NotBeNull();
+        File.Exists(second!).Should().BeTrue();
+        runner.CallCount.Should().Be(2, "a tracked-but-missing file must be re-extracted, not returned stale");
+    }
+
+    // SPEC-005#I12 — a temp file left on disk by a prior process (on disk, untracked in memory) is
+    // reused WITHOUT running ffmpeg and re-tracked in the cache.
+    [Trait("serves-spec", "SPEC-005")]
+    [Fact]
+    public async Task GetThumbnailAsync_PreexistingOnDiskFile_ReusedWithoutFfmpeg_ThenCached()
+    {
+        var input = MakeInput();
+        var runner = new WritingFakeRunner();
+        var svc = NewService(runner, bucket: TimeSpan.FromSeconds(1));
+
+        // Seed the exact temp path for (input, bucket 2s) on disk, on a service with nothing tracked yet.
+        var tempPath = svc.ResolveTempPath(input, TimeSpan.FromSeconds(2));
+        Directory.CreateDirectory(Path.GetDirectoryName(tempPath)!);
+        await File.WriteAllTextAsync(tempPath, "left-by-prior-process");
+
+        var path = await svc.GetThumbnailAsync(input, TimeSpan.FromSeconds(2.4), 160, CancellationToken.None);
+
+        path.Should().Be(tempPath, "the on-disk file for the bucket is reused verbatim");
+        runner.CallCount.Should().Be(0, "a pre-existing on-disk temp file bypasses ffmpeg");
+
+        // It is now tracked → a second same-bucket call is an in-memory cache hit (still no ffmpeg).
+        var again = await svc.GetThumbnailAsync(input, TimeSpan.FromSeconds(2.9), 160, CancellationToken.None);
+        again.Should().Be(tempPath);
+        runner.CallCount.Should().Be(0);
+    }
+
+    // SPEC-005#I23 — the constructor rejects a null runner or null cacheRoot with ArgumentNullException.
+    [Trait("serves-spec", "SPEC-005")]
+    [Fact]
+    public void Ctor_NullRunnerOrCacheRoot_Throws()
+    {
+        var runner = new WritingFakeRunner();
+        var act1 = () => new FfmpegThumbnailService(null!, _cacheRoot);
+        var act2 = () => new FfmpegThumbnailService(runner, null!);
+        act1.Should().Throw<ArgumentNullException>();
+        act2.Should().Throw<ArgumentNullException>();
+    }
+
+    // SPEC-005#I24 — a non-positive bucketGranularity falls back to the 1s default (so 1.5s and 1.9s
+    // share bucket 1, while 0.5s is the distinct bucket 0).
+    [Trait("serves-spec", "SPEC-005")]
+    [Fact]
+    public async Task Ctor_NonPositiveBucketGranularity_FallsBackToOneSecond()
+    {
+        var input = MakeInput();
+        var runner = new WritingFakeRunner();
+        var svc = NewService(runner, bucket: TimeSpan.Zero); // non-positive → 1s default
+
+        await svc.GetThumbnailAsync(input, TimeSpan.FromSeconds(1.5), 160, CancellationToken.None);
+        await svc.GetThumbnailAsync(input, TimeSpan.FromSeconds(1.9), 160, CancellationToken.None);
+        runner.CallCount.Should().Be(1, "Zero granularity fell back to 1s: 1.5s and 1.9s share bucket 1");
+
+        await svc.GetThumbnailAsync(input, TimeSpan.FromSeconds(0.5), 160, CancellationToken.None);
+        runner.CallCount.Should().Be(2, "0.5s falls into the distinct bucket 0 (1s bucketing, not pass-through)");
+    }
+
+    // SPEC-005#I24 — a non-positive maxEntries falls back to the 128 default (no premature eviction).
+    [Trait("serves-spec", "SPEC-005")]
+    [Fact]
+    public async Task Ctor_NonPositiveMaxEntries_FallsBackTo128()
+    {
+        var input = MakeInput();
+        var runner = new WritingFakeRunner();
+        var svc = NewService(runner, bucket: TimeSpan.FromSeconds(1), maxEntries: 0); // non-positive → 128
+
+        var p0 = await svc.GetThumbnailAsync(input, TimeSpan.FromSeconds(0), 160, CancellationToken.None);
+        await svc.GetThumbnailAsync(input, TimeSpan.FromSeconds(1), 160, CancellationToken.None);
+        await svc.GetThumbnailAsync(input, TimeSpan.FromSeconds(2), 160, CancellationToken.None);
+
+        // With the 128 default (not 0), bucket 0 is NOT evicted: its file survives and re-request is a hit.
+        File.Exists(p0!).Should().BeTrue("maxEntries 0 fell back to 128 — no eviction after 3 entries");
+        var before = runner.CallCount;
+        await svc.GetThumbnailAsync(input, TimeSpan.FromSeconds(0), 160, CancellationToken.None);
+        runner.CallCount.Should().Be(before, "the still-cached bucket 0 is served from memory (no re-extract)");
+    }
+
+    // SPEC-005#I25 — DefaultCacheRoot() composes %LOCALAPPDATA%/VideoSplitJoiner/thumb-cache (OS-temp fallback).
+    [Trait("serves-spec", "SPEC-005")]
+    [Fact]
+    public void DefaultCacheRoot_ComposesAppDataThumbCachePath()
+    {
+        var root = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        if (string.IsNullOrEmpty(root))
+        {
+            root = Path.GetTempPath();
+        }
+
+        var expected = Path.Combine(root, FfmpegThumbnailService.AppFolderName, FfmpegThumbnailService.CacheFolderName);
+        var actual = FfmpegThumbnailService.DefaultCacheRoot();
+
+        actual.Should().Be(expected);
+        actual.Should().EndWith(Path.Combine(FfmpegThumbnailService.AppFolderName, FfmpegThumbnailService.CacheFolderName));
+    }
+
     private static void TryDelete(string dir)
     {
         try { if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true); }

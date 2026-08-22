@@ -169,4 +169,29 @@ public class KeptMiddleRequestBuilderTests
         }
         finally { Cleanup(dir); }
     }
+
+    // SPEC-002#I13 — a probe failure (ProbeResult not ProbeSucceeded) makes the builder throw
+    // SplitException ("Cannot trim …"), the genuine-error path the runner records as Failed — distinct
+    // from the NoOpTrimException → Skipped path (covered by Build_NoOpTrim_ThrowsNoOpTrimException).
+    [Trait("serves-spec", "SPEC-002")]
+    [Fact]
+    public async Task Build_ProbeFails_ThrowsSplitException_CannotTrim()
+    {
+        var dir = NewDir();
+        var input = Path.Combine(dir, "clip.mp4");
+        await File.WriteAllTextAsync(input, "src");
+        try
+        {
+            // FailingMediaProbe (from SplitEngineSpecGapTests) always returns ProbeFailed.
+            var builder = new KeptMiddleRequestBuilder(new FailingMediaProbe("not a media file"));
+            var effective = Path.Combine(dir, "clip_trimmed.mp4");
+            var item = new BulkTrimItem(input, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(8), effective);
+
+            var act = () => builder.BuildAsync(item, effective, overwrite: false, CancellationToken.None);
+
+            (await act.Should().ThrowAsync<SplitException>()).Which.Message
+                .Should().Contain("Cannot trim").And.Contain("not a media file");
+        }
+        finally { Cleanup(dir); }
+    }
 }

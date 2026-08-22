@@ -481,6 +481,95 @@ public class FfmpegWaveformServiceTests : IDisposable
         tokens[tokens.IndexOf("-ar") + 1].Should().Be(4000.ToString(CultureInfo.InvariantCulture));
     }
 
+    // ---- todo-automate gap coverage (SPEC-006) ----
+
+    // SPEC-006#I22 — ResolveTempPath == <cacheRoot>/<sha256-hex first-16-bytes of inputPath>/audio.pcm,
+    // and DefaultCacheRoot() composes %LOCALAPPDATA%/VideoSplitJoiner/waveform-cache (OS-temp fallback).
+    [Trait("serves-spec", "SPEC-006")]
+    [Fact]
+    public void ResolveTempPath_And_DefaultCacheRoot_ComposeExpectedLayout()
+    {
+        const string input = @"C:\videos\clip.mp4";
+        var svc = NewService(new WritingPcmRunner(Pcm(1, 2)));
+
+        // <hash> = first 16 bytes of SHA-256(inputPath UTF-8) as lowercase hex.
+        var hashBytes = System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(input));
+        var sb = new System.Text.StringBuilder(32);
+        for (var i = 0; i < 16; i++)
+        {
+            sb.Append(hashBytes[i].ToString("x2", CultureInfo.InvariantCulture));
+        }
+
+        var expectedTemp = Path.Combine(_cacheRoot, sb.ToString(), FfmpegWaveformService.PcmFileName);
+        svc.ResolveTempPath(input).Should().Be(expectedTemp);
+        FfmpegWaveformService.PcmFileName.Should().Be("audio.pcm");
+
+        var root = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        if (string.IsNullOrEmpty(root))
+        {
+            root = Path.GetTempPath();
+        }
+
+        var expectedRoot = Path.Combine(root, FfmpegWaveformService.AppFolderName, FfmpegWaveformService.CacheFolderName);
+        FfmpegWaveformService.DefaultCacheRoot().Should().Be(expectedRoot);
+        FfmpegWaveformService.DefaultCacheRoot().Should().EndWith(
+            Path.Combine(FfmpegWaveformService.AppFolderName, FfmpegWaveformService.CacheFolderName));
+    }
+
+    // SPEC-006#I23 — the constructor rejects a null runner or null cacheRoot with ArgumentNullException.
+    [Trait("serves-spec", "SPEC-006")]
+    [Fact]
+    public void Ctor_NullRunnerOrCacheRoot_Throws()
+    {
+        var runner = new WritingPcmRunner(Pcm(1, 2));
+        var act1 = () => new FfmpegWaveformService(null!, _cacheRoot);
+        var act2 = () => new FfmpegWaveformService(runner, null!);
+        act1.Should().Throw<ArgumentNullException>();
+        act2.Should().Throw<ArgumentNullException>();
+    }
+
+    // SPEC-006#I23 — a non-positive sampleRateHz falls back to the 4000 default (emitted as -ar 4000).
+    [Trait("serves-spec", "SPEC-006")]
+    [Fact]
+    public async Task Ctor_NonPositiveSampleRate_FallsBackTo4000_InArgs()
+    {
+        var input = MakeInput();
+        var runner = new WritingPcmRunner(Pcm(1000, 2000, 3000, 4000));
+        var svc = NewService(runner, sampleRate: 0); // non-positive → 4000 default
+
+        await svc.GetPeaksAsync(input, buckets: 2, CancellationToken.None);
+
+        var tokens = runner.Commands[0];
+        tokens[tokens.IndexOf("-ar") + 1].Should().Be("4000", "sampleRateHz 0 fell back to the 4000 default");
+    }
+
+    // SPEC-006#I23 — a non-positive maxEntries falls back to the 16 default (still evicts at 16).
+    [Trait("serves-spec", "SPEC-006")]
+    [Fact]
+    public async Task Ctor_NonPositiveMaxEntries_FallsBackTo16_StillEvicts()
+    {
+        var input = MakeInput();
+        var runner = new WritingPcmRunner(Pcm(1000, 2000, 3000, 4000));
+        var svc = NewService(runner, maxEntries: 0); // non-positive → 16 default
+
+        // 17 distinct bucket-count keys on the same file → with the 16 cap the FIRST key is evicted.
+        for (var b = 1; b <= 17; b++)
+        {
+            await svc.GetPeaksAsync(input, buckets: b, CancellationToken.None);
+        }
+
+        runner.CallCount.Should().Be(17, "17 distinct keys each extract once");
+
+        // The most-recent key (buckets:17) is still cached → a re-request is a HIT (no re-run). This
+        // rules out the maxEntries:0 "cache nothing" behavior (where every call would re-extract).
+        await svc.GetPeaksAsync(input, buckets: 17, CancellationToken.None);
+        runner.CallCount.Should().Be(17, "a recent key is cached — maxEntries fell back to a positive cap");
+
+        // The oldest key (buckets:1) was evicted at the 16 cap → a re-request re-extracts.
+        await svc.GetPeaksAsync(input, buckets: 1, CancellationToken.None);
+        runner.CallCount.Should().Be(18, "the oldest key was evicted at the 16 default cap");
+    }
+
     private static void TryDelete(string dir)
     {
         try { if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true); }

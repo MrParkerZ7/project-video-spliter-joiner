@@ -104,4 +104,56 @@ public class SplitArgsInvariantTests
         var noCopy = new[] { "-i", "in.mp4", "-map", "0", "out.mp4" };
         SplitArgsBuilder.SatisfiesCopyInvariant(noCopy).Should().BeFalse();
     }
+
+    // ---- todo-automate gap coverage (SPEC-001) ----
+
+    // SPEC-001#I15 — SegmentMuxer with zero interior cuts throws SplitException.
+    [Trait("serves-spec", "SPEC-001")]
+    [Fact]
+    public void SegmentMuxer_ZeroInteriorCuts_Throws()
+    {
+        var act = () => SplitArgsBuilder.SegmentMuxer(@"C:\in.mp4", Array.Empty<TimeSpan>(), @"C:\out\part%03d.mp4");
+        act.Should().Throw<SplitException>().WithMessage("*at least one interior cut time*");
+    }
+
+    // SPEC-001#I16 — PerSegment places -ss BEFORE -i (an input-side seek).
+    [Trait("serves-spec", "SPEC-001")]
+    [Fact]
+    public void PerSegment_PlacesSsBeforeInput()
+    {
+        var tokens = SplitArgsBuilder.PerSegment(
+            @"C:\in.mp4", TimeSpan.FromSeconds(3), TimeSpan.FromSeconds(6), @"C:\out\seg.mp4").ToList().ToList();
+
+        var ss = tokens.IndexOf("-ss");
+        var i = tokens.IndexOf("-i");
+        ss.Should().BeGreaterThanOrEqualTo(0);
+        i.Should().BeGreaterThan(ss, "-ss must precede -i so the seek is an input-side seek");
+    }
+
+    // SPEC-001#I17 — PerSegment emits -to == (end - start) as a DURATION relative to the seek, not the
+    // absolute source end (emitting the absolute end would over-run by `start`).
+    [Trait("serves-spec", "SPEC-001")]
+    [Fact]
+    public void PerSegment_To_IsDurationRelativeToSeek_NotAbsoluteEnd()
+    {
+        var tokens = SplitArgsBuilder.PerSegment(
+            @"C:\in.mp4", TimeSpan.FromSeconds(3), TimeSpan.FromSeconds(6), @"C:\out\seg.mp4").ToList().ToList();
+
+        var to = tokens.IndexOf("-to");
+        to.Should().BeGreaterThanOrEqualTo(0);
+        tokens[to + 1].Should().Be("3", "-to is the duration (6 - 3), not the absolute end 6");
+    }
+
+    // SPEC-001#I17 (boundary) — an end earlier than start clamps the emitted -to duration to 0.
+    [Trait("serves-spec", "SPEC-001")]
+    [Fact]
+    public void PerSegment_EndBeforeStart_ClampsToZeroDuration()
+    {
+        var tokens = SplitArgsBuilder.PerSegment(
+            @"C:\in.mp4", TimeSpan.FromSeconds(6), TimeSpan.FromSeconds(3), @"C:\out\seg.mp4").ToList().ToList();
+
+        var to = tokens.IndexOf("-to");
+        to.Should().BeGreaterThanOrEqualTo(0);
+        tokens[to + 1].Should().Be("0", "a negative (end - start) duration clamps to 0");
+    }
 }
