@@ -18,18 +18,18 @@ One spec per feature; numbered invariants are the source `todo-automate` derives
 | [SPEC-004](SPEC-004-media-probe.md) | media-probe | core | 32 | 32 | 0 |
 | [SPEC-005](SPEC-005-thumbnail-service.md) | thumbnail-service | core | 25 | 25 | 0 |
 | [SPEC-006](SPEC-006-waveform-service.md) | waveform-service | core | 23 | 23 | 0 |
-| [SPEC-007](SPEC-007-cut-profiles.md) | cut-profiles | core | 30 | 30 | 0 |
+| [SPEC-007](SPEC-007-cut-profiles.md) | cut-profiles | core | 67 | 67 | 0 |
 | [SPEC-008](SPEC-008-operation-progress-eta.md) | operation-progress-eta | app | 40 | 40 | 0 |
 | [SPEC-009](SPEC-009-app-settings.md) | app-settings | app | 22 | 22 | 0 |
 | [SPEC-010](SPEC-010-split-screen.md) | split-screen | app | 40 | 40 | 0 |
-| [SPEC-011](SPEC-011-bulk-cut-screen.md) | bulk-cut-screen | app | 60 | 60 | 0 |
+| [SPEC-011](SPEC-011-bulk-cut-screen.md) | bulk-cut-screen | app | 67 | 67 | 0 |
 | [SPEC-012](SPEC-012-join-screen.md) | join-screen | app | 28 | 28 | 0 |
 | [SPEC-013](SPEC-013-preview-player.md) | preview-player | app | 48 | 46 | 2 |
 | [SPEC-014](SPEC-014-timeline.md) | timeline | app | 35 | 30 | 5 |
 | [SPEC-015](SPEC-015-app-shell-theming.md) | app-shell-theming | ui | 28 | 22 | 6 |
-| **TOTAL** | | | **512** | **496** | **16** |
+| **TOTAL** | | | **556** | **540** | **16** |
 
-**Coverage: 97% of spec cases** (496/512). The 16 remaining are deferred (see [_GAPS.md](_GAPS.md)):
+**Coverage: 97% of spec cases** (540/556). The 16 remaining are deferred (see [_GAPS.md](_GAPS.md)):
 view-only WPF render (SPEC-014 scrub/waveform), `FfmeMediaPlayer` WPF-bound (verified live), native P/Invoke,
 App crash-handler wiring, resource-load theme styles, and 2 intentionally-unreachable defensive assertions —
 all need a helper-extraction / seam refactor to become unit-testable. Tracked by **T-105**.

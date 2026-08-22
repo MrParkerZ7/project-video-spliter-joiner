@@ -47,6 +47,19 @@ re-encode — the player only previews; every cut continues to keyframe-snap thr
   `PlayerView` and the set-at-playhead gestures re-snap through the existing cut path; the `CutProfile`
   model is a WPF-free Core record persisted by `IAppSettings`. See
   [ADR 0016](docs/adr/0016-shared-bulk-preview-player-and-cut-profiles.md).
+- **Bulk Cut — profile thumbnails + per-row cut-point frame previews (G-038)** — cut profiles now carry an
+  **optional thumbnail**: **Save current as…** auto-captures the **frame at the row's intro-end** as the
+  profile's default thumbnail, **Upload image…** overrides it with your own picture, and **Clear** removes it;
+  the thumbnail shows **beside the profile's name in the picker** and **persists across restarts** (deleting a
+  profile removes its thumbnail too). And each row now shows small **frame thumbnails at its cut points** — the
+  **intro-end** (gold ring) and, when an outro is set, the **outro-start** (blue ring) — so you can verify a cut
+  by eye; they **update as you drag** the handles. Both are **best-effort** — a frame that can't be captured just
+  shows a placeholder and never blocks a save or a batch. There is **no new ffmpeg/frame path**: cut-point frames
+  reuse the same `IThumbnailService` the hover-preview uses (debounced + latest-wins, behind a **dedicated
+  concurrency gate** so they never starve the keyframe scans), and profile thumbnails are copied into a per-user
+  `profile-thumbs` folder by a new `ProfileThumbnailStore`. The stored value is a **path only, never image
+  bytes**, and the `settings.json` round-trip is **backward-compatible** (an older file with no `thumbnailPath`
+  loads cleanly).
 - **Split tool-panel 50/50 layout (G-035, implements design D-003)** — the Split screen's tool panel is now a
   **bounded 50/50 star-row layout**: the **Cut markers** list and the **Parts to export** list each take ~half of
   the panel's height and grow with the window, and each scrolls internally when it overflows its half. "Add cut at

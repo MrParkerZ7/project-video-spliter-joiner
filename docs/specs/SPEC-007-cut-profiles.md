@@ -8,19 +8,23 @@ sources:
   - src/Core/Profiles/CutProfile.cs
   - src/App/Settings/AppSettings.cs
   - src/App/ViewModels/CutProfileApplier.cs
-serves-goal: [G-037]
-updated: 2026-08-22
+  - src/App/Settings/ProfileThumbnailStore.cs
+  - src/App/ViewModels/BulkCutViewModel.cs
+serves-goal: [G-037, G-038]
+updated: 2026-08-23
 ---
 
 ## What
 A **cut profile** is a reusable, named "keep-the-middle" trim recipe: an absolute intro-end offset measured from the START of a file, plus an optional outro length measured from the END. `CutProfile` (Core, WPF-free, immutable record) is the model with construction-time validation; `AppSettings` persists a list of profiles to `settings.json` (upsert/delete by case-insensitive name, offsets stored as human-readable seconds, tolerant load); `CutProfileApplier` applies a profile to a set of Bulk Cut rows (intro absolute-and-clamped, outro from-end so uneven-length episodes align, each row re-snapping to its own keyframes and re-validating, invalidated rows reported not dropped) and builds a profile from a row's current cut. Storing the outro from the end is what lets ONE profile land correctly on episodes of different lengths.
 
+A profile also carries an **optional thumbnail** (G-038 / T-106): `CutProfile.ThumbnailPath` is an optional PATH string (never image bytes) that survives the JSON round-trip backward-compatibly; `ProfileThumbnailStore` copies a chosen frame/image into a per-user `profile-thumbs` folder under a deterministic, collision-resistant safe name and best-effort removes it, and `AppSettings.DeleteProfile` cascades that removal. The T-107 view-model glue on `BulkCutViewModel` auto-captures the row's intro-end frame as the profile's default thumbnail on save (best-effort — a failed grab never blocks the save), with upload-override and clear.
+
 ## Why
 Users cutting a season of episodes want to define "trim the 12s intro and the 20s of end credits" ONCE and apply it across files of differing durations. An absolute-from-start intro plus a from-END outro (rather than two absolute times) makes the same profile land correctly on a 22-minute and a 24-minute episode alike (the T-096 apply-to-all convention). The model is deliberately Core-resident and WPF-free so it can be validated, persisted as stable JSON, and unit-tested without an App/UI dependency, and the persistence layer must tolerate corrupt or legacy files without ever crashing the app.
 
 ## Scope
-**In:** the `CutProfile` record and its validation; `AppSettings` profile persistence (`CutProfiles` list, `SaveProfile` upsert, `DeleteProfile`, JSON round-trip via `CutProfileDto`, tolerant/backward-compatible load); `CutProfileApplier.ApplyProfile` (intro/outro application, per-row re-snap + re-validate, `ApplyToAllReport`) and `CutProfileApplier.BuildProfileFromRow`.
-**Out:** the T-103 `BulkCutViewModel` command glue (`SaveProfile`/`ApplyProfileToSelected`/`ApplyProfileToAll`/`DeleteSelectedProfile`, the profile bar, command enable/disable) — a separate app-layer spec; the keyframe-snap and cut-validity engine behind `BulkItemViewModel.IntroEnd`/`OutroStart`/`IsValidCut` (its own spec); the non-profile `AppSettings` fields (folders, layout mode, split ratios).
+**In:** the `CutProfile` record and its validation (including the optional `ThumbnailPath` member); `AppSettings` profile persistence (`CutProfiles` list, `SaveProfile` upsert, `DeleteProfile` + its thumbnail-file cascade, JSON round-trip via `CutProfileDto` incl. `thumbnailPath`, tolerant/backward-compatible load); `CutProfileApplier.ApplyProfile` (intro/outro application, per-row re-snap + re-validate, `ApplyToAllReport`) and `CutProfileApplier.BuildProfileFromRow`; the `ProfileThumbnailStore` file store (`Save`/`Delete`/`DeleteByPath`/`DefaultRoot`/`SafeFileName`); and the **T-107 thumbnail glue** on `BulkCutViewModel` (`SaveProfileWithAutoThumbnailAsync` auto-default capture, `UploadThumbnail`, `ClearThumbnail`, `AttachThumbnail`).
+**Out:** the **non-thumbnail** T-103 `BulkCutViewModel` command glue (`SaveProfile`/`ApplyProfileToSelected`/`ApplyProfileToAll`/`DeleteSelectedProfile`, the profile bar, command enable/disable) — covered by SPEC-011; the keyframe-snap and cut-validity engine behind `BulkItemViewModel.IntroEnd`/`OutroStart`/`IsValidCut` (its own spec); the per-row cut-point frame thumbnails (T-108 — SPEC-011); the non-profile `AppSettings` fields (folders, layout mode, split ratios); the WPF profile-picker view/`PathToBitmapConverter` rendering.
 
 ## Current behavior & invariants
 
@@ -60,9 +64,56 @@ Users cutting a season of episodes want to define "trim the 12s intro and the 20
 - **I29** — `BuildProfileFromRow` on a row **without an outro** produces a profile whose `OutroFromEnd` is `null` (a keep-to-EOF profile).
 - **I30** — `BuildProfileFromRow(name, null)` throws `ArgumentNullException`.
 
+### CutProfile thumbnail — model (T-106) (`src/Core/Profiles/CutProfile.cs`)
+- **I31** — `CutProfile` takes an optional fourth `ThumbnailPath` parameter; a profile constructed with a non-blank path exposes it unchanged (`ThumbnailPath`).
+- **I32** — the thumbnail is optional: constructing without the argument (the 3-arg form) yields `ThumbnailPath == null` (absent ⇒ no thumbnail).
+- **I33** — a `null` / empty / whitespace `ThumbnailPath` normalizes to `null` (`NormalizeThumbnailPath`), so an empty string never masquerades as a real thumbnail.
+- **I34** — a non-blank `ThumbnailPath` is stored **trimmed** of surrounding whitespace (like `Name`).
+- **I35** — `ThumbnailPath` is plain metadata: the record performs **no** existence/format validation on it (unlike the range-checked offsets), so a nonexistent or non-image path constructs without throwing.
+- **I36** — a record `with { ThumbnailPath = … }` sets the thumbnail while leaving the other fields intact and the original instance unchanged (the copy-on-attach path T-107 uses).
+- **I37** — `ThumbnailPath` participates in record value-equality: two profiles equal on `Name`/`IntroFromStart`/`OutroFromEnd` but differing only on `ThumbnailPath` are **not** equal.
+
+### Thumbnail persistence — round-trip (T-106) (`src/App/Settings/AppSettings.cs`)
+- **I38** — `ThumbnailPath` round-trips through the JSON file: a profile saved with a thumbnail path reloads (new `AppSettings` over the same path) with the identical path, and a no-thumbnail profile stays `null` across the round-trip (`CutProfileDto.ThumbnailPath`, `MapProfiles`).
+- **I39** — the thumbnail persists as a PATH **string** (the JSON carries a `"thumbnailPath"` key holding the path), never image bytes (`CutProfileDto.ThumbnailPath` is `string?`).
+- **I40** — a `null` `ThumbnailPath` is **omitted entirely** from the written JSON (`JsonIgnoreCondition.WhenWritingNull`), so a no-thumbnail profile stays byte-clean (same discipline as I19).
+- **I41** — backward compatibility: an older `cutProfiles` entry that predates the field (no `thumbnailPath` key) loads with `ThumbnailPath == null` and its sibling fields (name/offsets) intact — an additive, non-breaking migration (`MapProfiles` → `NullIfBlank(dto.ThumbnailPath)`).
+
+### Thumbnail file store — `ProfileThumbnailStore` (T-106) (`src/App/Settings/ProfileThumbnailStore.cs`)
+- **I42** — `Save(profileName, sourcePath)` copies the source file into the store root (bytes verbatim), creates the root on demand, and returns the stored **absolute** path — the value assigned to `CutProfile.ThumbnailPath` (`Save`, `Directory.CreateDirectory`).
+- **I43** — `Save` preserves a **recognized** source image extension (lowercased) on the stored file (`NormalizeExtension`, `KnownImageExtensions`).
+- **I44** — `Save` with an **unrecognized** source extension defaults the stored file to `.png` (`DefaultExtension`).
+- **I45** — `Save` overwrites the profile's prior thumbnail first — including across an **extension change** — so exactly one thumbnail file exists per profile (`Save` → `DeleteExistingFor`).
+- **I46** — `Save` **sanitizes** an odd profile name (invalid filename chars → `_`) into a safe filename, so a name with illegal characters copies successfully instead of raising an I/O error (`SafeFileName`).
+- **I47** — `Save` throws `ArgumentException` (`profileName`) on a blank/whitespace profile name.
+- **I48** — `Save` throws `ArgumentException` (`sourceImageOrFramePath`) on a blank/whitespace source path.
+- **I49** — `Save` throws `FileNotFoundException` when the source file does not exist — a genuine caller error, distinct from the best-effort deletes (`Save` guard).
+- **I50** — `Delete(profileName)` removes the profile's stored thumbnail file (`Delete` → `DeleteExistingFor`).
+- **I51** — `Delete` resolves the file **case-insensitively**, matching the profile upsert key (`Delete("series")` removes the file saved under `"Series"`).
+- **I52** — `Delete` is best-effort: an unknown / never-saved / blank / `null` name is a no-op that **never throws** (`Delete` early-return, `TryDeleteFile` swallow).
+- **I53** — `DeleteByPath(path)` best-effort removes a specific stored file by its path (`DeleteByPath` → `TryDeleteFile`).
+- **I54** — `DeleteByPath` is best-effort on a missing / blank / `null` path — a no-op that never throws.
+- **I55** — `DefaultRoot()` resolves to `%LOCALAPPDATA%/VideoSplitJoiner/profile-thumbs` (mirroring the thumb-cache composition), with an OS-temp fallback when local-app-data cannot be resolved (`DefaultRoot`, `AppFolderName`, `ThumbsFolderName`).
+- **I56** — `SafeFileName` is **collision-resistant**: two distinct names that sanitize to the same readable stem still map to different files, via a short SHA-256-derived hash suffix (`SafeFileName`, `ShortHash`).
+- **I57** — `SafeFileName` is **case-insensitively stable** (same file for `Foo`/`foo`), matching the upsert key, so `Save`/`Delete`/the cascade all resolve the same file across sessions.
+- **I58** — the store's root is **injectable** and construction is side-effect-free — no directory is created until the first `Save` (`ProfileThumbnailStore(string root)` ctor; every test redirects the root away from the real per-user folder).
+
+### DeleteProfile → thumbnail cascade (T-106) (`src/App/Settings/AppSettings.cs`)
+- **I59** — `DeleteProfile` **cascades** to the thumbnail file: after removing the profile it best-effort deletes the stored thumbnail both by the recomputed safe name (`store.Delete(name)`) **and** by the exact recorded path (`store.DeleteByPath(removedProfile.ThumbnailPath)`), covering a directly-set path that diverges from the safe-name path (`DeleteProfile`).
+- **I60** — the cascade is optional and best-effort: an `AppSettings` with **no** wired store (`AppSettings(file)`) simply skips the thumbnail cleanup — the profile is still removed and persisted, without throwing (`_thumbnailStore?.Delete`).
+
+### Profile-thumbnail glue — auto-default / upload / clear (T-107) (`src/App/ViewModels/BulkCutViewModel.cs`)
+- **I61** — `SaveProfileWithAutoThumbnailAsync(name)` auto-captures the selected row's **intro-end frame** as the profile's default thumbnail: it grabs exactly one frame at `row.IntroEnd.Snapped` (width `ProfileThumbnailWidth` = 96), copies it into the `ProfileThumbnailStore`, persists the stored path onto the profile, and re-points the bar's `SelectedProfile` at the thumbnailed instance.
+- **I62** — the auto-default persists the profile **first** and is never blocked on the grab: a grab that returns **null** still saves the profile with a `null` thumbnail (placeholder) (`SaveProfileWithAutoThumbnailAsync` step 1 → `SaveProfile`, then best-effort attach).
+- **I63** — a grab that **throws** never blocks or fails the save: the profile still saves with a `null` thumbnail (`SaveProfileWithAutoThumbnailAsync` try/catch, `AttachThumbnail` catch).
+- **I64** — with **no selected row**, `SaveProfileWithAutoThumbnailAsync` is a no-op: nothing is saved and no frame grab is attempted.
+- **I65** — `UploadThumbnail(profile, imagePath)` overrides the thumbnail: it copies the chosen image into the store (extension preserved), persists the stored path onto the profile, and re-points the bar selection (`UploadThumbnail` → `AttachThumbnail`).
+- **I66** — `UploadThumbnail` is best-effort: a `null` profile, a blank/missing image, or a store copy-failure is a silent no-op that leaves the profile's current thumbnail untouched and never throws (`AttachThumbnail` catch).
+- **I67** — `ClearThumbnail(profile)` nulls the profile's `ThumbnailPath` **and** best-effort deletes the stored file(s) — by name and by the exact recorded path — then re-points the bar selection, so the picker reverts to the placeholder; it is a no-op when the profile is unset or has no persisted entry (`ClearThumbnail`).
+
 ## Links
-- Design: — (feature tasks T-096 apply-to-all convention · T-102 model/persistence/apply · T-103 VM command glue)
-- Goals: G-037
-- Related specs: — (T-103 `BulkCutViewModel` profile-commands spec; the keyframe-snap / cut-validity spec — both adjacent, out of scope here)
-- Key code: `src/Core/Profiles/CutProfile.cs` · `src/App/Settings/AppSettings.cs` (`CutProfiles`/`SaveProfile`/`DeleteProfile` + `SettingsDto`/`CutProfileDto`) · `src/App/ViewModels/CutProfileApplier.cs`
-- Tests: `tests/Core.Tests/CutProfileTests.cs` · `tests/App.Tests/CutProfilePersistenceTests.cs` · `tests/App.Tests/CutProfileApplierTests.cs` (and app-layer `tests/App.Tests/BulkCutProfileCommandsTests.cs`)
+- Design: — (feature tasks T-096 apply-to-all convention · T-102 model/persistence/apply · T-103 VM command glue · T-106 thumbnail model/store · T-107 thumbnail UI glue)
+- Goals: G-037, G-038 (profile thumbnails)
+- Related specs: SPEC-011 (bulk-cut-screen — the T-103 non-thumbnail profile commands + the T-108 per-row cut-point thumbnails); the keyframe-snap / cut-validity spec — both adjacent, out of scope here
+- Key code: `src/Core/Profiles/CutProfile.cs` (`ThumbnailPath`) · `src/App/Settings/AppSettings.cs` (`CutProfiles`/`SaveProfile`/`DeleteProfile` cascade + `SettingsDto`/`CutProfileDto`) · `src/App/Settings/ProfileThumbnailStore.cs` (`Save`/`Delete`/`DeleteByPath`/`DefaultRoot`/`SafeFileName`) · `src/App/ViewModels/CutProfileApplier.cs` · `src/App/ViewModels/BulkCutViewModel.cs` (`SaveProfileWithAutoThumbnailAsync`/`UploadThumbnail`/`ClearThumbnail`/`AttachThumbnail`)
+- Tests: `tests/Core.Tests/CutProfileTests.cs` · `tests/App.Tests/CutProfilePersistenceTests.cs` · `tests/App.Tests/CutProfileApplierTests.cs` · `tests/App.Tests/ProfileThumbnailStoreTests.cs` (store + `DeleteProfile` cascade, T-106) · `tests/App.Tests/BulkCutProfileThumbnailTests.cs` (auto-default/upload/clear, T-107) (and app-layer `tests/App.Tests/BulkCutProfileCommandsTests.cs`)

@@ -297,6 +297,36 @@ G-037 adds a **preview player** and **reusable cut profiles** to the tab, record
   never silently dropped) and builds a profile from a row's current cut, **reusing** the apply-to-all
   convention rather than duplicating it.
 
+### Profile thumbnails + per-row cut-point frames (G-038)
+
+G-038 adds two thumbnail affordances to the tab, both **reusing the existing frame source** — no second
+ffmpeg/frame path:
+
+- **A profile's thumbnail is a path, stored by `ProfileThumbnailStore` — never bytes in the JSON.**
+  `CutProfile` gains an optional `ThumbnailPath` (Core, WPF-free; a blank normalizes to `null`, no
+  existence/format check — it is metadata, not a cut offset). `ProfileThumbnailStore` (`App/Settings/`,
+  BCL-only) copies a chosen frame/image into `%LOCALAPPDATA%/VideoSplitJoiner/profile-thumbs` (mirroring
+  the thumb-cache root composition, OS-temp fallback) under a **deterministic, collision-resistant safe
+  name** — invalid chars sanitized, a short SHA-256 suffix keying off the case-folded profile name so it
+  resolves the same file across sessions and never collides — and best-effort removes it. `IAppSettings`
+  round-trips the **path** as human-readable JSON (`thumbnailPath`, omitted when null → byte-clean; an
+  older file with no key loads as `null` — backward-compatible), and `AppSettings.DeleteProfile`
+  **cascades** to delete the stored file (by safe-name and by the exact recorded path). The T-107 glue on
+  `BulkCutViewModel` (`SaveProfileWithAutoThumbnailAsync`) captures the row's **intro-end frame** via
+  `IThumbnailService.GetThumbnailAsync` as the default, with `UploadThumbnail`/`ClearThumbnail` overrides —
+  all **best-effort and off the save path**: the profile persists first, so a slow/failed grab or a store
+  failure just leaves the placeholder and never blocks the save.
+- **Per-row cut-point frames reuse `IThumbnailService` behind a dedicated concurrency gate.** Each
+  `BulkItemViewModel` grabs a small frame at its keyframe-**snapped** intro-end (and outro-start, when
+  `HasOutro`) through the **same** shared `IThumbnailService` the hover-preview uses — no new frame path —
+  driven by an internal `HandleThumbnailGrabber` that copies `ThumbnailPreviewViewModel`'s **debounce +
+  cancel-prior + latest-wins** discipline (a slower 200ms settle so a drag coalesces to one grab; results
+  marshalled back over the captured `SynchronizationContext` via `Progress<T>`). Crucially the grabs run
+  through a **separate** `SemaphoreSlim(3,3)` on `BulkCutViewModel` — *not* the keyframe-scan gate — so a
+  large batch's eye-candy frame grabs can never starve the ffprobe keyframe scans that gate `CanRunBatch`;
+  the permit is held only around the grab, never during the debounce. Every grab is best-effort (null →
+  the muted placeholder chip) and cancelled per row on Remove/Clear (`CancelScan`).
+
 ## In-app preview player + timeline (`App/Media/`, `App/ViewModels/`)
 
 The Split screen embeds a live video preview and a visual cut-selection strip. This layer lives

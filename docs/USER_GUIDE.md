@@ -252,7 +252,11 @@ apply it across the whole list.
    you can find the exact spot by sight. Both handles **keyframe-snap** on commit, and each shows its
    snapped time — the same `requested → snapped (±delta)` readout as the Split screen (see
    [Why cuts snap to keyframes](#why-cuts-snap-to-keyframes) — the snapped time is the real cut, shown
-   per handle). A row whose handles leave nothing meaningful to keep is marked invalid and excluded.
+   per handle). Beside each row, a small **frame thumbnail shows exactly where each cut lands** — the
+   frame at the **intro-end** (gold-ringed) and, once an outro is set, the frame at the **outro-start**
+   (blue-ringed) — so you can confirm a cut by eye without opening the preview. They **update as you drag**
+   each handle (a beat behind, once the cut settles), and show a muted placeholder while a frame loads or
+   if it can't be read. A row whose handles leave nothing meaningful to keep is marked invalid and excluded.
 4. **Apply cut points to all (optional).** Set one row the way you want, then **apply its cut points to
    every other row** so you don't mark each by hand. The intro-end copies as an absolute time from the
    start, but **the outro is measured from the *end* of each file** — so a set of episodes of *different
@@ -266,6 +270,13 @@ apply it across the whole list.
    - **Save current as…** — with a row selected, click it, type a name, and **Save**. The profile is
      **stored in your settings and survives a restart**. Saving under a name that already exists
      **replaces** it, so you can refine a profile in place.
+   - **Each profile carries a thumbnail.** When you **Save**, the app automatically uses the **frame at
+     the row's intro-end** as the profile's thumbnail, shown **beside its name in the picker** so you can
+     tell profiles apart at a glance. In the same Save box you can **Upload image…** to use your own
+     picture instead, or **Clear** to remove it (the profile then shows a plain placeholder). The
+     thumbnail is kept with your settings and **survives a restart**, and **deleting a profile removes its
+     thumbnail too**. Setting a thumbnail is best-effort — if a frame can't be captured, the profile
+     still saves, just with the placeholder.
    - **Pick a profile** from the drop-down, then **Apply → selected** to apply it to the selected row, or
      **Apply → all** to apply it to **every checked row at once**. The intro is applied as an absolute
      time from the start, but — exactly like *apply cut points to all* — **the outro is measured from the

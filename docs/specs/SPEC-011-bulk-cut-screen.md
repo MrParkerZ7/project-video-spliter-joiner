@@ -8,8 +8,8 @@ sources:
   - src/App/ViewModels/BulkCutViewModel.cs
   - src/App/ViewModels/BulkItemViewModel.cs
   - src/App/ViewModels/CutProfileApplier.cs
-serves-goal: [G-036, G-037]
-updated: 2026-08-22
+serves-goal: [G-036, G-037, G-038]
+updated: 2026-08-23
 ---
 
 ## What
@@ -20,9 +20,10 @@ add-ordered list of `BulkItemViewModel` rows; each row keeps exactly the middle 
 provides: an **apply-to-all** gesture that copies one row's cut to the other checked rows (intro absolute,
 outro from end, each re-snapped + re-validated); reusable **cut profiles** (save / apply-to-selected /
 apply-to-all / delete); a **single shared mini-preview player** where selecting a row opens that file and two
-**set-at-playhead** gestures place the cut by watching (G-037); and a batch **Run** that *delegates* the whole
-trim job to `IBulkTrimEngine.RunAsync` (the VM owns no batch loop), fanning weighted-monotonic overall progress,
-per-row progress, and the returned ledger back onto the rows.
+**set-at-playhead** gestures place the cut by watching (G-037); **per-row cut-point frame thumbnails** that grab a
+small frame at each row's snapped intro-end (and outro-start) so the cut can be verified by eye (G-038); and a
+batch **Run** that *delegates* the whole trim job to `IBulkTrimEngine.RunAsync` (the VM owns no batch loop),
+fanning weighted-monotonic overall progress, per-row progress, and the returned ledger back onto the rows.
 
 ## Why
 Trimming a season of episodes one-file-at-a-time on the Split screen is slow and error-prone. Bulk Cut (D-004 /
@@ -34,16 +35,20 @@ disk pre-flight inside the T-095 engine (not the VM) keeps this screen a thin, t
 
 ## Scope
 **In:** the Bulk Cut tab view-models — `BulkCutViewModel` (list management, dedup, throttled scan gate,
-apply-to-all, cut-profile commands, shared preview player + selection, set-at-playhead, `CanRunBatch`,
-`RunBatchAsync` delegation, progress fan-out, ledger routing, batch-state mapping) and `BulkItemViewModel` (per-row
-handles, keyframe scan, computed validity/`RowState`/`KeptDuration`/`Warning`, `IsEnabled` auto-disable, request
+apply-to-all, cut-profile commands, shared preview player + selection, set-at-playhead, the dedicated cut-point
+thumbnail gate, `CanRunBatch`, `RunBatchAsync` delegation, progress fan-out, ledger routing, batch-state mapping)
+and `BulkItemViewModel` (per-row handles, keyframe scan, computed validity/`RowState`/`KeptDuration`/`Warning`,
+`IsEnabled` auto-disable, the per-row cut-point frame thumbnails `IntroThumbnailPath`/`OutroThumbnailPath`, request
 builders, batch fan-out hooks), plus `CutProfileApplier` (pure apply/build for profiles as used by the tab).
 
 **Out:** the batch execution engine itself (`IBulkTrimEngine` / `BulkTrimEngine` — collision policy resolution,
 disk pre-flight, the per-item ffmpeg trim, `BatchResult`/`BatchOutcome` construction); the kept-segment request
 math (`KeptSegmentSelector`, T-094); keyframe snapping internals (`CutMarkerViewModel`); the reopen sequencing
 inside `FfmeMediaPlayer`/`MediaReopenGuard` (T-080); cut-profile persistence (`IAppSettings.CutProfiles`,
-`CutProfile`, T-102); the WPF views and drag-drop routing. Those are adjacent specs.
+`CutProfile`, T-102) and the **profile-thumbnail** model/store/persistence + the T-107 auto-default/upload/clear
+glue (`ProfileThumbnailStore`, `SaveProfileWithAutoThumbnailAsync`/`UploadThumbnail`/`ClearThumbnail`, T-106/107 —
+SPEC-007); the shared `IThumbnailService`/`FfmpegThumbnailService` frame source the cut-point grabs reuse
+(SPEC-005); the WPF views and drag-drop routing. Those are adjacent specs.
 
 ## Current behavior & invariants
 
@@ -218,11 +223,40 @@ inside `FfmeMediaPlayer`/`MediaReopenGuard` (T-080); cut-profile persistence (`I
   profile-apply commands (same property instance is returned/surfaced) (`ApplyToAllReport`, `ApplyProfileToSelected`
   / `ApplyProfileToAll` / `ApplyToAll` all assign it).
 
+### Per-row cut-point frame thumbnails (T-108, `BulkItemViewModel`)
+- **I61** — when a row's keyframes resolve, it grabs a small frame (`ThumbnailWidth` = 64) at the keyframe-**snapped**
+  intro-end and sets `IntroThumbnailPath` to it — the initial grab fires on scan-resolve, at `IntroEnd.Snapped` (e.g.
+  an intro requested at 11s on a 2s grid grabs the frame at the snapped 10s) (`RequestAllThumbnails`,
+  `HandleThumbnailGrabber`).
+- **I62** — moving the intro handle re-grabs at the **new** snapped cut time: a `Snapped` change on `IntroEnd`
+  re-requests that handle's frame and `IntroThumbnailPath` updates to the frame at the new snapped position
+  (`OnHandleChanged` → `RequestIntroThumbnail`).
+- **I63** — rapid handle moves are **debounced + cancel-prior + latest-wins** (the settle window defaults to
+  `DefaultThumbnailDebounce` = 200ms): while several moves happen inside the debounce window, only the **final**
+  snapped cut reaches the service (one grab), the superseded requests being cancelled before they touch ffmpeg
+  (`HandleThumbnailGrabber.Request`/`GrabAsync`).
+- **I64** — the outro thumbnail is **gated on `HasOutro`**: `AddOutro` grabs the outro-start frame at its snapped
+  time into `OutroThumbnailPath`, and `ClearOutro` cancels any in-flight outro grab and drops the frame
+  (`OutroThumbnailPath` → null, the chip hides) (`AddOutro`/`RequestOutroThumbnail`, `ClearOutro`).
+- **I65** — the grab is **best-effort / null-safe**: a grab that returns null (or fails) leaves the corresponding
+  thumbnail path `null` — the view shows the muted placeholder chip, never an image, and nothing throws into the UI
+  (`HandleThumbnailGrabber.OnResolved`, `GrabAsync` catch).
+- **I66** — grabs are cancelled **per row on Remove/Clear**: `CancelScan` cancels the intro and outro grabbers'
+  in-flight requests, so a removed/cleared row's parked grab faults, never reaches the service, and commits no frame
+  path (`CancelScan` → `_introGrabber?.Cancel()` / `_outroGrabber?.Cancel()`).
+- **I67** — cut-point frame grabs are bounded to **at most 3 concurrent** through a **dedicated** `SemaphoreSlim(3,3)`
+  owned by the tab VM and shared into every row — separate from the keyframe-scan gate, so eye-candy frame grabs
+  never starve the ffprobe scans that gate `CanRunBatch`; the permit is held only around the grab, never during the
+  debounce (`_thumbnailGate`, `HandleThumbnailGrabber.GrabAsync` gate scope).
+
 ## Links
 - Design: D-004 (Bulk Cut screen)
-- Goals: G-036 (batch trim), G-037 (shared preview + set-at-playhead + reusable cut profiles)
+- Goals: G-036 (batch trim), G-037 (shared preview + set-at-playhead + reusable cut profiles), G-038 (profile
+  thumbnails + per-row cut-point frame previews — feature task T-108 for the per-row thumbnails here)
 - Related specs: the T-095 batch engine (`IBulkTrimEngine` / `BulkTrimEngine`) spec — not yet authored; T-094
   kept-segment request (`KeptSegmentSelector`); T-080 media reopen guard (`MediaReopenGuard`); T-102 cut-profile
-  persistence (`CutProfile` / `IAppSettings.CutProfiles`).
-- Key code: `src/App/ViewModels/BulkCutViewModel.cs`, `src/App/ViewModels/BulkItemViewModel.cs`,
-  `src/App/ViewModels/CutProfileApplier.cs`.
+  persistence (`CutProfile` / `IAppSettings.CutProfiles`); SPEC-007 (cut profiles — incl. the T-106/107
+  profile-thumbnail model/store/glue); SPEC-005 (`IThumbnailService` frame source the cut-point grabs reuse).
+- Key code: `src/App/ViewModels/BulkCutViewModel.cs` (`_thumbnailGate`), `src/App/ViewModels/BulkItemViewModel.cs`
+  (`IntroThumbnailPath`/`OutroThumbnailPath`, `HandleThumbnailGrabber`), `src/App/ViewModels/CutProfileApplier.cs`.
+- Tests: `tests/App.Tests/BulkItemThumbnailTests.cs` (T-108 cut-point thumbnails) · `tests/App.Tests/BulkSpecGapTests.cs`.
