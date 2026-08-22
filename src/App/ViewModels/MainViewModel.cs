@@ -89,7 +89,9 @@ public sealed class MainViewModel : ObservableObject
 
         // D-004 / T-097 — the Bulk Cut screen shares the SAME probe / split engine / thumbnail service /
         // settings instances (no second ffmpeg graph); its batch runner defaults over the shared split engine.
-        BulkCut = new BulkCutViewModel(probe, splitEngine, thumbnailService, settings);
+        // T-100 — it gets its OWN FfmeMediaPlayer for the shared mini-preview (a second FFME element is
+        // fine; Split/Bulk are different tabs and only the active tab decodes — see StopInactiveScreenPlayers).
+        BulkCut = new BulkCutViewModel(probe, splitEngine, thumbnailService, settings, player: new FfmeMediaPlayer());
 
         ToggleLayoutCommand = new RelayCommand(ToggleLayout);
 
@@ -142,6 +144,9 @@ public sealed class MainViewModel : ObservableObject
         {
             if (SetProperty(ref _selectedTabIndex, value))
             {
+                // T-100 — two FFME elements (Split + Bulk) live in one process; only the active tab
+                // should decode, so stop the players of the now-inactive screens on every switch.
+                StopInactiveScreenPlayers();
                 OnPropertyChanged(nameof(CurrentOperation));
                 // T-088 — the shared tab-strip Load/Clear buttons follow the active screen.
                 OnPropertyChanged(nameof(CurrentClearCommand));
@@ -313,6 +318,27 @@ public sealed class MainViewModel : ObservableObject
 
     /// <summary>Flip the layout axis (invoked by <see cref="ToggleLayoutCommand"/>).</summary>
     private void ToggleLayout() => IsVertical = !IsVertical;
+
+    /// <summary>
+    /// Only the active tab decodes (T-100). The Split and Bulk screens each own an FFME preview element;
+    /// leaving one visible-but-inactive would keep a second decoder alive. On every tab switch, stop the
+    /// player of each screen that is NOT the active tab (Split = tab 0, Bulk = tab 2; Join has no
+    /// player). Idempotent + null-safe: an inert <see cref="NullMediaPlayer"/> (tests) or an unattached
+    /// <see cref="FfmeMediaPlayer"/> (before its view is loaded) both no-op, and a legacy test ctor with
+    /// no <see cref="BulkCut"/> is guarded.
+    /// </summary>
+    private void StopInactiveScreenPlayers()
+    {
+        if (SelectedTabIndex != 0)
+        {
+            Split.Player.Stop();
+        }
+
+        if (!IsBulkActive)
+        {
+            BulkCut?.Player.Stop();
+        }
+    }
 
     /// <summary>
     /// Composes the running-title overlay from an operation's status/progress/ETA, or the plain

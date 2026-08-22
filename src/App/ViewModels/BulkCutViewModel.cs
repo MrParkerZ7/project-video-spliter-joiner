@@ -7,6 +7,7 @@ using System.Globalization;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using VideoSplitJoiner.App.Media;
 using VideoSplitJoiner.App.Settings;
 using VideoSplitJoiner.Core.Bulk;
 using VideoSplitJoiner.Core.Errors;
@@ -79,25 +80,35 @@ public sealed class BulkCutViewModel : ObservableObject
     private bool _overwrite;
     private ApplyToAllReport? _applyToAllReport;
     private IReadOnlyList<BulkTrimItemResult> _lastFailedItems = Array.Empty<BulkTrimItemResult>();
+    private BulkItemViewModel? _selectedItem;
 
     /// <summary>
     /// Create the tab VM sharing the App's media probe / split engine / thumbnail service / settings.
     /// When <paramref name="bulkTrimEngine"/> is null a real <see cref="BulkTrimEngine"/> is default-
     /// constructed over the SAME <paramref name="splitEngine"/> + a <see cref="KeptMiddleRequestBuilder"/>
     /// over the SAME <paramref name="probe"/> (no second engine / probe); tests inject a fake.
+    /// <paramref name="player"/> is the single shared mini-preview player (T-100): selecting a row opens
+    /// that file in THIS one FFME-backed <see cref="PlayerViewModel"/> (never a player per row). The
+    /// composition root passes the Bulk tab's own <see cref="FfmeMediaPlayer"/>; when omitted it defaults
+    /// to a no-op <see cref="NullMediaPlayer"/> so existing constructions / tests keep compiling.
     /// </summary>
     public BulkCutViewModel(
         IMediaProbe probe,
         ISplitEngine splitEngine,
         IThumbnailService thumbnails,
         IAppSettings settings,
-        IBulkTrimEngine? bulkTrimEngine = null)
+        IBulkTrimEngine? bulkTrimEngine = null,
+        IMediaPlayer? player = null)
     {
         _probe = probe ?? throw new ArgumentNullException(nameof(probe));
         _splitEngine = splitEngine ?? throw new ArgumentNullException(nameof(splitEngine));
         _thumbnails = thumbnails ?? throw new ArgumentNullException(nameof(thumbnails));
         _settings = settings ?? throw new ArgumentNullException(nameof(settings));
         _bulkTrimEngine = bulkTrimEngine ?? new BulkTrimEngine(_splitEngine, new KeptMiddleRequestBuilder(_probe));
+
+        // T-100: the ONE shared preview player, reusing the injected thumbnail service (mirrors how
+        // SplitViewModel constructs its Player). Null player → inert NullMediaPlayer (tests / no-preview).
+        Player = new PlayerViewModel(player ?? NullMediaPlayer.Instance, _thumbnails);
 
         Operation = new OperationViewModel();
         Items = new ObservableCollection<BulkItemViewModel>();
@@ -119,6 +130,36 @@ public sealed class BulkCutViewModel : ObservableObject
 
     /// <summary>The aggregate operation — overall bar, taskbar/title, and the batch cancel.</summary>
     public OperationViewModel Operation { get; }
+
+    /// <summary>
+    /// The single shared mini-preview player (T-100 / G-037) — the ONE FFME-backed decoder the whole
+    /// tab reuses. Selecting a row (<see cref="SelectedItem"/>) opens THAT file here; there is never a
+    /// player per row. T-101's preview pane binds transport/scrub to this.
+    /// </summary>
+    public PlayerViewModel Player { get; }
+
+    /// <summary>
+    /// The currently-selected row (two-way bound from the list, T-101). Changing it opens the row's
+    /// <see cref="BulkItemViewModel.Path"/> in the ONE shared <see cref="Player"/> (a null selection —
+    /// list cleared / nothing selected — unloads it instead). The open goes through
+    /// <see cref="PlayerViewModel.Open"/> → <see cref="FfmeMediaPlayer"/>'s built-in
+    /// <see cref="MediaReopenGuard"/> (T-080), so a rapid row-to-row switch never issues Open while a
+    /// prior Close is still in flight (the native-AV hazard) — each Open supersedes the previous pending
+    /// one. The first <see cref="AddFilesAsync"/> auto-selects the first row for convenience; removing
+    /// the selected row re-points the selection at a neighbour (or unloads) so it never opens a
+    /// just-removed file.
+    /// </summary>
+    public BulkItemViewModel? SelectedItem
+    {
+        get => _selectedItem;
+        set
+        {
+            if (SetProperty(ref _selectedItem, value))
+            {
+                OpenOrUnloadSelected(value);
+            }
+        }
+    }
 
     /// <summary>The batch lifecycle state.</summary>
     public BulkBatchState BatchState
@@ -259,6 +300,13 @@ public sealed class BulkCutViewModel : ObservableObject
             await PopulateAsync(item).ConfigureAwait(true);
         }
 
+        // T-100: auto-select the first row for convenience — fires on the first add (nothing selected
+        // yet), and again after a Clear/empty selection, opening it in the shared preview player.
+        if (SelectedItem is null && Items.Count > 0)
+        {
+            SelectedItem = Items[0];
+        }
+
         RaiseRunState();
     }
 
@@ -293,9 +341,22 @@ public sealed class BulkCutViewModel : ObservableObject
             return;
         }
 
+        // T-100: capture whether we're removing the selected row (and its slot) BEFORE it leaves the
+        // list, so we can re-point the shared player at a neighbour rather than leave SelectedItem
+        // dangling at a just-removed file.
+        var removingSelected = ReferenceEquals(_selectedItem, item);
+        var index = Items.IndexOf(item);
+
         item.CancelScan();
         item.PropertyChanged -= OnItemChanged;
         Items.Remove(item);
+
+        if (removingSelected)
+        {
+            // Neighbour at the same slot (or the new last row), else null → the setter unloads the player.
+            SelectedItem = Items.Count > 0 ? Items[Math.Min(index, Items.Count - 1)] : null;
+        }
+
         RaiseRunState();
     }
 
@@ -306,6 +367,11 @@ public sealed class BulkCutViewModel : ObservableObject
         {
             return;
         }
+
+        // T-100: drop the selection (setter unloads the shared player), then blank the player
+        // unconditionally so a Clear leaves the preview empty even if nothing was selected.
+        SelectedItem = null;
+        Player.Unload();
 
         foreach (var item in Items)
         {
@@ -319,6 +385,25 @@ public sealed class BulkCutViewModel : ObservableObject
         ApplyToAllReport = null;
         LastFailedItems = Array.Empty<BulkTrimItemResult>();
         RaiseRunState();
+    }
+
+    /// <summary>
+    /// Open the newly-selected row's file in the ONE shared <see cref="Player"/>, or unload it on a
+    /// null selection (T-100). The open goes through <see cref="PlayerViewModel.Open"/>, which for the
+    /// production <see cref="FfmeMediaPlayer"/> registers the open with its <see cref="MediaReopenGuard"/>
+    /// (T-080) and only issues the native Open once the element has settled out of any closing/opening
+    /// state — so a rapid row-to-row switch supersedes the prior pending open instead of crashing.
+    /// </summary>
+    private void OpenOrUnloadSelected(BulkItemViewModel? item)
+    {
+        if (item is null)
+        {
+            Player.Unload();
+        }
+        else
+        {
+            Player.Open(item.Path);
+        }
     }
 
     // ---- Apply-to-all (§2.3) ----------------------------------------------------------------
@@ -398,6 +483,10 @@ public sealed class BulkCutViewModel : ObservableObject
         {
             return;
         }
+
+        // T-100: stop the preview decode before the batch trims — don't waste a decoder/CPU on the
+        // shared player while ffmpeg is doing the real work. The file stays selected; it re-plays on demand.
+        Player.Stop();
 
         BatchState = BulkBatchState.Preparing;
         ApplyToAllReport = null;
