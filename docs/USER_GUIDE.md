@@ -222,12 +222,28 @@ titles (and maybe the same end card) you want stripped in one pass. Every trim i
 stream-copy, keyframe-snapped cut as the Split screen — just applied to a whole list — and **your
 original files are never touched**: each trim is written to a **new** `_trimmed` file beside its source.
 
+A **preview pane sits at the top of the tab**, above the list: select any row and it plays there, so you
+can watch a video and set its cut points by eye — then save a cut you like as a **reusable profile** and
+apply it across the whole list.
+
 1. **Add videos.** Click **Add videos…** or **drag video files onto the screen** (see
    [Drag and drop](#drag-and-drop)) — every dropped video is added, in a scrollable list, one row per
    file. The list **de-dupes by path**, so adding the same file twice makes only one row. Each row
    probes in the background for its duration and builds its keyframe index (which cuts snap to); a row
    that can't be read is flagged and left out of the run.
-2. **Mark the cut points on each row.** Every row has its own **scrub bar with two handles**:
+2. **Preview a row and set its cuts from the player.** Click a row in the list and it opens in the
+   **preview pane** at the top of the tab — the **same player the Split screen uses**: **Play / Pause**,
+   **Stop**, drag-to-**scrub**, a hover **frame preview**, the jog buttons (**±1s / 5s / 10s / 20s / 1m /
+   5m / 10m / 20m**), **frame-step** (`⏴` / `⏵`, ±1 frame), **jump to start / end**, and volume /
+   playback-speed controls (see [Preview & pick cuts from the player](#preview--pick-cuts-from-the-player)
+   for the full control tour). Park the playhead on the exact frame where the intro ends — or where the
+   outro starts — then click **Set intro-end here** or **Set outro-start here** to drop that cut on the
+   **selected row** at the playhead. It **keyframe-snaps** exactly like any other cut, and *Set
+   outro-start here* **adds** an outro to the row if it didn't have one. The selected row wears a **gold
+   ring** in the list. **Only one video decodes at a time** — selecting another row hands the single
+   player to it — and a **draggable splitter** between the pane and the list lets you trade space between
+   them.
+3. **Mark the cut points on each row.** Every row has its own **scrub bar with two handles**:
    - the **gold intro-end handle (`▸`)** marks where the intro ends — everything before it is dropped;
    - the optional **blue outro-start handle (`◂`)** marks where the outro begins — everything after it
      is dropped. Leave it off to **keep to the end of the file**.
@@ -237,19 +253,35 @@ original files are never touched**: each trim is written to a **new** `_trimmed`
    snapped time — the same `requested → snapped (±delta)` readout as the Split screen (see
    [Why cuts snap to keyframes](#why-cuts-snap-to-keyframes) — the snapped time is the real cut, shown
    per handle). A row whose handles leave nothing meaningful to keep is marked invalid and excluded.
-3. **Apply cut points to all (optional).** Set one row the way you want, then **apply its cut points to
+4. **Apply cut points to all (optional).** Set one row the way you want, then **apply its cut points to
    every other row** so you don't mark each by hand. The intro-end copies as an absolute time from the
    start, but **the outro is measured from the *end* of each file** — so a set of episodes of *different
    lengths* still line up (you trim the same amount off every tail, not to the same absolute timestamp).
    If a copied cut doesn't fit a shorter video, that row is **flagged for you to fix**, never silently
    dropped.
-4. **Run.** Click **Run bulk cut** (the button shows how many rows will run). The videos are trimmed
+5. **Save a cut once and reuse it — cut profiles (optional).** Once a row's intro (and optional outro)
+   are set the way you want, save them as a **named profile** and reuse them on any list later — handy
+   when a series always has the same-length opening titles and end card. Use the **profiles bar** at the
+   top-right of the tab:
+   - **Save current as…** — with a row selected, click it, type a name, and **Save**. The profile is
+     **stored in your settings and survives a restart**. Saving under a name that already exists
+     **replaces** it, so you can refine a profile in place.
+   - **Pick a profile** from the drop-down, then **Apply → selected** to apply it to the selected row, or
+     **Apply → all** to apply it to **every checked row at once**. The intro is applied as an absolute
+     time from the start, but — exactly like *apply cut points to all* — **the outro is measured from the
+     end of each file**, so a set of episodes of *different lengths* still line up. Every target
+     **re-snaps to its own keyframes and re-validates**; any row the profile doesn't fit (its intro
+     overshoots, or its tail is longer than the whole file) is **flagged red** and counted in the note
+     under the bar — e.g. *"Applied to 8 row(s) · 1 now invalid (see the red rows)"* — never silently
+     dropped.
+   - **Delete** removes the selected profile.
+6. **Run.** Click **Run bulk cut** (the button shows how many rows will run). The videos are trimmed
    **one after another**, with each row's progress plus an overall bar on the **Windows taskbar and the
    window title**. **One bad row never stops the batch** — it's recorded and the run moves on, and at the
    end any failures are offered for a **Retry failed** pass. **Cancel** stops before the next file: every
    already-finished trim is kept, and only the one in progress is rolled back (you never get a
    half-written file).
-5. **Output.** Each trim is written as `<name>_trimmed<ext>` in the **same folder as its source** (e.g.
+7. **Output.** Each trim is written as `<name>_trimmed<ext>` in the **same folder as its source** (e.g.
    `episode1.mkv` → `episode1_trimmed.mkv`). **The original is never modified.** If a `_trimmed` file
    already exists, the app **auto-suffixes** the new one (`_trimmed_2`, `_trimmed_3`, …) so nothing is
    ever clobbered — unless you tick **Overwrite**, which replaces the existing output in place. (Even

@@ -31,6 +31,22 @@ re-encode — the player only previews; every cut continues to keyframe-snap thr
   (kept-index resolved by `KeptSegmentSelector`), orchestrated by a new UI-free Core `BulkTrimEngine`
   (sequential batch loop, collision policy, disk pre-flight, ledger) that the WPF-free `BulkCutViewModel` /
   `BulkItemViewModel` delegate to. See [ADR 0015](docs/adr/0015-bulk-trim-reuses-split-single-segment.md).
+- **Bulk Cut — preview player, jog controls, and reusable cut profiles (G-037)** — the Bulk Cut tab gains
+  an **in-app preview player**: click a row and it plays in a **shared preview pane** at the top of the
+  tab (one decoder for the whole list, **reusing the Split screen's player** — transport, scrub,
+  hover-thumbnail, the **±1s / 5s / 10s / 20s / 1m / 5m / 10m / 20m** jog buttons, and frame-step), so you
+  can find the exact frame and click **Set intro-end here** / **Set outro-start here** to drop that row's
+  cut from the playhead (**keyframe-snapped**, same as every cut). A **draggable splitter** divides the
+  pane from the list and the selected row carries a **gold ring**; only the active tab decodes (a tab
+  switch or a batch run stops the preview). And **reusable cut profiles**: **Save current as…** names a
+  row's cut (intro-from-start + optional outro-from-end) and **persists it to settings** (survives
+  restart, upsert-by-name); pick one from the profiles bar and **Apply → selected** or **Apply → all** —
+  the outro measured **from the end** so uneven-length episodes align, each target **re-snapped +
+  re-validated**, and any row the profile invalidates **flagged red** with an aggregate "Applied to N ·
+  M now invalid" note; **Delete** removes it. There is **no new player or ffmpeg path** — the pane reuses
+  `PlayerView` and the set-at-playhead gestures re-snap through the existing cut path; the `CutProfile`
+  model is a WPF-free Core record persisted by `IAppSettings`. See
+  [ADR 0016](docs/adr/0016-shared-bulk-preview-player-and-cut-profiles.md).
 - **Split tool-panel 50/50 layout (G-035, implements design D-003)** — the Split screen's tool panel is now a
   **bounded 50/50 star-row layout**: the **Cut markers** list and the **Parts to export** list each take ~half of
   the panel's height and grow with the window, and each scrolls internally when it overflows its half. "Add cut at

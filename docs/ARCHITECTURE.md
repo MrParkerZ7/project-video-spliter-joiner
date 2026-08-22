@@ -257,6 +257,46 @@ holds cut logic — all of it is on the WPF-free VMs. Keeping the batch engine, 
 and the request builder in Core (referencing no WPF) is what keeps **`CoreIsUiFreeTests` green**. A new
 `DropScrimBrush` token backs the drag-drop highlight.
 
+### The shared preview player + cut profiles (G-037)
+
+G-037 adds a **preview player** and **reusable cut profiles** to the tab, recorded as
+**[ADR 0016](adr/0016-shared-bulk-preview-player-and-cut-profiles.md)**:
+
+- **One shared preview player, bound to the selected row — not one per row.** `BulkCutViewModel` owns a
+  single `PlayerViewModel` over **one** `FfmeMediaPlayer` (`Player`) — the tab's own FFME element,
+  distinct from the Split tab's. Selecting a row (`SelectedItem`, two-way bound from the list `ListBox`)
+  opens **that** file in the one player; a null selection (list cleared / nothing selected) unloads it,
+  and removing the selected row re-points the selection at a neighbour so it never opens a just-removed
+  file. The pane **reuses the Split `PlayerView` wholesale** (`DataContext = Player`), inheriting the
+  whole transport surface — play/pause/stop, scrub, hover-thumbnail, the ±1s…±20m jog set (`SkipCommand`),
+  frame-step, jump-to-ends, and volume/speed — so there is **no second player view or view model**.
+- **`MediaReopenGuard` auto-engages on a fast row switch.** Because `Player.Open` routes through
+  `FfmeMediaPlayer`'s built-in `MediaReopenGuard` (T-080), a rapid row-to-row switch **supersedes the
+  prior pending Open** instead of issuing one while a previous Close is still in flight (the native-AV
+  race) — no bulk-specific guarding needed.
+- **Only the active tab decodes.** Two FFME elements (Split + Bulk) live in one process, so
+  `MainViewModel.StopInactiveScreenPlayers` stops the inactive screens' players on **every tab switch**,
+  and `RunBatchAsync` stops the preview before the batch trims — at most one decoder is ever busy,
+  regardless of how long the list is.
+- **Set-at-playhead reuses the existing snap path.** `SetIntroAtPlayheadCommand` /
+  `SetOutroAtPlayheadCommand` write the selected row's `CutMarkerViewModel.Requested` from the live
+  playhead — the **same setter** the per-row scrub handles and the IN/OUT fields use — so the cut
+  re-snaps to keyframes identically (no new snap logic). Both are gated on a selected row **and** a ready
+  player (`CanSetCutAtPlayhead`).
+- **Cut profiles are a WPF-free Core record persisted in settings.** `CutProfile` (`Core/Profiles/`) is a
+  plain immutable record — `{ Name, IntroFromStart` (absolute time-from-start)`, OutroFromEnd?` (measured
+  from the END; `null` ⇒ keep to EOF)` }` — validated at construction and Core-resident so it stays
+  unit-testable and `CoreIsUiFree`-clean. `IAppSettings` persists it to `settings.json` as **seconds
+  (double)**, not `TimeSpan` ticks, and is **backward-compatible**: a missing `cutProfiles` key loads as
+  an empty list (older files stay valid), the key is omitted entirely when there are none, and a corrupt
+  entry is skipped rather than crashing. Saves are **upsert-by-name** (case-insensitive, position
+  preserved). The **outro-from-END** convention is what lets one profile fit episodes of different lengths
+  — the same convention `ApplyToAll` uses. `CutProfileApplier` (`App/ViewModels/`, a WPF-free static
+  helper) applies a profile to a set of rows (intro absolute + clamped, outro from-end + clamped, each
+  target re-snapped + re-validated, invalidated rows **reported** through the shared `ApplyToAllReport` —
+  never silently dropped) and builds a profile from a row's current cut, **reusing** the apply-to-all
+  convention rather than duplicating it.
+
 ## In-app preview player + timeline (`App/Media/`, `App/ViewModels/`)
 
 The Split screen embeds a live video preview and a visual cut-selection strip. This layer lives
