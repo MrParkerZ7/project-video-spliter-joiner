@@ -579,3 +579,8 @@
 ## 2026-08-22 · todo-automate (full spec-layer bootstrap) — Phase A: specs authored
 - Bootstrapped docs/specs/ living-spec layer (target had none). Standard: docs/standards/feature-spec-structure.md (+ _index). 15 code-grounded feature specs SPEC-001..SPEC-015 (Split/Bulk/Join/Probe/Thumbs/Waveform/Profiles engines + progress-ETA/settings/screens/player/timeline/shell) via a 15-agent workflow, each mapping the existing 725 tests onto its invariants.
 - Coverage: **512 invariants · 418 covered · 82% of spec cases covered · 94 gaps** (_index.md table + _GAPS.md list). Lowest: SPEC-015 shell 15/28, SPEC-003 join 19/31, SPEC-001 split 25/38, SPEC-004 probe 22/32. Next (Phase C): generate the unit-testable gaps (serves-spec tagged) + run; view-only/theming gaps deferred.
+
+## 2026-08-22 · todo-automate — COMPLETE (spec→test, full bootstrap)
+- **Phase C done.** Core gap-gen (`52de14c`, +52 SPEC-001..006) + App gap-gen (`df8bce3`, +42 SPEC-007..015) = **94 new serves-spec-tagged tests**. Suite **819** (Core 343 + App 476), 0 warnings, **no source bugs surfaced** (code matched every spec). App worker built a minimal STA harness to cover OrientedSplitPanel (SPEC-015 I16/I17).
+- **Coverage: 82% → 97% of spec cases (496/512).** 16 deferred (docs/specs/_GAPS.md): 2 unreachable-defensive, 1 needs IDiskSpaceProbe seam (SPEC-001 I31), 2 FfmeMediaPlayer WPF-bound (live-verified), 5 view-only WPF render (SPEC-014), 6 native/STA/resource-load (SPEC-015). Filed **T-105** (make-testable refactors, low/later).
+- Spec layer: 15 SPEC-NNN + standard + _index committed 7a3c27c. todo-automate deliverable = the living-spec contracts + serves-spec traceability + the closed coverage tail.
