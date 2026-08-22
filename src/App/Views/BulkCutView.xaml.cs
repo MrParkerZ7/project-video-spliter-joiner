@@ -246,6 +246,62 @@ public partial class BulkCutView : UserControl
         return true;
     }
 
+    // ---- Cut-profile save: themed inline name popup (T-103) ---------------------------------
+
+    /// <summary>
+    /// Open the themed inline name input under the Save button (not a raw WPF dialog). Pre-fills with the
+    /// currently-selected profile's name (handy for a "save over" upsert) and focuses/selects the field.
+    /// </summary>
+    private void OnSaveProfileClicked(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is not BulkCutViewModel vm || vm.SelectedItem is null)
+        {
+            return;
+        }
+
+        ProfileNameBox.Text = vm.SelectedProfile?.Name ?? string.Empty;
+        SaveProfilePopup.IsOpen = true;
+        ProfileNameBox.Focus();
+        ProfileNameBox.SelectAll();
+    }
+
+    private void OnProfileNameKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Enter)
+        {
+            CommitSaveProfile();
+            e.Handled = true;
+        }
+        else if (e.Key == Key.Escape)
+        {
+            SaveProfilePopup.IsOpen = false;
+            e.Handled = true;
+        }
+    }
+
+    private void OnConfirmSaveProfileClicked(object sender, RoutedEventArgs e) => CommitSaveProfile();
+
+    private void OnCancelSaveProfileClicked(object sender, RoutedEventArgs e) => SaveProfilePopup.IsOpen = false;
+
+    /// <summary>Validate non-blank, hand the trimmed name to the VM's save command, then close the popup.</summary>
+    private void CommitSaveProfile()
+    {
+        if (DataContext is not BulkCutViewModel vm)
+        {
+            return;
+        }
+
+        var name = ProfileNameBox.Text?.Trim();
+        if (string.IsNullOrEmpty(name))
+        {
+            ProfileNameBox.Focus(); // keep the popup open until a non-empty name is entered
+            return;
+        }
+
+        vm.SaveProfileCommand.Execute(name);
+        SaveProfilePopup.IsOpen = false;
+    }
+
     // ---- Completed surface: reveal the output folder ----------------------------------------
 
     private void OnOpenFolderClicked(object sender, RoutedEventArgs e)

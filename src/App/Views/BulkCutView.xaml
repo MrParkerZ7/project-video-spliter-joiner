@@ -48,26 +48,156 @@
             <RowDefinition Height="Auto" />              <!-- 4: footer (output + Run + lifecycle) -->
         </Grid.RowDefinitions>
 
-        <!-- ================= Header: subtitle + gold/blue legend ================= -->
-        <StackPanel Grid.Row="0" Margin="4,0,4,8">
-            <TextBlock Text="Keep the middle · drop intro (gold) &amp; optional outro (blue) · stream-copy, keyframe-snapped · originals kept"
-                       TextWrapping="Wrap"
-                       Foreground="{StaticResource TextSecondaryBrush}" />
-            <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
-                <Rectangle Width="12" Height="12" Fill="{StaticResource AccentBrush}" VerticalAlignment="Center" />
-                <TextBlock Text="intro-end / keep" Margin="4,0,14,0" VerticalAlignment="Center"
-                           FontSize="{StaticResource FontSizeSmall}"
-                           Foreground="{StaticResource TextMutedBrush}" />
-                <Rectangle Width="12" Height="12" Fill="{StaticResource InfoBrush}" VerticalAlignment="Center" />
-                <TextBlock Text="outro-start" Margin="4,0,14,0" VerticalAlignment="Center"
-                           FontSize="{StaticResource FontSizeSmall}"
-                           Foreground="{StaticResource TextMutedBrush}" />
-                <Rectangle Width="12" Height="12" Fill="{StaticResource DropScrimBrush}" VerticalAlignment="Center" />
-                <TextBlock Text="dropped" Margin="4,0,0,0" VerticalAlignment="Center"
-                           FontSize="{StaticResource FontSizeSmall}"
-                           Foreground="{StaticResource TextMutedBrush}" />
+        <!-- ================= Header: subtitle + gold/blue legend + cut-profiles bar ================= -->
+        <Grid Grid.Row="0" Margin="4,0,4,8">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />  <!-- subtitle/legend + profiles bar -->
+                <RowDefinition Height="Auto" />  <!-- apply-report note (spans both cols) -->
+            </Grid.RowDefinitions>
+
+            <!-- Subtitle + gold/blue legend -->
+            <StackPanel Grid.Row="0" Grid.Column="0" VerticalAlignment="Center">
+                <TextBlock Text="Keep the middle · drop intro (gold) &amp; optional outro (blue) · stream-copy, keyframe-snapped · originals kept"
+                           TextWrapping="Wrap"
+                           Foreground="{StaticResource TextSecondaryBrush}" />
+                <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                    <Rectangle Width="12" Height="12" Fill="{StaticResource AccentBrush}" VerticalAlignment="Center" />
+                    <TextBlock Text="intro-end / keep" Margin="4,0,14,0" VerticalAlignment="Center"
+                               FontSize="{StaticResource FontSizeSmall}"
+                               Foreground="{StaticResource TextMutedBrush}" />
+                    <Rectangle Width="12" Height="12" Fill="{StaticResource InfoBrush}" VerticalAlignment="Center" />
+                    <TextBlock Text="outro-start" Margin="4,0,14,0" VerticalAlignment="Center"
+                               FontSize="{StaticResource FontSizeSmall}"
+                               Foreground="{StaticResource TextMutedBrush}" />
+                    <Rectangle Width="12" Height="12" Fill="{StaticResource DropScrimBrush}" VerticalAlignment="Center" />
+                    <TextBlock Text="dropped" Margin="4,0,0,0" VerticalAlignment="Center"
+                               FontSize="{StaticResource FontSizeSmall}"
+                               Foreground="{StaticResource TextMutedBrush}" />
+                </StackPanel>
             </StackPanel>
-        </StackPanel>
+
+            <!-- ===== Cut-profiles bar (T-103) — compact group, subtle when empty ===== -->
+            <Border Grid.Row="0" Grid.Column="1"
+                    Margin="12,0,0,0"
+                    VerticalAlignment="Center"
+                    Padding="8,5"
+                    Background="{StaticResource Surface1Brush}"
+                    BorderBrush="{StaticResource BorderBrush}"
+                    BorderThickness="1"
+                    CornerRadius="{StaticResource RadiusMd}">
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <!-- Full state (≥1 saved profile): pick + apply + delete -->
+                    <TextBlock Text="Profile"
+                               Margin="0,0,6,0"
+                               VerticalAlignment="Center"
+                               FontSize="{StaticResource FontSizeSmall}"
+                               Foreground="{StaticResource TextMutedBrush}"
+                               Visibility="{Binding HasProfiles, Converter={StaticResource BoolToVisibility}}" />
+                    <ComboBox MinWidth="140"
+                              VerticalAlignment="Center"
+                              ItemsSource="{Binding Profiles}"
+                              SelectedItem="{Binding SelectedProfile, Mode=TwoWay}"
+                              DisplayMemberPath="Name"
+                              ToolTip="Choose a saved cut profile to apply"
+                              Visibility="{Binding HasProfiles, Converter={StaticResource BoolToVisibility}}" />
+                    <Button Content="Apply → selected"
+                            Margin="6,0,0,0"
+                            Padding="8,4"
+                            VerticalAlignment="Center"
+                            ToolTip="Apply the chosen profile to the selected row (re-snapped + re-validated)"
+                            Command="{Binding ApplyProfileToSelectedCommand}"
+                            Visibility="{Binding HasProfiles, Converter={StaticResource BoolToVisibility}}" />
+                    <Button Content="Apply → all"
+                            Margin="6,0,0,0"
+                            Padding="8,4"
+                            VerticalAlignment="Center"
+                            ToolTip="Apply the chosen profile to every checked row (outro measured from the end so uneven lengths align)"
+                            Command="{Binding ApplyProfileToAllCommand}"
+                            Visibility="{Binding HasProfiles, Converter={StaticResource BoolToVisibility}}" />
+                    <Button Content="Delete"
+                            Margin="6,0,0,0"
+                            Padding="8,4"
+                            VerticalAlignment="Center"
+                            ToolTip="Delete the selected profile"
+                            Command="{Binding DeleteProfileCommand}"
+                            Visibility="{Binding HasProfiles, Converter={StaticResource BoolToVisibility}}" />
+
+                    <!-- Empty state: unobtrusive hint next to the always-present Save button -->
+                    <TextBlock Text="Save a cut profile"
+                               Margin="0,0,6,0"
+                               VerticalAlignment="Center"
+                               FontSize="{StaticResource FontSizeSmall}"
+                               Foreground="{StaticResource TextMutedBrush}"
+                               Visibility="{Binding HasProfiles, Converter={StaticResource BoolToCollapsed}}" />
+
+                    <!-- Save current row's cut as a named profile (themed inline popup, not a raw dialog) -->
+                    <Button x:Name="SaveProfileButton"
+                            Content="Save current as…"
+                            Margin="6,0,0,0"
+                            Padding="8,4"
+                            VerticalAlignment="Center"
+                            ToolTip="Save the selected row's current intro/outro as a reusable named profile"
+                            IsEnabled="{Binding CanSaveProfile}"
+                            Click="OnSaveProfileClicked" />
+
+                    <!-- Themed inline name input (Popup anchored under the Save button) -->
+                    <Popup x:Name="SaveProfilePopup"
+                           PlacementTarget="{Binding ElementName=SaveProfileButton}"
+                           Placement="Bottom"
+                           StaysOpen="False"
+                           AllowsTransparency="True"
+                           PopupAnimation="Fade">
+                        <Border Margin="0,4,0,0"
+                                Padding="10"
+                                Background="{StaticResource SurfaceBrush}"
+                                BorderBrush="{StaticResource BorderStrongBrush}"
+                                BorderThickness="1"
+                                CornerRadius="{StaticResource RadiusMd}">
+                            <StackPanel Width="240">
+                                <TextBlock Text="Name this cut profile"
+                                           Foreground="{StaticResource TextSecondaryBrush}"
+                                           FontSize="{StaticResource FontSizeSmall}" />
+                                <TextBox x:Name="ProfileNameBox"
+                                         Margin="0,6,0,0"
+                                         MaxLength="60"
+                                         KeyDown="OnProfileNameKeyDown" />
+                                <StackPanel Orientation="Horizontal"
+                                            HorizontalAlignment="Right"
+                                            Margin="0,8,0,0">
+                                    <Button Content="Cancel"
+                                            Padding="10,4"
+                                            Click="OnCancelSaveProfileClicked" />
+                                    <Button Style="{StaticResource AccentButton}"
+                                            Content="Save"
+                                            Margin="6,0,0,0"
+                                            Padding="12,4"
+                                            Click="OnConfirmSaveProfileClicked" />
+                                </StackPanel>
+                            </StackPanel>
+                        </Border>
+                    </Popup>
+                </StackPanel>
+            </Border>
+
+            <!-- ===== Apply report note — shared surface for apply-to-all (T-097) + profile apply (T-103) ===== -->
+            <Border Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2"
+                    Margin="0,8,0,0"
+                    Padding="8,4"
+                    Background="{StaticResource Surface2Brush}"
+                    BorderBrush="{StaticResource BorderStrongBrush}"
+                    BorderThickness="1"
+                    CornerRadius="{StaticResource RadiusSm}"
+                    Visibility="{Binding ApplyToAllReport, Converter={StaticResource NullToCollapsed}}">
+                <TextBlock Text="{Binding ApplyReportSummary}"
+                           TextWrapping="Wrap"
+                           FontSize="{StaticResource FontSizeSmall}"
+                           Foreground="{StaticResource TextSecondaryBrush}" />
+            </Border>
+        </Grid>
 
         <!-- ================= Preview pane (T-101 / G-037) =================
              A preview region at the TOP of the tab. When a row is selected it hosts the SAME

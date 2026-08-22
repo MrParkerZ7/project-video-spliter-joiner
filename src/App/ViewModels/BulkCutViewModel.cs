@@ -12,6 +12,7 @@ using VideoSplitJoiner.App.Settings;
 using VideoSplitJoiner.Core.Bulk;
 using VideoSplitJoiner.Core.Errors;
 using VideoSplitJoiner.Core.Media;
+using VideoSplitJoiner.Core.Profiles;
 using VideoSplitJoiner.Core.Split;
 using VideoSplitJoiner.Core.Thumbnails;
 
@@ -81,6 +82,7 @@ public sealed class BulkCutViewModel : ObservableObject
     private ApplyToAllReport? _applyToAllReport;
     private IReadOnlyList<BulkTrimItemResult> _lastFailedItems = Array.Empty<BulkTrimItemResult>();
     private BulkItemViewModel? _selectedItem;
+    private CutProfile? _selectedProfile;
 
     /// <summary>
     /// Create the tab VM sharing the App's media probe / split engine / thumbnail service / settings.
@@ -124,6 +126,14 @@ public sealed class BulkCutViewModel : ObservableObject
         SetOutroAtPlayheadCommand = new RelayCommand(_ => SetOutroAtPlayhead(), _ => CanSetCutAtPlayhead);
         CancelCommand = Operation.CancelCommand;
 
+        // T-103: cut-profile commands — thin glue over the T-102 applier/persistence (no new model/persistence).
+        Profiles = new ObservableCollection<CutProfile>();
+        SaveProfileCommand = new RelayCommand(p => SaveProfile(p as string), _ => CanSaveProfile);
+        ApplyProfileToSelectedCommand = new RelayCommand(_ => ApplyProfileToSelected(), _ => CanApplyProfileToSelected);
+        ApplyProfileToAllCommand = new RelayCommand(_ => ApplyProfileToAll(), _ => CanApplyProfileToAll);
+        DeleteProfileCommand = new RelayCommand(_ => DeleteSelectedProfile(), _ => HasSelectedProfile);
+        RefreshProfiles(); // project the persisted CutProfiles into the observable list on construct
+
         // T-101: the two "set at playhead" gestures enable only with a selected row AND a ready
         // preview player (a null-duration player has no real playhead to capture) — re-raise their
         // guards when the shared player's readiness flips (mirrors SplitViewModel.OnPlayerChanged).
@@ -166,6 +176,7 @@ public sealed class BulkCutViewModel : ObservableObject
                 OpenOrUnloadSelected(value);
                 OnPropertyChanged(nameof(HasSelection));
                 RaisePlayheadCommandStates();
+                RaiseProfileCommandStates(); // Save / Apply→selected depend on the selection (T-103)
             }
         }
     }
@@ -176,6 +187,43 @@ public sealed class BulkCutViewModel : ObservableObject
     /// not.
     /// </summary>
     public bool HasSelection => _selectedItem is not null;
+
+    // ---- Cut profiles (T-103) ---------------------------------------------------------------
+
+    /// <summary>
+    /// The saved cut profiles projected from <see cref="IAppSettings.CutProfiles"/> into an observable
+    /// list the profiles-bar <c>ComboBox</c> binds to. Refreshed from settings on construct and after
+    /// every <see cref="SaveProfile"/> / <see cref="DeleteSelectedProfile"/> (T-102 owns the persistence).
+    /// </summary>
+    public ObservableCollection<CutProfile> Profiles { get; }
+
+    /// <summary>The profile chosen in the bar's <c>ComboBox</c> — the source for Apply / Delete.</summary>
+    public CutProfile? SelectedProfile
+    {
+        get => _selectedProfile;
+        set
+        {
+            if (SetProperty(ref _selectedProfile, value))
+            {
+                RaiseProfileCommandStates();
+            }
+        }
+    }
+
+    /// <summary>True when ≥1 profile is saved — drives the profiles bar's full-vs-empty affordance.</summary>
+    public bool HasProfiles => Profiles.Count > 0;
+
+    /// <summary>True when a profile is selected in the bar (gates Apply/Delete).</summary>
+    public bool HasSelectedProfile => _selectedProfile is not null;
+
+    /// <summary>Save-current-as is enabled only with a selected source row to capture the cut from.</summary>
+    public bool CanSaveProfile => _selectedItem is not null;
+
+    /// <summary>Apply→selected needs both a chosen profile and a selected target row.</summary>
+    public bool CanApplyProfileToSelected => _selectedProfile is not null && _selectedItem is not null;
+
+    /// <summary>Apply→all needs a chosen profile and at least one user-checked row to apply it to.</summary>
+    public bool CanApplyProfileToAll => _selectedProfile is not null && Items.Any(i => i.IsCheckedByUser);
 
     /// <summary>The batch lifecycle state.</summary>
     public BulkBatchState BatchState
@@ -198,11 +246,43 @@ public sealed class BulkCutViewModel : ObservableObject
         set => SetProperty(ref _overwrite, value);
     }
 
-    /// <summary>The most recent apply-to-all report (applied count + invalidated rows), or null.</summary>
+    /// <summary>
+    /// The most recent apply report (applied count + invalidated rows), or null. Shared surface for
+    /// BOTH the per-row apply-to-all gesture (<see cref="ApplyToAll"/>) AND the profile apply commands
+    /// (<see cref="ApplyProfileToSelected"/> / <see cref="ApplyProfileToAll"/>, T-103) — same
+    /// <see cref="global::VideoSplitJoiner.App.ViewModels.ApplyToAllReport"/> shape, reported not silent.
+    /// </summary>
     public ApplyToAllReport? ApplyToAllReport
     {
         get => _applyToAllReport;
-        private set => SetProperty(ref _applyToAllReport, value);
+        private set
+        {
+            if (SetProperty(ref _applyToAllReport, value))
+            {
+                OnPropertyChanged(nameof(ApplyReportSummary));
+            }
+        }
+    }
+
+    /// <summary>
+    /// A compact, human note for the most recent apply (T-097's apply-to-all + T-103's profile apply): how
+    /// many rows the cut was applied to and how many that left invalid (the invalidated rows ALSO keep their
+    /// own per-row red <c>invalid</c> state chip — this is the aggregate line). Null ⇒ nothing to show.
+    /// </summary>
+    public string? ApplyReportSummary
+    {
+        get
+        {
+            if (_applyToAllReport is not { } r)
+            {
+                return null;
+            }
+
+            var invalid = r.InvalidatedRows.Count;
+            return invalid == 0
+                ? string.Create(CultureInfo.InvariantCulture, $"Applied to {r.AppliedCount} row(s).")
+                : string.Create(CultureInfo.InvariantCulture, $"Applied to {r.AppliedCount} row(s) · {invalid} now invalid (see the red rows).");
+        }
     }
 
     /// <summary>The failed rows from the last run — the subset the UI offers to retry (T-097 renders "Retry failed (N)").</summary>
@@ -272,6 +352,18 @@ public sealed class BulkCutViewModel : ObservableObject
 
     /// <summary>Cancel the in-flight batch — delegates to the aggregate op's cancel.</summary>
     public RelayCommand CancelCommand { get; }
+
+    /// <summary>Save the selected row's current cut as a named profile (parameter = the name). T-103.</summary>
+    public RelayCommand SaveProfileCommand { get; }
+
+    /// <summary>Apply the selected profile to the selected row only. T-103.</summary>
+    public RelayCommand ApplyProfileToSelectedCommand { get; }
+
+    /// <summary>Apply the selected profile to every user-checked row (one click, same-series batch). T-103.</summary>
+    public RelayCommand ApplyProfileToAllCommand { get; }
+
+    /// <summary>Delete the selected profile from settings + the bar. T-103.</summary>
+    public RelayCommand DeleteProfileCommand { get; }
 
     // ---- Add / remove / clear ---------------------------------------------------------------
 
@@ -559,6 +651,109 @@ public sealed class BulkCutViewModel : ObservableObject
         ApplyToAllReport = report;
         RaiseRunState();
         return report;
+    }
+
+    // ---- Cut profiles (T-103 — thin glue over the T-102 applier/persistence) ----------------
+
+    /// <summary>
+    /// Save the SELECTED row's current cut as a profile named <paramref name="name"/>:
+    /// <see cref="CutProfileApplier.BuildProfileFromRow"/> → <see cref="IAppSettings.SaveProfile"/>
+    /// (upsert-by-name, case-insensitive) → refresh <see cref="Profiles"/> and select the saved one.
+    /// No-op without a selected row or a blank/whitespace name (the name is trimmed).
+    /// </summary>
+    public void SaveProfile(string? name)
+    {
+        if (_selectedItem is not { } row)
+        {
+            return;
+        }
+
+        var trimmed = name?.Trim();
+        if (string.IsNullOrEmpty(trimmed))
+        {
+            return; // naming UX: non-empty required (upsert on a duplicate name — T-102 already upserts)
+        }
+
+        var profile = CutProfileApplier.BuildProfileFromRow(trimmed, row);
+        _settings.SaveProfile(profile);
+        RefreshProfiles();
+        SelectedProfile = Profiles.FirstOrDefault(
+            p => string.Equals(p.Name, profile.Name, StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>
+    /// Apply <see cref="SelectedProfile"/> to the selected row only (<see cref="CutProfileApplier.ApplyProfile"/>),
+    /// surfacing the returned <see cref="ApplyToAllReport"/> the same way apply-to-all does. No-op without both.
+    /// </summary>
+    public ApplyToAllReport? ApplyProfileToSelected()
+    {
+        if (_selectedProfile is not { } profile || _selectedItem is not { } row)
+        {
+            return null;
+        }
+
+        var report = CutProfileApplier.ApplyProfile(profile, new[] { row });
+        ApplyToAllReport = report;
+        RaiseRunState();
+        return report;
+    }
+
+    /// <summary>
+    /// Apply <see cref="SelectedProfile"/> to every user-checked row (mirrors the apply-to-all targeting —
+    /// the raw <c>IsCheckedByUser</c> intent, so a profile can also re-validate a currently-invalid checked
+    /// row). Each target re-snaps + re-validates in the applier; invalidated rows are REPORTED through the
+    /// shared <see cref="ApplyToAllReport"/> (and keep their own red per-row chip). No-op without a profile.
+    /// </summary>
+    public ApplyToAllReport? ApplyProfileToAll()
+    {
+        if (_selectedProfile is not { } profile)
+        {
+            return null;
+        }
+
+        var targets = Items.Where(i => i.IsCheckedByUser).ToList();
+        var report = CutProfileApplier.ApplyProfile(profile, targets);
+        ApplyToAllReport = report;
+        RaiseRunState();
+        return report;
+    }
+
+    /// <summary>
+    /// Delete <see cref="SelectedProfile"/> from settings (<see cref="IAppSettings.DeleteProfile"/>) and the
+    /// bar, then refresh + re-point the selection at the first remaining profile (or none). No-op if unset.
+    /// </summary>
+    public void DeleteSelectedProfile()
+    {
+        if (_selectedProfile is not { } profile)
+        {
+            return;
+        }
+
+        _settings.DeleteProfile(profile.Name);
+        RefreshProfiles();
+        SelectedProfile = Profiles.FirstOrDefault();
+    }
+
+    /// <summary>Re-project <see cref="IAppSettings.CutProfiles"/> into <see cref="Profiles"/> + re-gate the profile commands.</summary>
+    private void RefreshProfiles()
+    {
+        Profiles.Clear();
+        foreach (var profile in _settings.CutProfiles)
+        {
+            Profiles.Add(profile);
+        }
+
+        OnPropertyChanged(nameof(HasProfiles));
+        RaiseProfileCommandStates();
+    }
+
+    private void RaiseProfileCommandStates()
+    {
+        OnPropertyChanged(nameof(HasSelectedProfile));
+        OnPropertyChanged(nameof(CanSaveProfile));
+        OnPropertyChanged(nameof(CanApplyProfileToSelected));
+        OnPropertyChanged(nameof(CanApplyProfileToAll));
+        SaveProfileCommand.RaiseCanExecuteChanged(); // global requery re-evaluates every RelayCommand's CanExecute
     }
 
     // ---- Run batch (§4 — DELEGATES to T-095) ------------------------------------------------
