@@ -555,3 +555,7 @@
 
 ## 2026-08-22 · todo-task-next — T-099 done (themed tooltips)
 - **T-099 done** (`8e8fa2e`, 671 green): one implicit global <Style TargetType="ToolTip"> in Controls.xaml — Surface3Brush bg + TextPrimaryBrush (near-white) fg (both explicit, the fix) + BorderStrongBrush 1px + RadiusSm + Padding 10,6 + FontSizeSmall + MaxWidth 360 wrap + HasDropShadow. Root cause: no ToolTip style existed → WPF default pale bg + dark theme's inherited light fg = light-on-light empty box. Covers all 63 tooltips + future, zero per-site edits. Token-only, no VM change.
+
+## 2026-08-22 · todo-task — G-037 planned (Bulk Cut preview player + jog + cut profiles)
+- Enhancement to Bulk Cut (from user): mini preview player like Split + timing bar + jog buttons (±1s/5s/10s/20s/1m) + reusable intro/outro profiles. Grounded strong reuse: PlayerViewModel/PlayerView/IMediaPlayer/FfmeMediaPlayer + SkipCommand jog set + TimelineView + AppSettings JSON-DTO + MediaReopenGuard. Decisions: ONE shared player bound to a SelectedItem (per-row players infeasible); profile = {Name, IntroFromStart, OutroFromEnd?} in settings (supersedes deferred DefaultIntroSeconds).
+- **G-037** + tasks T-100..T-104: T-100 SelectedItem+shared player wiring [M, now] · T-101 preview pane UI (player+timeline+jog+set-at-playhead) [L, ←T-100] · T-102 CutProfile model+persistence [M, now] · T-103 profile UI save/apply [M, ←T-100+T-102] · T-104 docs [S, ←T-101+T-103]. Two proceedable roots (T-100, T-102). proceed-with: perfect-dev --auto-approve. Next: todo-next-all.
