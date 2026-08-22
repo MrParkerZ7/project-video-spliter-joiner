@@ -215,19 +215,66 @@ internal sealed class ThrowingFakeSplitEngine : ISplitEngine
 /// No-op-by-default thumbnail service (the per-row hover preview is a T-097 view concern). T-107 tests set
 /// <see cref="ThumbnailFactory"/> to a func returning a REAL temp frame path so the auto-default capture can
 /// be exercised; leaving it null keeps the original "returns null" behavior the T-096/T-097/T-103 tests rely on.
+///
+/// <para>T-108 additions (all opt-in, so existing tests are untouched): <see cref="Requests"/> records the
+/// (path,time,width) of every grab so a test can assert WHICH snapped time was grabbed and how many times;
+/// <see cref="Gate"/>, when set, makes each grab park until released so a test can observe how many grabs run
+/// CONCURRENTLY (<see cref="PeakConcurrent"/>) to prove the batch concurrency bound.</para>
 /// </summary>
 internal sealed class FakeThumbnailService : IThumbnailService
 {
+    private readonly object _lock = new();
+
     /// <summary>Scriptable result for <see cref="GetThumbnailAsync"/> (inputPath, time, width) → path or null. Null func ⇒ always null.</summary>
     public Func<string, TimeSpan, int, string?>? ThumbnailFactory { get; set; }
 
     /// <summary>Number of <see cref="GetThumbnailAsync"/> calls — lets a test assert the auto-default grab actually fired.</summary>
     public int GetThumbnailCallCount { get; private set; }
 
-    public Task<string?> GetThumbnailAsync(string inputPath, TimeSpan time, int width, CancellationToken ct)
+    /// <summary>Every grab's (inputPath, time, width), in call order (T-108 — assert the snapped grab time).</summary>
+    public List<(string InputPath, TimeSpan Time, int Width)> Requests { get; } = new();
+
+    /// <summary>When set, each grab awaits this gate before returning — hold it to observe concurrency, release to let grabs finish (T-108).</summary>
+    public TaskCompletionSource? Gate { get; set; }
+
+    /// <summary>Live count of in-flight grabs (T-108).</summary>
+    public int CurrentConcurrent { get; private set; }
+
+    /// <summary>High-water mark of concurrent grabs — asserts the batch concurrency bound (T-108).</summary>
+    public int PeakConcurrent { get; private set; }
+
+    public async Task<string?> GetThumbnailAsync(string inputPath, TimeSpan time, int width, CancellationToken ct)
     {
-        GetThumbnailCallCount++;
-        return Task.FromResult(ThumbnailFactory?.Invoke(inputPath, time, width));
+        TaskCompletionSource? gate;
+        lock (_lock)
+        {
+            GetThumbnailCallCount++;
+            Requests.Add((inputPath, time, width));
+            CurrentConcurrent++;
+            if (CurrentConcurrent > PeakConcurrent)
+            {
+                PeakConcurrent = CurrentConcurrent;
+            }
+
+            gate = Gate;
+        }
+
+        try
+        {
+            if (gate is not null)
+            {
+                await gate.Task.WaitAsync(ct).ConfigureAwait(false);
+            }
+
+            return ThumbnailFactory?.Invoke(inputPath, time, width);
+        }
+        finally
+        {
+            lock (_lock)
+            {
+                CurrentConcurrent--;
+            }
+        }
     }
 
     public void Clear(string inputPath)

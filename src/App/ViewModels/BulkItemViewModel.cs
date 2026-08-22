@@ -9,6 +9,7 @@ using VideoSplitJoiner.Core.Bulk;
 using VideoSplitJoiner.Core.Errors;
 using VideoSplitJoiner.Core.Media;
 using VideoSplitJoiner.Core.Split;
+using VideoSplitJoiner.Core.Thumbnails;
 
 namespace VideoSplitJoiner.App.ViewModels;
 
@@ -76,8 +77,25 @@ public sealed class BulkItemViewModel : ObservableObject
 
     private static readonly TimeSpan OneSecond = TimeSpan.FromSeconds(1);
 
+    /// <summary>Width (px) of the per-row cut-point frame thumbnails (T-108) handed to the shared service.</summary>
+    public const int ThumbnailWidth = 64;
+
+    /// <summary>
+    /// Default settle window before a handle move triggers a per-row frame grab (T-108). Deliberately
+    /// slower than the scrub-hover debounce (<see cref="ThumbnailPreviewViewModel.DefaultDebounce"/> = 60ms):
+    /// the cut settles, so a slower debounce coalesces a drag into a single grab.
+    /// </summary>
+    public static readonly TimeSpan DefaultThumbnailDebounce = TimeSpan.FromMilliseconds(200);
+
     private readonly IMediaProbe _probe;
     private readonly SemaphoreSlim _scanGate;
+
+    // T-108: per-handle frame grabbers (debounce + latest-wins + cancel-prior), null when no thumbnail
+    // service was injected (existing BulkItemViewModel tests construct rows without one → grabbers inert).
+    private readonly HandleThumbnailGrabber? _introGrabber;
+    private readonly HandleThumbnailGrabber? _outroGrabber;
+    private string? _introThumbnailPath;
+    private string? _outroThumbnailPath;
 
     private IReadOnlyList<TimeSpan> _keyframes = Array.Empty<TimeSpan>();
     private bool _isIndexingKeyframes = true;
@@ -103,8 +121,25 @@ public sealed class BulkItemViewModel : ObservableObject
     /// <paramref name="defaultIntro"/> (unwired in v1 — post-v1 <c>DefaultIntroSeconds</c> pre-seed)
     /// seeds the intro handle; both handles are created optimistically (<c>snapPending: true</c>) and
     /// resolved once the background scan lands.
+    ///
+    /// <para>T-108: <paramref name="thumbnails"/> is the tab VM's SHARED <see cref="IThumbnailService"/> —
+    /// when non-null, the row grabs a small frame at the intro-end (and outro-start) cut point, debounced +
+    /// latest-wins + cancel-prior (modelled on <see cref="ThumbnailPreviewViewModel"/>). <paramref name="thumbnailGate"/>
+    /// bounds concurrent frame grabs across a large batch (a dedicated <see cref="SemaphoreSlim"/> mirroring
+    /// the T-096 scan gate). <paramref name="thumbnailDebounce"/>/<paramref name="thumbnailDelay"/> are test
+    /// seams (default = <see cref="DefaultThumbnailDebounce"/> over <see cref="Task.Delay(TimeSpan, CancellationToken)"/>).
+    /// A null <paramref name="thumbnails"/> leaves the grabbers inert (existing tests keep compiling / stay
+    /// grab-free).</para>
     /// </summary>
-    public BulkItemViewModel(string path, IMediaProbe probe, SemaphoreSlim scanGate, TimeSpan? defaultIntro = null)
+    public BulkItemViewModel(
+        string path,
+        IMediaProbe probe,
+        SemaphoreSlim scanGate,
+        TimeSpan? defaultIntro = null,
+        IThumbnailService? thumbnails = null,
+        SemaphoreSlim? thumbnailGate = null,
+        TimeSpan? thumbnailDebounce = null,
+        Func<TimeSpan, CancellationToken, Task>? thumbnailDelay = null)
     {
         Path = path ?? throw new ArgumentNullException(nameof(path));
         _probe = probe ?? throw new ArgumentNullException(nameof(probe));
@@ -120,6 +155,16 @@ public sealed class BulkItemViewModel : ObservableObject
 
         IntroEnd = new CutMarkerViewModel(_probe, () => Keyframes, defaultIntro ?? TimeSpan.Zero, snapPending: true);
         IntroEnd.PropertyChanged += OnHandleChanged;
+
+        if (thumbnails is not null)
+        {
+            var debounce = thumbnailDebounce is { } d && d > TimeSpan.Zero ? d : DefaultThumbnailDebounce;
+            var delay = thumbnailDelay ?? ((wait, ct) => Task.Delay(wait, ct));
+            _introGrabber = new HandleThumbnailGrabber(
+                thumbnails, thumbnailGate, ThumbnailWidth, debounce, delay, p => IntroThumbnailPath = p);
+            _outroGrabber = new HandleThumbnailGrabber(
+                thumbnails, thumbnailGate, ThumbnailWidth, debounce, delay, p => OutroThumbnailPath = p);
+        }
     }
 
     // ---- Identity / shape -------------------------------------------------------------------
@@ -204,6 +249,10 @@ public sealed class BulkItemViewModel : ObservableObject
 
         OutroStart = handle;
         RecomputeAll();
+
+        // T-108: the resolve above runs BEFORE the OutroStart setter subscribes OnHandleChanged, so the
+        // handle event won't fire the first grab — kick it explicitly (also covers a no-change re-snap).
+        RequestOutroThumbnail();
     }
 
     /// <summary>Drop the outro-start handle (keep now runs to EOF).</summary>
@@ -211,6 +260,52 @@ public sealed class BulkItemViewModel : ObservableObject
     {
         OutroStart = null;
         RecomputeAll();
+
+        // T-108: cancel any in-flight outro grab and drop its frame so the (now-hidden) outro chip clears.
+        _outroGrabber?.Cancel();
+        OutroThumbnailPath = null;
+    }
+
+    // ---- Cut-point frame thumbnails (T-108) -------------------------------------------------
+
+    /// <summary>
+    /// Temp jpg PATH of the frame at the intro-end cut point (or null while loading / if the grab failed).
+    /// The view binds it through <c>PathToBitmapConverter</c> (OnLoad → the file isn't held open); null shows
+    /// the muted placeholder chip. WPF-free (a plain string) — the grabber is pure Task/CancellationToken.
+    /// </summary>
+    public string? IntroThumbnailPath
+    {
+        get => _introThumbnailPath;
+        private set => SetProperty(ref _introThumbnailPath, value);
+    }
+
+    /// <summary>
+    /// Temp jpg PATH of the frame at the outro-start cut point (null while loading / if unavailable / when
+    /// there is no outro). Cleared by <see cref="ClearOutro"/>; grabbed at the outro handle's snapped time.
+    /// </summary>
+    public string? OutroThumbnailPath
+    {
+        get => _outroThumbnailPath;
+        private set => SetProperty(ref _outroThumbnailPath, value);
+    }
+
+    /// <summary>Re-grab the intro-end frame at the current snapped time (debounced + latest-wins). No-op when inert.</summary>
+    private void RequestIntroThumbnail() => _introGrabber?.Request(Path, IntroEnd.Snapped);
+
+    /// <summary>Re-grab the outro-start frame at the current snapped time (debounced + latest-wins). No-op without an outro.</summary>
+    private void RequestOutroThumbnail()
+    {
+        if (HasOutro)
+        {
+            _outroGrabber?.Request(Path, OutroStart!.Snapped);
+        }
+    }
+
+    /// <summary>Grab both cut-point frames (on keyframe-resolve / apply-to-all / profile-apply, when Snapped becomes real).</summary>
+    private void RequestAllThumbnails()
+    {
+        RequestIntroThumbnail();
+        RequestOutroThumbnail();
     }
 
     // ---- Keyframes --------------------------------------------------------------------------
@@ -468,6 +563,7 @@ public sealed class BulkItemViewModel : ObservableObject
                 IntroEnd.ResolveSnap();
                 OutroStart?.ResolveSnap();
                 RecomputeAll();
+                RequestAllThumbnails(); // T-108: grab at the (identity-snapped) cut even without keyframes
             }
 
             return;
@@ -484,10 +580,22 @@ public sealed class BulkItemViewModel : ObservableObject
         IntroEnd.ResolveSnap();
         OutroStart?.ResolveSnap();
         RecomputeAll();
+
+        // T-108: keyframes just resolved (Snapped became real) → initial cut-point frame grab. A ResolveSnap
+        // that did NOT move Snapped raises no handle event, so this explicit kick covers that gap.
+        RequestAllThumbnails();
     }
 
-    /// <summary>Cancel this row's in-flight/queued scan (on Remove / Clear).</summary>
-    internal void CancelScan() => _scanCts?.Cancel();
+    /// <summary>
+    /// Cancel this row's in-flight/queued scan AND any in-flight frame grabs (on Remove / Clear). The
+    /// grabber CTS cancel drops a superseded grab so a removed row never touches ffmpeg or updates state.
+    /// </summary>
+    internal void CancelScan()
+    {
+        _scanCts?.Cancel();
+        _introGrabber?.Cancel();
+        _outroGrabber?.Cancel();
+    }
 
     /// <summary>The row's current scan task (for tests to await the throttled scans deterministically).</summary>
     internal Task CurrentScanTask => _currentScanTask ?? Task.CompletedTask;
@@ -604,6 +712,19 @@ public sealed class BulkItemViewModel : ObservableObject
         {
             RecomputeAll();
         }
+
+        // T-108: a Snapped change moves the cut → re-grab THAT handle's frame at the new snapped time.
+        if (e.PropertyName == nameof(CutMarkerViewModel.Snapped))
+        {
+            if (ReferenceEquals(sender, IntroEnd))
+            {
+                RequestIntroThumbnail();
+            }
+            else if (ReferenceEquals(sender, OutroStart))
+            {
+                RequestOutroThumbnail();
+            }
+        }
     }
 
     private void RecomputeAll()
@@ -641,5 +762,147 @@ public sealed class BulkItemViewModel : ObservableObject
         {
             return 0;
         }
+    }
+
+    /// <summary>
+    /// Per-handle cut-point frame grabber (T-108), modelled on <see cref="ThumbnailPreviewViewModel"/>'s
+    /// debounce + latest-wins + cancel-prior discipline. Each <see cref="Request"/> cancels the prior
+    /// in-flight grab (its debounce wait faults, so a superseded request never reaches ffmpeg), waits the
+    /// debounce window off the UI thread, acquires the shared concurrency gate ONLY around the actual grab
+    /// (never during the debounce), then — if still the newest request — marshals the resolved path back
+    /// onto the captured <see cref="SynchronizationContext"/> (the WPF dispatcher in the app, the test's
+    /// pumpable context under xUnit) via <see cref="Progress{T}"/>, exactly like the codebase's other VMs.
+    /// WPF-free: pure <see cref="Task"/> / <see cref="CancellationToken"/> / delay-func. Best-effort — any
+    /// failure resolves to a null path (the placeholder chip shows) and never throws into the UI.
+    /// </summary>
+    private sealed class HandleThumbnailGrabber
+    {
+        private readonly IThumbnailService _thumbnails;
+        private readonly SemaphoreSlim? _gate;
+        private readonly int _width;
+        private readonly TimeSpan _debounce;
+        private readonly Func<TimeSpan, CancellationToken, Task> _delay;
+        private readonly Action<string?> _apply;
+        private readonly IProgress<PathResult> _postResult;
+
+        // The current (latest) request; swapped — and the prior cancelled — on every Request (latest-wins).
+        private CancellationTokenSource? _requestCts;
+
+        // Monotonic request id; a resolved grab commits its path only when its id is still the newest, so a
+        // superseded-but-not-yet-cancelled grab can never clobber a newer result.
+        private long _requestId;
+
+        public HandleThumbnailGrabber(
+            IThumbnailService thumbnails,
+            SemaphoreSlim? gate,
+            int width,
+            TimeSpan debounce,
+            Func<TimeSpan, CancellationToken, Task> delay,
+            Action<string?> apply)
+        {
+            _thumbnails = thumbnails;
+            _gate = gate;
+            _width = width;
+            _debounce = debounce;
+            _delay = delay;
+            _apply = apply;
+            _postResult = new Progress<PathResult>(OnResolved);
+        }
+
+        /// <summary>Debounce → (gated) grab → marshal-back for the frame of <paramref name="inputPath"/> at <paramref name="time"/>, latest-wins.</summary>
+        public void Request(string inputPath, TimeSpan time)
+        {
+            Cancel();
+            var cts = new CancellationTokenSource();
+            _requestCts = cts;
+            var id = ++_requestId;
+            _ = GrabAsync(inputPath, time, id, cts);
+        }
+
+        /// <summary>Cancel + dispose the in-flight request's CTS (if any) so a superseded/removed grab is dropped.</summary>
+        public void Cancel()
+        {
+            var cts = _requestCts;
+            _requestCts = null;
+            if (cts is null)
+            {
+                return;
+            }
+
+            try
+            {
+                cts.Cancel();
+            }
+            catch (ObjectDisposedException)
+            {
+                // Already retired by its own finally — nothing to cancel.
+            }
+        }
+
+        private async Task GrabAsync(string inputPath, TimeSpan time, long id, CancellationTokenSource cts)
+        {
+            try
+            {
+                // Debounce: settle before touching ffmpeg. A newer Request cancels this wait.
+                await _delay(_debounce, cts.Token).ConfigureAwait(false);
+
+                string? path;
+                if (_gate is not null)
+                {
+                    // Hold the concurrency permit ONLY around the grab — never during the debounce — so a
+                    // large batch caps concurrent ffmpeg frame grabs without permits sitting idle.
+                    await _gate.WaitAsync(cts.Token).ConfigureAwait(false);
+                    try
+                    {
+                        path = await _thumbnails.GetThumbnailAsync(inputPath, time, _width, cts.Token).ConfigureAwait(false);
+                    }
+                    finally
+                    {
+                        _gate.Release();
+                    }
+                }
+                else
+                {
+                    path = await _thumbnails.GetThumbnailAsync(inputPath, time, _width, cts.Token).ConfigureAwait(false);
+                }
+
+                if (cts.Token.IsCancellationRequested)
+                {
+                    return;
+                }
+
+                _postResult.Report(new PathResult(id, path));
+            }
+            catch (OperationCanceledException)
+            {
+                // Superseded by a newer request / a Cancel — drop silently (never clobbers a newer result).
+            }
+            catch
+            {
+                // Best-effort — any other failure shows the placeholder.
+            }
+            finally
+            {
+                if (ReferenceEquals(_requestCts, cts))
+                {
+                    _requestCts = null;
+                }
+
+                cts.Dispose();
+            }
+        }
+
+        /// <summary>Commit a resolved grab on the captured context — only when it is still the newest request.</summary>
+        private void OnResolved(PathResult result)
+        {
+            if (result.Id != _requestId)
+            {
+                return; // a newer request superseded this grab → drop it
+            }
+
+            _apply(string.IsNullOrEmpty(result.Path) ? null : result.Path);
+        }
+
+        private readonly record struct PathResult(long Id, string? Path);
     }
 }

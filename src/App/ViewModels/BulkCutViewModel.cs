@@ -78,6 +78,16 @@ public sealed class BulkCutViewModel : ObservableObject
     // §3 — the single bounded scan gate, owned here and shared into every row (max 3 concurrent ffprobe scans).
     private readonly SemaphoreSlim _scanGate = new(3, 3);
 
+    // T-108 — a SEPARATE bounded gate shared into every row so a large batch caps concurrent ffmpeg
+    // cut-point frame grabs at 3. Deliberately NOT the scan gate: frame thumbnails are eye-candy, and
+    // sharing the scan gate would let ffmpeg grabs starve the ffprobe keyframe scans that gate CanRunBatch.
+    private readonly SemaphoreSlim _thumbnailGate = new(3, 3);
+
+    // T-108 test seams: the per-row grab debounce + delay func, forwarded into each row. Null ⇒ each row
+    // uses its production defaults (BulkItemViewModel.DefaultThumbnailDebounce over Task.Delay).
+    private readonly TimeSpan? _thumbnailDebounce;
+    private readonly Func<TimeSpan, CancellationToken, Task>? _thumbnailDelay;
+
     private readonly object _progressLock = new();
     private double _lastOverall;
 
@@ -106,13 +116,17 @@ public sealed class BulkCutViewModel : ObservableObject
         IAppSettings settings,
         IBulkTrimEngine? bulkTrimEngine = null,
         IMediaPlayer? player = null,
-        ProfileThumbnailStore? thumbnailStore = null)
+        ProfileThumbnailStore? thumbnailStore = null,
+        TimeSpan? thumbnailDebounce = null,
+        Func<TimeSpan, CancellationToken, Task>? thumbnailDelay = null)
     {
         _probe = probe ?? throw new ArgumentNullException(nameof(probe));
         _splitEngine = splitEngine ?? throw new ArgumentNullException(nameof(splitEngine));
         _thumbnails = thumbnails ?? throw new ArgumentNullException(nameof(thumbnails));
         _settings = settings ?? throw new ArgumentNullException(nameof(settings));
         _bulkTrimEngine = bulkTrimEngine ?? new BulkTrimEngine(_splitEngine, new KeptMiddleRequestBuilder(_probe));
+        _thumbnailDebounce = thumbnailDebounce; // T-108 test seams (null ⇒ per-row production defaults)
+        _thumbnailDelay = thumbnailDelay;
 
         // T-107: the file store for profile thumbnails (T-106). Default = the per-user root; tests inject a
         // store over a temp root. Constructing it is side-effect-free (only resolves a root string).
@@ -406,7 +420,16 @@ public sealed class BulkCutViewModel : ObservableObject
                 continue; // dedup — already have a row for this source
             }
 
-            var item = new BulkItemViewModel(path, _probe, _scanGate)
+            // T-108: thread the SHARED thumbnail service + the dedicated bounded thumbnail gate into the row
+            // so it grabs its cut-point frames through the same cache (no second frame-grab path), bounded.
+            var item = new BulkItemViewModel(
+                path,
+                _probe,
+                _scanGate,
+                thumbnails: _thumbnails,
+                thumbnailGate: _thumbnailGate,
+                thumbnailDebounce: _thumbnailDebounce,
+                thumbnailDelay: _thumbnailDelay)
             {
                 SizeBefore = SafeFileSize(path),
             };

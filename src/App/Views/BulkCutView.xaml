@@ -408,13 +408,14 @@
                                         CornerRadius="{StaticResource RadiusMd}">
                                     <Grid>
                                         <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="Auto" />
-                                            <ColumnDefinition Width="210" />
-                                            <ColumnDefinition Width="*" MinWidth="180" />
-                                            <ColumnDefinition Width="Auto" />
-                                            <ColumnDefinition Width="Auto" />
-                                            <ColumnDefinition Width="Auto" />
-                                            <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="Auto" />   <!-- 0: row-in-batch checkbox -->
+                                            <ColumnDefinition Width="210" />    <!-- 1: name + keep-line + warning -->
+                                            <ColumnDefinition Width="*" MinWidth="180" /> <!-- 2: dual-handle scrub bar -->
+                                            <ColumnDefinition Width="Auto" />   <!-- 3: cut-point frame thumbnails (T-108) -->
+                                            <ColumnDefinition Width="Auto" />   <!-- 4: IN / OUT readouts -->
+                                            <ColumnDefinition Width="Auto" />   <!-- 5: per-row state chip -->
+                                            <ColumnDefinition Width="Auto" />   <!-- 6: apply-to-all -->
+                                            <ColumnDefinition Width="Auto" />   <!-- 7: remove -->
                                         </Grid.ColumnDefinitions>
 
                                         <!-- Row-in-batch checkbox -->
@@ -458,8 +459,47 @@
                                                                 VerticalAlignment="Center"
                                                                 DataContext="{Binding}" />
 
+                                        <!-- ===== Cut-point frame thumbnails (T-108) =====
+                                             A small frame grabbed at the keyframe-SNAPPED intro-end (gold-ringed)
+                                             and, when an outro is set, the outro-start (blue-ringed), so the user
+                                             can eyeball where the cut lands without scrubbing. The muted chip is
+                                             the placeholder; the Image covers it when a grab resolves, and stays
+                                             transparent (chip shows through) while loading / if the grab returned
+                                             null. PathToBitmap loads with OnLoad so the temp file isn't held open
+                                             (reused verbatim — no second frame-grab path). Updates debounced as
+                                             the handle moves. -->
+                                        <StackPanel Grid.Column="3"
+                                                    Orientation="Horizontal"
+                                                    VerticalAlignment="Center"
+                                                    Margin="0,0,10,0">
+                                            <Border Width="64" Height="36"
+                                                    Background="{StaticResource Surface2Brush}"
+                                                    BorderBrush="{StaticResource AccentBrush}"
+                                                    BorderThickness="1"
+                                                    CornerRadius="{StaticResource RadiusSm}"
+                                                    ClipToBounds="True"
+                                                    SnapsToDevicePixels="True"
+                                                    ToolTip="Frame at the intro-end cut">
+                                                <Image Source="{Binding IntroThumbnailPath, Converter={StaticResource PathToBitmap}}"
+                                                       Stretch="UniformToFill" />
+                                            </Border>
+                                            <Border Width="64" Height="36"
+                                                    Margin="6,0,0,0"
+                                                    Background="{StaticResource Surface2Brush}"
+                                                    BorderBrush="{StaticResource InfoBrush}"
+                                                    BorderThickness="1"
+                                                    CornerRadius="{StaticResource RadiusSm}"
+                                                    ClipToBounds="True"
+                                                    SnapsToDevicePixels="True"
+                                                    ToolTip="Frame at the outro-start cut"
+                                                    Visibility="{Binding HasOutro, Converter={StaticResource BoolToVisibility}}">
+                                                <Image Source="{Binding OutroThumbnailPath, Converter={StaticResource PathToBitmap}}"
+                                                       Stretch="UniformToFill" />
+                                            </Border>
+                                        </StackPanel>
+
                                         <!-- IN / OUT readouts (editable, snap-on-commit) -->
-                                        <StackPanel Grid.Column="3" VerticalAlignment="Center" Margin="0,0,8,0">
+                                        <StackPanel Grid.Column="4" VerticalAlignment="Center" Margin="0,0,8,0">
                                             <StackPanel Orientation="Horizontal">
                                                 <TextBlock Text="IN" Width="26" Style="{StaticResource FieldLabel}" />
                                                 <TextBox Style="{StaticResource TimeField}"
@@ -500,7 +540,7 @@
                                         </StackPanel>
 
                                         <!-- Per-row state chip -->
-                                        <Border Grid.Column="4"
+                                        <Border Grid.Column="5"
                                                 VerticalAlignment="Center"
                                                 Margin="0,0,8,0"
                                                 Padding="8,2"
@@ -515,7 +555,7 @@
                                         </Border>
 
                                         <!-- Apply this row's cut points to all others (source = this row) -->
-                                        <Button Grid.Column="5"
+                                        <Button Grid.Column="6"
                                                 Content="⧉"
                                                 Margin="0,0,4,0"
                                                 Padding="7,2"
@@ -525,7 +565,7 @@
                                                 CommandParameter="{Binding}" />
 
                                         <!-- Remove this row -->
-                                        <Button Grid.Column="6"
+                                        <Button Grid.Column="7"
                                                 Content="✕"
                                                 Padding="7,2"
                                                 VerticalAlignment="Center"
