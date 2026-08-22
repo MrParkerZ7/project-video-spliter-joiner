@@ -604,3 +604,9 @@
 
 ## 2026-08-23 · G-038 drive — T-108 done
 - **T-108 done** (`5767c8b`, +7 → 864): per-row cut-point frame thumbnails. BulkItemViewModel.IntroThumbnailPath/OutroThumbnailPath + HandleThumbnailGrabber (debounce 200ms, cancel-prior CTS swap, latest-wins monotonic id, Progress<T> marshal, GetThumbnailAsync at Snapped 64px). Triggers: keyframes-resolve (RequestAllThumbnails after ResolveSnap), OnHandleChanged (sender-discriminated), AddOutro, apply-to-all/profile. ClearOutro/CancelScan cancel grabs. Deviation: dedicated _thumbnailGate SemaphoreSlim(3) (NOT the scan gate — FfmpegThumbnailService has no in-flight coalescing; sharing would starve ffprobe scans); permit acquired post-debounce. View: 64×36 chips col 3, intro gold-ring always + outro blue-ring on HasOutro, reused PathToBitmapConverter. 7 serves-spec:SPEC-011 tests (incl PeakConcurrent≤3). T-109 unblocked (both deps done).
+
+## 2026-08-23 · todo-next-all CONVERGED — T-110 + G-038 shipped
+- **T-109 done** (`f336cf1`): USER_GUIDE + CHANGELOG + ARCHITECTURE + SPEC-007 (+37 inv) + SPEC-011 (+7 inv); _index 556 inv / 540 covered / 16 deferred / 97%.
+- **G-038 DONE** — Bulk Cut thumbnails: T-106 CutProfile.ThumbnailPath+store · T-107 profile-thumb UI (auto-default/upload/clear/picker) · T-108 per-row cut-point frame thumbnails (intro gold / outro blue, debounced, bounded) · T-109 docs. Reused IThumbnailService/PathToBitmapConverter/AppSettings round-trip; WPF-free VMs.
+- **T-110 DONE** (`49c02ad`): Split jog buttons freeze on the exact frame (pause-then-seek at Scrub), no ~1s play burst.
+- Drive: T-110 + G-038 (T-106..109). Suite 819→864 (+45). All pushed, Release relaunched. T-105 (test-infra refactors, later/low) intentionally left out of the drive.
