@@ -145,6 +145,50 @@
     </Style>
 
     <!-- ================================================================= -->
+    <!-- ToolTip (implicit, T-099) — themed dark surface so tooltips read   -->
+    <!-- as light text on a raised dark card. WPF's default ToolTip uses a  -->
+    <!-- pale system background; the dark theme's inherited light foreground -->
+    <!-- rendered light-on-light → tooltips looked empty. The fix sets BOTH  -->
+    <!-- colors explicitly from tokens (Surface3 bg + TextPrimary fg) and    -->
+    <!-- re-templates with a bordered card so no inherited/default color     -->
+    <!-- can clash. Un-keyed → covers ALL ToolTip= usages app-wide + future  -->
+    <!-- ones with zero per-site edits. Long tooltips wrap (MaxWidth + Wrap).-->
+    <!-- ================================================================= -->
+    <Style TargetType="ToolTip">
+        <Setter Property="Background" Value="{DynamicResource Surface3Brush}" />
+        <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
+        <Setter Property="FontFamily" Value="{DynamicResource AppFontFamily}" />
+        <Setter Property="FontSize" Value="{DynamicResource FontSizeSmall}" />
+        <Setter Property="MaxWidth" Value="360" />
+        <Setter Property="HasDropShadow" Value="True" />
+        <Setter Property="TextOptions.TextFormattingMode" Value="Ideal" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ToolTip">
+                    <ControlTemplate.Resources>
+                        <!-- String tooltips render into an auto-generated TextBlock;
+                             base it on the global TextBlock style (keeps the light
+                             TextPrimary foreground) and add wrapping so long text
+                             wraps at MaxWidth instead of clipping. -->
+                        <Style TargetType="TextBlock" BasedOn="{StaticResource {x:Type TextBlock}}">
+                            <Setter Property="TextWrapping" Value="Wrap" />
+                        </Style>
+                    </ControlTemplate.Resources>
+                    <Border Background="{TemplateBinding Background}"
+                            BorderBrush="{DynamicResource BorderStrongBrush}"
+                            BorderThickness="1"
+                            CornerRadius="{DynamicResource RadiusSm}"
+                            Padding="10,6"
+                            TextElement.Foreground="{DynamicResource TextPrimaryBrush}"
+                            SnapsToDevicePixels="True">
+                        <ContentPresenter />
+                    </Border>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- ================================================================= -->
     <!-- TextBox (implicit) — dark surface, TextPrimary, rounded           -->
     <!-- ================================================================= -->
     <Style TargetType="TextBox">
