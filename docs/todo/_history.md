@@ -571,3 +571,7 @@
 
 ## 2026-08-22 · G-037 drive — T-103 done
 - **T-103 done** (`2435d29`, +10 → 725): cut-profile UI. Profiles bar in the Bulk header (ComboBox + Apply→selected/all + Delete, visible when HasProfiles; always-on Save current as…; empty hint). VM commands (WPF-free) delegate to T-102 (SaveProfile/DeleteProfile + CutProfileApplier.ApplyProfile/BuildProfileFromRow); Profiles ObservableCollection refreshed from settings. Themed Popup name input (Enter/Escape). ApplyToAllReport surfaced via new ApplyReportSummary inline note (also retroactively surfaces the ⧉ apply-to-all). Deviations: Apply→all targets IsCheckedByUser (mirrors apply-to-all, allows re-validating invalid-but-checked rows); added the inline note (no prior XAML surface); pre-seed skipped. T-104 unblocked.
+
+## 2026-08-22 · G-037 CONVERGED — Bulk Cut preview player + jog + cut profiles shipped
+- **T-104 done** (`29385f6`): USER_GUIDE + ARCHITECTURE + CHANGELOG + ADR 0016 (shared preview player bound to selected row, not per-row; cut profiles in AppSettings).
+- **G-037 DONE** — T-100 shared player+SelectedItem · T-101 preview pane (jog/scrub/frame-step + set-at-playhead) · T-102 CutProfile model+persistence · T-103 profile UI (save/apply/delete) · T-104 docs. 725 tests, all pushed. Release relaunched. Reused PlayerView/SkipCommand/TimelineView-scrub/MediaReopenGuard/AppSettings wholesale. Supersedes the deferred DefaultIntroSeconds (pre-seed itself not built). Deferred still: auto intro/outro detection.
