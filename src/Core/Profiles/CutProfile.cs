@@ -22,7 +22,8 @@ namespace VideoSplitJoiner.Core.Profiles;
 /// <param name="Name">Human-facing profile name — non-empty (stored trimmed); the case-insensitive upsert key.</param>
 /// <param name="IntroFromStart">Absolute intro-end offset from the START of the file — the start of the kept middle. Non-negative.</param>
 /// <param name="OutroFromEnd">Optional outro length measured from the END of the file; <c>null</c> ⇒ keep runs to EOF (no tail trim). Non-negative when present.</param>
-public sealed record CutProfile(string Name, TimeSpan IntroFromStart, TimeSpan? OutroFromEnd)
+/// <param name="ThumbnailPath">Optional PATH to a recognizable thumbnail image for this profile (G-038 / T-106); <c>null</c> ⇒ no thumbnail. A blank/whitespace value normalizes to <c>null</c>. This is metadata only — a path string, never image bytes — and the model performs NO existence/format check (the App-side <c>ProfileThumbnailStore</c> owns the file). Pure Core: the record stays WPF- and file-I/O-free.</param>
+public sealed record CutProfile(string Name, TimeSpan IntroFromStart, TimeSpan? OutroFromEnd, string? ThumbnailPath = null)
 {
     /// <summary>The profile name — non-empty, stored trimmed; the case-insensitive upsert key.</summary>
     public string Name { get; init; } = ValidateName(Name);
@@ -32,6 +33,18 @@ public sealed record CutProfile(string Name, TimeSpan IntroFromStart, TimeSpan? 
 
     /// <summary>Optional outro length measured from the end of the file (non-negative when present); <c>null</c> ⇒ keep to EOF.</summary>
     public TimeSpan? OutroFromEnd { get; init; } = ValidateOffset(OutroFromEnd, nameof(OutroFromEnd));
+
+    /// <summary>
+    /// Optional path to a thumbnail image for this profile (T-106); <c>null</c> ⇒ no thumbnail. A
+    /// null/blank/whitespace input normalizes to <c>null</c> (and a non-blank value is stored trimmed),
+    /// so an empty string never masquerades as a real thumbnail. Non-crashing by design — the model does
+    /// NOT validate that the path exists or points at a decodable image (that is the store's job); it is
+    /// plain metadata, not a cut offset, so <c>CutProfileApplier</c> ignores it.
+    /// </summary>
+    public string? ThumbnailPath { get; init; } = NormalizeThumbnailPath(ThumbnailPath);
+
+    private static string? NormalizeThumbnailPath(string? value) =>
+        string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
     private static string ValidateName(string name) =>
         string.IsNullOrWhiteSpace(name)

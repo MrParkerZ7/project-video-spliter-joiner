@@ -185,4 +185,68 @@ public sealed class CutProfilePersistenceTests : IDisposable
             .Should().Throw<ArgumentNullException>()
             .Which.ParamName.Should().Be("profile");
     }
+
+    // ---- SPEC-007 — optional thumbnail path round-trip (T-106) --------------------------------
+
+    [Fact]
+    [Trait("serves-spec", "SPEC-007")]
+    public void SaveProfile_WithThumbnail_RoundTrips_PathPreserved()
+    {
+        var settings = new AppSettings(_file);
+        var withThumb = new CutProfile("Series", TimeSpan.FromSeconds(8), TimeSpan.FromSeconds(12), @"C:\thumbs\series.png");
+        var without = new CutProfile("Bare", TimeSpan.FromSeconds(5), null);
+
+        settings.SaveProfile(withThumb);
+        settings.SaveProfile(without);
+
+        var reloaded = new AppSettings(_file);
+        reloaded.CutProfiles.Should().Equal(new[] { withThumb, without },
+            "the thumbnail path round-trips through the JSON (records compare by value, thumbnail included)");
+        reloaded.CutProfiles[0].ThumbnailPath.Should().Be(@"C:\thumbs\series.png");
+        reloaded.CutProfiles[1].ThumbnailPath.Should().BeNull("a no-thumbnail profile stays null across the round-trip");
+    }
+
+    [Fact]
+    [Trait("serves-spec", "SPEC-007")]
+    public void SaveProfile_PersistsThumbnail_AsPathString_NotBytes()
+    {
+        var settings = new AppSettings(_file);
+        settings.SaveProfile(new CutProfile("Series", TimeSpan.FromSeconds(8), null, @"C:\thumbs\series.png"));
+
+        var json = File.ReadAllText(_file);
+        json.Should().Contain("\"thumbnailPath\"", "the thumbnail is persisted as a PATH key");
+        json.Should().Contain("series.png", "the stored value is the path string, never image bytes");
+    }
+
+    [Fact]
+    [Trait("serves-spec", "SPEC-007")]
+    public void NoThumbnail_OmitsTheKey_KeepingProfilesByteClean()
+    {
+        var settings = new AppSettings(_file);
+        settings.SaveProfile(new CutProfile("Bare", TimeSpan.FromSeconds(5), null));
+
+        File.ReadAllText(_file).Should().NotContain("thumbnailPath",
+            "a null thumbnail is omitted entirely (WhenWritingNull) so profiles without one stay byte-clean");
+    }
+
+    [Fact]
+    [Trait("serves-spec", "SPEC-007")]
+    public void OlderProfileEntry_WithoutThumbnailPathField_LoadsNull_SiblingsIntact()
+    {
+        // A settings file whose cutProfiles entry predates the thumbnail field: name + offsets, no thumbnailPath.
+        Directory.CreateDirectory(_dir);
+        File.WriteAllText(_file,
+            "{ \"cutProfiles\": [" +
+            "{ \"name\": \"Legacy\", \"introSeconds\": 10, \"outroSeconds\": 4 }" +
+            "] }");
+
+        var settings = new AppSettings(_file);
+
+        settings.CutProfiles.Should().ContainSingle();
+        var profile = settings.CutProfiles[0];
+        profile.ThumbnailPath.Should().BeNull("an absent thumbnailPath field ⇒ null, never a crash");
+        profile.Name.Should().Be("Legacy", "the sibling fields survive the additive migration");
+        profile.IntroFromStart.Should().Be(TimeSpan.FromSeconds(10));
+        profile.OutroFromEnd.Should().Be(TimeSpan.FromSeconds(4));
+    }
 }

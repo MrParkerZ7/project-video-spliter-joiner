@@ -40,6 +40,7 @@ public sealed class AppSettings : IAppSettings
     };
 
     private readonly string _filePath;
+    private readonly ProfileThumbnailStore? _thumbnailStore;
 
     private string? _lastInputDir;
     private string? _lastOutputDir;
@@ -48,19 +49,27 @@ public sealed class AppSettings : IAppSettings
     private double? _verticalSplitRatio;
     private List<CutProfile> _cutProfiles = new();
 
-    /// <summary>Create a settings store over the default per-user file, loading any existing state.</summary>
+    /// <summary>
+    /// Create a settings store over the default per-user file, loading any existing state. Wires the
+    /// default <see cref="ProfileThumbnailStore"/> (T-106) so <see cref="DeleteProfile"/> cascades to the
+    /// deleted profile's thumbnail file. (Constructing the store is side-effect-free — it only resolves a
+    /// root string; no directory is created until a thumbnail is actually saved.)
+    /// </summary>
     public AppSettings()
-        : this(DefaultFilePath())
+        : this(DefaultFilePath(), new ProfileThumbnailStore())
     {
     }
 
     /// <summary>
     /// Create a settings store over an explicit file path (used by tests). Loads the file immediately
-    /// if it exists; a missing or corrupt file leaves the store at defaults (nulls).
+    /// if it exists; a missing or corrupt file leaves the store at defaults (nulls). The optional
+    /// <paramref name="thumbnailStore"/> (T-106) receives the delete-cascade — when <c>null</c>, deleting
+    /// a profile simply skips the thumbnail-file cleanup (the profile persistence is unaffected).
     /// </summary>
-    public AppSettings(string filePath)
+    public AppSettings(string filePath, ProfileThumbnailStore? thumbnailStore = null)
     {
         _filePath = filePath ?? throw new ArgumentNullException(nameof(filePath));
+        _thumbnailStore = thumbnailStore;
         Load();
     }
 
@@ -167,10 +176,23 @@ public sealed class AppSettings : IAppSettings
             return;
         }
 
+        // Capture the matching profile BEFORE removing, so the cascade can also clean up a thumbnail
+        // whose stored path diverges from the recomputed safe-name path (e.g. a directly-set path).
+        var removedProfile = _cutProfiles.FirstOrDefault(
+            p => string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase));
+
         var removed = _cutProfiles.RemoveAll(
             p => string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase));
         if (removed > 0)
         {
+            // T-106 cascade: best-effort delete the profile's thumbnail file(s). Both calls never throw
+            // (missing/locked file is swallowed) so a thumbnail problem can never break the profile delete.
+            _thumbnailStore?.Delete(name);
+            if (removedProfile?.ThumbnailPath is { } thumbnailPath)
+            {
+                _thumbnailStore?.DeleteByPath(thumbnailPath);
+            }
+
             Save();
         }
     }
@@ -270,7 +292,8 @@ public sealed class AppSettings : IAppSettings
             CutProfile profile;
             try
             {
-                profile = new CutProfile(name, TimeSpan.FromSeconds(dto.IntroSeconds), outro);
+                // T-106: an absent thumbnailPath (older file) → null; the record normalizes blank → null.
+                profile = new CutProfile(name, TimeSpan.FromSeconds(dto.IntroSeconds), outro, NullIfBlank(dto.ThumbnailPath));
             }
             catch
             {
@@ -342,6 +365,8 @@ public sealed class AppSettings : IAppSettings
                         Name = p.Name,
                         IntroSeconds = p.IntroFromStart.TotalSeconds,
                         OutroSeconds = p.OutroFromEnd?.TotalSeconds,
+                        // T-106: persist the PATH only (never image bytes); null → key omitted (byte-clean).
+                        ThumbnailPath = p.ThumbnailPath,
                     }).ToList(),
             };
 
@@ -419,7 +444,10 @@ public sealed class AppSettings : IAppSettings
     /// <summary>
     /// On-disk shape of one cut profile (T-102): the name plus the two offsets as SECONDS (double) — a
     /// stable, human-readable JSON form (never TimeSpan ticks). <c>outroSeconds</c> is nullable
-    /// (<c>null</c> ⇒ keep runs to EOF, no tail trim).
+    /// (<c>null</c> ⇒ keep runs to EOF, no tail trim). <c>thumbnailPath</c> (T-106) is an optional PATH
+    /// string to the profile's thumbnail image — never image bytes; absent in older files → <c>null</c>
+    /// (backward-compatible additive field), and null is omitted on write (WhenWritingNull) so a
+    /// no-thumbnail profile stays byte-clean.
     /// </summary>
     private sealed class CutProfileDto
     {
@@ -431,5 +459,8 @@ public sealed class AppSettings : IAppSettings
 
         [JsonPropertyName("outroSeconds")]
         public double? OutroSeconds { get; set; }
+
+        [JsonPropertyName("thumbnailPath")]
+        public string? ThumbnailPath { get; set; }
     }
 }

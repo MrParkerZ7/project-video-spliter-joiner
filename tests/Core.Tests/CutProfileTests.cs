@@ -81,4 +81,72 @@ public sealed class CutProfileTests
 
         a.Should().Be(b, "records compare by value");
     }
+
+    // ---- SPEC-007 — optional thumbnail (T-106) --------------------------------------------------
+
+    [Fact]
+    [Trait("serves-spec", "SPEC-007")]
+    public void Construct_WithThumbnailPath_ExposesIt()
+    {
+        var profile = new CutProfile("Series", TimeSpan.FromSeconds(8), null, @"C:\thumbs\series.png");
+
+        profile.ThumbnailPath.Should().Be(@"C:\thumbs\series.png");
+    }
+
+    [Fact]
+    [Trait("serves-spec", "SPEC-007")]
+    public void Construct_WithoutThumbnailPath_DefaultsToNull()
+    {
+        // The existing 3-arg positional call site (e.g. CutProfileApplier) still compiles and gets null.
+        var profile = new CutProfile("No thumb", TimeSpan.FromSeconds(5), null);
+
+        profile.ThumbnailPath.Should().BeNull("the thumbnail is optional — absent ⇒ no thumbnail");
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    [Trait("serves-spec", "SPEC-007")]
+    public void Construct_WithBlankThumbnailPath_NormalizesToNull(string? thumbnail)
+    {
+        var profile = new CutProfile("Blank thumb", TimeSpan.FromSeconds(5), null, thumbnail);
+
+        profile.ThumbnailPath.Should().BeNull("a blank/whitespace path is not a real thumbnail — non-crashing normalize");
+    }
+
+    [Fact]
+    [Trait("serves-spec", "SPEC-007")]
+    public void ThumbnailPath_IsStoredTrimmed()
+    {
+        var profile = new CutProfile("Trim thumb", TimeSpan.FromSeconds(5), null, "  C:\\thumbs\\a.png  ");
+
+        profile.ThumbnailPath.Should().Be(@"C:\thumbs\a.png", "surrounding whitespace is trimmed like the name");
+    }
+
+    [Fact]
+    [Trait("serves-spec", "SPEC-007")]
+    public void With_SetsThumbnailPath_LeavingOtherFieldsIntact()
+    {
+        // How T-107 will attach a thumbnail to an existing profile: a record `with` expression.
+        var original = new CutProfile("Series", TimeSpan.FromSeconds(8), TimeSpan.FromSeconds(12));
+
+        var updated = original with { ThumbnailPath = @"C:\thumbs\series.png" };
+
+        updated.ThumbnailPath.Should().Be(@"C:\thumbs\series.png");
+        updated.Name.Should().Be("Series");
+        updated.IntroFromStart.Should().Be(TimeSpan.FromSeconds(8));
+        updated.OutroFromEnd.Should().Be(TimeSpan.FromSeconds(12));
+        original.ThumbnailPath.Should().BeNull("`with` produces a copy — the original is unchanged");
+    }
+
+    [Fact]
+    [Trait("serves-spec", "SPEC-007")]
+    public void ValueEquality_ProfilesDifferingOnlyByThumbnail_AreNotEqual()
+    {
+        var a = new CutProfile("Same", TimeSpan.FromSeconds(3), TimeSpan.FromSeconds(7), @"C:\a.png");
+        var b = new CutProfile("Same", TimeSpan.FromSeconds(3), TimeSpan.FromSeconds(7), @"C:\b.png");
+
+        a.Should().NotBe(b, "the thumbnail path participates in the record's value equality");
+    }
 }
