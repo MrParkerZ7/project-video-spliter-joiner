@@ -552,3 +552,6 @@
 ## 2026-08-22 · G-036 CONVERGED — Bulk Cut tab shipped (D-004)
 - **T-098 done** (`ef27dd8`): USER_GUIDE + ARCHITECTURE + CHANGELOG + ADR 0015 (bulk = Split keeping one middle segment); also landed the deferred todo-docs remainder (README + ADRs 0001-0015). "commit the docs" cleared.
 - **G-036 DONE** — Bulk Cut tab shipped end-to-end: T-094 KeptSegmentSelector · T-095 BulkTrimEngine · T-096 VMs · T-097 View+wiring · T-098 docs. 671 tests, all pushed. Release relaunched (Bulk Cut tab live). Deferred post-v1: IAppSettings.DefaultIntroSeconds pre-seed; auto intro/outro detection.
+
+## 2026-08-22 · todo-task-next — T-099 done (themed tooltips)
+- **T-099 done** (`8e8fa2e`, 671 green): one implicit global <Style TargetType="ToolTip"> in Controls.xaml — Surface3Brush bg + TextPrimaryBrush (near-white) fg (both explicit, the fix) + BorderStrongBrush 1px + RadiusSm + Padding 10,6 + FontSizeSmall + MaxWidth 360 wrap + HasDropShadow. Root cause: no ToolTip style existed → WPF default pale bg + dark theme's inherited light fg = light-on-light empty box. Covers all 63 tooltips + future, zero per-site edits. Token-only, no VM change.
