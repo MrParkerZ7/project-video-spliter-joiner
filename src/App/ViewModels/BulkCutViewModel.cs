@@ -120,7 +120,14 @@ public sealed class BulkCutViewModel : ObservableObject
         ClearCommand = new RelayCommand(_ => Clear(), _ => CanClear);
         ApplyToAllCommand = new RelayCommand(p => ApplyToAll(p as BulkItemViewModel), _ => Items.Count > 1);
         RunBatchCommand = new RelayCommand(_ => _ = RunBatchAsync(), _ => CanRunBatch);
+        SetIntroAtPlayheadCommand = new RelayCommand(_ => SetIntroAtPlayhead(), _ => CanSetCutAtPlayhead);
+        SetOutroAtPlayheadCommand = new RelayCommand(_ => SetOutroAtPlayhead(), _ => CanSetCutAtPlayhead);
         CancelCommand = Operation.CancelCommand;
+
+        // T-101: the two "set at playhead" gestures enable only with a selected row AND a ready
+        // preview player (a null-duration player has no real playhead to capture) — re-raise their
+        // guards when the shared player's readiness flips (mirrors SplitViewModel.OnPlayerChanged).
+        Player.PropertyChanged += OnPlayerChanged;
     }
 
     // ---- State ------------------------------------------------------------------------------
@@ -157,9 +164,18 @@ public sealed class BulkCutViewModel : ObservableObject
             if (SetProperty(ref _selectedItem, value))
             {
                 OpenOrUnloadSelected(value);
+                OnPropertyChanged(nameof(HasSelection));
+                RaisePlayheadCommandStates();
             }
         }
     }
+
+    /// <summary>
+    /// True when a row is selected — drives the preview pane (T-101): the pane shows the reused
+    /// <see cref="PlayerView"/> when a row is selected, and its "select a video to preview" hint when
+    /// not.
+    /// </summary>
+    public bool HasSelection => _selectedItem is not null;
 
     /// <summary>The batch lifecycle state.</summary>
     public BulkBatchState BatchState
@@ -224,6 +240,13 @@ public sealed class BulkCutViewModel : ObservableObject
     /// <summary>Clear all is enabled with ≥1 row and no run in flight.</summary>
     public bool CanClear => Items.Count > 0 && !Operation.IsRunning;
 
+    /// <summary>
+    /// The two "set at playhead" gestures (T-101) are enabled only when a row is selected AND the
+    /// shared preview <see cref="Player"/> is ready (its duration is known — i.e. there is a real
+    /// playhead position to capture). Mirrors <c>SplitViewModel.CanSetCutAtPlayhead</c>.
+    /// </summary>
+    public bool CanSetCutAtPlayhead => _selectedItem is not null && Player.IsReady;
+
     // ---- Commands ---------------------------------------------------------------------------
 
     /// <summary>Add videos (parameter = paths): dedup + probe + throttled background keyframe scan.</summary>
@@ -240,6 +263,12 @@ public sealed class BulkCutViewModel : ObservableObject
 
     /// <summary>Run the batch through the engine (guarded by <see cref="CanRunBatch"/>).</summary>
     public RelayCommand RunBatchCommand { get; }
+
+    /// <summary>Set the selected row's intro-end to the preview playhead, snapped (guarded by <see cref="CanSetCutAtPlayhead"/>).</summary>
+    public RelayCommand SetIntroAtPlayheadCommand { get; }
+
+    /// <summary>Set the selected row's outro-start to the preview playhead — adds one if none, else moves it; snapped (guarded by <see cref="CanSetCutAtPlayhead"/>).</summary>
+    public RelayCommand SetOutroAtPlayheadCommand { get; }
 
     /// <summary>Cancel the in-flight batch — delegates to the aggregate op's cancel.</summary>
     public RelayCommand CancelCommand { get; }
@@ -404,6 +433,69 @@ public sealed class BulkCutViewModel : ObservableObject
         {
             Player.Open(item.Path);
         }
+    }
+
+    // ---- Set-at-playhead (T-101) ------------------------------------------------------------
+
+    /// <summary>
+    /// Set the selected row's intro-end to the shared preview player's current playhead
+    /// (<see cref="PlayerViewModel.Position"/>). Writing <see cref="CutMarkerViewModel.Requested"/>
+    /// re-snaps to the row's keyframes automatically — the same path the per-row scrub handles and the
+    /// editable IN field use — so the row's scrub bar updates live. No-op without a selection / a ready
+    /// player (also guarded by <see cref="CanSetCutAtPlayhead"/> on the command).
+    /// </summary>
+    public void SetIntroAtPlayhead()
+    {
+        if (!CanSetCutAtPlayhead)
+        {
+            return;
+        }
+
+        _selectedItem!.IntroEnd.Requested = Player.Position;
+    }
+
+    /// <summary>
+    /// Set the selected row's outro-start to the shared preview player's current playhead: add the
+    /// outro handle if the row has none (<see cref="BulkItemViewModel.AddOutro"/>), else move the
+    /// existing handle by writing <see cref="CutMarkerViewModel.Requested"/> (re-snaps). No-op without
+    /// a selection / a ready player (also guarded by <see cref="CanSetCutAtPlayhead"/> on the command).
+    /// </summary>
+    public void SetOutroAtPlayhead()
+    {
+        if (!CanSetCutAtPlayhead)
+        {
+            return;
+        }
+
+        var row = _selectedItem!;
+        if (row.HasOutro)
+        {
+            row.OutroStart!.Requested = Player.Position;
+        }
+        else
+        {
+            row.AddOutro(Player.Position);
+        }
+    }
+
+    /// <summary>
+    /// The shared player's readiness gates both set-at-playhead gestures — refresh their guards when
+    /// it flips (mirrors <c>SplitViewModel.OnPlayerChanged</c>). Position ticks do not affect the
+    /// guards, so they are ignored here.
+    /// </summary>
+    private void OnPlayerChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName is nameof(PlayerViewModel.IsReady) or nameof(PlayerViewModel.Duration))
+        {
+            RaisePlayheadCommandStates();
+        }
+    }
+
+    private void RaisePlayheadCommandStates()
+    {
+        OnPropertyChanged(nameof(CanSetCutAtPlayhead));
+        SetIntroAtPlayheadCommand.RaiseCanExecuteChanged();
+        SetOutroAtPlayheadCommand.RaiseCanExecuteChanged();
     }
 
     // ---- Apply-to-all (§2.3) ----------------------------------------------------------------

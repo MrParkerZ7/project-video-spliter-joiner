@@ -41,9 +41,11 @@
           DragLeave="OnDragLeave"
           Drop="OnDrop">
         <Grid.RowDefinitions>
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="*" />
-            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />              <!-- 0: header (subtitle + legend) -->
+            <RowDefinition Height="*" MinHeight="220" /> <!-- 1: preview pane (T-101) -->
+            <RowDefinition Height="Auto" />              <!-- 2: splitter (preview ‖ list) -->
+            <RowDefinition Height="*" MinHeight="150" /> <!-- 3: row list (T-097) -->
+            <RowDefinition Height="Auto" />              <!-- 4: footer (output + Run + lifecycle) -->
         </Grid.RowDefinitions>
 
         <!-- ================= Header: subtitle + gold/blue legend ================= -->
@@ -67,21 +69,142 @@
             </StackPanel>
         </StackPanel>
 
-        <!-- ================= List of row cards ================= -->
+        <!-- ================= Preview pane (T-101 / G-037) =================
+             A preview region at the TOP of the tab. When a row is selected it hosts the SAME
+             PlayerView the Split tab uses (transport + scrub + hover-thumb + the ±1s/5s/10s/20s/1m/5m
+             jog row + frame-step + play/pause + volume/speed + time readout), bound to the ONE shared
+             BulkCut.Player (T-100). PlayerView's own OnLoaded attaches the Bulk FfmeMediaPlayer's
+             MediaElement via Player.PlayerControl — identical to how Split hosts it — so no attach glue
+             is needed here. Below the player, two HeroButton "set at playhead" gestures write the
+             selected row's intro-end / outro-start from the live playhead (snapped). A hint fills the
+             pane when nothing is selected. -->
         <Border Grid.Row="1"
                 Background="{StaticResource Surface1Brush}"
                 BorderBrush="{StaticResource BorderBrush}"
                 BorderThickness="1"
                 CornerRadius="{StaticResource RadiusMd}">
             <Grid>
-                <ScrollViewer VerticalScrollBarVisibility="Auto"
-                              HorizontalScrollBarVisibility="Disabled"
-                              Padding="8">
-                    <ItemsControl x:Name="RowsList" ItemsSource="{Binding Items}">
-                        <ItemsControl.ItemTemplate>
+                <!-- Selected: caption + reused player + set-at-playhead action bar -->
+                <Grid Margin="8"
+                      Visibility="{Binding HasSelection, Converter={StaticResource BoolToVisibility}}">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />              <!-- caption -->
+                        <RowDefinition Height="*" MinHeight="140" /> <!-- reused PlayerView -->
+                        <RowDefinition Height="Auto" />              <!-- set-at-playhead action bar -->
+                    </Grid.RowDefinitions>
+
+                    <TextBlock Grid.Row="0"
+                               Margin="2,0,2,6"
+                               Text="{Binding SelectedItem.FileName}"
+                               FontWeight="SemiBold"
+                               TextTrimming="CharacterEllipsis"
+                               ToolTip="{Binding SelectedItem.Path}"
+                               Foreground="{StaticResource TextPrimaryBrush}" />
+
+                    <views:PlayerView Grid.Row="1" DataContext="{Binding Player}" />
+
+                    <!-- Set-at-playhead — the pane's primary gesture (HeroButton: gold + Bold + glow,
+                         distinct from the AccentButton batch Run). Both disabled until a row is
+                         selected AND the player is ready (SetIntro/OutroAtPlayheadCommand guards). -->
+                    <StackPanel Grid.Row="2" Margin="0,8,0,0">
+                        <TextBlock Text="▸ play to the intro end (or outro start), then set the cut from the playhead"
+                                   Margin="2,0,2,6"
+                                   FontSize="{StaticResource FontSizeSmall}"
+                                   Foreground="{StaticResource TextMutedBrush}"
+                                   TextWrapping="Wrap" />
+                        <WrapPanel>
+                            <Button Style="{StaticResource HeroButton}"
+                                    Margin="0,0,8,0"
+                                    Content="Set intro-end here"
+                                    ToolTip="Set the selected row's intro-end to the preview playhead (snaps to the nearest keyframe)"
+                                    Command="{Binding SetIntroAtPlayheadCommand}" />
+                            <Button Style="{StaticResource HeroButton}"
+                                    Content="Set outro-start here"
+                                    ToolTip="Set the selected row's outro-start to the preview playhead (adds an outro if none; snaps)"
+                                    Command="{Binding SetOutroAtPlayheadCommand}" />
+                        </WrapPanel>
+                    </StackPanel>
+                </Grid>
+
+                <!-- Hint state — no row selected -->
+                <StackPanel HorizontalAlignment="Center"
+                            VerticalAlignment="Center"
+                            Visibility="{Binding HasSelection, Converter={StaticResource BoolToCollapsed}}">
+                    <TextBlock Text="Select a video to preview"
+                               HorizontalAlignment="Center"
+                               FontFamily="{StaticResource SansFontFamily}"
+                               FontSize="{StaticResource FontSizeTitle}"
+                               Foreground="{StaticResource TextSecondaryBrush}" />
+                    <TextBlock Text="Click a row below to play it here, then set its intro-end / outro-start from the playhead."
+                               Margin="0,4,0,0"
+                               MaxWidth="440"
+                               TextAlignment="Center"
+                               TextWrapping="Wrap"
+                               HorizontalAlignment="Center"
+                               Foreground="{StaticResource TextMutedBrush}" />
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <!-- Drag handle: resize the preview pane against the row list (mirrors SplitView, T-027) -->
+        <GridSplitter Grid.Row="2"
+                      Height="6"
+                      Margin="0,6"
+                      HorizontalAlignment="Stretch"
+                      VerticalAlignment="Center"
+                      ResizeBehavior="PreviousAndNext"
+                      ResizeDirection="Rows"
+                      ToolTip="Drag to resize the preview against the list" />
+
+        <!-- ================= List of row cards ================= -->
+        <Border Grid.Row="3"
+                Background="{StaticResource Surface1Brush}"
+                BorderBrush="{StaticResource BorderBrush}"
+                BorderThickness="1"
+                CornerRadius="{StaticResource RadiusMd}">
+            <Grid>
+                <!-- ListBox (T-101): each row is selectable; SelectedItem two-way drives the preview
+                     pane above. The ItemContainerStyle drops the default selection chrome for a gold
+                     accent ring around the selected card, and carries the inter-card gap (the card's
+                     own bottom margin moved here) so the ring hugs the card. The ListBox scrolls
+                     internally — no outer ScrollViewer needed. -->
+                <ListBox x:Name="RowsList"
+                         ItemsSource="{Binding Items}"
+                         SelectedItem="{Binding SelectedItem, Mode=TwoWay}"
+                         Background="Transparent"
+                         BorderThickness="0"
+                         Padding="8"
+                         HorizontalContentAlignment="Stretch"
+                         ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                         ScrollViewer.VerticalScrollBarVisibility="Auto">
+                    <ListBox.ItemContainerStyle>
+                        <Style TargetType="ListBoxItem">
+                            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                            <Setter Property="Padding" Value="0" />
+                            <Setter Property="Margin" Value="0,0,0,8" />
+                            <Setter Property="Template">
+                                <Setter.Value>
+                                    <ControlTemplate TargetType="ListBoxItem">
+                                        <Border x:Name="SelBd"
+                                                Background="Transparent"
+                                                BorderBrush="Transparent"
+                                                BorderThickness="2"
+                                                CornerRadius="{StaticResource RadiusMd}">
+                                            <ContentPresenter />
+                                        </Border>
+                                        <ControlTemplate.Triggers>
+                                            <Trigger Property="IsSelected" Value="True">
+                                                <Setter TargetName="SelBd" Property="BorderBrush" Value="{StaticResource AccentBrush}" />
+                                            </Trigger>
+                                        </ControlTemplate.Triggers>
+                                    </ControlTemplate>
+                                </Setter.Value>
+                            </Setter>
+                        </Style>
+                    </ListBox.ItemContainerStyle>
+                    <ListBox.ItemTemplate>
                             <DataTemplate DataType="{x:Type vm:BulkItemViewModel}">
-                                <Border Margin="0,0,0,8"
-                                        Padding="8"
+                                <Border Padding="8"
                                         Background="{StaticResource SurfaceBrush}"
                                         BorderBrush="{StaticResource BorderBrush}"
                                         BorderThickness="1"
@@ -215,9 +338,8 @@
                                     </Grid>
                                 </Border>
                             </DataTemplate>
-                        </ItemsControl.ItemTemplate>
-                    </ItemsControl>
-                </ScrollViewer>
+                    </ListBox.ItemTemplate>
+                </ListBox>
 
                 <!-- Empty state (Join-style hint + gold/blue legend) — shown while there are no rows. -->
                 <Border IsHitTestVisible="False"
@@ -252,7 +374,7 @@
         </Border>
 
         <!-- ================= Footer: output note + overall bar + Run/Cancel + lifecycle surfaces ================= -->
-        <StackPanel Grid.Row="2" Margin="4,10,4,0">
+        <StackPanel Grid.Row="4" Margin="4,10,4,0">
             <Grid>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*" />
@@ -432,7 +554,7 @@
 
         <!-- ================= Drag-drop highlight overlay ================= -->
         <Border x:Name="DropHighlight"
-                Grid.RowSpan="3"
+                Grid.RowSpan="5"
                 IsHitTestVisible="False"
                 Visibility="Collapsed"
                 BorderBrush="{StaticResource AccentBrush}"
