@@ -283,6 +283,43 @@ public partial class BulkCutView : UserControl
 
     private void OnCancelSaveProfileClicked(object sender, RoutedEventArgs e) => SaveProfilePopup.IsOpen = false;
 
+    // ---- Profile thumbnail: upload / clear (T-107) ------------------------------------------
+
+    /// <summary>
+    /// Pick an image and hand it to the VM to store as the SELECTED profile's thumbnail (T-107). The VM
+    /// copies it into the T-106 <c>ProfileThumbnailStore</c>, folds the stored path onto the profile, and
+    /// re-persists — best-effort, so a cancel / bad pick is a no-op. The OpenFileDialog lives here (View),
+    /// keeping the VM WPF-free.
+    /// </summary>
+    private void OnUploadThumbnailClicked(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is not BulkCutViewModel vm || vm.SelectedProfile is not { } profile)
+        {
+            return;
+        }
+
+        var dialog = new OpenFileDialog
+        {
+            Title = "Choose a thumbnail image",
+            Filter = "Image files|*.png;*.jpg;*.jpeg;*.bmp;*.gif;*.webp;*.tif;*.tiff|All files|*.*",
+            CheckFileExists = true,
+        };
+
+        if (dialog.ShowDialog() == true)
+        {
+            vm.UploadThumbnail(profile, dialog.FileName);
+        }
+    }
+
+    /// <summary>Clear the selected profile's thumbnail via the VM (best-effort store delete + null the path).</summary>
+    private void OnClearThumbnailClicked(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is BulkCutViewModel vm && vm.SelectedProfile is { } profile)
+        {
+            vm.ClearThumbnail(profile);
+        }
+    }
+
     /// <summary>Validate non-blank, hand the trimmed name to the VM's save command, then close the popup.</summary>
     private void CommitSaveProfile()
     {

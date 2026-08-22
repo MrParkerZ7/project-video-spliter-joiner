@@ -211,11 +211,24 @@ internal sealed class ThrowingFakeSplitEngine : ISplitEngine
     }
 }
 
-/// <summary>No-op thumbnail service (the per-row hover preview is a T-097 view concern).</summary>
+/// <summary>
+/// No-op-by-default thumbnail service (the per-row hover preview is a T-097 view concern). T-107 tests set
+/// <see cref="ThumbnailFactory"/> to a func returning a REAL temp frame path so the auto-default capture can
+/// be exercised; leaving it null keeps the original "returns null" behavior the T-096/T-097/T-103 tests rely on.
+/// </summary>
 internal sealed class FakeThumbnailService : IThumbnailService
 {
-    public Task<string?> GetThumbnailAsync(string inputPath, TimeSpan time, int width, CancellationToken ct) =>
-        Task.FromResult<string?>(null);
+    /// <summary>Scriptable result for <see cref="GetThumbnailAsync"/> (inputPath, time, width) → path or null. Null func ⇒ always null.</summary>
+    public Func<string, TimeSpan, int, string?>? ThumbnailFactory { get; set; }
+
+    /// <summary>Number of <see cref="GetThumbnailAsync"/> calls — lets a test assert the auto-default grab actually fired.</summary>
+    public int GetThumbnailCallCount { get; private set; }
+
+    public Task<string?> GetThumbnailAsync(string inputPath, TimeSpan time, int width, CancellationToken ct)
+    {
+        GetThumbnailCallCount++;
+        return Task.FromResult(ThumbnailFactory?.Invoke(inputPath, time, width));
+    }
 
     public void Clear(string inputPath)
     {

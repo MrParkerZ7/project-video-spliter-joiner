@@ -69,6 +69,11 @@ public sealed class BulkCutViewModel : ObservableObject
     private readonly IThumbnailService _thumbnails;
     private readonly IAppSettings _settings;
     private readonly IBulkTrimEngine _bulkTrimEngine;
+    private readonly ProfileThumbnailStore _thumbnailStore;
+
+    // T-107: width (px) of the auto-captured intro-end frame stored as a profile's default thumbnail
+    // (displayed tiny in the picker, but stored crisp so an upload/override reads cleanly too).
+    private const int ProfileThumbnailWidth = 96;
 
     // §3 — the single bounded scan gate, owned here and shared into every row (max 3 concurrent ffprobe scans).
     private readonly SemaphoreSlim _scanGate = new(3, 3);
@@ -100,13 +105,18 @@ public sealed class BulkCutViewModel : ObservableObject
         IThumbnailService thumbnails,
         IAppSettings settings,
         IBulkTrimEngine? bulkTrimEngine = null,
-        IMediaPlayer? player = null)
+        IMediaPlayer? player = null,
+        ProfileThumbnailStore? thumbnailStore = null)
     {
         _probe = probe ?? throw new ArgumentNullException(nameof(probe));
         _splitEngine = splitEngine ?? throw new ArgumentNullException(nameof(splitEngine));
         _thumbnails = thumbnails ?? throw new ArgumentNullException(nameof(thumbnails));
         _settings = settings ?? throw new ArgumentNullException(nameof(settings));
         _bulkTrimEngine = bulkTrimEngine ?? new BulkTrimEngine(_splitEngine, new KeptMiddleRequestBuilder(_probe));
+
+        // T-107: the file store for profile thumbnails (T-106). Default = the per-user root; tests inject a
+        // store over a temp root. Constructing it is side-effect-free (only resolves a root string).
+        _thumbnailStore = thumbnailStore ?? new ProfileThumbnailStore();
 
         // T-100: the ONE shared preview player, reusing the injected thumbnail service (mirrors how
         // SplitViewModel constructs its Player). Null player → inert NullMediaPlayer (tests / no-preview).
@@ -128,7 +138,7 @@ public sealed class BulkCutViewModel : ObservableObject
 
         // T-103: cut-profile commands — thin glue over the T-102 applier/persistence (no new model/persistence).
         Profiles = new ObservableCollection<CutProfile>();
-        SaveProfileCommand = new RelayCommand(p => SaveProfile(p as string), _ => CanSaveProfile);
+        SaveProfileCommand = new RelayCommand(p => _ = SaveProfileWithAutoThumbnailAsync(p as string), _ => CanSaveProfile);
         ApplyProfileToSelectedCommand = new RelayCommand(_ => ApplyProfileToSelected(), _ => CanApplyProfileToSelected);
         ApplyProfileToAllCommand = new RelayCommand(_ => ApplyProfileToAll(), _ => CanApplyProfileToAll);
         DeleteProfileCommand = new RelayCommand(_ => DeleteSelectedProfile(), _ => HasSelectedProfile);
@@ -680,6 +690,134 @@ public sealed class BulkCutViewModel : ObservableObject
         SelectedProfile = Profiles.FirstOrDefault(
             p => string.Equals(p.Name, profile.Name, StringComparison.OrdinalIgnoreCase));
     }
+
+    // ---- Profile thumbnails (T-107 — thin glue over the T-106 ProfileThumbnailStore) --------
+
+    /// <summary>
+    /// Save the selected row's cut as <paramref name="name"/> (via <see cref="SaveProfile"/>) AND, best-effort
+    /// and OFF the save path, capture the row's intro-end frame as the profile's <b>default thumbnail</b>
+    /// (T-107). The profile is persisted + shown FIRST — the save is NEVER blocked on the grab — then a
+    /// background <see cref="IThumbnailService.GetThumbnailAsync"/> at the row's snapped intro-end is copied
+    /// into the <see cref="ProfileThumbnailStore"/> and its stored path folded onto the profile. A null /
+    /// failed grab (or a store failure) simply leaves the profile with no thumbnail (the picker shows a
+    /// placeholder). This is the async step the <see cref="SaveProfileCommand"/> drives (fire-and-forget);
+    /// exposed awaitable for tests. Never throws.
+    /// </summary>
+    public async Task SaveProfileWithAutoThumbnailAsync(string? name, CancellationToken ct = default)
+    {
+        // 1. Persist + refresh + select immediately — a slow/failed grab must never delay the save.
+        SaveProfile(name);
+
+        if (_selectedItem is not { } row)
+        {
+            return;
+        }
+
+        var trimmed = name?.Trim();
+        if (string.IsNullOrEmpty(trimmed) || FindPersistedProfile(trimmed) is null)
+        {
+            return; // blank name / nothing was saved → no thumbnail to attach
+        }
+
+        // 2. Best-effort intro-end frame grab (the service seeks + shells ffmpeg off the UI thread and
+        //    returns null on any failure — but guard anyway so nothing ever escapes onto the save path).
+        string? framePath;
+        try
+        {
+            framePath = await _thumbnails
+                .GetThumbnailAsync(row.Path, row.IntroEnd.Snapped, ProfileThumbnailWidth, ct)
+                .ConfigureAwait(true);
+        }
+        catch
+        {
+            return; // a failed grab keeps the null thumbnail (placeholder shows)
+        }
+
+        if (string.IsNullOrEmpty(framePath))
+        {
+            return;
+        }
+
+        // 3. Copy the frame into the store + fold its stored path onto the profile (re-persist + refresh).
+        AttachThumbnail(trimmed, framePath);
+    }
+
+    /// <summary>
+    /// Override <paramref name="profile"/>'s thumbnail with a user-chosen <paramref name="imagePath"/> (T-107):
+    /// copies the image into the <see cref="ProfileThumbnailStore"/> and folds the stored path onto the
+    /// profile (re-persist + refresh + reselect). Best-effort — a null profile / blank-or-missing image / a
+    /// store copy failure is a silent no-op that leaves the profile's current thumbnail untouched.
+    /// </summary>
+    public void UploadThumbnail(CutProfile? profile, string? imagePath)
+    {
+        if (profile is null || string.IsNullOrWhiteSpace(imagePath))
+        {
+            return;
+        }
+
+        AttachThumbnail(profile.Name, imagePath);
+    }
+
+    /// <summary>
+    /// Clear <paramref name="profile"/>'s thumbnail (T-107): best-effort delete the stored file(s) — by name
+    /// (covers any stored extension) and by the exact recorded path — then null the profile's
+    /// <see cref="CutProfile.ThumbnailPath"/> (re-persist + refresh + reselect), so the picker reverts to the
+    /// placeholder. No-op when the profile is unset or has no persisted entry. Never throws.
+    /// </summary>
+    public void ClearThumbnail(CutProfile? profile)
+    {
+        if (profile is null || FindPersistedProfile(profile.Name) is not { } existing)
+        {
+            return;
+        }
+
+        _thumbnailStore.Delete(existing.Name); // best-effort (missing/locked file swallowed)
+        if (existing.ThumbnailPath is { } path)
+        {
+            _thumbnailStore.DeleteByPath(path);
+        }
+
+        _settings.SaveProfile(existing with { ThumbnailPath = null });
+        RefreshProfiles();
+        SelectedProfile = FindBarProfile(existing.Name);
+    }
+
+    /// <summary>
+    /// Shared store-and-attach step for the auto-default (<see cref="SaveProfileWithAutoThumbnailAsync"/>) and
+    /// upload (<see cref="UploadThumbnail"/>) paths: copy <paramref name="imagePath"/> into the store under the
+    /// persisted profile's name, fold the returned stored path onto the profile, then re-persist + refresh +
+    /// reselect. Best-effort — an un-saved profile or a store failure (blank/missing source, locked target)
+    /// leaves the profile unchanged.
+    /// </summary>
+    private void AttachThumbnail(string profileName, string imagePath)
+    {
+        if (FindPersistedProfile(profileName) is not { } existing)
+        {
+            return; // the profile must be saved before a thumbnail can hang off it
+        }
+
+        string storedPath;
+        try
+        {
+            storedPath = _thumbnailStore.Save(existing.Name, imagePath);
+        }
+        catch
+        {
+            return; // blank/missing source or a copy failure — keep the profile's current thumbnail
+        }
+
+        _settings.SaveProfile(existing with { ThumbnailPath = storedPath });
+        RefreshProfiles();
+        SelectedProfile = FindBarProfile(existing.Name);
+    }
+
+    /// <summary>The persisted profile whose name matches (case-insensitive), or null.</summary>
+    private CutProfile? FindPersistedProfile(string name) => _settings.CutProfiles
+        .FirstOrDefault(p => string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>The bar's projected profile whose name matches (case-insensitive), or null — used to re-point the selection at the refreshed instance.</summary>
+    private CutProfile? FindBarProfile(string name) => Profiles
+        .FirstOrDefault(p => string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase));
 
     /// <summary>
     /// Apply <see cref="SelectedProfile"/> to the selected row only (<see cref="CutProfileApplier.ApplyProfile"/>),
