@@ -575,3 +575,7 @@
 ## 2026-08-22 · G-037 CONVERGED — Bulk Cut preview player + jog + cut profiles shipped
 - **T-104 done** (`29385f6`): USER_GUIDE + ARCHITECTURE + CHANGELOG + ADR 0016 (shared preview player bound to selected row, not per-row; cut profiles in AppSettings).
 - **G-037 DONE** — T-100 shared player+SelectedItem · T-101 preview pane (jog/scrub/frame-step + set-at-playhead) · T-102 CutProfile model+persistence · T-103 profile UI (save/apply/delete) · T-104 docs. 725 tests, all pushed. Release relaunched. Reused PlayerView/SkipCommand/TimelineView-scrub/MediaReopenGuard/AppSettings wholesale. Supersedes the deferred DefaultIntroSeconds (pre-seed itself not built). Deferred still: auto intro/outro detection.
+
+## 2026-08-22 · todo-automate (full spec-layer bootstrap) — Phase A: specs authored
+- Bootstrapped docs/specs/ living-spec layer (target had none). Standard: docs/standards/feature-spec-structure.md (+ _index). 15 code-grounded feature specs SPEC-001..SPEC-015 (Split/Bulk/Join/Probe/Thumbs/Waveform/Profiles engines + progress-ETA/settings/screens/player/timeline/shell) via a 15-agent workflow, each mapping the existing 725 tests onto its invariants.
+- Coverage: **512 invariants · 418 covered · 82% of spec cases covered · 94 gaps** (_index.md table + _GAPS.md list). Lowest: SPEC-015 shell 15/28, SPEC-003 join 19/31, SPEC-001 split 25/38, SPEC-004 probe 22/32. Next (Phase C): generate the unit-testable gaps (serves-spec tagged) + run; view-only/theming gaps deferred.

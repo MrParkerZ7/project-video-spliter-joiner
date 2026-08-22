@@ -1,0 +1,159 @@
+---
+id: SPEC-002
+slug: bulk-trim-engine
+area: core
+title: Bulk trim engine (keep one middle segment)
+status: current
+sources:
+  - src/Core/Split/KeptSegmentSelector.cs
+  - src/Core/Bulk/BulkTrimEngine.cs
+  - src/Core/Bulk/KeptMiddleRequestBuilder.cs
+  - src/Core/Bulk/BulkTrimItem.cs
+  - src/Core/Bulk/BulkTrimItemResult.cs
+  - src/Core/Bulk/BatchResult.cs
+  - src/Core/Bulk/BatchOutcome.cs
+  - src/Core/Bulk/ItemOutcome.cs
+  - src/Core/Bulk/CollisionPolicy.cs
+  - src/Core/Bulk/BulkTrimOptions.cs
+  - src/Core/Bulk/BulkTrimProgress.cs
+  - src/Core/Bulk/NoOpTrimException.cs
+  - src/Core/Bulk/IDiskSpaceProbe.cs
+  - src/Core/Bulk/IBulkTrimEngine.cs
+  - src/Core/Bulk/IBulkTrimRequestBuilder.cs
+serves-goal: [G-036]
+updated: 2026-08-22
+---
+
+## What
+The Bulk Cut Core feature (design D-004) batch-trims many source videos at once, keeping exactly the
+middle segment `[introEnd → outroStart | EOF]` of each. Its load-bearing decision is that **a bulk
+trim IS a Split that keeps one middle segment** — it adds NO second ffmpeg path. `KeptSegmentSelector`
+(a pure, I/O-free helper) resolves which planned segment is the kept middle and assembles the
+single-kept-segment `SplitRequest`; `KeptMiddleRequestBuilder` does the same in production (probing
+each source, delegating the index math, honoring the collision-resolved output path);
+`BulkTrimEngine.RunAsync` is the UI-free orchestrator that runs the rows **sequentially** and
+**failure-isolated** over the existing `ISplitEngine`, owning the batch loop, cancel semantics,
+collision policy, a batch disk pre-flight, progress rollup, and a per-row result ledger. Every row
+still flows through `ISplitEngine.SplitAsync`, so the `-c copy` stream-copy invariant, temp-then-move
+cancel-safety, and per-run disk pre-flight are all inherited for free.
+
+## Why
+Users trimming intros/outros off a folder of clips need one action, not N. Reusing the single-segment
+Split path (rather than writing a new batch ffmpeg command) means the batch inherits every safety
+property the Split engine already proved (stream-copy losslessness, no partial output on cancel,
+keyframe snapping) and only adds the batch-level concerns: order, isolation, collisions, disk
+head-room, cancellation, and a completeness-guaranteed ledger the UI can report and retry from. The
+kept-middle index is deliberately delegated to a pure helper because it is **not always 2** — the real
+planner drops a cut that snaps to ~0 or ~duration, so the kept part can begin at file start (index 1),
+and the both-boundaries-collapse case must be an honest no-op rather than a bogus trim.
+
+## Scope
+**In:** kept-middle index resolution across every planner outcome (`ResolveKeptIndex`); single-kept-segment
+request assembly (`BuildKeptMiddleRequest`, `KeptMiddleRequestBuilder`); the batch orchestration contract
+(sequential run, failure isolation, cancel sweep, collision policy + source-safety, batch disk
+pre-flight, no-op skip, ledger completeness, batch-outcome resolution, progress rollup).
+
+**Out:** the underlying Split engine's own behavior (per-segment `-c copy` command construction, temp-then-move,
+keyframe snapping, the `SplitPlanner` drop/merge/snap rules) — that is the core Split-engine spec; this
+spec only asserts the *reuse* and the batch layer on top. Also out: the App/WPF Bulk Cut tab, its VMs,
+the preview player, and cut profiles (G-037) — those are app-layer specs.
+
+## Current behavior & invariants
+
+### Reuse (a bulk trim IS a single-segment Split)
+- **I1** — The request a bulk trim produces carries a single-element `SelectedSegmentIndices` and runs through
+  `ISplitEngine.SplitAsync` as **exactly one** per-segment `-ss/-to -c copy` command — no segment muxer
+  (`segment`), no encoder tokens, no second ffmpeg path. (`KeptSegmentSelector.BuildKeptMiddleRequest`,
+  `KeptMiddleRequestBuilder.BuildAsync` → `SelectedSegmentIndices: new[]{keptIndex}`.)
+
+### Kept-middle index resolution (`KeptSegmentSelector.ResolveKeptIndex`)
+- **I2** — Intro-end and outro-start both survive planning → the kept middle is **index 2**
+  (parts `[0..intro],[intro..outro],[outro..EOF]`).
+- **I3** — Intro-end survives, no outro (`outroStart == null`) → the kept part `[intro..EOF]` is the final part,
+  **index 2**.
+- **I4** — Intro-end snaps to ~0 and is dropped by the planner (with an outro present) → the kept part now
+  begins at file start `[0..outro]`, so the kept **index is 1** (the "index-not-always-2" case).
+- **I5** — Outro-start snaps to ~duration and is dropped → kept **index stays 2** and runs to EOF.
+- **I6** — Empty keyframes list → snapping is a no-op and the index is resolved on the **raw (unsnapped) cut
+  times** (guards `SnapToNearestKeyframe` throwing on an empty list); result is index 2 for the interior case.
+- **I7** — Both boundaries collapse (intro snaps to ~0 **and** no outro, so no cut survives) → the
+  `SplitException` thrown by `SplitPlanner.Plan` **propagates** unchanged; no bogus index is returned.
+
+### Single-kept-segment request shape (`BuildKeptMiddleRequest`)
+- **I8** — The built `SplitRequest` writes to the **source folder**, uses `TrimmedNamingPattern`
+  (`"{name}_trimmed{ext}"`, no `{index}` token), and selects exactly the one kept index; the original
+  source file is never a write target and stays byte-for-byte unmodified.
+- **I9** — Cut points = `[introEnd, outroStart]` when an outro is present, `[introEnd]` (keep to EOF) when
+  `outroStart` is null.
+- **I10** — An interior kept trim carries `-to`; a kept-to-EOF trim (no outro, final part) **omits** `-to`.
+
+### Production builder (`KeptMiddleRequestBuilder`)
+- **I11** — The builder probes the source for duration + keyframes, delegates the kept index to
+  `ResolveKeptIndex`, and honors the runner's collision-resolved effective path **verbatim** —
+  `OutputDir` = its folder, `NamingPattern` = the literal file name (no `{index}`), and the passed
+  `overwrite` flag threaded onto the request.
+- **I12** — When `ResolveKeptIndex` throws the both-collapse `SplitException` (I7), the builder translates it
+  into a distinct `NoOpTrimException` (the runner maps that to Skipped, never Failed).
+- **I13** — A probe failure (`ProbeResult` not `ProbeSucceeded`) → the builder throws `SplitException`
+  (`"Cannot trim '…': <reason>"`), which the runner records as a **Failed** row — distinct from the no-op
+  path.
+
+### Batch orchestration (`BulkTrimEngine.RunAsync`)
+- **I14** — `null` or empty `items` → a no-op `BatchResult(BatchOutcome.Completed, empty ledger)`; the engine
+  is never called.
+- **I15** — Rows run **sequentially**, head-to-tail, in input order, each as one `SplitAsync` call for every
+  runnable (non-pre-decided) row.
+- **I16** — Failure isolation: a row whose trim throws `SplitException` is recorded **Failed** (with a mapped
+  `UserFacingError`) and the batch **continues** — every remaining row is still attempted.
+- **I17** — Cancel mid-run: the in-flight row (an `OperationCanceledException` with a genuinely-cancelled
+  token) is recorded **Cancelled** with its ffmpeg temp already swept (no partial moved into place); the
+  loop stops; every not-yet-started row is **NotStarted**; earlier **Done** rows are kept; batch outcome is
+  **Cancelled**.
+- **I18** — A `NoOpTrimException` from the builder → the row is **Skipped** (deliberate no-op, not Failed), the
+  engine is not called for it, and the batch continues.
+
+### Collision policy (`CollisionPolicy`, resolved before any ffmpeg runs)
+- **I19** — `AutoSuffix` (default): a colliding output resolves to the first free `<stem>_2<ext>`, `_3`, …; the
+  existing file is left untouched and the request runs with `overwrite == false`.
+- **I20** — `Skip`: an existing output → the row is **Skipped** with **zero** engine calls.
+- **I21** — `Overwrite`: an existing output → the request runs with `SplitRequest.Overwrite == true` and the
+  base output name is kept.
+- **I22** — Source-safety (any policy): the **source path is never a write target** — a desired output equal to
+  the source is forced onto an `AutoSuffix` name with `overwrite == false`, even under `Overwrite`, and the
+  source bytes stay unmodified.
+- **I23** — A collision-resolution exception (e.g. `ResolveAutoSuffix` exhausting 10 000 attempts) is isolated
+  to its own row (recorded **Failed** with the wrapped error) and never aborts the batch.
+
+### Batch disk pre-flight (`IDiskSpaceProbe`)
+- **I24** — A knowable per-drive shortfall (a measurable drive's free bytes < Σ source sizes + a 16 MB margin)
+  **blocks the whole batch before any ffmpeg runs**: every row is **NotStarted** carrying a `DiskFull`
+  error, batch outcome is **Blocked**, and the engine is called zero times.
+- **I25** — Source size is used as a safe upper bound (trimming only removes bytes); an **unmeasurable** drive
+  (probe returns null) or an **unsizable** input skips that root's check — never a false-positive block, so
+  the batch runs.
+- **I26** — The pre-flight per-root size estimate **excludes** rows already decided at pre-resolve
+  (collision-Skipped or resolution-Failed) — only runnable rows count toward the required space.
+
+### Ledger, outcome, and progress (`BatchResult`, `BulkTrimItemResult`, `BulkTrimProgress`)
+- **I27** — Ledger completeness: `BatchResult.Items` has exactly one entry per input row, in **input order**,
+  preserving each row's identity and opaque `Tag`.
+- **I28** — Batch-outcome resolution: **Completed** iff every row is Done; **CompletedWithFailures** iff any row
+  is Failed or Skipped (and not cancelled); **Cancelled** iff cancelled; **Blocked** iff the disk pre-flight
+  blocked.
+- **I29** — Ledger-entry fields: a **Done** row records the effective `OutputPath` and surfaces the
+  `SplitResult`'s non-fatal warnings (coarse GOP, no keyframes, …); a **Failed** row records the mapped
+  `UserFacingError`; both are null on the other outcomes.
+- **I30** — A `SplitException` carrying ffmpeg stderr is mapped to a **categorized** `UserFacingError` (e.g. an
+  ENOSPC stderr signature → `ErrorCategory.DiskFull`), keeping the log path + full text.
+- **I31** — Progress: `OverallFraction` is monotonic non-decreasing, reaches `1.0` on normal completion, and the
+  first reported sample is the `Preflight` phase.
+- **I32** — `BatchResult` tallies (`DoneCount`, `FailedCount`, `SkippedCount`, `FailedItems`) reflect the ledger
+  outcomes.
+
+## Links
+- Design: D-004 (`docs/design/D-004/README.md`, `docs/design/D-004/core-flow.md`)
+- Goals: G-036 (Build the Bulk Cut tab; tasks T-094→T-098)
+- ADR: 0015 — bulk trim reuses Split single-segment (`docs/adr/0015-bulk-trim-reuses-split-single-segment.md`)
+- Related specs: the core Split-engine spec (the `-c copy` / temp-then-move / planner contract this feature reuses); the G-037 Bulk Cut app-layer additions (preview player + cut profiles, ADR-0016)
+- Key code: `src/Core/Split/KeptSegmentSelector.cs`, `src/Core/Bulk/BulkTrimEngine.cs`,
+  `src/Core/Bulk/KeptMiddleRequestBuilder.cs`, `src/Core/Bulk/{BulkTrimItem,BulkTrimItemResult,BatchResult,BatchOutcome,ItemOutcome,CollisionPolicy,BulkTrimOptions,BulkTrimProgress,NoOpTrimException,IDiskSpaceProbe}.cs`
