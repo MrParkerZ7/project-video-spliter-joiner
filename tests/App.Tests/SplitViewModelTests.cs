@@ -886,4 +886,98 @@ public sealed class SplitViewModelTests
         await run;
         vm.CanClear.Should().BeTrue();
     }
+
+    // ==== SPEC-010 split-screen gaps (todo-automate) =========================================
+
+    // SPEC-010#I1 — LoadAsync(null-or-whitespace) is a no-op: returns immediately, mutates nothing.
+    [Fact]
+    [Trait("serves-spec", "SPEC-010")]
+    public async Task LoadAsync_NullOrBlankPath_IsNoOp_MutatesNothing()
+    {
+        var (vm, _, engine) = Build();
+        var stateBefore = vm.Operation.State;
+
+        var act = async () =>
+        {
+            await vm.LoadAsync(null);
+            await vm.LoadAsync("   ");
+        };
+
+        await act.Should().NotThrowAsync();
+        vm.InputPath.Should().BeNull("a null/blank path never loads a file");
+        vm.HasFile.Should().BeFalse();
+        vm.Info.Should().BeNull();
+        vm.Operation.State.Should().Be(stateBefore, "the shared operation is untouched by a no-op load");
+        engine.LastRequest.Should().BeNull();
+    }
+
+    // SPEC-010#I22 — no file loaded, or duration <= 0, yields an empty Segments projection.
+    [Fact]
+    [Trait("serves-spec", "SPEC-010")]
+    public async Task Segments_EmptyOnFreshVm_AfterClear_AndForZeroDurationFile()
+    {
+        var (vm, probe, _) = Build();
+
+        // Fresh (unloaded) VM → no parts projected.
+        vm.Segments.Should().BeEmpty("a fresh VM has no segment projection");
+
+        // A file whose probed duration is Zero → still no parts, even with a marker placed.
+        probe.ProbeResultToReturn = ProbeResult.Success(
+            new MediaInfo(TimeSpan.Zero, "mp4", Array.Empty<StreamInfo>(), Array.Empty<StreamInfo>()));
+        probe.KeyframesToReturn = new[] { TimeSpan.Zero };
+        await vm.LoadAsync(FakePath);
+        vm.HasFile.Should().BeTrue();
+        vm.AddMarker(TimeSpan.FromSeconds(1));
+        vm.Segments.Should().BeEmpty("a zero-duration file projects no parts");
+
+        // A normally-loaded file with markers projects parts; Clear then wipes them back to empty.
+        var (vm2, probe2, _) = Build();
+        probe2.KeyframesToReturn = Enumerable.Range(0, 61).Select(i => TimeSpan.FromSeconds(i)).ToArray();
+        await vm2.LoadAsync(FakePath);
+        vm2.AddMarker(TimeSpan.FromSeconds(20));
+        vm2.AddMarker(TimeSpan.FromSeconds(40));
+        vm2.Segments.Should().NotBeEmpty("precondition: markers on a real-duration file project parts");
+
+        vm2.Clear();
+        vm2.Segments.Should().BeEmpty("Clear unloads the file → empty segment projection");
+    }
+
+    // SPEC-010#I27 — RunSplitAsync is a no-op unless CanRunSplit (guarded early-return).
+    [Fact]
+    [Trait("serves-spec", "SPEC-010")]
+    public async Task RunSplitAsync_NoOp_WhenCanRunSplitFalse()
+    {
+        var (vm, probe, engine) = Build();
+        probe.KeyframesToReturn = new[] { TimeSpan.Zero, TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(10) };
+        await vm.LoadAsync(FakePath);
+        vm.OutputDir = @"C:\out";
+        // No markers → CanRunSplit false.
+        vm.CanRunSplit.Should().BeFalse("no markers → the run is gated off");
+
+        var stateBefore = vm.Operation.State;
+
+        await vm.RunSplitAsync();
+
+        engine.LastRequest.Should().BeNull("the guarded early-return never builds a request / calls the engine");
+        vm.Operation.State.Should().Be(stateBefore, "Operation state is untouched by the no-op run");
+    }
+
+    // SPEC-010#I30 — a blank NamingPattern is replaced with SplitRequest.DefaultNamingPattern.
+    [Fact]
+    [Trait("serves-spec", "SPEC-010")]
+    public async Task RunSplit_BlankNamingPattern_SubstitutesDefault()
+    {
+        var (vm, probe, engine) = Build();
+        probe.KeyframesToReturn = Enumerable.Range(0, 61).Select(i => TimeSpan.FromSeconds(i)).ToArray();
+        await vm.LoadAsync(FakePath);
+        vm.OutputDir = @"C:\out";
+        vm.AddMarker(TimeSpan.FromSeconds(20));
+        vm.NamingPattern = "   "; // blank → must fall back to the default at request-build time
+
+        await vm.RunSplitAsync();
+
+        engine.LastRequest.Should().NotBeNull();
+        engine.LastRequest!.NamingPattern.Should().Be(SplitRequest.DefaultNamingPattern,
+            "a blank naming pattern is substituted with SplitRequest.DefaultNamingPattern");
+    }
 }

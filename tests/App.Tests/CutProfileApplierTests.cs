@@ -137,4 +137,16 @@ public sealed class CutProfileApplierTests
         ((Action)(() => CutProfileApplier.ApplyProfile(profile, null!)))
             .Should().Throw<ArgumentNullException>();
     }
+
+    // SPEC-007#I30 — BuildProfileFromRow(name, null) throws ArgumentNullException
+    // (ArgumentNullException.ThrowIfNull on row). CutProfileApplierTests covers ApplyProfile null-args
+    // (ApplyProfile_NullArgs_Throw) but never the null-row guard on BuildProfileFromRow.
+    [Fact]
+    [Trait("serves-spec", "SPEC-007")]
+    public void BuildProfileFromRow_NullRow_ThrowsArgumentNullException()
+    {
+        ((Action)(() => CutProfileApplier.BuildProfileFromRow("X", null!)))
+            .Should().Throw<ArgumentNullException>()
+            .Which.ParamName.Should().Be("row");
+    }
 }

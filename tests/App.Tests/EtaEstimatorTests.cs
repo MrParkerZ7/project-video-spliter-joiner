@@ -242,4 +242,23 @@ public sealed class EtaEstimatorTests
     {
         EtaEstimator.FormatEta(TimeSpan.FromSeconds(-5)).Should().Be("estimating…");
     }
+
+    // ---- SPEC-008 gap (todo-automate): ctor alpha guard -------------------------------------
+
+    // SPEC-008#I34 — the EtaEstimator constructor rejects an alpha outside (0,1] with
+    // ArgumentOutOfRangeException; alpha == 1.0 is accepted (inclusive upper bound).
+    [Fact]
+    [Trait("serves-spec", "SPEC-008")]
+    public void Ctor_AlphaOutsideOpenZeroToOne_Throws_InclusiveUpperBoundAccepted()
+    {
+        ((Action)(() => new EtaEstimator(alpha: 0d)))
+            .Should().Throw<ArgumentOutOfRangeException>("alpha 0 is outside (0, 1]");
+        ((Action)(() => new EtaEstimator(alpha: 1.5)))
+            .Should().Throw<ArgumentOutOfRangeException>("alpha 1.5 is outside (0, 1]");
+        ((Action)(() => new EtaEstimator(alpha: -0.1)))
+            .Should().Throw<ArgumentOutOfRangeException>("a negative alpha is outside (0, 1]");
+
+        ((Action)(() => new EtaEstimator(alpha: 1.0)))
+            .Should().NotThrow("1.0 is the inclusive upper bound of (0, 1]");
+    }
 }

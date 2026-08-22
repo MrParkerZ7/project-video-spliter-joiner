@@ -1,8 +1,11 @@
 using System;
 using System.Collections.Generic;
+using System.Threading;
+using System.Threading.Tasks;
 using FluentAssertions;
 using VideoSplitJoiner.App.Media;
 using VideoSplitJoiner.App.ViewModels;
+using VideoSplitJoiner.Core.Thumbnails;
 using Xunit;
 
 namespace VideoSplitJoiner.App.Tests;
@@ -952,5 +955,90 @@ public sealed class PlayerViewModelTests
         player.Volume.Should().Be(1.0);
         player.IsMuted.Should().BeFalse();
         player.SpeedRatio.Should().Be(1.0);
+    }
+
+    // ==== SPEC-013 preview-player gaps (todo-automate) =======================================
+
+    /// <summary>Records Clear(path) / ClearAll / GetThumbnail calls so hover-wiring can be observed (I39).</summary>
+    private sealed class RecordingThumbnailService : IThumbnailService
+    {
+        public List<string> Cleared { get; } = new();
+
+        public int ClearAllCount { get; private set; }
+
+        public List<(string Path, TimeSpan Time)> Requests { get; } = new();
+
+        public Task<string?> GetThumbnailAsync(string inputPath, TimeSpan time, int width, CancellationToken ct)
+        {
+            Requests.Add((inputPath, time));
+            return Task.FromResult<string?>(null);
+        }
+
+        public void Clear(string inputPath) => Cleared.Add(inputPath);
+
+        public void ClearAll() => ClearAllCount++;
+    }
+
+    // SPEC-013#I35 — Unload() resets the same preview state as Open: player.Unload called; Duration→null
+    // (IsReady false); IsPlaying false; Position Zero; Volume 1.0 / IsMuted false / SpeedRatio 1.0;
+    // seek hold cleared; PreviewFailed cleared. Mirrors Open_CallsPlayerOpen_ResetsState for the Unload path.
+    [Fact]
+    [Trait("serves-spec", "SPEC-013")]
+    public void Unload_FullyResetsPreviewState()
+    {
+        var (vm, player) = BuildReady(60);
+
+        // Dirty the VM: preview-failed, playing, non-default audio/speed, a mid-seek hold at a non-zero pos.
+        player.RaiseFailed("boom");                       // PreviewFailed = true
+        vm.PlayPause();                                    // IsPlaying = true (Failed doesn't clear Duration → still ready)
+        vm.Volume = 0.3;
+        vm.IsMuted = true;
+        vm.SpeedRatio = 2.0;
+        vm.Position = TimeSpan.FromSeconds(40);            // user seek → seek-target hold armed, position 40
+
+        // Preconditions: genuinely dirtied.
+        vm.PreviewFailed.Should().BeTrue();
+        vm.IsPlaying.Should().BeTrue();
+        vm.Position.Should().Be(TimeSpan.FromSeconds(40));
+
+        vm.Unload();
+
+        player.Calls.Should().Contain("Unload", "Unload blanks the underlying player surface");
+        vm.IsReady.Should().BeFalse();
+        vm.Duration.Should().BeNull();
+        vm.IsPlaying.Should().BeFalse();
+        vm.Position.Should().Be(TimeSpan.Zero);
+        vm.Volume.Should().Be(1.0);
+        vm.IsMuted.Should().BeFalse();
+        vm.SpeedRatio.Should().Be(1.0);
+        vm.PreviewFailed.Should().BeFalse();
+        vm.PreviewFailedReason.Should().BeNull();
+    }
+
+    // SPEC-013#I39 — hover-thumbnail wiring through the full ctor: Open → Thumbnail.SetInput(path);
+    // OnDurationAvailable → Thumbnail.SetDuration(duration); Unload → Thumbnail.Clear().
+    [Fact]
+    [Trait("serves-spec", "SPEC-013")]
+    public void HoverThumbnail_Wiring_OpenSetsInput_DurationForwarded_UnloadClears()
+    {
+        var player = new FakeMediaPlayer();
+        var thumbs = new RecordingThumbnailService();
+        var vm = new PlayerViewModel(player, thumbs); // full ctor wires the hover Thumbnail over the service
+        const string path = @"C:\videos\clip.mp4";
+
+        // (a) Open forwards the path to Thumbnail.SetInput (duration not yet known).
+        vm.Open(path);
+        vm.Thumbnail.MouseEnter();                          // cursor over the bar
+        vm.Thumbnail.IsThumbnailVisible.Should().BeFalse("SetInput set the path but no duration is known yet");
+
+        // (b) OnDurationAvailable forwards the known duration to Thumbnail.SetDuration → popup can show,
+        //     proving BOTH the input path (SetInput) and the duration (SetDuration) reached the preview.
+        player.RaiseDurationAvailable(TimeSpan.FromSeconds(30));
+        vm.Thumbnail.IsThumbnailVisible.Should().BeTrue("SetInput(path) + SetDuration(30s) → the hover popup is showable");
+
+        // (c) Unload calls Thumbnail.Clear → sweeps the input's cache via the service.
+        vm.Unload();
+        thumbs.Cleared.Should().Contain(path, "Unload invokes Thumbnail.Clear, which sweeps the current input path");
+        vm.Thumbnail.IsThumbnailVisible.Should().BeFalse("Unload hides the hover popup");
     }
 }

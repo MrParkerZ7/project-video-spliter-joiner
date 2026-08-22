@@ -540,4 +540,75 @@ public sealed class JoinViewModelTests
         await run;
         vm.CanClear.Should().BeTrue();
     }
+
+    // ==== SPEC-012 join-screen gaps (todo-automate) ==========================================
+
+    /// <summary>A join engine whose compatibility check THROWS — drives the defensive catch (I10).</summary>
+    private sealed class ThrowingCompatJoinEngine : IJoinEngine
+    {
+        public Task<CompatReport> CheckCompatibilityAsync(IReadOnlyList<string> inputPaths, CancellationToken ct = default)
+            => throw new InvalidOperationException("compat boom");
+
+        public Task<JoinResult> JoinAsync(JoinRequest req, IProgress<double>? progress = null, CancellationToken ct = default, IProgress<VideoSplitJoiner.Core.Ffmpeg.OperationStatus>? status = null)
+            => Task.FromResult(JoinResult.Ok(req.OutputPath));
+    }
+
+    // SPEC-012#I1 — AddFilesAsync(null) is a no-op: no items, no probe, no compat check, no throw.
+    [Fact]
+    [Trait("serves-spec", "SPEC-012")]
+    public async Task AddFilesAsync_Null_IsNoOp()
+    {
+        var (vm, engine, _) = Build();
+
+        var act = async () => await vm.AddFilesAsync(null);
+
+        await act.Should().NotThrowAsync();
+        vm.Items.Should().BeEmpty("a null path set adds nothing");
+        engine.CompatCheckCount.Should().Be(0, "no items were added → no compat check runs");
+    }
+
+    // SPEC-012#I10 — CheckCompatibilityAsync throwing is caught defensively → Compat null,
+    // IsCompatible false, summary prefixed "Could not verify compatibility:", Run gated.
+    [Fact]
+    [Trait("serves-spec", "SPEC-012")]
+    public async Task RefreshCompat_EngineThrows_CaughtDefensively_RunGated()
+    {
+        var probe = new FakeProbe();
+        var vm = new JoinViewModel(new ThrowingCompatJoinEngine(), probe);
+
+        await vm.AddFilesAsync(new[] { Clip1, Clip2 });
+        vm.OutputPath = Output;
+
+        vm.Compat.Should().BeNull("a thrown check is treated as 'no report'");
+        vm.IsCompatible.Should().BeFalse();
+        vm.CompatSummary.Should().StartWith("Could not verify compatibility:", "the thrown message is surfaced defensively");
+        vm.CanRunJoin.Should().BeFalse("an unverifiable set stays gated off");
+        vm.RunJoinCommand.CanExecute(null).Should().BeFalse();
+    }
+
+    // SPEC-012#I14 — the synchronous Move(int,int) wrapper delegates to MoveAsync (the drag code-behind
+    // entry point). Existing reorder tests exercise MoveAsync / MoveUp/DownCommand but never Move().
+    [Fact]
+    [Trait("serves-spec", "SPEC-012")]
+    public async Task Move_SyncWrapper_ReordersSameAsMoveAsync()
+    {
+        var (vm, _, _) = Build();
+        await vm.AddFilesAsync(new[] { Clip1, Clip2, Clip3 });
+
+        vm.Move(2, 0); // sync wrapper: c to the front (the reorder itself is synchronous)
+
+        vm.Items.Select(i => i.Path).Should().Equal(new[] { Clip3, Clip1, Clip2 },
+            "the sync Move() entry point reorders exactly like MoveAsync(2, 0)");
+    }
+
+    // SPEC-012#I28 — CancelCommand delegates to Operation.CancelCommand (same instance).
+    [Fact]
+    [Trait("serves-spec", "SPEC-012")]
+    public void CancelCommand_IsOperationCancelCommand()
+    {
+        var (vm, _, _) = Build();
+
+        vm.CancelCommand.Should().BeSameAs(vm.Operation.CancelCommand,
+            "the Join-level Cancel delegates to the shared operation's cancel");
+    }
 }

@@ -219,6 +219,21 @@ public sealed class TimelineTests
     }
 
     // =========================================================================================
+    // SPEC-014 timeline gap (todo-automate) — ctor null-owner guard
+    // =========================================================================================
+
+    // SPEC-014#I13 — TimelineViewModel(null owner) throws ArgumentNullException with paramName "owner".
+    // No existing test constructs the VM with a null owner (every builder passes a real SplitViewModel).
+    [Fact]
+    [Trait("serves-spec", "SPEC-014")]
+    public void Ctor_NullOwner_ThrowsArgumentNullException()
+    {
+        ((Action)(() => new TimelineViewModel(null!)))
+            .Should().Throw<ArgumentNullException>()
+            .Which.ParamName.Should().Be("owner");
+    }
+
+    // =========================================================================================
     // Fakes + builders (mirror SplitViewModelPlayheadTests)
     // =========================================================================================
 

@@ -170,4 +170,19 @@ public sealed class CutProfilePersistenceTests : IDisposable
         File.ReadAllText(_file).Should().NotContain("cutProfiles",
             "with no saved profiles the key is omitted entirely (empty list ≠ an empty array in the file)");
     }
+
+    // ---- SPEC-007 cut-profiles gap (todo-automate) ------------------------------------------
+
+    // SPEC-007#I11 — SaveProfile(null) throws ArgumentNullException (ArgumentNullException.ThrowIfNull
+    // in AppSettings.SaveProfile). No existing persistence test passes null to SaveProfile.
+    [Fact]
+    [Trait("serves-spec", "SPEC-007")]
+    public void SaveProfile_Null_ThrowsArgumentNullException()
+    {
+        var settings = new AppSettings(_file);
+
+        ((Action)(() => settings.SaveProfile(null!)))
+            .Should().Throw<ArgumentNullException>()
+            .Which.ParamName.Should().Be("profile");
+    }
 }

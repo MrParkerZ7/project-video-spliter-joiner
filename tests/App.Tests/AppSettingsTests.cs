@@ -203,4 +203,110 @@ public sealed class AppSettingsTests : IDisposable
         settings.HorizontalSplitRatio.Should().BeLessThanOrEqualTo(0.95, "a corrupt/out-of-range ratio is clamped so no pane wedges to zero");
         settings.VerticalSplitRatio.Should().BeGreaterThanOrEqualTo(0.05);
     }
+
+    // ==== SPEC-009 app-settings gaps (todo-automate) =========================================
+
+    // SPEC-009#I3 — new AppSettings((string)null!) throws ArgumentNullException (ctor null guard).
+    // No existing test passes a null path (every test injects a real temp path).
+    [Fact]
+    [Trait("serves-spec", "SPEC-009")]
+    public void Ctor_NullPath_ThrowsArgumentNullException()
+    {
+        ((Action)(() => new AppSettings((string)null!)))
+            .Should().Throw<ArgumentNullException>()
+            .Which.ParamName.Should().Be("filePath");
+    }
+
+    // SPEC-009#I13 — a persisted NON-FINITE ratio maps to null on load (NOT a clamped number), unlike
+    // the finite out-of-range case (9.0 / -3.0) which clamps. ±Infinity parses to a double and is
+    // routed through ClampRatio → null; a valid sibling field survives (proving it is the ratio branch,
+    // not a whole-file reset).
+    [Fact]
+    [Trait("serves-spec", "SPEC-009")]
+    public void Ratio_InfinityInFile_MapsToNull_NotClamped_SiblingSurvives()
+    {
+        Directory.CreateDirectory(_dir);
+        File.WriteAllText(_file,
+            "{ \"lastInputDir\": \"D:\\\\keep\", \"horizontalSplitRatio\": 1e999, \"verticalSplitRatio\": -1e999 }");
+
+        var settings = new AppSettings(_file);
+
+        settings.HorizontalSplitRatio.Should().BeNull("a +Infinity ratio maps to null, never a clamped number");
+        settings.VerticalSplitRatio.Should().BeNull("a -Infinity ratio maps to null, never a clamped number");
+        settings.LastInputDir.Should().Be(@"D:\keep", "the non-finite ratio nulls only the ratio, not the sibling fields");
+    }
+
+    // SPEC-009#I13 — a NaN literal is invalid JSON; the defensive load falls back to defaults, so the
+    // ratio loads as null (never a NaN or a clamped number). Complements the ±Infinity case above.
+    [Fact]
+    [Trait("serves-spec", "SPEC-009")]
+    public void Ratio_NaNTokenInFile_LoadsSafelyToNull()
+    {
+        Directory.CreateDirectory(_dir);
+        File.WriteAllText(_file, "{ \"horizontalSplitRatio\": NaN }");
+
+        AppSettings? settings = null;
+        ((Action)(() => settings = new AppSettings(_file)))
+            .Should().NotThrow("a NaN-bearing settings file must never crash the app");
+        settings!.HorizontalSplitRatio.Should().BeNull("a NaN ratio maps to null on load, never a NaN/clamped number");
+    }
+
+    // SPEC-009#I15 — the dirty-check setters skip re-persisting when assigned the current value. Delete
+    // the file after a write, re-assign the SAME value, and assert the file is NOT rewritten.
+    [Fact]
+    [Trait("serves-spec", "SPEC-009")]
+    public void Setter_ReassigningSameValue_DoesNotRewriteTheFile()
+    {
+        var settings = new AppSettings(_file);
+        settings.LastInputDir = @"D:\videos\in";      // persists → file exists
+        File.Exists(_file).Should().BeTrue("precondition: the first set wrote the file");
+
+        File.Delete(_file);                            // remove it so a re-write would be observable
+
+        settings.LastInputDir = @"D:\videos\in";       // SAME value → dirty-check should skip Save
+        File.Exists(_file).Should().BeFalse("re-assigning the current value must not re-persist (no rewrite)");
+
+        // A DIFFERENT value still persists (proves the guard is value-based, not a blanket no-write).
+        settings.LastInputDir = @"D:\videos\other";
+        File.Exists(_file).Should().BeTrue("assigning a changed value re-persists");
+    }
+
+    // SPEC-009#I15 — the same no-rewrite guard holds for a ratio setter (Nullable.Equals path).
+    [Fact]
+    [Trait("serves-spec", "SPEC-009")]
+    public void RatioSetter_ReassigningSameValue_DoesNotRewriteTheFile()
+    {
+        var settings = new AppSettings(_file);
+        settings.HorizontalSplitRatio = 0.62;
+        File.Exists(_file).Should().BeTrue();
+
+        File.Delete(_file);
+
+        settings.HorizontalSplitRatio = 0.62;          // same value → no rewrite
+        File.Exists(_file).Should().BeFalse("re-assigning the current ratio must not re-persist");
+    }
+
+    // SPEC-009#I16 — atomic temp-then-rename write: no stray "<path>.tmp" lingers after a save, and a
+    // pre-existing good file is replaced (via File.Replace) rather than left half-written.
+    [Fact]
+    [Trait("serves-spec", "SPEC-009")]
+    public void Save_IsAtomicTempThenRename_NoStrayTmp_ReplacesExistingFile()
+    {
+        var tmp = _file + ".tmp";
+
+        var settings = new AppSettings(_file);
+        settings.LastInputDir = @"D:\in";              // first write (File.Move over a fresh path)
+
+        File.Exists(_file).Should().BeTrue();
+        File.Exists(tmp).Should().BeFalse("the temp file is renamed into place, never left behind");
+
+        settings.LastOutputDir = @"D:\out";            // second write over an EXISTING file (File.Replace)
+
+        File.Exists(tmp).Should().BeFalse("no stray .tmp after replacing an existing file either");
+        Directory.GetFiles(_dir, "*.tmp").Should().BeEmpty("no temp artifacts linger in the settings folder");
+
+        var reloaded = new AppSettings(_file);
+        reloaded.LastInputDir.Should().Be(@"D:\in", "the replace preserved the earlier field");
+        reloaded.LastOutputDir.Should().Be(@"D:\out", "the atomic replace committed the new field");
+    }
 }
