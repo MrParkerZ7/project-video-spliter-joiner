@@ -44,9 +44,19 @@ public sealed class MainViewModel : ObservableObject
     private const double DefaultHorizontalRatio = 0.7;
     private const double DefaultVerticalRatio = 0.62;
 
+    /// <summary>
+    /// Fallback ratios for the Bulk Cut tab's OWN split (G-039 / T-112) — the preview-pane fraction.
+    /// Side-by-side (horizontal) leans the pane smaller so the wide row-list gets the extra width;
+    /// stacked (vertical) is a balanced ~50/50. Kept separate from the Split-tab defaults above.
+    /// </summary>
+    private const double DefaultBulkHorizontalRatio = 0.4;
+    private const double DefaultBulkVerticalRatio = 0.5;
+
     private bool _isVertical;
     private double _horizontalSplitRatio = DefaultHorizontalRatio;
     private double _verticalSplitRatio = DefaultVerticalRatio;
+    private double _bulkHorizontalSplitRatio = DefaultBulkHorizontalRatio;
+    private double _bulkVerticalSplitRatio = DefaultBulkVerticalRatio;
 
     /// <summary>Production composition root — builds the real ffmpeg-backed Core service graph.</summary>
     public MainViewModel()
@@ -81,6 +91,8 @@ public sealed class MainViewModel : ObservableObject
         _isVertical = settings.LayoutMode == LayoutMode.Vertical;   // restore last-used axis on startup
         _horizontalSplitRatio = settings.HorizontalSplitRatio ?? DefaultHorizontalRatio;
         _verticalSplitRatio = settings.VerticalSplitRatio ?? DefaultVerticalRatio;
+        _bulkHorizontalSplitRatio = settings.BulkHorizontalSplitRatio ?? DefaultBulkHorizontalRatio;
+        _bulkVerticalSplitRatio = settings.BulkVerticalSplitRatio ?? DefaultBulkVerticalRatio;
 
         // The in-app preview player is FFME-backed (FfmeMediaPlayer, decodes via ffmpeg); PlayerView
         // attaches its FFME MediaElement on Loaded. Unattached here, so construction stays render-free.
@@ -116,6 +128,8 @@ public sealed class MainViewModel : ObservableObject
             _isVertical = settings.LayoutMode == LayoutMode.Vertical;
             _horizontalSplitRatio = settings.HorizontalSplitRatio ?? DefaultHorizontalRatio;
             _verticalSplitRatio = settings.VerticalSplitRatio ?? DefaultVerticalRatio;
+            _bulkHorizontalSplitRatio = settings.BulkHorizontalSplitRatio ?? DefaultBulkHorizontalRatio;
+            _bulkVerticalSplitRatio = settings.BulkVerticalSplitRatio ?? DefaultBulkVerticalRatio;
         }
 
         ToggleLayoutCommand = new RelayCommand(ToggleLayout);
@@ -311,6 +325,52 @@ public sealed class MainViewModel : ObservableObject
                 if (_settings is not null)
                 {
                     _settings.VerticalSplitRatio = clamped;
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// The remembered split position for the Bulk Cut tab's HORIZONTAL (side-by-side) layout — the
+    /// preview-pane fraction of the total width (0..1). Two-way bound from the Bulk tab's
+    /// <c>OrientedSplitPanel</c> so a drag persists here (write-through to
+    /// <see cref="IAppSettings.BulkHorizontalSplitRatio"/>). Deliberately SEPARATE from
+    /// <see cref="HorizontalSplitRatio"/> (Split's video↔tools ratio) so the two tabs' splits never
+    /// couple (G-039 / T-112). Independent of <see cref="BulkVerticalSplitRatio"/> per axis (D6).
+    /// </summary>
+    public double BulkHorizontalSplitRatio
+    {
+        get => _bulkHorizontalSplitRatio;
+        set
+        {
+            var clamped = Math.Clamp(value, 0.05, 0.95);
+            if (SetProperty(ref _bulkHorizontalSplitRatio, clamped))
+            {
+                if (_settings is not null)
+                {
+                    _settings.BulkHorizontalSplitRatio = clamped;
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// The remembered split position for the Bulk Cut tab's VERTICAL (stacked) layout — the
+    /// preview-pane fraction of the total height (0..1). Two-way bound + write-through to
+    /// <see cref="IAppSettings.BulkVerticalSplitRatio"/>. Separate from <see cref="VerticalSplitRatio"/>
+    /// (Split's ratio) and independent of <see cref="BulkHorizontalSplitRatio"/> (D6 / T-112).
+    /// </summary>
+    public double BulkVerticalSplitRatio
+    {
+        get => _bulkVerticalSplitRatio;
+        set
+        {
+            var clamped = Math.Clamp(value, 0.05, 0.95);
+            if (SetProperty(ref _bulkVerticalSplitRatio, clamped))
+            {
+                if (_settings is not null)
+                {
+                    _settings.BulkVerticalSplitRatio = clamped;
                 }
             }
         }

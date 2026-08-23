@@ -57,6 +57,25 @@ public interface IAppSettings
     double? VerticalSplitRatio { get; set; }
 
     /// <summary>
+    /// The remembered split-ratio for the Bulk Cut tab's HORIZONTAL (side-by-side) layout — the
+    /// preview-pane fraction of the total width (0..1) when the pane sits BESIDE the row-list
+    /// (G-039 / T-112). Kept SEPARATE from <see cref="HorizontalSplitRatio"/> (Split's video↔tools
+    /// ratio) so dragging the Bulk split never distorts the Split tab's split, and vice-versa.
+    /// <c>null</c> = use the Bulk default. Independent of <see cref="BulkVerticalSplitRatio"/> (D6).
+    /// Setting it persists immediately.
+    /// </summary>
+    double? BulkHorizontalSplitRatio { get; set; }
+
+    /// <summary>
+    /// The remembered split-ratio for the Bulk Cut tab's VERTICAL (stacked) layout — the preview-pane
+    /// fraction of the total height (0..1) when the pane stacks ABOVE the row-list (G-039 / T-112).
+    /// Kept SEPARATE from <see cref="VerticalSplitRatio"/> (Split's ratio) to avoid cross-tab coupling.
+    /// <c>null</c> = use the Bulk default. Independent of <see cref="BulkHorizontalSplitRatio"/> (D6).
+    /// Setting it persists immediately.
+    /// </summary>
+    double? BulkVerticalSplitRatio { get; set; }
+
+    /// <summary>
     /// The saved reusable cut profiles (G-037 / T-102) — a named intro-from-start + optional
     /// outro-from-end that can be applied to any Bulk Cut row/batch. Ordered by save order, deduped by
     /// <see cref="CutProfile.Name"/> (case-insensitive). Empty when none are saved / on a first launch or

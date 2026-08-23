@@ -69,10 +69,8 @@
           Drop="OnDrop">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />              <!-- 0: header (subtitle + legend) -->
-            <RowDefinition Height="*" MinHeight="220" /> <!-- 1: preview pane (T-101) -->
-            <RowDefinition Height="Auto" />              <!-- 2: splitter (preview ‖ list) -->
-            <RowDefinition Height="*" MinHeight="150" /> <!-- 3: row list (T-097) -->
-            <RowDefinition Height="Auto" />              <!-- 4: footer (output + Run + lifecycle) -->
+            <RowDefinition Height="*" MinHeight="220" /> <!-- 1: axis-aware preview ‖ list split (T-112) -->
+            <RowDefinition Height="Auto" />              <!-- 2: footer (output + Run + lifecycle) -->
         </Grid.RowDefinitions>
 
         <!-- ================= Header: subtitle + gold/blue legend + cut-profiles bar ================= -->
@@ -266,17 +264,32 @@
             </Border>
         </Grid>
 
-        <!-- ================= Preview pane (T-101 / G-037) =================
-             A preview region at the TOP of the tab. When a row is selected it hosts the SAME
+        <!-- ★ G-039 / T-112 axis-aware body: the SAME two regions — preview pane + row-list — laid out
+             side-by-side (horizontal MODE) or stacked (vertical MODE) from the MainViewModel's IsVertical,
+             the natural Bulk analog of Split's video↔tools split. Direct IsVertical bind (NO InverseBool —
+             mirrors Split's OUTER panel convention): vertical monitor mode → pane STACKED ABOVE the list;
+             horizontal mode → pane BESIDE the list. The OrientedSplitPanel owns the themed splitter + the
+             per-axis remembered ratios; those ratios are Bulk-SPECIFIC (BulkHorizontal/BulkVerticalSplitRatio)
+             so dragging here never disturbs the Split tab's own split. IsVertical + both ratios come from the
+             Window's DataContext (MainViewModel); this UserControl's DataContext stays the BulkCutViewModel.
+             The profiles header stays ABOVE (Row 0) and the footer BELOW (Row 2) — outside the split. -->
+        <views:OrientedSplitPanel Grid.Row="1"
+                IsVertical="{Binding DataContext.IsVertical, RelativeSource={RelativeSource AncestorType=Window}}"
+                HorizontalRatio="{Binding DataContext.BulkHorizontalSplitRatio, RelativeSource={RelativeSource AncestorType=Window}, Mode=TwoWay}"
+                VerticalRatio="{Binding DataContext.BulkVerticalSplitRatio, RelativeSource={RelativeSource AncestorType=Window}, Mode=TwoWay}">
+            <views:OrientedSplitPanel.FirstChild>
+
+        <!-- ================= Preview pane (T-101 / G-037) — FirstChild (top / left) =================
+             A preview region. When a row is selected it hosts the SAME
              PlayerView the Split tab uses (transport + scrub + hover-thumb + the ±1s/5s/10s/20s/1m/5m
              jog row + frame-step + play/pause + volume/speed + time readout), bound to the ONE shared
              BulkCut.Player (T-100). PlayerView's own OnLoaded attaches the Bulk FfmeMediaPlayer's
              MediaElement via Player.PlayerControl — identical to how Split hosts it — so no attach glue
-             is needed here. Below the player, two HeroButton "set at playhead" gestures write the
+             is needed here, and the attach re-runs when this pane is re-parented on a layout flip (the
+             PlayerView reloads). Below the player, two HeroButton "set at playhead" gestures write the
              selected row's intro-end / outro-start from the live playhead (snapped). A hint fills the
              pane when nothing is selected. -->
-        <Border Grid.Row="1"
-                Background="{StaticResource Surface1Brush}"
+        <Border Background="{StaticResource Surface1Brush}"
                 BorderBrush="{StaticResource BorderBrush}"
                 BorderThickness="1"
                 CornerRadius="{StaticResource RadiusMd}">
@@ -343,19 +356,14 @@
             </Grid>
         </Border>
 
-        <!-- Drag handle: resize the preview pane against the row list (mirrors SplitView, T-027) -->
-        <GridSplitter Grid.Row="2"
-                      Height="6"
-                      Margin="0,6"
-                      HorizontalAlignment="Stretch"
-                      VerticalAlignment="Center"
-                      ResizeBehavior="PreviousAndNext"
-                      ResizeDirection="Rows"
-                      ToolTip="Drag to resize the preview against the list" />
+            </views:OrientedSplitPanel.FirstChild>
 
-        <!-- ================= List of row cards ================= -->
-        <Border Grid.Row="3"
-                Background="{StaticResource Surface1Brush}"
+        <!-- ================= List of row cards (T-097 / G-038) — SecondChild (bottom / right) =================
+             The themed splitter that used to sit between the preview and the list (a fixed GridSplitter)
+             is now OWNED by the OrientedSplitPanel and drags in BOTH orientations. The ListBox scrolls
+             internally (vertically) so many rows fit while the preview stays fixed. -->
+            <views:OrientedSplitPanel.SecondChild>
+        <Border Background="{StaticResource Surface1Brush}"
                 BorderBrush="{StaticResource BorderBrush}"
                 BorderThickness="1"
                 CornerRadius="{StaticResource RadiusMd}">
@@ -609,9 +617,11 @@
                 </Border>
             </Grid>
         </Border>
+            </views:OrientedSplitPanel.SecondChild>
+        </views:OrientedSplitPanel>
 
         <!-- ================= Footer: output note + overall bar + Run/Cancel + lifecycle surfaces ================= -->
-        <StackPanel Grid.Row="4" Margin="4,10,4,0">
+        <StackPanel Grid.Row="2" Margin="4,10,4,0">
             <Grid>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*" />
@@ -791,7 +801,7 @@
 
         <!-- ================= Drag-drop highlight overlay ================= -->
         <Border x:Name="DropHighlight"
-                Grid.RowSpan="5"
+                Grid.RowSpan="3"
                 IsHitTestVisible="False"
                 Visibility="Collapsed"
                 BorderBrush="{StaticResource AccentBrush}"

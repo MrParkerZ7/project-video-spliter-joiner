@@ -301,6 +301,10 @@ internal sealed class FakeSettings : IAppSettings
 
     public double? VerticalSplitRatio { get; set; }
 
+    public double? BulkHorizontalSplitRatio { get; set; }
+
+    public double? BulkVerticalSplitRatio { get; set; }
+
     public IReadOnlyList<CutProfile> CutProfiles => _cutProfiles;
 
     public void SaveProfile(CutProfile profile)

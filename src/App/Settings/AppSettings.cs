@@ -47,6 +47,8 @@ public sealed class AppSettings : IAppSettings
     private LayoutMode _layoutMode = LayoutMode.Horizontal;
     private double? _horizontalSplitRatio;
     private double? _verticalSplitRatio;
+    private double? _bulkHorizontalSplitRatio;
+    private double? _bulkVerticalSplitRatio;
     private List<CutProfile> _cutProfiles = new();
 
     /// <summary>
@@ -147,6 +149,34 @@ public sealed class AppSettings : IAppSettings
     }
 
     /// <inheritdoc />
+    public double? BulkHorizontalSplitRatio
+    {
+        get => _bulkHorizontalSplitRatio;
+        set
+        {
+            if (!Nullable.Equals(_bulkHorizontalSplitRatio, value))
+            {
+                _bulkHorizontalSplitRatio = value;
+                Save();
+            }
+        }
+    }
+
+    /// <inheritdoc />
+    public double? BulkVerticalSplitRatio
+    {
+        get => _bulkVerticalSplitRatio;
+        set
+        {
+            if (!Nullable.Equals(_bulkVerticalSplitRatio, value))
+            {
+                _bulkVerticalSplitRatio = value;
+                Save();
+            }
+        }
+    }
+
+    /// <inheritdoc />
     public IReadOnlyList<CutProfile> CutProfiles => _cutProfiles;
 
     /// <inheritdoc />
@@ -239,6 +269,8 @@ public sealed class AppSettings : IAppSettings
                 _layoutMode = ParseLayoutMode(dto.LayoutMode);
                 _horizontalSplitRatio = ClampRatio(dto.HorizontalSplitRatio);
                 _verticalSplitRatio = ClampRatio(dto.VerticalSplitRatio);
+                _bulkHorizontalSplitRatio = ClampRatio(dto.BulkHorizontalSplitRatio); // absent (older file) → null → default
+                _bulkVerticalSplitRatio = ClampRatio(dto.BulkVerticalSplitRatio);
                 _cutProfiles = MapProfiles(dto.CutProfiles); // missing/empty field → empty list (older files safe)
             }
         }
@@ -250,6 +282,8 @@ public sealed class AppSettings : IAppSettings
             _layoutMode = LayoutMode.Horizontal;
             _horizontalSplitRatio = null;
             _verticalSplitRatio = null;
+            _bulkHorizontalSplitRatio = null;
+            _bulkVerticalSplitRatio = null;
             _cutProfiles = new List<CutProfile>();
         }
     }
@@ -356,6 +390,8 @@ public sealed class AppSettings : IAppSettings
                 LayoutMode = _layoutMode.ToString(),
                 HorizontalSplitRatio = _horizontalSplitRatio,
                 VerticalSplitRatio = _verticalSplitRatio,
+                BulkHorizontalSplitRatio = _bulkHorizontalSplitRatio,
+                BulkVerticalSplitRatio = _bulkVerticalSplitRatio,
                 // Null (not an empty array) when there are none, so the key is omitted entirely
                 // (JsonIgnoreCondition.WhenWritingNull) — an older/empty file stays byte-clean.
                 CutProfiles = _cutProfiles.Count == 0
@@ -432,6 +468,17 @@ public sealed class AppSettings : IAppSettings
 
         [JsonPropertyName("verticalSplitRatio")]
         public double? VerticalSplitRatio { get; set; }
+
+        /// <summary>
+        /// The Bulk Cut tab's per-axis split ratios (G-039 / T-112) — separate keys from the Split-tab
+        /// ratios above so the two tabs never share a persisted split. Absent in older files → <c>null</c>
+        /// → the Bulk default (backward-compatible additive fields; null is omitted on write).
+        /// </summary>
+        [JsonPropertyName("bulkHorizontalSplitRatio")]
+        public double? BulkHorizontalSplitRatio { get; set; }
+
+        [JsonPropertyName("bulkVerticalSplitRatio")]
+        public double? BulkVerticalSplitRatio { get; set; }
 
         /// <summary>
         /// The saved cut profiles (T-102). Absent in older files → <c>null</c> → an empty list on load

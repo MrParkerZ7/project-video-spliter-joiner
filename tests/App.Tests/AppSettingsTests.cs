@@ -309,4 +309,67 @@ public sealed class AppSettingsTests : IDisposable
         reloaded.LastInputDir.Should().Be(@"D:\in", "the replace preserved the earlier field");
         reloaded.LastOutputDir.Should().Be(@"D:\out", "the atomic replace committed the new field");
     }
+
+    // ---- G-039 / T-112: the Bulk Cut tab's OWN per-axis split ratios ------------------------
+    // Same backward-compat round-trip contract as the Split-tab ratios above, but persisted to
+    // SEPARATE keys (bulkHorizontalSplitRatio / bulkVerticalSplitRatio) so dragging the Bulk split
+    // never disturbs the Split tab's split. The OrientedSplitPanel flip itself is covered by
+    // T-081 / SPEC-015; these guard the settings round-trip the Bulk pair added.
+
+    [Fact]
+    [Trait("serves-spec", "SPEC-011")]
+    public void BulkSplitRatios_RoundTrip_Independently_PerAxis()
+    {
+        var settings = new AppSettings(_file);
+        settings.BulkHorizontalSplitRatio = 0.44;
+        settings.BulkVerticalSplitRatio = 0.58;
+
+        // Persisted to their own keys, distinct from the Split-tab ratio keys.
+        var json = File.ReadAllText(_file);
+        json.Should().Contain("bulkHorizontalSplitRatio").And.Contain("bulkVerticalSplitRatio");
+
+        var reloaded = new AppSettings(_file);
+        reloaded.BulkHorizontalSplitRatio.Should().Be(0.44);
+        reloaded.BulkVerticalSplitRatio.Should().Be(0.58, "the two Bulk axes persist to separate keys (D6)");
+    }
+
+    [Fact]
+    [Trait("serves-spec", "SPEC-011")]
+    public void BulkSplitRatios_DefaultToNull_WhenMissing()
+    {
+        var settings = new AppSettings(_file);
+
+        settings.BulkHorizontalSplitRatio.Should().BeNull("a never-set Bulk ratio means 'use the Bulk default'");
+        settings.BulkVerticalSplitRatio.Should().BeNull();
+    }
+
+    [Fact]
+    [Trait("serves-spec", "SPEC-011")]
+    public void BulkSplitRatios_AbsentInLegacyFile_LoadAsNull_SplitRatiosSurvive()
+    {
+        // A file written before T-112 carries the Split-tab ratios but NO bulk keys. The Bulk pair
+        // loads as null (→ default), and the older sibling fields are untouched (additive round-trip).
+        Directory.CreateDirectory(_dir);
+        File.WriteAllText(_file, "{ \"horizontalSplitRatio\": 0.7, \"verticalSplitRatio\": 0.62 }");
+
+        var settings = new AppSettings(_file);
+
+        settings.BulkHorizontalSplitRatio.Should().BeNull("an older file with no bulk keys → null → the Bulk default");
+        settings.BulkVerticalSplitRatio.Should().BeNull();
+        settings.HorizontalSplitRatio.Should().Be(0.7, "the legacy Split-tab ratios survive the additive bulk fields");
+        settings.VerticalSplitRatio.Should().Be(0.62);
+    }
+
+    [Fact]
+    [Trait("serves-spec", "SPEC-011")]
+    public void BulkSplitRatio_OutOfRangeInFile_IsClampedOnLoad()
+    {
+        Directory.CreateDirectory(_dir);
+        File.WriteAllText(_file, "{ \"bulkHorizontalSplitRatio\": 9.0, \"bulkVerticalSplitRatio\": -3.0 }");
+
+        var settings = new AppSettings(_file);
+
+        settings.BulkHorizontalSplitRatio.Should().BeLessThanOrEqualTo(0.95, "a corrupt/out-of-range Bulk ratio is clamped so no pane wedges to zero");
+        settings.BulkVerticalSplitRatio.Should().BeGreaterThanOrEqualTo(0.05);
+    }
 }

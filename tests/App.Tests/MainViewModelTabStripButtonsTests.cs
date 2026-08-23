@@ -34,6 +34,8 @@ public sealed class MainViewModelTabStripButtonsTests
         public LayoutMode LayoutMode { get; set; } = LayoutMode.Horizontal;
         public double? HorizontalSplitRatio { get; set; }
         public double? VerticalSplitRatio { get; set; }
+        public double? BulkHorizontalSplitRatio { get; set; }
+        public double? BulkVerticalSplitRatio { get; set; }
 
         private readonly List<CutProfile> _cutProfiles = new();
         public IReadOnlyList<CutProfile> CutProfiles => _cutProfiles;
