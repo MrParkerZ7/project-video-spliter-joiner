@@ -630,3 +630,7 @@
 
 ## 2026-08-23 · board hygiene — closed 10 stale goal statuses
 - Flipped G-019, G-020, G-022, G-023, G-025, G-026, G-027, G-028, G-029, G-030 from active → done (each carried a completed date pulled from its tasks, mostly 2026-07-18). All their tasks were done + pushed weeks ago; only the goal status line lagged. Board now has 0 stale-unclosed active goals. Recurring "goal-close-step-didn't-fire" hygiene, cleared on user request.
+
+## 2026-08-23 · todo-docs — created 4 warranted doc gaps (Docs ~high → complete)
+- Reverse-engineered doc+code surface; the set was already strong (17 ADRs, 15 living specs, 4 designs, standards, ARCHITECTURE/USER_GUIDE/CHANGELOG). Gaps found + created (code-grounded): docs/README.md (docs PORTAL/index), docs/GLOSSARY.md (domain terms), docs/DEV.md (build/test/conventions), docs/ROADMAP.md (shipped ✅ + deferred/future 📋). Linked all from root README's Documentation section.
+- Not auto-created (flagged): LICENSE (legal, per ADR-0012 GPL/LGPL → user/legal, not auto-authored); SECURITY.md (N-A — local desktop tool, minimal surface); per-module READMEs (covered by the specs). No misplaced docs to relocate (root-keep already clean). Structure conformant.
