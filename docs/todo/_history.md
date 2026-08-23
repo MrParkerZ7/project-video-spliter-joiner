@@ -623,3 +623,7 @@
 
 ## 2026-08-23 · G-039 drive — T-113 done (profiles UX regroup)
 - **T-113 done** (`11a8a32`, 879 view-only): flat profiles strip → bordered "Profiles" card (SurfaceBrush/BorderBrush/RadiusMd + SemiBold caption). 3-tier hierarchy: HERO thumbnail ComboBox (MinWidth 164), PRIMARY Save current as… (AccentButton + vector plus), SECONDARY Apply→selected/all as a paired split-control (new view-local ProfileSegmentButton), MUTED Delete ✕ (ProfileDangerButton, danger-on-hover). Tokens only, no behavior change (same commands/gating/thumbnail/popup, code-behind untouched), fits both layout modes (header Row 0). Deviation: Save = AccentButton not HeroButton (keeps it primary within the cluster, not competing with screen heroes); 2 new styles view-local not shared Controls.xaml. T-114 unblocked (all 3 deps done).
+
+## 2026-08-23 · todo-task-next CONVERGED — G-039 Bulk Cut polish shipped
+- **T-114 done** (`6d0380c`): USER_GUIDE + CHANGELOG + ARCHITECTURE + SPEC-011 (+4 inv I68-71) + SPEC-009 (+3 inv I23-25); _index 563 inv / 547 covered / 16 deferred / 97%.
+- **G-039 DONE** — T-111 apply-to-all re-activation fix (RelayCommand deterministic notify, app-wide) · T-112 Bulk layout-mode-aware (OrientedSplitPanel pane↔list, Bulk-specific ratios) · T-113 profiles UX regroup (bordered card + hierarchy) · T-114 docs. Suite 864→879 (+15). All pushed, Release relaunched. (User message trailed off after "and" — 4th item never specified.)
