@@ -59,6 +59,101 @@
             <Setter Property="Padding" Value="4,1" />
             <Setter Property="VerticalContentAlignment" Value="Center" />
         </Style>
+
+        <!-- ===== T-113: cut-profiles cluster styles (visual-only regroup) =====
+             Two view-local button treatments that give the profiles card a clear
+             action hierarchy (Save = accent primary uses the shared AccentButton;
+             these two are the SECONDARY + MUTED tiers). Tokens only. -->
+
+        <!-- Apply segment (secondary) — a flat, borderless cell of the paired
+             "Apply → selected / → all" split-control. Neutral TextSecondary at
+             rest, lifts to Surface3 + TextPrimary on hover. String Content so the
+             glyph/label inherit the button Foreground (and follow the hover swap);
+             the shared bordered container + 1px divider make the two read as one
+             grouped control. -->
+        <Style x:Key="ProfileSegmentButton" TargetType="Button">
+            <Setter Property="Foreground" Value="{StaticResource TextSecondaryBrush}" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="FontFamily" Value="{StaticResource AppFontFamily}" />
+            <Setter Property="FontSize" Value="{StaticResource FontSizeSmall}" />
+            <Setter Property="Padding" Value="9,5" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="SnapsToDevicePixels" Value="True" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd"
+                                Background="{TemplateBinding Background}"
+                                SnapsToDevicePixels="True">
+                            <ContentPresenter HorizontalAlignment="Center"
+                                              VerticalAlignment="Center"
+                                              Margin="{TemplateBinding Padding}"
+                                              RecognizesAccessKey="True" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="{StaticResource Surface3Brush}" />
+                                <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}" />
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="{StaticResource Surface4Brush}" />
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.4" />
+                                <Setter Property="Cursor" Value="Arrow" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Delete (muted → danger-on-hover) — lowest-priority action in the
+             cluster: a muted ✕ glyph on a plain surface chip at rest, revealing a
+             Danger border + Danger glyph only on hover so the destructive intent
+             surfaces on approach (never shouts). Tokens only. -->
+        <Style x:Key="ProfileDangerButton" TargetType="Button">
+            <Setter Property="Foreground" Value="{StaticResource TextMutedBrush}" />
+            <Setter Property="Background" Value="{StaticResource Surface2Brush}" />
+            <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="FontFamily" Value="{StaticResource AppFontFamily}" />
+            <Setter Property="FontSize" Value="{StaticResource FontSizeBody}" />
+            <Setter Property="Padding" Value="9,5" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="SnapsToDevicePixels" Value="True" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="{StaticResource RadiusSm}"
+                                SnapsToDevicePixels="True">
+                            <ContentPresenter HorizontalAlignment="Center"
+                                              VerticalAlignment="Center"
+                                              Margin="{TemplateBinding Padding}"
+                                              RecognizesAccessKey="True" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="{StaticResource Surface3Brush}" />
+                                <Setter TargetName="Bd" Property="BorderBrush" Value="{StaticResource DangerBrush}" />
+                                <Setter Property="Foreground" Value="{StaticResource DangerBrush}" />
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Bd" Property="Opacity" Value="0.85" />
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.4" />
+                                <Setter Property="Cursor" Value="Arrow" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
     </UserControl.Resources>
 
     <Grid x:Name="RootGrid"
@@ -105,69 +200,114 @@
                 </StackPanel>
             </StackPanel>
 
-            <!-- ===== Cut-profiles bar (T-103) — compact group, subtle when empty ===== -->
+            <!-- ===== Cut-profiles cluster (T-103 · regrouped T-113) =====
+                 A bordered "Profiles" card that reads as ONE grouped unit (distinct
+                 from the tab-strip Add/Clear/Run and the pane's set-at-playhead
+                 gestures) with a clear action hierarchy:
+                   • HERO   — the thumbnail-aware picker (tallest element, wide MinWidth)
+                   • PRIMARY— ✚ Save current as… (accent, the create action)
+                   • SECONDARY — Apply → selected / → all as a paired split-control
+                   • MUTED  — ✕ Delete (muted, danger-on-hover)
+                 Differentiated on ≥2 of size/weight/color-role/spacing, tokens only,
+                 and kept compact (one control row under a caption) so it doesn't
+                 crowd the split below in either layout mode. HasProfiles gating is
+                 unchanged; the empty state stays an unobtrusive Save affordance. -->
             <Border Grid.Row="0" Grid.Column="1"
                     Margin="12,0,0,0"
                     VerticalAlignment="Center"
-                    Padding="8,5"
-                    Background="{StaticResource Surface1Brush}"
+                    Padding="10,7"
+                    Background="{StaticResource SurfaceBrush}"
                     BorderBrush="{StaticResource BorderBrush}"
                     BorderThickness="1"
                     CornerRadius="{StaticResource RadiusMd}">
-                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                    <!-- Full state (≥1 saved profile): pick + apply + delete -->
-                    <TextBlock Text="Profile"
-                               Margin="0,0,6,0"
-                               VerticalAlignment="Center"
+                <StackPanel>
+                    <!-- Section caption — names the grouped unit in both states. -->
+                    <TextBlock Text="Profiles"
+                               Margin="2,0,0,6"
                                FontSize="{StaticResource FontSizeSmall}"
-                               Foreground="{StaticResource TextMutedBrush}"
-                               Visibility="{Binding HasProfiles, Converter={StaticResource BoolToVisibility}}" />
-                    <ComboBox MinWidth="140"
-                              VerticalAlignment="Center"
-                              ItemsSource="{Binding Profiles}"
-                              SelectedItem="{Binding SelectedProfile, Mode=TwoWay}"
-                              ItemTemplate="{StaticResource ProfileItemTemplate}"
-                              ToolTip="Choose a saved cut profile to apply"
-                              Visibility="{Binding HasProfiles, Converter={StaticResource BoolToVisibility}}" />
-                    <Button Content="Apply → selected"
-                            Margin="6,0,0,0"
-                            Padding="8,4"
-                            VerticalAlignment="Center"
-                            ToolTip="Apply the chosen profile to the selected row (re-snapped + re-validated)"
-                            Command="{Binding ApplyProfileToSelectedCommand}"
-                            Visibility="{Binding HasProfiles, Converter={StaticResource BoolToVisibility}}" />
-                    <Button Content="Apply → all"
-                            Margin="6,0,0,0"
-                            Padding="8,4"
-                            VerticalAlignment="Center"
-                            ToolTip="Apply the chosen profile to every checked row (outro measured from the end so uneven lengths align)"
-                            Command="{Binding ApplyProfileToAllCommand}"
-                            Visibility="{Binding HasProfiles, Converter={StaticResource BoolToVisibility}}" />
-                    <Button Content="Delete"
-                            Margin="6,0,0,0"
-                            Padding="8,4"
-                            VerticalAlignment="Center"
-                            ToolTip="Delete the selected profile"
-                            Command="{Binding DeleteProfileCommand}"
-                            Visibility="{Binding HasProfiles, Converter={StaticResource BoolToVisibility}}" />
+                               FontWeight="SemiBold"
+                               Foreground="{StaticResource TextSecondaryBrush}" />
 
-                    <!-- Empty state: unobtrusive hint next to the always-present Save button -->
-                    <TextBlock Text="Save a cut profile"
-                               Margin="0,0,6,0"
-                               VerticalAlignment="Center"
-                               FontSize="{StaticResource FontSizeSmall}"
-                               Foreground="{StaticResource TextMutedBrush}"
-                               Visibility="{Binding HasProfiles, Converter={StaticResource BoolToCollapsed}}" />
+                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                        <!-- HERO: thumbnail picker ([thumb chip] Name). Natural height
+                             (fits the 28px chip) makes it the tallest element; a wider
+                             MinWidth gives the selected profile's thumbnail room. -->
+                        <ComboBox MinWidth="164"
+                                  VerticalAlignment="Center"
+                                  ItemsSource="{Binding Profiles}"
+                                  SelectedItem="{Binding SelectedProfile, Mode=TwoWay}"
+                                  ItemTemplate="{StaticResource ProfileItemTemplate}"
+                                  ToolTip="Choose a saved cut profile to apply"
+                                  Visibility="{Binding HasProfiles, Converter={StaticResource BoolToVisibility}}" />
 
-                    <!-- Save current row's cut as a named profile (themed inline popup, not a raw dialog) -->
-                    <Button x:Name="SaveProfileButton"
-                            Content="Save current as…"
-                            Margin="6,0,0,0"
-                            Padding="8,4"
-                            VerticalAlignment="Center"
-                            ToolTip="Save the selected row's current intro/outro as a reusable named profile"
-                            IsEnabled="{Binding CanSaveProfile}"
-                            Click="OnSaveProfileClicked" />
+                        <!-- SECONDARY: Apply as a paired split-control — one bordered
+                             Surface2 container, two flat segments split by a 1px rule. -->
+                        <Border Margin="8,0,0,0"
+                                VerticalAlignment="Center"
+                                Background="{StaticResource Surface2Brush}"
+                                BorderBrush="{StaticResource BorderBrush}"
+                                BorderThickness="1"
+                                CornerRadius="{StaticResource RadiusSm}"
+                                SnapsToDevicePixels="True"
+                                Visibility="{Binding HasProfiles, Converter={StaticResource BoolToVisibility}}">
+                            <StackPanel Orientation="Horizontal">
+                                <Button Style="{StaticResource ProfileSegmentButton}"
+                                        Content="⧉ selected"
+                                        ToolTip="Apply the chosen profile to the selected row (re-snapped + re-validated)"
+                                        Command="{Binding ApplyProfileToSelectedCommand}" />
+                                <Rectangle Width="1" Fill="{StaticResource BorderBrush}" />
+                                <Button Style="{StaticResource ProfileSegmentButton}"
+                                        Content="⧉ all"
+                                        ToolTip="Apply the chosen profile to every checked row (outro measured from the end so uneven lengths align)"
+                                        Command="{Binding ApplyProfileToAllCommand}" />
+                            </StackPanel>
+                        </Border>
+
+                        <!-- MUTED: Delete — muted ✕, danger-on-hover. -->
+                        <Button Style="{StaticResource ProfileDangerButton}"
+                                Content="✕"
+                                Margin="8,0,0,0"
+                                VerticalAlignment="Center"
+                                ToolTip="Delete the selected profile"
+                                Command="{Binding DeleteProfileCommand}"
+                                Visibility="{Binding HasProfiles, Converter={StaticResource BoolToVisibility}}" />
+
+                        <!-- Empty state: unobtrusive hint next to the always-present Save button -->
+                        <TextBlock Text="Save a cut profile"
+                                   Margin="2,0,0,0"
+                                   VerticalAlignment="Center"
+                                   FontSize="{StaticResource FontSizeSmall}"
+                                   Foreground="{StaticResource TextMutedBrush}"
+                                   Visibility="{Binding HasProfiles, Converter={StaticResource BoolToCollapsed}}" />
+
+                        <!-- PRIMARY: Save current row's cut as a named profile — accent
+                             (the create action), ✚ vector glyph in the app's icon style
+                             (matches Split's HeroButton add-cut). Themed inline popup,
+                             not a raw dialog. -->
+                        <Button x:Name="SaveProfileButton"
+                                Style="{StaticResource AccentButton}"
+                                Margin="8,0,0,0"
+                                Padding="12,5"
+                                VerticalAlignment="Center"
+                                ToolTip="Save the selected row's current intro/outro as a reusable named profile"
+                                IsEnabled="{Binding CanSaveProfile}"
+                                Click="OnSaveProfileClicked">
+                            <StackPanel Orientation="Horizontal">
+                                <Path Data="M6,0.5 L6,11.5 M0.5,6 L11.5,6"
+                                      Stroke="{StaticResource AccentTextBrush}"
+                                      StrokeThickness="2"
+                                      StrokeStartLineCap="Round"
+                                      StrokeEndLineCap="Round"
+                                      Width="12" Height="12"
+                                      VerticalAlignment="Center"
+                                      Margin="0,0,7,0"
+                                      SnapsToDevicePixels="True"
+                                      UseLayoutRounding="True" />
+                                <TextBlock Text="Save current as…"
+                                           VerticalAlignment="Center"
+                                           Foreground="{StaticResource AccentTextBrush}" />
+                            </StackPanel>
+                        </Button>
 
                     <!-- Themed inline name input (Popup anchored under the Save button) -->
                     <Popup x:Name="SaveProfilePopup"
@@ -245,6 +385,7 @@
                             </StackPanel>
                         </Border>
                     </Popup>
+                    </StackPanel>
                 </StackPanel>
             </Border>
 
