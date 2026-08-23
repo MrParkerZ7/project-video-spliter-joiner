@@ -200,6 +200,20 @@ re-encode — the player only previews; every cut continues to keyframe-snap thr
 
 ### Changed
 
+- **Bulk Cut — layout-mode-aware, refreshed profiles UI, and apply-to-all reliability fix (G-039)** — the
+  Bulk Cut tab now **follows the vertical/horizontal layout toggle**: its preview pane and row list are
+  wrapped in the same `OrientedSplitPanel` the Split screen uses, so **vertical mode stacks** the preview
+  above the list and **horizontal mode places them side-by-side**, with a themed splitter draggable in
+  both orientations and a **Bulk-specific remembered split position per axis** (kept separate from the
+  Split tab's, and backward-compatible in `settings.json` — an older file with no bulk keys just falls
+  back to the Bulk defaults). The **profiles area is regrouped** from a flat inline strip into a bordered
+  **"Profiles" card** — a thumbnail-aware picker, a gold primary **Save current as…**, a paired
+  **Apply → selected / → all** split-control, and a muted **Delete** — a tokens-only restyle with the
+  same commands, thumbnail display, and gating (no behavior change). And **apply-to-all now re-fires
+  reliably every time**: the per-row *apply cut points to all* and the profile *Apply → all* buttons
+  used to go stale after their first use; they now re-enable deterministically on every change (an
+  app-wide `RelayCommand` notification fix) and each re-apply re-reads the **current** source. See
+  [ADR 0016](docs/adr/0016-shared-bulk-preview-player-and-cut-profiles.md).
 - **Custom themed window frame (G-018)** — the default light Windows title bar is replaced by a custom
   **dark title bar** (WindowChrome) matching the theme: the app title with a gold accent on the left,
   and themed minimize / maximize-restore / close caption buttons (close hovers red) on the right. The

@@ -8,7 +8,9 @@ sources:
   - src/App/ViewModels/BulkCutViewModel.cs
   - src/App/ViewModels/BulkItemViewModel.cs
   - src/App/ViewModels/CutProfileApplier.cs
-serves-goal: [G-036, G-037, G-038]
+  - src/App/ViewModels/RelayCommand.cs
+  - src/App/ViewModels/MainViewModel.cs
+serves-goal: [G-036, G-037, G-038, G-039]
 updated: 2026-08-23
 ---
 
@@ -249,14 +251,71 @@ SPEC-007); the shared `IThumbnailService`/`FfmpegThumbnailService` frame source 
   never starve the ffprobe scans that gate `CanRunBatch`; the permit is held only around the grab, never during the
   debounce (`_thumbnailGate`, `HandleThumbnailGrabber.GrabAsync` gate scope).
 
+### Layout-mode-aware body (G-039 / T-112)
+- **I68** — the Bulk body is **layout-mode-aware**: the preview pane and the row-list are the two
+  children (`FirstChild` / `SecondChild`) of a single `OrientedSplitPanel` bound to
+  `MainViewModel.IsVertical` — the same axis-flip container the Split screen uses — so the tab tracks
+  the app's vertical/horizontal toggle: **vertical** stacks the pane above the list, **horizontal**
+  places them side-by-side. The panel owns the themed splitter (draggable in both axes), the profiles
+  header stays above and the output/Run footer below the split, and the one shared preview player
+  survives the axis re-parent (the reused `PlayerView` reloads and re-attaches the Bulk FFME element).
+  The Bulk split remembers its own position with **Bulk-specific** per-axis ratios
+  (`MainViewModel.BulkHorizontalSplitRatio` / `BulkVerticalSplitRatio`, two-way bound, clamped
+  `[0.05, 0.95]`, write-through to the matching `IAppSettings` keys, defaults `0.4` / `0.5`), kept
+  **separate** from the Split tab's `HorizontalSplitRatio`/`VerticalSplitRatio` so dragging one tab's
+  split never disturbs the other's. The `OrientedSplitPanel` flip mechanism is covered by SPEC-015
+  (I16/I17); the settings round-trip by SPEC-009 (I23–I25). (`BulkCutView.xaml`,
+  `MainViewModel.BulkHorizontalSplitRatio`/`BulkVerticalSplitRatio`)
+
+### Apply-to-all re-fires every invocation (G-039 / T-111)
+- **I69** — **apply-to-all re-fires on every invocation, not just the first** (both the per-row `⧉`
+  apply-to-all and the profile **Apply → all**): `RelayCommand.RaiseCanExecuteChanged` raises the
+  command's **own** `CanExecuteChanged` directly (deterministic notify) **in addition** to chaining
+  `CommandManager.RequerySuggested`, so a gate-input change re-enables the bound button every time.
+  (Pre-fix bug: `CanExecuteChanged` forwarded *solely* to `CommandManager.RequerySuggested`, so an
+  explicit `RaiseCanExecuteChanged()` notified a subscribed handler **zero** times and the Apply→all
+  button went stale after first use.) The `RelayCommand` change is **app-wide and additive** — every
+  command's own subscribers now fire deterministically while the automatic input-driven and
+  cross-command global requery is fully preserved. (`RelayCommand.RaiseCanExecuteChanged`,
+  `RelayCommand.CanExecuteChanged`)
+- **I70** — the Bulk VM re-raises the profile-command gates **explicitly** rather than leaning on the
+  global-requery side effect: `RaiseProfileCommandStates` re-raises each of `SaveProfileCommand` /
+  `ApplyProfileToSelectedCommand` / `ApplyProfileToAllCommand` / `DeleteProfileCommand`, and
+  `RaiseRunState` **also** re-raises `ApplyProfileToAllCommand` (its gate additionally depends on the
+  checked-row set / `Items` membership) — so a profile-selection change (no profile → disabled,
+  profile picked → enabled) or a checked-row change re-evaluates the affected buttons deterministically.
+  (`RaiseProfileCommandStates`, `RaiseRunState`)
+- **I71** — a re-apply reads the **current** source and propagates its values every time: after the
+  source row's cut is changed (or a profile re-saved under the same name), the next `ApplyToAll` /
+  `ApplyProfileToAll` re-syncs every target to the current source values (never swallowed as a no-op),
+  the `SelectedItem` / `SelectedProfile` selection **survives** the apply, and `ApplyToAllReport` is
+  re-assigned on **each** apply so an identical re-apply never *looks* like a no-op. Apply semantics are
+  unchanged (outro-from-END, re-snap + re-validate per target, invalidated rows reported — see I20–I24,
+  I55–I57). (`ApplyToAll`, `ApplyProfileToAll`, `ApplyToAllReport`)
+
+> **T-113 (profiles-card regroup) — no new invariant.** The flat inline profiles strip became a
+> bordered **"Profiles"** card (thumbnail-aware picker · gold primary **Save current as…** · paired
+> **Apply → selected / → all** split-control · muted **Delete**) — a **tokens-only, view-only** restyle
+> with the **same** commands, thumbnail display, Save popup, and `HasProfiles` gating (I51–I60). No
+> behavior changed, so it adds no invariant. (`BulkCutView.xaml`)
+
 ## Links
 - Design: D-004 (Bulk Cut screen)
 - Goals: G-036 (batch trim), G-037 (shared preview + set-at-playhead + reusable cut profiles), G-038 (profile
-  thumbnails + per-row cut-point frame previews — feature task T-108 for the per-row thumbnails here)
+  thumbnails + per-row cut-point frame previews — feature task T-108 for the per-row thumbnails here), G-039
+  (Bulk Cut polish — layout-mode-aware body T-112, profiles-card regroup T-113, apply-to-all re-activation T-111)
 - Related specs: the T-095 batch engine (`IBulkTrimEngine` / `BulkTrimEngine`) spec — not yet authored; T-094
   kept-segment request (`KeptSegmentSelector`); T-080 media reopen guard (`MediaReopenGuard`); T-102 cut-profile
   persistence (`CutProfile` / `IAppSettings.CutProfiles`); SPEC-007 (cut profiles — incl. the T-106/107
-  profile-thumbnail model/store/glue); SPEC-005 (`IThumbnailService` frame source the cut-point grabs reuse).
-- Key code: `src/App/ViewModels/BulkCutViewModel.cs` (`_thumbnailGate`), `src/App/ViewModels/BulkItemViewModel.cs`
-  (`IntroThumbnailPath`/`OutroThumbnailPath`, `HandleThumbnailGrabber`), `src/App/ViewModels/CutProfileApplier.cs`.
-- Tests: `tests/App.Tests/BulkItemThumbnailTests.cs` (T-108 cut-point thumbnails) · `tests/App.Tests/BulkSpecGapTests.cs`.
+  profile-thumbnail model/store/glue); SPEC-005 (`IThumbnailService` frame source the cut-point grabs reuse);
+  SPEC-009 (app settings — the Bulk-specific per-axis split ratios I68 persists, I23–I25); SPEC-015 (app shell —
+  the `OrientedSplitPanel` axis-flip container I68 reuses, I16/I17).
+- Key code: `src/App/ViewModels/BulkCutViewModel.cs` (`_thumbnailGate`, `RaiseProfileCommandStates`,
+  `RaiseRunState`), `src/App/ViewModels/BulkItemViewModel.cs` (`IntroThumbnailPath`/`OutroThumbnailPath`,
+  `HandleThumbnailGrabber`), `src/App/ViewModels/CutProfileApplier.cs`,
+  `src/App/ViewModels/RelayCommand.cs` (`RaiseCanExecuteChanged` — T-111 deterministic notify),
+  `src/App/ViewModels/MainViewModel.cs` (`BulkHorizontalSplitRatio`/`BulkVerticalSplitRatio` — T-112),
+  `src/App/Views/BulkCutView.xaml` (`OrientedSplitPanel` body — T-112; "Profiles" card — T-113).
+- Tests: `tests/App.Tests/BulkItemThumbnailTests.cs` (T-108 cut-point thumbnails) · `tests/App.Tests/BulkSpecGapTests.cs`
+  · `tests/App.Tests/BulkCutApplyToAllReactivationTests.cs` (T-111 apply-to-all re-fires — I69–I71) ·
+  `tests/App.Tests/AppSettingsTests.cs` (T-112 Bulk-ratio round-trip — I68's persisted ratios, tagged `serves-spec=SPEC-011`).

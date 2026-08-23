@@ -257,6 +257,16 @@ holds cut logic — all of it is on the WPF-free VMs. Keeping the batch engine, 
 and the request builder in Core (referencing no WPF) is what keeps **`CoreIsUiFreeTests` green**. A new
 `DropScrimBrush` token backs the drag-drop highlight.
 
+**Layout-mode-aware body (G-039 / T-112).** The tab's preview pane and row-list are the two children of an
+`OrientedSplitPanel` bound to `MainViewModel.IsVertical` — the **same axis-flip container the Split screen
+uses** for its vertical-monitor layout — so the Bulk body stacks (vertical mode) or sits side-by-side
+(horizontal mode) with the app-wide layout toggle, the panel owning a themed splitter draggable in both
+axes. Its split position is remembered with a **Bulk-specific** per-axis ratio pair
+(`BulkHorizontalSplitRatio` / `BulkVerticalSplitRatio` on `MainViewModel`, write-through to `IAppSettings`),
+deliberately **separate** from the Split tab's ratios so dragging one tab's split never couples with the
+other's; the single shared preview player survives the re-parent (the reused `PlayerView` reloads and
+re-attaches its FFME element). This is a **view-only re-parent** — no Bulk view-model behavior changed.
+
 ### The shared preview player + cut profiles (G-037)
 
 G-037 adds a **preview player** and **reusable cut profiles** to the tab, recorded as
@@ -616,6 +626,14 @@ folders are chosen — so the app reopens where you left off.
 
 The UI uses **hand-rolled MVVM**: `ObservableObject` (INotifyPropertyChanged base) and `RelayCommand`
 (ICommand) — no MVVM framework.
+
+**`RelayCommand.RaiseCanExecuteChanged` notifies deterministically (G-039 / T-111).** It raises the
+command's **own** `CanExecuteChanged` directly **and** chains `CommandManager.RequerySuggested`, so an
+explicit VM `RaiseCanExecuteChanged()` re-evaluates a bound button's gate immediately instead of waiting
+on WPF's heuristic, weak-referenced global requery. Previously `CanExecuteChanged` forwarded *solely* to
+`CommandManager.RequerySuggested`, so a subscribed handler saw zero direct callbacks and a command's
+enabled-state could go stale after first use — the app-wide fix behind the Bulk "apply-to-all re-fires
+every time" behavior (SPEC-011). The automatic input-driven and cross-command requery is fully preserved.
 
 - **`MainViewModel`** is the **composition root**. Its parameterless ctor builds the real Core graph
   once — `FfmpegBinaryLocator` → `FfprobeRunner`/`FfmpegRunner` → `MediaProbe` → `SplitEngine`,

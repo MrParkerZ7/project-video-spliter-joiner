@@ -222,9 +222,12 @@ titles (and maybe the same end card) you want stripped in one pass. Every trim i
 stream-copy, keyframe-snapped cut as the Split screen — just applied to a whole list — and **your
 original files are never touched**: each trim is written to a **new** `_trimmed` file beside its source.
 
-A **preview pane sits at the top of the tab**, above the list: select any row and it plays there, so you
-can watch a video and set its cut points by eye — then save a cut you like as a **reusable profile** and
-apply it across the whole list.
+A **preview pane shares the tab with the list**: select any row and it plays there, so you can watch a
+video and set its cut points by eye — then save a cut you like as a **reusable profile** and apply it
+across the whole list. The pane and the list **follow the app's layout toggle** — in the default
+**horizontal** layout the preview sits **beside** the list, and in **vertical (stacked)** layout it sits
+**above** it — and a **draggable splitter** (in either orientation) lets you trade space between them.
+The Bulk tab **remembers its own split position per layout**, independent of the Split screen's.
 
 1. **Add videos.** Click **Add videos…** or **drag video files onto the screen** (see
    [Drag and drop](#drag-and-drop)) — every dropped video is added, in a scrollable list, one row per
@@ -241,8 +244,7 @@ apply it across the whole list.
    **selected row** at the playhead. It **keyframe-snaps** exactly like any other cut, and *Set
    outro-start here* **adds** an outro to the row if it didn't have one. The selected row wears a **gold
    ring** in the list. **Only one video decodes at a time** — selecting another row hands the single
-   player to it — and a **draggable splitter** between the pane and the list lets you trade space between
-   them.
+   player to it.
 3. **Mark the cut points on each row.** Every row has its own **scrub bar with two handles**:
    - the **gold intro-end handle (`▸`)** marks where the intro ends — everything before it is dropped;
    - the optional **blue outro-start handle (`◂`)** marks where the outro begins — everything after it
@@ -265,8 +267,9 @@ apply it across the whole list.
    dropped.
 5. **Save a cut once and reuse it — cut profiles (optional).** Once a row's intro (and optional outro)
    are set the way you want, save them as a **named profile** and reuse them on any list later — handy
-   when a series always has the same-length opening titles and end card. Use the **profiles bar** at the
-   top-right of the tab:
+   when a series always has the same-length opening titles and end card. The profile controls are grouped
+   into a bordered **"Profiles" card** — a thumbnail picker, a **Save current as…** button, a paired
+   **Apply → selected / → all** control, and **Delete**:
    - **Save current as…** — with a row selected, click it, type a name, and **Save**. The profile is
      **stored in your settings and survives a restart**. Saving under a name that already exists
      **replaces** it, so you can refine a profile in place.
@@ -283,7 +286,7 @@ apply it across the whole list.
      end of each file**, so a set of episodes of *different lengths* still line up. Every target
      **re-snaps to its own keyframes and re-validates**; any row the profile doesn't fit (its intro
      overshoots, or its tail is longer than the whole file) is **flagged red** and counted in the note
-     under the bar — e.g. *"Applied to 8 row(s) · 1 now invalid (see the red rows)"* — never silently
+     under the card — e.g. *"Applied to 8 row(s) · 1 now invalid (see the red rows)"* — never silently
      dropped.
    - **Delete** removes the selected profile.
 6. **Run.** Click **Run bulk cut** (the button shows how many rows will run). The videos are trimmed

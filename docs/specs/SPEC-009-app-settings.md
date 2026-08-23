@@ -7,15 +7,16 @@ status: current
 sources:
   - src/App/Settings/AppSettings.cs
   - src/App/Settings/IAppSettings.cs
-serves-goal: [G-010, G-037]
-updated: 2026-08-22
+serves-goal: [G-010, G-037, G-039]
+updated: 2026-08-23
 ---
 
 ## What
 `AppSettings` is the app's file-backed, cross-session preferences store (T-038). It persists a small
 set of "remember where I was / how I had it" values to a single JSON file
 (`%APPDATA%/VideoSplitJoiner/settings.json` by default) via `System.Text.Json`: the last input and
-output folders, the layout axis, the two per-axis split ratios, and the saved cut profiles. Reads happen
+output folders, the layout axis, the two per-axis split ratios (plus a second, **Bulk-specific**
+per-axis ratio pair, G-039), and the saved cut profiles. Reads happen
 once on construction; every setter persists its change immediately and best-effort. The store is robust
 by design — a missing, empty, corrupt, or older/partial file degrades to documented defaults and never
 crashes the app, and a write failure is swallowed while the value stays live in memory for the session.
@@ -32,8 +33,9 @@ gracefully rather than throw.
 ## Scope
 **In:** the JSON persistence + round-trip contract of `AppSettings`/`IAppSettings` — file location, load
 tolerance (missing/blank/corrupt/partial), the folder fields (`LastInputDir`/`LastOutputDir`,
-blank→null normalization), the per-axis split ratios (`HorizontalSplitRatio`/`VerticalSplitRatio` and
-`ClampRatio` load-side sanitization), `LayoutMode` persistence, the dirty-check setters, the atomic
+blank→null normalization), the per-axis split ratios (`HorizontalSplitRatio`/`VerticalSplitRatio` **and
+the Bulk-specific `BulkHorizontalSplitRatio`/`BulkVerticalSplitRatio` pair** — G-039/T-112 — both under
+the shared `ClampRatio` load-side sanitization), `LayoutMode` persistence, the dirty-check setters, the atomic
 temp-then-rename write + swallowed-write-failure behavior, and the **settings-persistence** aspects of
 `CutProfiles` (round-trip via the file, seconds encoding, missing-field → empty, key-omission, corrupt-row
 skip, dedup-on-load, no loss of siblings).
@@ -108,9 +110,30 @@ out of scope.
   `IsFiniteNonNegative`, guarded `new CutProfile(...)`)
 - **I22** — Duplicate profile names deduped on load: duplicate names in the file collapse
   case-insensitively with first-occurrence-wins. (`MapProfiles` `seen` HashSet, `StringComparer.OrdinalIgnoreCase`)
+- **I23** — Bulk Cut per-axis ratios round-trip to their **own** keys (G-039 / T-112):
+  `BulkHorizontalSplitRatio` / `BulkVerticalSplitRatio` persist to **separate** JSON keys
+  (`bulkHorizontalSplitRatio` / `bulkVerticalSplitRatio`), distinct from the Split-tab ratio keys
+  (I10), and reload independently of each other and of the Split-tab ratios — so the Bulk tab's split
+  never shares state with Split's. Each setter persists immediately, dirty-checked with `Nullable.Equals`.
+  (`BulkHorizontalSplitRatio`/`BulkVerticalSplitRatio` setters + `SettingsDto` keys, D6)
+- **I24** — Missing bulk-ratio keys → null → default, siblings intact: an older file written before
+  T-112 carries no `bulkHorizontalSplitRatio`/`bulkVerticalSplitRatio` keys; both load as `null` ("use
+  the Bulk default") without crashing and **without losing** the sibling folder / layout / Split-ratio /
+  profile fields (additive migration, as I11/I19); a never-set bulk ratio likewise reloads `null`, and a
+  null value is omitted on write (`WhenWritingNull`). (`Load` per-field mapping; default field state)
+- **I25** — Out-of-range / non-finite bulk ratio sanitized on load via the shared `ClampRatio`: a
+  persisted bulk ratio outside `[0.05, 0.95]` is clamped into that band on load (so a corrupt value can
+  never wedge a Bulk pane to zero), and a `NaN`/`Infinity`/null maps to `null` (use the default) — the
+  **same** `ClampRatio` sanitization applied to the Split-tab ratios (I12/I13). (`ClampRatio` applied to
+  `dto.BulkHorizontalSplitRatio` / `dto.BulkVerticalSplitRatio` in `Load`)
 
 ## Links
-- Design: D-001 (vertical-monitor layout — persisted layout state); ADR-0016 (cut profiles)
-- Goals: G-010 (remember last input/output location), G-037 (reusable cut profiles)
-- Related specs: SPEC-007 (cut profiles — profile model, upsert/delete/apply semantics)
+- Design: D-001 (vertical-monitor layout — persisted layout state); D-004 (Bulk Cut screen); ADR-0016 (cut profiles)
+- Goals: G-010 (remember last input/output location), G-037 (reusable cut profiles), G-039 (Bulk Cut polish —
+  the Bulk-specific per-axis split ratios, T-112)
+- Related specs: SPEC-007 (cut profiles — profile model, upsert/delete/apply semantics); SPEC-011 (Bulk Cut
+  screen — consumes the Bulk-specific ratios I23–I25, its I68); SPEC-015 (app shell — the `OrientedSplitPanel`
+  the Bulk ratios drive, and the Split-tab layout axis / ratios)
 - Key code: src/App/Settings/AppSettings.cs, src/App/Settings/IAppSettings.cs, src/Core/Profiles/CutProfile.cs
+- Tests: tests/App.Tests/AppSettingsTests.cs (incl. the T-112 Bulk-ratio round-trip cases — round-trip,
+  default-null, legacy-absent→null with Split ratios surviving, clamp; tagged `serves-spec=SPEC-011`)
