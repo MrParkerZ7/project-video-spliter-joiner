@@ -644,3 +644,7 @@
 
 ## 2026-08-24 · G-040 drive — T-116 done (apply-to-all findable)
 - **T-116 done** (`e5a2d3b`, 883 view-only): FINDING — the per-row ⧉ was GENUINELY CLIPPED off-screen in horizontal mode (row's 8 cols hard-min ~830px; list = 1-HorizontalRatio ~30% body; RowsList HorizontalScrollBarVisibility=Disabled → rightmost cols fell off the edge). Fixed: wrapped row in a DockPanel, apply-to-all + remove in a right-docked action cluster (reserved before the fill) + ClipToBounds on the fill so scrub/thumbs/readouts clip at their own edge, actions stay reachable both modes. Relabelled per-row ⧉ → "⧉ all" + strong tooltip; profile "⧉ selected"/"⧉ all" → "⧉ Apply to selected"/"⧉ Apply to all" (all = SemiBold primary). Tokens-only, no behavior change. Kept scrub MinWidth=180 (graceful: middle detail clips before actions in very narrow). T-117 unblocked (both deps done).
+
+## 2026-08-24 · todo-next-all CONVERGED — G-040 Bulk Cut fixes shipped
+- **T-117 done** (`bced386`): SPEC-011 +2 inv (I72 debounced-preview-open, I73 cancel-pending-on-clear/run) + CHANGELOG + USER_GUIDE; _index 565/549/16 (97%).
+- **G-040 DONE** — T-115 slow row selection fixed (250ms latest-wins debounced preview-open, instant highlight) · T-116 apply-to-all discoverability (was CLIPPED off-screen in horizontal mode → right-docked action cluster + labels) · T-117 docs. Suite 879→883 (+4). All pushed, Release relaunched.
