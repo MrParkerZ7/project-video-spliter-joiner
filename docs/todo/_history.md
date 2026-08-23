@@ -627,3 +627,6 @@
 ## 2026-08-23 · todo-task-next CONVERGED — G-039 Bulk Cut polish shipped
 - **T-114 done** (`6d0380c`): USER_GUIDE + CHANGELOG + ARCHITECTURE + SPEC-011 (+4 inv I68-71) + SPEC-009 (+3 inv I23-25); _index 563 inv / 547 covered / 16 deferred / 97%.
 - **G-039 DONE** — T-111 apply-to-all re-activation fix (RelayCommand deterministic notify, app-wide) · T-112 Bulk layout-mode-aware (OrientedSplitPanel pane↔list, Bulk-specific ratios) · T-113 profiles UX regroup (bordered card + hierarchy) · T-114 docs. Suite 864→879 (+15). All pushed, Release relaunched. (User message trailed off after "and" — 4th item never specified.)
+
+## 2026-08-23 · board hygiene — closed 10 stale goal statuses
+- Flipped G-019, G-020, G-022, G-023, G-025, G-026, G-027, G-028, G-029, G-030 from active → done (each carried a completed date pulled from its tasks, mostly 2026-07-18). All their tasks were done + pushed weeks ago; only the goal status line lagged. Board now has 0 stale-unclosed active goals. Recurring "goal-close-step-didn't-fire" hygiene, cleared on user request.
