@@ -610,3 +610,7 @@
 - **G-038 DONE** — Bulk Cut thumbnails: T-106 CutProfile.ThumbnailPath+store · T-107 profile-thumb UI (auto-default/upload/clear/picker) · T-108 per-row cut-point frame thumbnails (intro gold / outro blue, debounced, bounded) · T-109 docs. Reused IThumbnailService/PathToBitmapConverter/AppSettings round-trip; WPF-free VMs.
 - **T-110 DONE** (`49c02ad`): Split jog buttons freeze on the exact frame (pause-then-seek at Scrub), no ~1s play burst.
 - Drive: T-110 + G-038 (T-106..109). Suite 819→864 (+45). All pushed, Release relaunched. T-105 (test-infra refactors, later/low) intentionally left out of the drive.
+
+## 2026-08-23 · todo-task-next — G-039 planned (Bulk Cut polish: layout-mode + profiles UX + apply-to-all fix)
+- User ask (3 items; message trailed off after "and"): (A) Bulk Cut doesn't respond to vertical/horizontal mode; (B) profiles bar is flat inline — improve UX/UI; (C) apply-to-all button doesn't re-activate after first use. Grounding: BulkCutView has NO OrientedSplitPanel/IsVertical (Split uses it for video↔tools); profiles = flat Horizontal StackPanel; apply commands re-raise via global requery (:917) — bug likely selection-lost-on-apply / idempotent-no-op / CanExecute-stuck.
+- **G-039** + T-111..114: T-111 fix apply-to-all re-activation [S,now,bug] · T-112 Bulk layout-mode-aware (OrientedSplitPanel pane↔list flip) [L,now] · T-113 profiles UX/UI regroup [M,now] · T-114 docs+SPEC-011 [S,←111/112/113]. todo-task-next → build to convergence. proceed-with: perfect-e2e --auto-approve.
