@@ -914,7 +914,17 @@ public sealed class BulkCutViewModel : ObservableObject
         OnPropertyChanged(nameof(CanSaveProfile));
         OnPropertyChanged(nameof(CanApplyProfileToSelected));
         OnPropertyChanged(nameof(CanApplyProfileToAll));
-        SaveProfileCommand.RaiseCanExecuteChanged(); // global requery re-evaluates every RelayCommand's CanExecute
+
+        // T-111: re-raise EACH profile command explicitly rather than leaning on the "global requery"
+        // side effect of a single SaveProfileCommand.RaiseCanExecuteChanged(). Since RelayCommand now
+        // raises its OWN CanExecuteChanged deterministically (not only via CommandManager), the Apply→all /
+        // Apply→selected / Delete buttons must be re-raised directly so a profile-selection change (e.g.
+        // "no profile → disabled", then "profile picked → enabled") notifies their bound buttons every time
+        // — the root cause of "Apply → all works once then its enabled-state goes stale."
+        SaveProfileCommand.RaiseCanExecuteChanged();
+        ApplyProfileToSelectedCommand.RaiseCanExecuteChanged();
+        ApplyProfileToAllCommand.RaiseCanExecuteChanged();
+        DeleteProfileCommand.RaiseCanExecuteChanged();
     }
 
     // ---- Run batch (§4 — DELEGATES to T-095) ------------------------------------------------
@@ -1113,6 +1123,13 @@ public sealed class BulkCutViewModel : ObservableObject
         RunBatchCommand.RaiseCanExecuteChanged();
         ClearCommand.RaiseCanExecuteChanged();
         ApplyToAllCommand.RaiseCanExecuteChanged();
+
+        // T-111: the profile Apply→all gate (CanApplyProfileToAll) ALSO depends on the checked-row set
+        // (Items.Any(IsCheckedByUser)) and on Items membership, both of which change here (rows added/
+        // removed, a row's IsEnabled toggled → OnItemsChanged/OnItemChanged → RaiseRunState). Re-raise it
+        // directly so its button re-evaluates deterministically instead of only via the global requery.
+        OnPropertyChanged(nameof(CanApplyProfileToAll));
+        ApplyProfileToAllCommand.RaiseCanExecuteChanged();
     }
 
     private static string NormalizePath(string path)
