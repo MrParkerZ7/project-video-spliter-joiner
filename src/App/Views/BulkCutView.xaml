@@ -252,12 +252,16 @@
                                 Visibility="{Binding HasProfiles, Converter={StaticResource BoolToVisibility}}">
                             <StackPanel Orientation="Horizontal">
                                 <Button Style="{StaticResource ProfileSegmentButton}"
-                                        Content="⧉ selected"
+                                        Content="⧉ Apply to selected"
                                         ToolTip="Apply the chosen profile to the selected row (re-snapped + re-validated)"
                                         Command="{Binding ApplyProfileToSelectedCommand}" />
                                 <Rectangle Width="1" Fill="{StaticResource BorderBrush}" />
+                                <!-- Primary apply action — SemiBold marks "all" as the emphasised choice
+                                     of the pair; relabelled from the terse "⧉ all" so it reads unambiguously
+                                     as "apply to all" (T-116). -->
                                 <Button Style="{StaticResource ProfileSegmentButton}"
-                                        Content="⧉ all"
+                                        Content="⧉ Apply to all"
+                                        FontWeight="SemiBold"
                                         ToolTip="Apply the chosen profile to every checked row (outro measured from the end so uneven lengths align)"
                                         Command="{Binding ApplyProfileToAllCommand}" />
                             </StackPanel>
@@ -555,7 +559,59 @@
                                         BorderBrush="{StaticResource BorderBrush}"
                                         BorderThickness="1"
                                         CornerRadius="{StaticResource RadiusMd}">
-                                    <Grid>
+                                    <DockPanel LastChildFill="True">
+
+                                        <!-- ===== T-116: stable apply-to-all + remove action cluster =====
+                                             Docked RIGHT so the DockPanel reserves this cluster's width from
+                                             the edge BEFORE laying out the fill content — so the apply-to-all
+                                             stays reachable on every row in BOTH layout modes. It used to be
+                                             the rightmost Auto column of one wide Grid and clipped off the
+                                             right edge in horizontal / narrow-list mode once the T-108
+                                             thumbnails + IN/OUT readouts overflowed the (horizontal-scroll-
+                                             disabled) list viewport. Compact labels keep the docked width
+                                             small so the fill (scrub + thumbnails + readouts) keeps room. -->
+                                        <StackPanel DockPanel.Dock="Right"
+                                                    Orientation="Horizontal"
+                                                    VerticalAlignment="Center">
+                                            <!-- Apply this row's cut points to all rows — the primary per-row
+                                                 gesture. Keeps the familiar ⧉ glyph (accent) + a short "all"
+                                                 label + a strong tooltip so it reads as "apply to all" at a
+                                                 glance instead of a mystery icon. Same command + parameter as
+                                                 before (no behaviour change). -->
+                                            <Button Padding="8,3"
+                                                    VerticalAlignment="Center"
+                                                    ToolTip="Apply this row's cut points to all rows (overwrites every other row's intro-end / outro-start)"
+                                                    Command="{Binding DataContext.ApplyToAllCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
+                                                    CommandParameter="{Binding}">
+                                                <StackPanel Orientation="Horizontal">
+                                                    <TextBlock Text="⧉"
+                                                               VerticalAlignment="Center"
+                                                               Foreground="{StaticResource AccentBrush}" />
+                                                    <TextBlock Text="all"
+                                                               Margin="4,0,0,0"
+                                                               VerticalAlignment="Center"
+                                                               FontSize="{StaticResource FontSizeSmall}"
+                                                               Foreground="{StaticResource TextSecondaryBrush}" />
+                                                </StackPanel>
+                                            </Button>
+
+                                            <!-- Remove this row -->
+                                            <Button Content="✕"
+                                                    Margin="6,0,0,0"
+                                                    Padding="7,2"
+                                                    VerticalAlignment="Center"
+                                                    ToolTip="Remove this video"
+                                                    Command="{Binding DataContext.RemoveCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
+                                                    CommandParameter="{Binding}" />
+                                        </StackPanel>
+
+                                    <!-- FILL: the row's detail content (checkbox · name/keep · scrub ·
+                                         cut-point thumbnails · IN/OUT · state chip). ClipToBounds so that when
+                                         the list is narrow (horizontal mode) this content clips at its own
+                                         right edge instead of overdrawing the docked action cluster above —
+                                         the scrub column (the sole `*`) yields first, the detail columns clip
+                                         next, and the apply-to-all / remove actions stay put. -->
+                                    <Grid ClipToBounds="True">
                                         <Grid.ColumnDefinitions>
                                             <ColumnDefinition Width="Auto" />   <!-- 0: row-in-batch checkbox -->
                                             <ColumnDefinition Width="210" />    <!-- 1: name + keep-line + warning -->
@@ -563,8 +619,6 @@
                                             <ColumnDefinition Width="Auto" />   <!-- 3: cut-point frame thumbnails (T-108) -->
                                             <ColumnDefinition Width="Auto" />   <!-- 4: IN / OUT readouts -->
                                             <ColumnDefinition Width="Auto" />   <!-- 5: per-row state chip -->
-                                            <ColumnDefinition Width="Auto" />   <!-- 6: apply-to-all -->
-                                            <ColumnDefinition Width="Auto" />   <!-- 7: remove -->
                                         </Grid.ColumnDefinitions>
 
                                         <!-- Row-in-batch checkbox -->
@@ -703,25 +757,8 @@
                                                        Foreground="{Binding RowState, Converter={StaticResource RowState}, ConverterParameter=brush}" />
                                         </Border>
 
-                                        <!-- Apply this row's cut points to all others (source = this row) -->
-                                        <Button Grid.Column="6"
-                                                Content="⧉"
-                                                Margin="0,0,4,0"
-                                                Padding="7,2"
-                                                VerticalAlignment="Center"
-                                                ToolTip="Apply this row's cut points to every other row"
-                                                Command="{Binding DataContext.ApplyToAllCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
-                                                CommandParameter="{Binding}" />
-
-                                        <!-- Remove this row -->
-                                        <Button Grid.Column="7"
-                                                Content="✕"
-                                                Padding="7,2"
-                                                VerticalAlignment="Center"
-                                                ToolTip="Remove this video"
-                                                Command="{Binding DataContext.RemoveCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}"
-                                                CommandParameter="{Binding}" />
                                     </Grid>
+                                    </DockPanel>
                                 </Border>
                             </DataTemplate>
                     </ListBox.ItemTemplate>
