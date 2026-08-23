@@ -244,7 +244,9 @@ The Bulk tab **remembers its own split position per layout**, independent of the
    **selected row** at the playhead. It **keyframe-snaps** exactly like any other cut, and *Set
    outro-start here* **adds** an outro to the row if it didn't have one. The selected row wears a **gold
    ring** in the list. **Only one video decodes at a time** — selecting another row hands the single
-   player to it.
+   player to it. Selecting is **instant** — the row highlights right away and the preview settles a beat
+   later on whatever row you land on, so scrolling or arrowing through the list doesn't load every row you
+   pass, only the one you stop on.
 3. **Mark the cut points on each row.** Every row has its own **scrub bar with two handles**:
    - the **gold intro-end handle (`▸`)** marks where the intro ends — everything before it is dropped;
    - the optional **blue outro-start handle (`◂`)** marks where the outro begins — everything after it
@@ -259,8 +261,9 @@ The Bulk tab **remembers its own split position per layout**, independent of the
    (blue-ringed) — so you can confirm a cut by eye without opening the preview. They **update as you drag**
    each handle (a beat behind, once the cut settles), and show a muted placeholder while a frame loads or
    if it can't be read. A row whose handles leave nothing meaningful to keep is marked invalid and excluded.
-4. **Apply cut points to all (optional).** Set one row the way you want, then **apply its cut points to
-   every other row** so you don't mark each by hand. The intro-end copies as an absolute time from the
+4. **Apply cut points to all (optional).** Set one row the way you want, then click the **⧉ "all"** button
+   on that row to **apply its cut points to every other row** so you don't mark each by hand (it sits with
+   the row's remove **✕** in the action cluster at the row's right edge, reachable in both layout modes). The intro-end copies as an absolute time from the
    start, but **the outro is measured from the *end* of each file** — so a set of episodes of *different
    lengths* still line up (you trim the same amount off every tail, not to the same absolute timestamp).
    If a copied cut doesn't fit a shorter video, that row is **flagged for you to fix**, never silently

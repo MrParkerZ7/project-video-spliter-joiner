@@ -257,6 +257,19 @@ re-encode — the player only previews; every cut continues to keyframe-snap thr
 
 ### Fixed
 
+- **Bulk Cut — instant row selection (debounced preview) + apply-to-all now reachable/labelled in both
+  layout modes (G-040)** — selecting a row in the Bulk Cut list is now **instant**: the row highlights and
+  its controls light up immediately, while the heavy preview open is **deferred behind a short (~250ms)
+  latest-wins debounce**, so **arrowing or scrolling through the list opens only the row you settle on**
+  instead of firing one FFME decoder init per row swept past (the old selection lag / "doesn't work").
+  Clearing the selection or starting a batch run **cancels a still-pending open**, so a stale preview never
+  lands after the list is cleared or the run has begun; the settled open still goes through the last-line
+  `MediaReopenGuard`. Separately, the per-row **apply-to-all** (⧉) had been **clipped off the right edge and
+  unreachable in horizontal (narrow-list) mode** once the cut-point thumbnails + IN/OUT readouts overflowed
+  the row — it and the **remove** (✕) button now sit in a **right-docked action cluster that stays reachable
+  in both layout modes**, relabelled per-row **⧉ "all"** (with a tooltip) and, in the Profiles card,
+  **⧉ Apply to selected / ⧉ Apply to all**. The debounce is a WPF-free view-model change and the
+  discoverability fix is view/label/layout only — **same commands, same apply semantics**, no behavior change.
 - **Cut markers appear instantly (G-012)** — placing a cut (Set-cut-at-playhead, manual add, or a
   timeline click) now drops the marker **immediately**, even while the background keyframe index is
   still running, instead of waiting for the scan. The optimistic marker shows a **"snapping…"** hint

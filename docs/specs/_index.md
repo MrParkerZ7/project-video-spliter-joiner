@@ -22,14 +22,14 @@ One spec per feature; numbered invariants are the source `todo-automate` derives
 | [SPEC-008](SPEC-008-operation-progress-eta.md) | operation-progress-eta | app | 40 | 40 | 0 |
 | [SPEC-009](SPEC-009-app-settings.md) | app-settings | app | 25 | 25 | 0 |
 | [SPEC-010](SPEC-010-split-screen.md) | split-screen | app | 40 | 40 | 0 |
-| [SPEC-011](SPEC-011-bulk-cut-screen.md) | bulk-cut-screen | app | 71 | 71 | 0 |
+| [SPEC-011](SPEC-011-bulk-cut-screen.md) | bulk-cut-screen | app | 73 | 73 | 0 |
 | [SPEC-012](SPEC-012-join-screen.md) | join-screen | app | 28 | 28 | 0 |
 | [SPEC-013](SPEC-013-preview-player.md) | preview-player | app | 48 | 46 | 2 |
 | [SPEC-014](SPEC-014-timeline.md) | timeline | app | 35 | 30 | 5 |
 | [SPEC-015](SPEC-015-app-shell-theming.md) | app-shell-theming | ui | 28 | 22 | 6 |
-| **TOTAL** | | | **563** | **547** | **16** |
+| **TOTAL** | | | **565** | **549** | **16** |
 
-**Coverage: 97% of spec cases** (547/563). The 16 remaining are deferred (see [_GAPS.md](_GAPS.md)):
+**Coverage: 97% of spec cases** (549/565). The 16 remaining are deferred (see [_GAPS.md](_GAPS.md)):
 view-only WPF render (SPEC-014 scrub/waveform), `FfmeMediaPlayer` WPF-bound (verified live), native P/Invoke,
 App crash-handler wiring, resource-load theme styles, and 2 intentionally-unreachable defensive assertions —
 all need a helper-extraction / seam refactor to become unit-testable. Tracked by **T-105**.

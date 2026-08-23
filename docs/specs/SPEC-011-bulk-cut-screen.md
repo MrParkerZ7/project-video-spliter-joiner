@@ -10,8 +10,8 @@ sources:
   - src/App/ViewModels/CutProfileApplier.cs
   - src/App/ViewModels/RelayCommand.cs
   - src/App/ViewModels/MainViewModel.cs
-serves-goal: [G-036, G-037, G-038, G-039]
-updated: 2026-08-23
+serves-goal: [G-036, G-037, G-038, G-039, G-040]
+updated: 2026-08-24
 ---
 
 ## What
@@ -299,11 +299,44 @@ SPEC-007); the shared `IThumbnailService`/`FfmpegThumbnailService` frame source 
 > with the **same** commands, thumbnail display, Save popup, and `HasProfiles` gating (I51–I60). No
 > behavior changed, so it adds no invariant. (`BulkCutView.xaml`)
 
+### Debounced preview-open on selection (G-040 / T-115)
+- **I72** — selecting a row **lights it up synchronously** while the preview open is **debounced (~250ms) +
+  latest-wins**: the `SelectedItem` setter updates the selection, raises `HasSelection`, and re-raises the
+  playhead + profile command `CanExecute` states **synchronously** (instant highlight — none of these wait on
+  the player), and only the shared-player `Player.Open` of the row's `Path` is deferred, behind the
+  `DefaultSelectionOpenDebounce` (250ms) settle window. Each selection change first cancels the prior pending
+  open (`CancelPendingOpen`, CTS-swap) then schedules `OpenAfterDebounceAsync`, so sweeping/arrowing through N
+  rows issues **exactly one** `Player.Open` — of the row finally settled on, not one heavy FFME decoder init
+  per row swept past (refines I27–I28: the open now defers behind the debounce instead of firing on set).
+  (`SelectedItem` setter, `OpenOrUnloadSelected`, `CancelPendingOpen`, `OpenAfterDebounceAsync`,
+  `DefaultSelectionOpenDebounce`)
+- **I73** — the pending open is **cancelled before an unload or a run can be overtaken by a stale open**: a
+  null/clear selection calls `CancelPendingOpen()` and then `Player.Unload()` immediately
+  (`OpenOrUnloadSelected(null)`), and `RunBatchAsync` calls `CancelPendingOpen()` **before** `Player.Stop()`
+  (stop-on-run wins) — so an open scheduled just before a clear or a batch run never lands after the
+  unload/stop. The settled open still routes through `PlayerViewModel.Open` → `FfmeMediaPlayer`'s
+  `MediaReopenGuard` (T-080), the last-line native-AV safety the debounce sits in front of and does **not**
+  replace. (`OpenOrUnloadSelected`, `CancelPendingOpen`, `RunBatchAsync`)
+
+> **T-116 (apply-to-all discoverability) — no new invariant.** The per-row apply-to-all (**⧉ "all"**) and
+> remove (**✕**) buttons were the two rightmost `Auto` columns of one wide row `Grid`; after T-108's
+> cut-point thumbnails + IN/OUT readouts that row overflowed the (horizontal-scroll-disabled) list viewport,
+> so in **horizontal / narrow-list** mode they **clipped off the right edge and were unreachable** ("where's
+> the apply-to-all button?"). The row content is now a `DockPanel` with those two actions in a **right-docked
+> cluster** (DockPanel reserves their width from the edge before the fill) + `ClipToBounds` on the fill grid,
+> so apply-to-all + remove **stay reachable on every row in both layout modes**; the per-row button keeps the
+> ⧉ glyph and gains a short **"all"** label + tooltip, and the profiles split-control is relabelled
+> **⧉ Apply to selected / ⧉ Apply to all**. **View/label/layout only** — same commands + parameters, no
+> behavior change (apply semantics unchanged — see I20–I26, I55–I57), so it adds no invariant. This is a
+> **layout-reachability** property (view-only WPF render, not unit-testable — the deferred-gap class of
+> [_GAPS.md](_GAPS.md)). (`BulkCutView.xaml`)
+
 ## Links
 - Design: D-004 (Bulk Cut screen)
 - Goals: G-036 (batch trim), G-037 (shared preview + set-at-playhead + reusable cut profiles), G-038 (profile
   thumbnails + per-row cut-point frame previews — feature task T-108 for the per-row thumbnails here), G-039
-  (Bulk Cut polish — layout-mode-aware body T-112, profiles-card regroup T-113, apply-to-all re-activation T-111)
+  (Bulk Cut polish — layout-mode-aware body T-112, profiles-card regroup T-113, apply-to-all re-activation T-111),
+  G-040 (Bulk Cut fixes — debounced preview-open T-115 (I72–I73), apply-to-all discoverability T-116 (view-only note))
 - Related specs: the T-095 batch engine (`IBulkTrimEngine` / `BulkTrimEngine`) spec — not yet authored; T-094
   kept-segment request (`KeptSegmentSelector`); T-080 media reopen guard (`MediaReopenGuard`); T-102 cut-profile
   persistence (`CutProfile` / `IAppSettings.CutProfiles`); SPEC-007 (cut profiles — incl. the T-106/107
@@ -318,4 +351,5 @@ SPEC-007); the shared `IThumbnailService`/`FfmpegThumbnailService` frame source 
   `src/App/Views/BulkCutView.xaml` (`OrientedSplitPanel` body — T-112; "Profiles" card — T-113).
 - Tests: `tests/App.Tests/BulkItemThumbnailTests.cs` (T-108 cut-point thumbnails) · `tests/App.Tests/BulkSpecGapTests.cs`
   · `tests/App.Tests/BulkCutApplyToAllReactivationTests.cs` (T-111 apply-to-all re-fires — I69–I71) ·
-  `tests/App.Tests/AppSettingsTests.cs` (T-112 Bulk-ratio round-trip — I68's persisted ratios, tagged `serves-spec=SPEC-011`).
+  `tests/App.Tests/AppSettingsTests.cs` (T-112 Bulk-ratio round-trip — I68's persisted ratios, tagged `serves-spec=SPEC-011`) ·
+  `tests/App.Tests/BulkCutViewModelDebouncedPreviewTests.cs` (T-115 debounced preview-open — I72–I73, 4 tests tagged `serves-spec=SPEC-011`).
