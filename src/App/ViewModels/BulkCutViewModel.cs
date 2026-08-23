@@ -75,6 +75,14 @@ public sealed class BulkCutViewModel : ObservableObject
     // (displayed tiny in the picker, but stored crisp so an upload/override reads cleanly too).
     private const int ProfileThumbnailWidth = 96;
 
+    /// <summary>
+    /// Default settle window (T-115) before a SETTLED row selection opens in the shared preview player.
+    /// Short enough to feel instant on a deliberate single click (~250ms is imperceptible), long enough
+    /// to coalesce a fast arrow/scroll through rows into ONE FFME open (the heavy decoder init) — only
+    /// the row you land on opens, not every row swept past.
+    /// </summary>
+    public static readonly TimeSpan DefaultSelectionOpenDebounce = TimeSpan.FromMilliseconds(250);
+
     // §3 — the single bounded scan gate, owned here and shared into every row (max 3 concurrent ffprobe scans).
     private readonly SemaphoreSlim _scanGate = new(3, 3);
 
@@ -87,6 +95,17 @@ public sealed class BulkCutViewModel : ObservableObject
     // uses its production defaults (BulkItemViewModel.DefaultThumbnailDebounce over Task.Delay).
     private readonly TimeSpan? _thumbnailDebounce;
     private readonly Func<TimeSpan, CancellationToken, Task>? _thumbnailDelay;
+
+    // T-115: the preview-open debounce interval + delay-func seams (mirrors the T-108 thumbnail seams).
+    // Production = DefaultSelectionOpenDebounce over Task.Delay; tests inject an immediate/gated delay so
+    // the debounced open is deterministic.
+    private readonly TimeSpan _selectionOpenDebounce;
+    private readonly Func<TimeSpan, CancellationToken, Task> _selectionOpenDelay;
+
+    // T-115: the pending debounced preview-open request. Swapped — and the prior one cancelled — on every
+    // selection change (latest-wins), and cancelled outright on a null/clear selection and when a batch run
+    // starts, so a stale open can never land after an Unload / after the run's Stop.
+    private CancellationTokenSource? _openCts;
 
     private readonly object _progressLock = new();
     private double _lastOverall;
@@ -108,6 +127,10 @@ public sealed class BulkCutViewModel : ObservableObject
     /// that file in THIS one FFME-backed <see cref="PlayerViewModel"/> (never a player per row). The
     /// composition root passes the Bulk tab's own <see cref="FfmeMediaPlayer"/>; when omitted it defaults
     /// to a no-op <see cref="NullMediaPlayer"/> so existing constructions / tests keep compiling.
+    /// <paramref name="selectionOpenDebounce"/> / <paramref name="selectionOpenDelay"/> are the T-115 test
+    /// seams for the preview-open debounce (default = <see cref="DefaultSelectionOpenDebounce"/> over
+    /// <see cref="Task.Delay(TimeSpan, CancellationToken)"/>); tests inject an immediate/gated delay so the
+    /// debounced open is deterministic, mirroring the T-108 thumbnail seams.
     /// </summary>
     public BulkCutViewModel(
         IMediaProbe probe,
@@ -118,7 +141,9 @@ public sealed class BulkCutViewModel : ObservableObject
         IMediaPlayer? player = null,
         ProfileThumbnailStore? thumbnailStore = null,
         TimeSpan? thumbnailDebounce = null,
-        Func<TimeSpan, CancellationToken, Task>? thumbnailDelay = null)
+        Func<TimeSpan, CancellationToken, Task>? thumbnailDelay = null,
+        TimeSpan? selectionOpenDebounce = null,
+        Func<TimeSpan, CancellationToken, Task>? selectionOpenDelay = null)
     {
         _probe = probe ?? throw new ArgumentNullException(nameof(probe));
         _splitEngine = splitEngine ?? throw new ArgumentNullException(nameof(splitEngine));
@@ -127,6 +152,10 @@ public sealed class BulkCutViewModel : ObservableObject
         _bulkTrimEngine = bulkTrimEngine ?? new BulkTrimEngine(_splitEngine, new KeptMiddleRequestBuilder(_probe));
         _thumbnailDebounce = thumbnailDebounce; // T-108 test seams (null ⇒ per-row production defaults)
         _thumbnailDelay = thumbnailDelay;
+
+        // T-115 preview-open debounce seams (null ⇒ production defaults; tests inject immediate/gated).
+        _selectionOpenDebounce = selectionOpenDebounce is { } d && d > TimeSpan.Zero ? d : DefaultSelectionOpenDebounce;
+        _selectionOpenDelay = selectionOpenDelay ?? ((wait, ct) => Task.Delay(wait, ct));
 
         // T-107: the file store for profile thumbnails (T-106). Default = the per-user root; tests inject a
         // store over a temp root. Constructing it is side-effect-free (only resolves a root string).
@@ -180,15 +209,23 @@ public sealed class BulkCutViewModel : ObservableObject
     public PlayerViewModel Player { get; }
 
     /// <summary>
-    /// The currently-selected row (two-way bound from the list, T-101). Changing it opens the row's
-    /// <see cref="BulkItemViewModel.Path"/> in the ONE shared <see cref="Player"/> (a null selection —
-    /// list cleared / nothing selected — unloads it instead). The open goes through
-    /// <see cref="PlayerViewModel.Open"/> → <see cref="FfmeMediaPlayer"/>'s built-in
-    /// <see cref="MediaReopenGuard"/> (T-080), so a rapid row-to-row switch never issues Open while a
-    /// prior Close is still in flight (the native-AV hazard) — each Open supersedes the previous pending
-    /// one. The first <see cref="AddFilesAsync"/> auto-selects the first row for convenience; removing
+    /// The currently-selected row (two-way bound from the list, T-101). Changing it lights the row up
+    /// instantly (selection + <see cref="HasSelection"/> + the command CanExecute states are set
+    /// synchronously) and, after a short debounce, opens the row's <see cref="BulkItemViewModel.Path"/>
+    /// in the ONE shared <see cref="Player"/> (a null selection — list cleared / nothing selected —
+    /// cancels any pending open and unloads it instead).
+    ///
+    /// <para>T-115: the preview open is <b>debounced (~250ms) + latest-wins</b> — a newer selection
+    /// cancels the pending open, so arrowing/scrolling through N rows opens only the row you SETTLE on,
+    /// never one heavy FFME decoder init per row swept past (the selection-lag root cause). The debounce
+    /// is an ADDITIONAL upstream throttle in front of — not a replacement for — the last-line safety:
+    /// the settled open still goes through <see cref="PlayerViewModel.Open"/> →
+    /// <see cref="FfmeMediaPlayer"/>'s built-in <see cref="MediaReopenGuard"/> (T-080), so even a switch
+    /// inside the debounce window never issues Open while a prior Close is still in flight.</para>
+    ///
+    /// <para>The first <see cref="AddFilesAsync"/> auto-selects the first row for convenience; removing
     /// the selected row re-points the selection at a neighbour (or unloads) so it never opens a
-    /// just-removed file.
+    /// just-removed file.</para>
     /// </summary>
     public BulkItemViewModel? SelectedItem
     {
@@ -197,10 +234,16 @@ public sealed class BulkCutViewModel : ObservableObject
         {
             if (SetProperty(ref _selectedItem, value))
             {
-                OpenOrUnloadSelected(value);
+                // T-115: the selection and everything cheap that depends on it (highlight, HasSelection,
+                // the playhead + profile command CanExecute states) update SYNCHRONOUSLY — the row lights
+                // up instantly, never waiting on the heavy FFME preview open. ONLY that open is deferred
+                // (debounced + latest-wins) in OpenOrUnloadSelected below, so arrowing through N rows opens
+                // just the settled one instead of thrashing the element with N decoder inits.
                 OnPropertyChanged(nameof(HasSelection));
                 RaisePlayheadCommandStates();
                 RaiseProfileCommandStates(); // Save / Apply→selected depend on the selection (T-103)
+
+                OpenOrUnloadSelected(value);
             }
         }
     }
@@ -542,21 +585,97 @@ public sealed class BulkCutViewModel : ObservableObject
     }
 
     /// <summary>
-    /// Open the newly-selected row's file in the ONE shared <see cref="Player"/>, or unload it on a
-    /// null selection (T-100). The open goes through <see cref="PlayerViewModel.Open"/>, which for the
-    /// production <see cref="FfmeMediaPlayer"/> registers the open with its <see cref="MediaReopenGuard"/>
-    /// (T-080) and only issues the native Open once the element has settled out of any closing/opening
-    /// state — so a rapid row-to-row switch supersedes the prior pending open instead of crashing.
+    /// Route a selection change to the ONE shared <see cref="Player"/> (T-100), now DEBOUNCED (T-115):
+    /// <list type="bullet">
+    /// <item>Any change first <b>cancels the pending debounced open</b> (latest-wins) so a superseded
+    /// row never opens — arrowing through N rows collapses to one open of the settled row.</item>
+    /// <item>A <b>null</b> selection (list cleared / nothing selected) unloads IMMEDIATELY, having just
+    /// cancelled the pending open above — so a stray open can never land after the unload.</item>
+    /// <item>A <b>non-null</b> selection schedules <see cref="OpenAfterDebounceAsync"/>: settle for the
+    /// debounce window, then — if not superseded — open. The open itself still goes through
+    /// <see cref="PlayerViewModel.Open"/> → <see cref="FfmeMediaPlayer"/>'s <see cref="MediaReopenGuard"/>
+    /// (T-080), the last-line native-AV safety the debounce sits in front of.</item>
+    /// </list>
     /// </summary>
     private void OpenOrUnloadSelected(BulkItemViewModel? item)
     {
+        // Latest-wins: a newer selection (or a clear) supersedes any still-pending debounced open.
+        CancelPendingOpen();
+
         if (item is null)
         {
             Player.Unload();
+            return;
         }
-        else
+
+        var cts = new CancellationTokenSource();
+        _openCts = cts;
+        _ = OpenAfterDebounceAsync(item.Path, cts);
+    }
+
+    /// <summary>
+    /// Cancel + dispose the pending debounced open's CTS (if any) so a superseded / cleared / run-preempted
+    /// selection never reaches <see cref="PlayerViewModel.Open"/>. Idempotent; safe to call when none is
+    /// pending. Mirrors the cancel-prior discipline of the T-108 grabber / <see cref="ThumbnailPreviewViewModel"/>.
+    /// </summary>
+    private void CancelPendingOpen()
+    {
+        var cts = _openCts;
+        _openCts = null;
+        if (cts is null)
         {
-            Player.Open(item.Path);
+            return;
+        }
+
+        try
+        {
+            cts.Cancel();
+        }
+        catch (ObjectDisposedException)
+        {
+            // Already retired by its own finally — nothing to cancel.
+        }
+    }
+
+    /// <summary>
+    /// Debounce → open, for one settled selection (T-115). Waits the debounce window off the immediate
+    /// call (a newer selection / clear / run cancels the wait via the shared CTS), then — only if this
+    /// request is still the current one — opens the file in the shared player.
+    ///
+    /// <para>Unlike the T-108 frame grabber (which awaits with <c>ConfigureAwait(false)</c> to run ffmpeg
+    /// OFF the UI thread and marshals only the tiny result back), the deferred action here IS a UI-thread
+    /// operation — <see cref="PlayerViewModel.Open"/> drives the FFME element + raises bound state — so the
+    /// whole method stays on the captured context (<c>ConfigureAwait(true)</c>): in the app that resumes on
+    /// the WPF dispatcher; under an immediate test delay the already-complete await continues inline, so the
+    /// open is observable synchronously. WPF-free: pure <see cref="Task"/> / <see cref="CancellationToken"/>
+    /// / delay-func, no PresentationFramework types.</para>
+    /// </summary>
+    private async Task OpenAfterDebounceAsync(string path, CancellationTokenSource cts)
+    {
+        try
+        {
+            // Settle before the heavy FFME open. A newer selection cancels this wait (latest-wins).
+            await _selectionOpenDelay(_selectionOpenDebounce, cts.Token).ConfigureAwait(true);
+
+            if (cts.Token.IsCancellationRequested)
+            {
+                return; // superseded after the wait resolved but before we opened
+            }
+
+            Player.Open(path);
+        }
+        catch (OperationCanceledException)
+        {
+            // Superseded by a newer selection / a clear / a run — drop silently (no open lands).
+        }
+        finally
+        {
+            if (ReferenceEquals(_openCts, cts))
+            {
+                _openCts = null;
+            }
+
+            cts.Dispose();
         }
     }
 
@@ -944,6 +1063,9 @@ public sealed class BulkCutViewModel : ObservableObject
 
         // T-100: stop the preview decode before the batch trims — don't waste a decoder/CPU on the
         // shared player while ffmpeg is doing the real work. The file stays selected; it re-plays on demand.
+        // T-115: also cancel any still-pending debounced open so a select-then-immediately-run gesture can't
+        // let a stale open fire AFTER this Stop (stop-on-run wins over an in-flight preview open).
+        CancelPendingOpen();
         Player.Stop();
 
         BatchState = BulkBatchState.Preparing;

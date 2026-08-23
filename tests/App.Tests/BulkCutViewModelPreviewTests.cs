@@ -104,13 +104,22 @@ public sealed class BulkCutViewModelPreviewTests
 #pragma warning restore CS0067
     }
 
+    /// <summary>
+    /// An immediate (non-parking) debounce seam for the T-115 preview-open: the already-complete await
+    /// continues INLINE, so a single settled selection's <see cref="PlayerViewModel.Open"/> fires
+    /// synchronously in-test — these T-100 tests keep asserting Open/Unload right after the selection
+    /// change without pumping. (Cancellation is still honoured so a superseded open is dropped.)
+    /// </summary>
+    private static Task Immediate(TimeSpan _, System.Threading.CancellationToken ct) =>
+        ct.IsCancellationRequested ? Task.FromCanceled(ct) : Task.CompletedTask;
+
     private static (BulkCutViewModel Vm, BulkFakeProbe Probe, RecordingMediaPlayer Player) Build()
     {
         var probe = new BulkFakeProbe();
         var player = new RecordingMediaPlayer();
         var vm = new BulkCutViewModel(
             probe, new ThrowingFakeSplitEngine(), new FakeThumbnailService(), new FakeSettings(),
-            new FakeBulkTrimEngine(), player);
+            new FakeBulkTrimEngine(), player, selectionOpenDelay: Immediate);
         return (vm, probe, player);
     }
 
