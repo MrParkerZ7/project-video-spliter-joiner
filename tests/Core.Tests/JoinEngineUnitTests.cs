@@ -365,4 +365,79 @@ public class JoinEngineUnitTests
         }
         finally { try { Directory.Delete(dir, recursive: true); } catch { /* best-effort */ } }
     }
+
+    // SPEC-003#I1/I20/I16 — a compatible MULTI-clip join is ONE concat-demuxer stream-copy pass
+    // (O(N)->1), never N-1 pairwise joins: the runner is launched EXACTLY once with a single
+    // command carrying both "concat" and "copy".
+    [Trait("serves-spec", "SPEC-003")]
+    [Fact]
+    public async Task JoinAsync_MultiClipCompatible_LaunchesFfmpegExactlyOnce_SingleConcatPass()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "vsj-joinbatch-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var a = Path.Combine(dir, "a.mp4");
+            var b = Path.Combine(dir, "b.mp4");
+            var c = Path.Combine(dir, "c.mp4");
+            await File.WriteAllTextAsync(a, "x");
+            await File.WriteAllTextAsync(b, "x");
+            await File.WriteAllTextAsync(c, "x");
+            var outPath = Path.Combine(dir, "joined.mp4");
+
+            // WritingFakeRunner writes the temp output (last token) + succeeds, and records
+            // CallCount + every command's token list.
+            var runner = new WritingFakeRunner();
+            var engine = new JoinEngine(runner, new StubProbe(_ => ProbeResult.Success(CompatibleClip())));
+
+            var result = await engine.JoinAsync(new JoinRequest(new[] { a, b, c }, outPath));
+
+            // CORRECTNESS: three concat-compatible clips join successfully into the output.
+            result.Success.Should().BeTrue();
+            result.OutputPath.Should().Be(Path.GetFullPath(outPath));
+
+            // PERF (batch, O(N)->1 pass): ONE ffmpeg launch — a single concat-demuxer stream-copy
+            // command — NOT N-1 pairwise joins.
+            runner.CallCount.Should().Be(1, "a compatible multi-clip join is a single concat pass, not N-1 pairwise joins");
+            runner.Commands.Should().ContainSingle();
+            runner.Commands[0].Should().Contain("concat").And.Contain("copy");
+        }
+        finally { try { Directory.Delete(dir, recursive: true); } catch { /* best-effort */ } }
+    }
+
+    // SPEC-003#I2/I6-I15 — two clips that BOTH probe successfully but differ in resolution are
+    // refused via the FULL probe-loop + CompatChecker path (distinct from the early input/output/
+    // probe-fail/output-exists guards): the refusal names the mismatched field and ffmpeg never runs.
+    [Trait("serves-spec", "SPEC-003")]
+    [Fact]
+    public async Task JoinAsync_StreamIncompatibleSet_Refuses_WithoutLaunchingFfmpeg()
+    {
+        var a = @"C:\clip-a.mp4";
+        var b = @"C:\clip-b.mp4";
+
+        // Reference clip (1920x1080) vs a second clip that probes fine but at a different resolution
+        // (1280x720) — built the CompatibleClip() way, only the video dimensions differ.
+        var reference = CompatibleClip();
+        var mismatched = new MediaInfo(
+            TimeSpan.FromSeconds(5), "mp4",
+            new[] { new StreamInfo(0, "h264", "video", 1280, 720, "yuv420p", null, null, "1/30") },
+            new[] { new StreamInfo(1, "aac", "audio", null, null, null, 48000, 2, "1/48000") });
+
+        // Recording runner: its CallCount stays 0 unless the engine actually launches ffmpeg.
+        var runner = new WritingFakeRunner();
+        var engine = new JoinEngine(
+            runner,
+            new StubProbe(p => p == a ? ProbeResult.Success(reference) : ProbeResult.Success(mismatched)));
+
+        var result = await engine.JoinAsync(new JoinRequest(new[] { a, b }, @"C:\out\joined.mp4"));
+
+        // CORRECTNESS: refused, and the refusal names the mismatched field (resolution).
+        result.Success.Should().BeFalse();
+        result.Refusal.Should().NotBeNull();
+        result.Refusal!.Mismatches.Should().Contain(m => m.Field == "resolution");
+
+        // PERF (no-I/O-on-reject): a stream-incompatible set is turned away after the probe loop +
+        // CompatChecker, before any ffmpeg launch.
+        runner.CallCount.Should().Be(0, "an incompatible set is refused before ffmpeg — no I/O on reject");
+    }
 }

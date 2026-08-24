@@ -47,6 +47,13 @@ public sealed class SplitViewModelNonBlockingLoadTests
 
         public List<string> KeyframeRequests { get; } = new();
 
+        /// <summary>
+        /// Paths whose in-flight scan token actually FIRED (recorded from the ct.Register callback
+        /// below). Lets a test prove a superseded load ACTIVELY cancels the prior scan (I5) rather
+        /// than merely ignoring its late result. Test-only probe extension — no production surface.
+        /// </summary>
+        public HashSet<string> CancelledScans { get; } = new();
+
         public Task<ProbeResult> ProbeAsync(string path, CancellationToken ct = default)
             => Task.FromResult(ProbeResultToReturn);
 
@@ -55,7 +62,11 @@ public sealed class SplitViewModelNonBlockingLoadTests
             KeyframeRequests.Add(path);
             var tcs = Gate(path);
             // Honour cancellation so a superseded scan surfaces as cancelled (stale-guard test).
-            ct.Register(() => tcs.TrySetCanceled(ct));
+            ct.Register(() =>
+            {
+                CancelledScans.Add(path);
+                tcs.TrySetCanceled(ct);
+            });
             return tcs.Task;
         }
 
@@ -609,6 +620,93 @@ public sealed class SplitViewModelNonBlockingLoadTests
             pump.RunUntil(() => true, TimeSpan.FromMilliseconds(200));
 
             vm.Keyframes.Should().BeEmpty("a scan superseded by Clear can never repopulate keyframes");
+            vm.IsIndexingKeyframes.Should().BeFalse();
+        });
+    }
+
+    // ---- One shared keyframe scan across many mid-index cuts (I13, SPEC-010) -----------------
+
+    [Fact]
+    [Trait("serves-spec", "SPEC-010")]
+    public void MultipleCutsWhileIndexing_ShareSingleKeyframeScan_NotOnePerMarker()
+    {
+        WithPump(pump =>
+        {
+            var (vm, probe, _) = Build();
+
+            // Load A with the keyframe scan GATED (in flight) so every cut below is placed while
+            // IsIndexingKeyframes is true — the optimistic/pending path.
+            var load = vm.LoadAsync(PathA);
+            pump.RunUntil(() => load.IsCompleted);
+            vm.IsIndexingKeyframes.Should().BeTrue();
+
+            // Three DISTINCT cuts placed mid-index → three pending markers, all riding the SAME
+            // in-flight scan (AddCutAt awaits the shared _keyframeIndexTask, never a second
+            // GetKeyframesAsync). Added out of chronological order to also exercise the sort.
+            vm.AddCutAt(TimeSpan.FromSeconds(2.4));
+            vm.AddCutAt(TimeSpan.FromSeconds(8.1));
+            vm.AddCutAt(TimeSpan.FromSeconds(5.6));
+            vm.Markers.Should().HaveCount(3);
+            vm.Markers.Should().OnlyContain(m => m.IsSnapPending);
+
+            // Release the ONE gated scan → all three pending markers resolve against it.
+            probe.Release(PathA, Enumerable.Range(0, 11).Select(i => TimeSpan.FromSeconds(i)).ToArray());
+            pump.RunUntil(() => !vm.IsIndexingKeyframes && vm.Markers.All(m => !m.IsSnapPending));
+
+            // PERF (dedup-coalesce, I13): exactly ONE scan served all three cuts — never one ffprobe
+            // pass per marker. Structural, not a timer.
+            probe.KeyframeRequests.Count(p => p == PathA).Should().Be(1,
+                "a single background scan is shared by every mid-index cut, not re-run per marker");
+
+            // CORRECTNESS: three markers survive (2.4→2, 5.6→6, 8.1→8 are distinct keyframes → no
+            // collapse), all resolved (none pending), and the list is time-ordered by snapped time.
+            vm.Markers.Should().HaveCount(3);
+            vm.Markers.Should().OnlyContain(m => !m.IsSnapPending);
+            vm.Markers.Select(m => m.Snapped).Should().ContainInOrder(
+                TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(6), TimeSpan.FromSeconds(8));
+            vm.Markers.Select(m => m.Snapped).Should().BeInAscendingOrder("snapped times ascending");
+        });
+    }
+
+    // ---- A new load ACTIVELY cancels the prior scan's token (I5, SPEC-010) -------------------
+
+    [Fact]
+    [Trait("serves-spec", "SPEC-010")]
+    public void LoadB_WhileAIndexing_ActivelyCancelsAScan_NotJustIgnoresLateResult()
+    {
+        WithPump(pump =>
+        {
+            var (vm, probe, _) = Build();
+
+            // Load A — its keyframe scan is gated (in flight, token live).
+            var loadA = vm.LoadAsync(PathA);
+            pump.RunUntil(() => loadA.IsCompleted);
+            vm.IsIndexingKeyframes.Should().BeTrue();
+
+            // Load B before A's scan finishes → StartKeyframeIndex cancels A's CTS, which synchronously
+            // fires the token registration inside A's GetKeyframesAsync (records the path + cancels the
+            // gate). B's scan is now the in-flight one.
+            var loadB = vm.LoadAsync(PathB);
+            pump.RunUntil(() => loadB.IsCompleted);
+            vm.InputPath.Should().Be(PathB);
+
+            // PERF (cancellation-honored, I5): A's scan token actually FIRED — this is ACTIVE
+            // cancellation, not merely dropping a late result. Structural (cancelled-set membership).
+            probe.CancelledScans.Should().Contain(PathA,
+                "a newer load must cancel the prior file's scan token, not just ignore its result");
+
+            // CORRECTNESS (latest-wins): release B first with its own keyframes → they commit.
+            var bKeyframes = new[] { TimeSpan.Zero, TimeSpan.FromSeconds(3) };
+            probe.Release(PathB, bKeyframes);
+            pump.RunUntil(() => !vm.IsIndexingKeyframes);
+            vm.Keyframes.Should().BeEquivalentTo(bKeyframes);
+
+            // A's late release is a NO-OP — its gate was already cancelled and its continuation is
+            // stale-guarded — so B's keyframes stand and indexing stays clear.
+            probe.Release(PathA, new[] { TimeSpan.FromSeconds(99) });
+            pump.RunUntil(() => true, TimeSpan.FromMilliseconds(200));
+
+            vm.Keyframes.Should().BeEquivalentTo(bKeyframes, "A's cancelled scan can never overwrite B");
             vm.IsIndexingKeyframes.Should().BeFalse();
         });
     }

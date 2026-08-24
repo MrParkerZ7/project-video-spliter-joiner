@@ -482,6 +482,61 @@ public class BulkTrimEngineTests
         }
         finally { Cleanup(dir); }
     }
+
+    // SPEC-002#I15 — rows run STRICTLY SEQUENTIALLY: the batch never has two ffmpeg trims in flight at
+    // once. CallCount==N proves each row ran, but NOT that the runs did not OVERLAP; a shared gate + a
+    // peak-concurrency high-water mark on the fake proves non-overlap. Every SplitAsync parks on the
+    // gate; we release it only after the first row is confirmed in-flight (a real TCS handshake, no
+    // sleep), then assert the peak of concurrent trims never exceeded one.
+    [Trait("serves-spec", "SPEC-002")]
+    [Fact]
+    public async Task Batch_RunsRowsSequentially_PeakConcurrencyIsOne()
+    {
+        var dir = NewDir();
+        try
+        {
+            var a = MakeItem(dir, "a", tag: 0);
+            var b = MakeItem(dir, "b", tag: 1);
+            var c = MakeItem(dir, "c", tag: 2);
+
+            var split = new FakeSplitEngine
+            {
+                // Hold every row on the gate so overlap (if any) is observable; the fake sets Entered
+                // the moment the first row is genuinely in-flight.
+                Gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously),
+                Entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously),
+            };
+            var engine = Engine(split, new FakeRequestBuilder());
+
+            // Start the batch on a background task so we can observe it mid-flight.
+            var run = Task.Run(() => engine.RunAsync(new[] { a, b, c }, new BulkTrimOptions()));
+
+            // Real await handshake — proceed only once the first row has actually entered SplitAsync
+            // (it is now parked on the gate). No Task.Delay / sleep.
+            await split.Entered!.Task;
+
+            // Release every parked/pending row; a sequential runner dispatches rows 2 and 3 only after
+            // row 1 returns, so they pass the now-open gate one at a time.
+            split.Gate!.TrySetResult();
+
+            var result = await run;
+
+            // PERF (structural, not a wall-clock timer): the high-water mark of in-flight trims never
+            // exceeded one — the batch serialises rows, so two ffmpeg trims never run at once (I15).
+            split.PeakConcurrent.Should().Be(1, "the batch serialises rows — never two trims run at once");
+
+            // CORRECTNESS: every row ran exactly once, and BOTH the dispatch order and the result ledger
+            // preserve input order.
+            result.Outcome.Should().Be(BatchOutcome.Completed);
+            split.CallCount.Should().Be(3, "every row is trimmed exactly once");
+            // rows are dispatched to the engine in input order (exact ordered equality)
+            split.Received.Select(r => Path.GetFileName(r.InputPath)).Should()
+                .Equal(new[] { "a.mp4", "b.mp4", "c.mp4" });
+            // the ledger preserves input order
+            result.Items.Select(r => r.Item.Tag).Should().Equal(0, 1, 2);
+        }
+        finally { Cleanup(dir); }
+    }
 }
 
 // --- test doubles -----------------------------------------------------------------------------
@@ -558,6 +613,25 @@ internal sealed class FakeSplitEngine : ISplitEngine
 
     public int CallCount => Received.Count;
 
+    // --- SPEC-002#I15 sequential-run instrumentation (mirrors FakeThumbnailService.Gate/PeakConcurrent) --
+
+    private readonly object _concurrencyLock = new();
+
+    /// <summary>When set, every <see cref="SplitAsync"/> parks on this gate before doing work — hold it to
+    /// observe how many trims run CONCURRENTLY, release it to let the parked rows drain (SPEC-002#I15).</summary>
+    public TaskCompletionSource? Gate { get; set; }
+
+    /// <summary>Set by the fake the moment a row ENTERS <see cref="SplitAsync"/> (after the concurrency count
+    /// is bumped, before it parks on <see cref="Gate"/>) — a real await handshake that lets a test proceed
+    /// only once the first row is genuinely in-flight, with no Task.Delay/sleep.</summary>
+    public TaskCompletionSource? Entered { get; set; }
+
+    /// <summary>Live count of in-flight <see cref="SplitAsync"/> calls (SPEC-002#I15).</summary>
+    public int CurrentConcurrent { get; private set; }
+
+    /// <summary>High-water mark of concurrent trims — a strictly sequential batch never exceeds one (SPEC-002#I15).</summary>
+    public int PeakConcurrent { get; private set; }
+
     public FakeSplitEngine(
         Dictionary<string, Behavior>? behaviorByName = null,
         Behavior @default = Behavior.Succeed,
@@ -579,37 +653,68 @@ internal sealed class FakeSplitEngine : ISplitEngine
         IProgress<OperationStatus>? status = null,
         IProgress<PartProgress>? partProgress = null)
     {
-        Received.Add(req);
-
-        // Every request the batch runner builds must be a clean stream-copy request (subset path).
-        req.SelectedSegmentIndices.Should().NotBeNull();
-
-        var key = Path.GetFileName(req.InputPath);
-        var behavior = _behaviorByName is not null && _behaviorByName.TryGetValue(key, out var b) ? b : _default;
-
-        progress?.Report(0.5);
-
-        switch (behavior)
+        TaskCompletionSource? gate;
+        lock (_concurrencyLock)
         {
-            case Behavior.Cancel:
-                _cancelSource?.Cancel();
-                ct.ThrowIfCancellationRequested();
-                throw new OperationCanceledException(ct);
+            Received.Add(req);
+            CurrentConcurrent++;
+            if (CurrentConcurrent > PeakConcurrent)
+            {
+                PeakConcurrent = CurrentConcurrent;
+            }
 
-            case Behavior.ThrowSplit:
-                throw new SplitException(
-                    $"The trim of '{key}' failed (ffmpeg exit -22).",
-                    logFilePath: null,
-                    fullStdErr: _throwStdErr ?? $"stderr tail for {key}");
+            gate = Gate;
+        }
 
-            default:
-                var outputPath = Path.Combine(req.OutputDir, req.NamingPattern);
-                Directory.CreateDirectory(req.OutputDir);
-                await File.WriteAllTextAsync(outputPath, "trimmed", ct).ConfigureAwait(false);
-                progress?.Report(1.0);
-                return new SplitResult(
-                    new[] { new SplitSegment(outputPath, TimeSpan.Zero, TimeSpan.Zero, TimeSpan.Zero, TimeSpan.Zero) },
-                    _successWarnings ?? Array.Empty<string>());
+        // Real await handshake: a row is now genuinely in-flight (counted, about to park).
+        Entered?.TrySetResult();
+
+        try
+        {
+            // Every request the batch runner builds must be a clean stream-copy request (subset path).
+            req.SelectedSegmentIndices.Should().NotBeNull();
+
+            // When gated, park here until the test releases — this is what lets PeakConcurrent observe
+            // whether the runner ever overlaps two rows.
+            if (gate is not null)
+            {
+                await gate.Task.WaitAsync(ct).ConfigureAwait(false);
+            }
+
+            var key = Path.GetFileName(req.InputPath);
+            var behavior = _behaviorByName is not null && _behaviorByName.TryGetValue(key, out var b) ? b : _default;
+
+            progress?.Report(0.5);
+
+            switch (behavior)
+            {
+                case Behavior.Cancel:
+                    _cancelSource?.Cancel();
+                    ct.ThrowIfCancellationRequested();
+                    throw new OperationCanceledException(ct);
+
+                case Behavior.ThrowSplit:
+                    throw new SplitException(
+                        $"The trim of '{key}' failed (ffmpeg exit -22).",
+                        logFilePath: null,
+                        fullStdErr: _throwStdErr ?? $"stderr tail for {key}");
+
+                default:
+                    var outputPath = Path.Combine(req.OutputDir, req.NamingPattern);
+                    Directory.CreateDirectory(req.OutputDir);
+                    await File.WriteAllTextAsync(outputPath, "trimmed", ct).ConfigureAwait(false);
+                    progress?.Report(1.0);
+                    return new SplitResult(
+                        new[] { new SplitSegment(outputPath, TimeSpan.Zero, TimeSpan.Zero, TimeSpan.Zero, TimeSpan.Zero) },
+                        _successWarnings ?? Array.Empty<string>());
+            }
+        }
+        finally
+        {
+            lock (_concurrencyLock)
+            {
+                CurrentConcurrent--;
+            }
         }
     }
 }

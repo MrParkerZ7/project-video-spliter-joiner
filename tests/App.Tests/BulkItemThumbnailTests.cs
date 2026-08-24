@@ -248,6 +248,38 @@ public sealed class BulkItemThumbnailTests
         row.IntroThumbnailPath.Should().BeNull("no frame is committed after cancel");
     }
 
+    // ---- Clear cancels a PARKED outro grab (I64 — the outro analog of CancelScan) ------------
+
+    [Fact]
+    [Trait("serves-spec", "SPEC-011")]
+    public async Task ClearOutro_CancelsParkedOutroGrab_NeverReachesService()
+    {
+        var delay = new GatedDelay();
+        // Keyframes-ready row; the initial intro grab is parked in the debounce window.
+        var (row, thumbs, pump) = await BuildReadyRowAsync(delay.Func, introSeconds: 10);
+
+        // Add an outro at a keyframe (50s snaps to 50) → its grab PARKS in the debounce window too.
+        row.AddOutro(TimeSpan.FromSeconds(50));
+
+        // Clear the outro WHILE its grab is still parked → ClearOutro cancels the outro grabber's CTS,
+        // so the parked debounce faults (latest-wins) and the superseded grab is dropped before ffmpeg —
+        // the untested cancel-of-a-parked-grab path (contrast the intro grabber's CancelScan test above).
+        row.ClearOutro();
+
+        // Release every parked gate + pump to completion: the intro grab resumes, the cancelled outro grab does not.
+        delay.ReleaseAll();
+        pump.PumpUntilResult();
+
+        // PERF (cancellation-honored + no-I/O-on-hot-path): the superseded outro grab NEVER reaches the
+        // service — no request was ever recorded for the outro's snapped time (50s).
+        thumbs.Requests.Should().NotContain(r => r.Time == TimeSpan.FromSeconds(50),
+            "clearing the outro cancels its parked grab before it reaches ffmpeg (the outro analog of CancelScan)");
+
+        // CORRECTNESS: the outro handle is gone and its frame is dropped.
+        row.HasOutro.Should().BeFalse("clearing the outro drops the handle");
+        row.OutroThumbnailPath.Should().BeNull("the cancelled outro grab commits no frame");
+    }
+
     // ---- Bounded concurrency across a batch --------------------------------------------------
 
     [Fact]

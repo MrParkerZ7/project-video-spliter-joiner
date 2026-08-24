@@ -611,4 +611,53 @@ public sealed class JoinViewModelTests
         vm.CancelCommand.Should().BeSameAs(vm.Operation.CancelCommand,
             "the Join-level Cancel delegates to the shared operation's cancel");
     }
+
+    // SPEC-012#I5/I8 — a batch AddFilesAsync of N clips re-checks compatibility EXACTLY ONCE
+    // (at the tail, after every item is queued), not once per file. Pins the count the existing
+    // add test only bounds with BeGreaterThan(0).
+    [Fact]
+    [Trait("serves-spec", "SPEC-012")]
+    public async Task AddFiles_BatchOfN_RunsExactlyOneCompatCheck()
+    {
+        var (vm, engine, _) = Build();
+
+        await vm.AddFilesAsync(new[] { Clip1, Clip2, Clip3 });
+
+        vm.Items.Select(i => i.Path).Should().ContainInOrder(Clip1, Clip2, Clip3);
+        engine.CompatCheckCount.Should().Be(1, "a batch add re-checks compat once at the tail, not per file");
+    }
+
+    // SPEC-012#I7 — adding a single clip never touches the engine: RefreshCompatAsync short-circuits
+    // with <2 items (no I/O on that path), leaving Run gated behind the "add at least 2" invite.
+    [Fact]
+    [Trait("serves-spec", "SPEC-012")]
+    public async Task AddFiles_SingleClip_DoesNotCallEngine_AndStaysGated()
+    {
+        var (vm, engine, _) = Build();
+
+        await vm.AddFilesAsync(new[] { Clip1 });
+
+        engine.CompatCheckCount.Should().Be(0, "with <2 items RefreshCompatAsync short-circuits and never touches the engine");
+        vm.CompatSummary.Should().Contain("at least 2");
+        vm.CanRunJoin.Should().BeFalse("a single clip is below the ≥2 run gate");
+    }
+
+    // SPEC-012#I15 — removing null or a FOREIGN item (never queued in this VM) is a pure no-op:
+    // the list is untouched and NO compat recheck fires (no I/O on that path). Mirrors the Move
+    // no-op count-assertions.
+    [Fact]
+    [Trait("serves-spec", "SPEC-012")]
+    public async Task Remove_NullOrForeignItem_IsNoOp_NoRecheck()
+    {
+        var (vm, engine, _) = Build();
+        await vm.AddFilesAsync(new[] { Clip1, Clip2 });
+        var checksBefore = engine.CompatCheckCount;
+
+        var foreign = new JoinItemViewModel(Clip3); // constructed directly — never added to this VM's list
+        vm.RemoveCommand.Execute(null);              // null parameter
+        vm.RemoveCommand.Execute(foreign);           // item not in the list
+
+        vm.Items.Should().HaveCount(2);
+        engine.CompatCheckCount.Should().Be(checksBefore, "a null/foreign remove changes nothing → no compat recheck");
+    }
 }

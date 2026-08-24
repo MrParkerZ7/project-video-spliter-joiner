@@ -416,6 +416,43 @@ public class FfmpegThumbnailServiceTests : IDisposable
         actual.Should().EndWith(Path.Combine(FfmpegThumbnailService.AppFolderName, FfmpegThumbnailService.CacheFolderName));
     }
 
+    // SPEC-005#I9 — the thumbnail cache is TRUE-LRU (recency-on-hit / move-to-front), NOT FIFO: re-accessing
+    // an entry promotes it to most-recently-used, so a later over-cap insert evicts a COLDER bucket rather
+    // than the re-accessed one. Structural perf assertion = CallCount (no ffmpeg re-run on a hit, exactly one
+    // extra run on a miss). A FIFO cache would evict A at the C insert, turning the re-grab-A into a miss.
+    [Trait("serves-spec", "SPEC-005")]
+    [Fact]
+    public async Task GetThumbnailAsync_CacheEviction_IsLru_ReAccessPromotesEntry_ColderBucketEvicted()
+    {
+        var input = MakeInput();
+        var runner = new WritingFakeRunner();
+        // Cap of 2 entries — the SAME seam GetThumbnailAsync_CacheBounded_EvictsOldest uses.
+        var svc = NewService(runner, bucket: TimeSpan.FromSeconds(1), maxEntries: 2);
+
+        // Fill the cap: A(bucket 0) then B(bucket 1) → two distinct extractions, cache = {A, B}.
+        var a1 = await svc.GetThumbnailAsync(input, TimeSpan.FromSeconds(0), 160, CancellationToken.None);
+        await svc.GetThumbnailAsync(input, TimeSpan.FromSeconds(1), 160, CancellationToken.None);
+        runner.CallCount.Should().Be(2, "the two distinct buckets A and B each required their own extraction");
+
+        // Re-access A → a cache HIT that PROMOTES A to most-recently-used (true-LRU move-to-front).
+        var a2 = await svc.GetThumbnailAsync(input, TimeSpan.FromSeconds(0), 160, CancellationToken.None);
+        runner.CallCount.Should().Be(2, "re-grabbing A is a cache hit and must NOT re-run ffmpeg");
+        a2.Should().Be(a1, "the promoted hit returns the very same cached path as the first A grab");
+
+        // Over-cap insert C(bucket 2) → evicts the TRUE LRU, which is now B (A was just promoted), NOT A.
+        await svc.GetThumbnailAsync(input, TimeSpan.FromSeconds(2), 160, CancellationToken.None);
+        runner.CallCount.Should().Be(3, "inserting the new bucket C required one fresh extraction");
+
+        // Re-access A → still a HIT: A survived because promotion made B the coldest entry, so B was evicted.
+        var a3 = await svc.GetThumbnailAsync(input, TimeSpan.FromSeconds(0), 160, CancellationToken.None);
+        runner.CallCount.Should().Be(3, "A survived eviction because the earlier hit promoted it — a FIFO cache would have evicted A here and forced a re-run");
+        a3.Should().Be(a1, "the surviving A still resolves to its original cached path (never re-extracted)");
+
+        // Re-access B → a MISS: B was the colder bucket and got evicted (its file deleted), so it re-extracts.
+        await svc.GetThumbnailAsync(input, TimeSpan.FromSeconds(1), 160, CancellationToken.None);
+        runner.CallCount.Should().Be(4, "B was evicted as the true LRU at the C insert, so re-grabbing it re-runs ffmpeg");
+    }
+
     private static void TryDelete(string dir)
     {
         try { if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true); }

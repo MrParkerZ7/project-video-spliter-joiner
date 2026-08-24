@@ -570,6 +570,46 @@ public class FfmpegWaveformServiceTests : IDisposable
         runner.CallCount.Should().Be(18, "the oldest key was evicted at the 16 default cap");
     }
 
+    // SPEC-006#I18 — the waveform cache is TRUE-LRU (TryGetCached move-to-front), NOT FIFO: re-accessing a
+    // cached key promotes it to most-recently-used, so the next over-cap insert evicts the genuinely-coldest
+    // key — never the just-touched one. Same seam as GetPeaksAsync_CacheBounded_EvictsOldest (WritingPcmRunner
+    // recording CallCount + NewService(..., maxEntries: 2), distinct keys via distinct bucket counts).
+    [Trait("serves-spec", "SPEC-006")]
+    [Fact]
+    public async Task GetPeaksAsync_CacheEviction_IsLru_ReAccessPromotesKey_ColderKeyEvicted()
+    {
+        var input = MakeInput();
+        var runner = new WritingPcmRunner(Pcm(1000, 2000, 3000, 4000));
+        // Cap of 2 live entries; a distinct bucket count is a distinct cache key.
+        var svc = NewService(runner, maxEntries: 2);
+
+        // Fill the cache to the cap with two distinct keys. LRU order (front→back): key(3), key(2).
+        var peaks2 = await svc.GetPeaksAsync(input, buckets: 2, CancellationToken.None);
+        await svc.GetPeaksAsync(input, buckets: 3, CancellationToken.None);
+        runner.CallCount.Should().Be(2, "two distinct keys each extract exactly once");
+
+        // Re-access key(2): a HIT that must (a) NOT re-run ffmpeg and (b) return the SAME peaks as the first
+        // extraction — while promoting key(2) to most-recently-used. LRU order becomes: key(2), key(3).
+        var peaks2Again = await svc.GetPeaksAsync(input, buckets: 2, CancellationToken.None);
+        runner.CallCount.Should().Be(2, "re-accessing a cached key hits the cache — no ffmpeg re-run");
+        peaks2Again.Should().Equal(peaks2, "a cache hit returns the originally-computed peaks unchanged");
+
+        // Over-cap insert of a NEW key(4): must evict the TRUE least-recently-used — the now-coldest key(3),
+        // NOT the just-promoted key(2). LRU order becomes: key(4), key(2).
+        await svc.GetPeaksAsync(input, buckets: 4, CancellationToken.None);
+        runner.CallCount.Should().Be(3, "a third distinct key extracts once and evicts the coldest entry");
+
+        // key(2) was promoted before the eviction, so it must have SURVIVED → still a HIT (no re-run).
+        // (Under FIFO, key(2) — the oldest INSERT — would have been evicted at the key(4) insert, making this a
+        // miss and pushing CallCount to 4. A failure here therefore exposes a real FIFO-not-LRU cache bug.)
+        await svc.GetPeaksAsync(input, buckets: 2, CancellationToken.None);
+        runner.CallCount.Should().Be(3, "the re-accessed key(2) was promoted to MRU and must survive eviction");
+
+        // key(3) was the evicted (coldest) key → a re-request MISSES and re-extracts.
+        await svc.GetPeaksAsync(input, buckets: 3, CancellationToken.None);
+        runner.CallCount.Should().Be(4, "the coldest key(3) was the LRU victim and must re-extract");
+    }
+
     private static void TryDelete(string dir)
     {
         try { if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true); }

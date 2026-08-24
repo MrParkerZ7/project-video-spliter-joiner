@@ -1088,4 +1088,47 @@ public sealed class PlayerViewModelTests
         thumbs.Cleared.Should().Contain(path, "Unload invokes Thumbnail.Clear, which sweeps the current input path");
         vm.Thumbnail.IsThumbnailVisible.Should().BeFalse("Unload hides the hover popup");
     }
+
+    // SPEC-013#I34/I35 — Open resets the T-051 live-scrub coalesce/throttle state (ResetScrubState
+    // clears _seekInFlight/_pendingScrubTarget) so the FIRST ScrubPreview on a freshly-loaded file
+    // issues IMMEDIATELY, not stashed behind a phantom in-flight seek left over from the prior file.
+    // Distinct from TrackClickToPoint_DoesNotWedgeLiveScrubState, which clears in-flight via Seeked
+    // (the settle path); this exercises the Open/Unload RESET path instead.
+    [Fact]
+    [Trait("serves-spec", "SPEC-013")]
+    public void Open_ResetsLiveScrubState_NextScrubPreviewIssuesImmediately_NotWedged()
+    {
+        var clock = new FakeClock();
+        var (vm, player) = BuildReadyWithClock(clock);
+
+        // File A: leave a live-scrub seek IN FLIGHT — issue one preview and never raise Seeked, so the
+        // coalesce state stays latched (_seekInFlight = true, nothing settles it).
+        vm.ScrubPreview(TimeSpan.FromSeconds(10));
+        player.Seeks.Should().ContainSingle().Which.Should().Be(TimeSpan.FromSeconds(10),
+            "the live-scrub seek is issued and now latched in flight (no Seeked to clear it)");
+
+        // Open file B and make it ready. Open MUST ResetScrubState — dropping the phantom in-flight seek.
+        vm.Open(@"C:\videos\B.mp4");
+        player.RaiseDurationAvailable(TimeSpan.FromSeconds(90));
+
+        var before = player.Seeks.Count;
+
+        // Move past the throttle window so the ONLY thing that could gate this preview is a wedged
+        // in-flight seek — isolates the invariant under test from the T-051 throttle window.
+        clock.Advance(1000);
+
+        // First live preview on the freshly-loaded file.
+        vm.ScrubPreview(TimeSpan.FromSeconds(20));
+
+        // PERF (structural — call-count, no wall-clock): the first post-Open preview issues IMMEDIATELY,
+        // not coalesced behind a phantom in-flight seek. Exactly one new seek, converging on the target.
+        player.Seeks.Count.Should().Be(before + 1,
+            "Open reset the live-scrub state, so the first preview on the new file issues immediately — not stashed behind a phantom in-flight seek");
+        player.Seeks[^1].Should().Be(TimeSpan.FromSeconds(20),
+            "the issued seek converges on the new target, not coalesced away or dropped");
+
+        // CORRECTNESS: ready once the new duration arrives; the playhead is pinned at the new target.
+        vm.IsReady.Should().BeTrue("the freshly-opened file is ready after its duration arrives");
+        vm.Position.Should().Be(TimeSpan.FromSeconds(20), "the live-scrub seek pins the display at the new target");
+    }
 }

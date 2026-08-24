@@ -46,6 +46,12 @@ internal sealed class BulkFakeProbe : IMediaProbe
 
     public int PeakScans { get; private set; }
 
+    /// <summary>Cumulative count of <see cref="GetKeyframesAsync"/> calls (I26). Unlike
+    /// <see cref="CurrentScans"/>/<see cref="PeakScans"/> — which track only LIVE concurrency (high-water)
+    /// and fall back to 0 once a scan finishes — this monotonic counter detects a SERIAL re-scan fired
+    /// after the keyframes are already loaded, so a drag can be proven to trigger zero additional scans.</summary>
+    public int GetKeyframesCallCount { get; private set; }
+
     /// <summary>Register keyframes for a path spaced every <paramref name="stepSeconds"/> across <paramref name="duration"/>.</summary>
     public void SetUniform(string path, TimeSpan duration, double stepSeconds)
     {
@@ -76,6 +82,7 @@ internal sealed class BulkFakeProbe : IMediaProbe
     {
         lock (_lock)
         {
+            GetKeyframesCallCount++;
             CurrentScans++;
             if (CurrentScans > PeakScans)
             {

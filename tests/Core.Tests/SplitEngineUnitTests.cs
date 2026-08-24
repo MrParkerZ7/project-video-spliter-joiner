@@ -270,6 +270,55 @@ public class SplitEngineUnitTests
             try { Directory.Delete(dir, recursive: true); } catch { /* best-effort */ }
         }
     }
+
+    // SPEC-001#I25 — a non-null selection is de-duped (HashSet) + clamped to the planned range:
+    // three copies of the SAME in-range index must coalesce to ONE run producing ONE part file
+    // (NOT three runs / a double-write / an overwrite throw).
+    [Trait("serves-spec", "SPEC-001")]
+    [Fact]
+    public async Task SplitAsync_DuplicateSelectedIndices_CoalesceToOneRun_WritesOneFile()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "vsj-dupsel-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        var input = Path.Combine(dir, "clip.mp4");
+        await File.WriteAllTextAsync(input, "placeholder");
+        var outDir = Path.Combine(dir, "out");
+        Directory.CreateDirectory(outDir);
+
+        try
+        {
+            // 10s file, 1s GOP. Cuts at 3 & 6 → 3 planned parts. Select the SAME part (index 2) three times.
+            var runner = new RecordingFakeRunner();
+            var probe = new FakeProbe(
+                TimeSpan.FromSeconds(10),
+                Enumerable.Range(0, 11).Select(i => TimeSpan.FromSeconds(i)).ToList());
+            var engine = new SplitEngine(runner, probe);
+
+            var req = new SplitRequest(
+                input,
+                new[] { TimeSpan.FromSeconds(3), TimeSpan.FromSeconds(6) },
+                outDir,
+                SelectedSegmentIndices: new[] { 2, 2, 2 });
+
+            var result = await engine.SplitAsync(req);
+
+            // PERF (dedup-coalesce): the duplicate selection collapses to a SINGLE ffmpeg run —
+            // the recording runner's command log has exactly one entry, not three.
+            runner.Commands.Should().ContainSingle("three copies of one in-range index must de-dupe to one run");
+
+            // CORRECTNESS: the single produced part is the correct one, keeping its ORIGINAL index (_part02).
+            result.Segments.Should().ContainSingle();
+            Path.GetFileName(result.Segments[0].Path).Should().Be("clip_part02.mp4");
+
+            // Exactly ONE output file on disk for part 02 — no double-write, no extra/overwritten siblings.
+            Directory.GetFiles(outDir, "*.mp4").Select(Path.GetFileName)
+                .Should().BeEquivalentTo(new[] { "clip_part02.mp4" });
+        }
+        finally
+        {
+            try { Directory.Delete(dir, recursive: true); } catch { /* best-effort */ }
+        }
+    }
 }
 
 /// <summary>Fake probe returning a fixed duration + keyframe list, no binary.</summary>

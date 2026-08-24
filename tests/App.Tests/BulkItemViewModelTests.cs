@@ -185,4 +185,37 @@ public sealed class BulkItemViewModelTests
         item.Tag.Should().BeSameAs(row);
         item.DesiredOutputPath.Should().EndWith("ep01_trimmed.mp4");
     }
+
+    // ---- I26: dragging re-snaps against the cached keyframes, never re-scans -----------------
+
+    [Fact]
+    [Trait("serves-spec", "SPEC-014")]
+    public async Task Dragging_ReSnapsAgainstCachedKeyframes_TriggersNoAdditionalKeyframeScan()
+    {
+        var probe = new BulkFakeProbe();
+        var row = await BuildReadyRowAsync(probe, Path60, 60, 2); // keyframes 0,2,4,…,60
+
+        // The one-time throttled ffprobe scan ran exactly once to load the keyframe list.
+        row.KeyframesReady.Should().BeTrue();
+        probe.GetKeyframesCallCount.Should().Be(1, "the keyframe scan runs once as the row becomes ready");
+
+        // Simulate a drag: ~20 rapid Requested sets sweeping 9.0s → 10.9s. I26: each set re-snaps
+        // Snapped against the ALREADY-LOADED keyframe list — scanning is a separate, earlier step.
+        var finalRequestedSeconds = 0d;
+        for (var i = 0; i < 20; i++)
+        {
+            finalRequestedSeconds = 9.0 + (i * 0.1); // 9.0, 9.1, …, 10.9
+            row.IntroEnd.Requested = TimeSpan.FromSeconds(finalRequestedSeconds);
+        }
+
+        // PERF (no I/O on the hot path — structural, call-count based): dragging re-snaps against the
+        // cached list and NEVER re-runs the scan, so the cumulative call count is STILL exactly 1.
+        probe.GetKeyframesCallCount.Should().Be(
+            1, "dragging re-snaps against the cached keyframes and triggers zero additional scans");
+
+        // CORRECTNESS: the final requested ~10.9s snapped to the nearest cached keyframe (10s).
+        row.IntroEnd.Requested.Should().Be(TimeSpan.FromSeconds(finalRequestedSeconds));
+        row.IntroEnd.Snapped.Should().Be(
+            TimeSpan.FromSeconds(10), "10.9s snaps to the nearest cached keyframe 10s");
+    }
 }
