@@ -128,10 +128,12 @@ public partial class MainWindow : Window
 
                 // Position/size the maximized window to the work area, expressed
                 // relative to the monitor origin (which is what WM_GETMINMAXINFO wants).
-                mmi.ptMaxPosition.x = Math.Abs(work.left - full.left);
-                mmi.ptMaxPosition.y = Math.Abs(work.top - full.top);
-                mmi.ptMaxSize.x = Math.Abs(work.right - work.left);
-                mmi.ptMaxSize.y = Math.Abs(work.bottom - work.top);
+                var (posX, posY, sizeX, sizeY) = WindowChromeMath.MaximizedWorkAreaBounds(
+                    work.left, work.top, work.right, work.bottom, full.left, full.top);
+                mmi.ptMaxPosition.x = posX;
+                mmi.ptMaxPosition.y = posY;
+                mmi.ptMaxSize.x = sizeX;
+                mmi.ptMaxSize.y = sizeY;
             }
         }
 

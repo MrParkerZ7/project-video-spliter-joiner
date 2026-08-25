@@ -3,6 +3,7 @@ using System.IO;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Threading;
+using VideoSplitJoiner.App.ViewModels;
 using VideoSplitJoiner.App.Views;
 using VideoSplitJoiner.Core.Errors;
 
@@ -116,9 +117,7 @@ public partial class App : Application
             // Put the full copyable text on the clipboard so the user can paste it into a report.
             ErrorActions.CopyError(error);
 
-            var body = logPath is not null
-                ? $"{error.Message}\n\n{ex.Message}\n\nA crash log was saved to:\n{logPath}\n\n(The full details have been copied to your clipboard.)"
-                : $"{error.Message}\n\n{ex.Message}\n\n(The full details have been copied to your clipboard.)";
+            var body = CrashReport.ComposeMessage(error.Message, ex.Message, logPath);
 
             MessageBox.Show(body, "VideoSplitJoiner — unexpected error", MessageBoxButton.OK, MessageBoxImage.Warning);
         }

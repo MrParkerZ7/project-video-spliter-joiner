@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 
 namespace VideoSplitJoiner.App.ViewModels;
 
@@ -40,5 +41,57 @@ public static class TimelineMath
 
         var clamped = Math.Clamp(x, 0d, 1d);
         return TimeSpan.FromTicks((long)Math.Round(duration.Ticks * clamped));
+    }
+
+    /// <summary>
+    /// Index of the entry in <paramref name="normalized"/> whose pixel position
+    /// (<c>value × <paramref name="width"/></c>) is nearest to <paramref name="xPx"/> and within
+    /// <paramref name="radiusPx"/>, or <c>-1</c> when none is in range. On a tie the later entry
+    /// wins — matching the timeline's marker-tick hit test (T-014 / SPEC-014 I31).
+    /// </summary>
+    public static int NearestNormalizedIndex(IReadOnlyList<double> normalized, double xPx, double width, double radiusPx)
+    {
+        var bestIndex = -1;
+        var bestDist = radiusPx;
+        for (var i = 0; i < normalized.Count; i++)
+        {
+            var dist = Math.Abs(normalized[i] * width - xPx);
+            if (dist <= bestDist)
+            {
+                bestIndex = i;
+                bestDist = dist;
+            }
+        }
+
+        return bestIndex;
+    }
+
+    /// <summary>
+    /// The normalized waveform peak to draw at pixel column <paramref name="column"/> of
+    /// <paramref name="columns"/>: the MAX peak over the source window mapped to that column (so
+    /// downsampling to fewer pixels than peaks keeps the loudest sample per column rather than
+    /// dropping it); when there are fewer peaks than columns the nearest source peak is used
+    /// (T-084 / SPEC-014 I35).
+    /// </summary>
+    public static float PeakForColumn(float[] peaks, int column, int columns)
+    {
+        var start = (int)((long)column * peaks.Length / columns);
+        var end = (int)((long)(column + 1) * peaks.Length / columns);
+        if (end <= start)
+        {
+            var idx = Math.Min(peaks.Length - 1, start);
+            return peaks[idx];
+        }
+
+        var max = 0f;
+        for (var i = start; i < end; i++)
+        {
+            if (peaks[i] > max)
+            {
+                max = peaks[i];
+            }
+        }
+
+        return max;
     }
 }

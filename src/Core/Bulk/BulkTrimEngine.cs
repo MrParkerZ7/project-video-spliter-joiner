@@ -1,5 +1,6 @@
 using System.Text.RegularExpressions;
 using VideoSplitJoiner.Core.Errors;
+using VideoSplitJoiner.Core.Io;
 using VideoSplitJoiner.Core.Split;
 
 namespace VideoSplitJoiner.Core.Bulk;

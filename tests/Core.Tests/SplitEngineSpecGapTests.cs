@@ -1,4 +1,5 @@
 using FluentAssertions;
+using VideoSplitJoiner.Core.Errors;
 using VideoSplitJoiner.Core.Media;
 using VideoSplitJoiner.Core.Split;
 using Xunit;
@@ -213,6 +214,64 @@ public class SplitEngineSpecGapTests
 
             Func<Task> act = () => engine.SplitAsync(req);
             await act.Should().ThrowAsync<SplitException>().WithMessage("*was not produced by ffmpeg*");
+        }
+        finally { Cleanup(dir); }
+    }
+
+    // SPEC-001#I31 — a knowable free-space shortfall rejects with the DiskFull message BEFORE any
+    // ffmpeg run (fail-fast, zero wasted heavy op), via the injected IDiskSpaceProbe seam.
+    [Trait("serves-spec", "SPEC-001")]
+    [Fact]
+    public async Task SplitAsync_DiskShortfall_RejectsBeforeFfmpeg_NoRun()
+    {
+        var dir = NewDir();
+        try
+        {
+            var input = NewInput(dir);
+            var outDir = Path.Combine(dir, "out");
+            Directory.CreateDirectory(outDir);
+
+            var runner = new RecordingFakeRunner();
+            // 1000 free bytes ≪ inputSize + 16 MB required → the pre-flight blocks before ffmpeg.
+            var engine = new SplitEngine(
+                runner, new FakeProbe(TimeSpan.FromSeconds(10), Keyframes),
+                new ErrorLogWriter(), new FakeDiskSpaceProbe(1000));
+            var req = new SplitRequest(
+                input, new[] { TimeSpan.FromSeconds(3), TimeSpan.FromSeconds(6) }, outDir);
+
+            Func<Task> act = () => engine.SplitAsync(req);
+            await act.Should().ThrowAsync<SplitException>().WithMessage("*Not enough space*");
+            runner.Commands.Should().BeEmpty(
+                "a disk-shortfall split fails the pre-flight before launching ffmpeg — no wasted heavy op");
+        }
+        finally { Cleanup(dir); }
+    }
+
+    // SPEC-001#I31 — an UNMEASURABLE drive (probe returns null) SKIPS the pre-flight rather than
+    // false-blocking; the split proceeds to ffmpeg (subset path so the fake runner materializes it).
+    [Trait("serves-spec", "SPEC-001")]
+    [Fact]
+    public async Task SplitAsync_UnmeasurableDrive_SkipsPreflight_SplitProceeds()
+    {
+        var dir = NewDir();
+        try
+        {
+            var input = NewInput(dir);
+            var outDir = Path.Combine(dir, "out");
+            Directory.CreateDirectory(outDir);
+
+            var runner = new RecordingFakeRunner();
+            // null free bytes = unmeasurable → the pre-flight is skipped, never a false-positive block.
+            var engine = new SplitEngine(
+                runner, new FakeProbe(TimeSpan.FromSeconds(10), Keyframes),
+                new ErrorLogWriter(), new FakeDiskSpaceProbe(null));
+            var req = new SplitRequest(
+                input, new[] { TimeSpan.FromSeconds(3), TimeSpan.FromSeconds(6) }, outDir,
+                SelectedSegmentIndices: new[] { 2 });
+
+            await engine.SplitAsync(req); // must NOT throw the DiskFull block
+            runner.Commands.Should().NotBeEmpty(
+                "an unmeasurable drive skips the pre-flight, so the split proceeds to ffmpeg");
         }
         finally { Cleanup(dir); }
     }

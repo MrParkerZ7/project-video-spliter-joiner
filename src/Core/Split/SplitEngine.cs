@@ -1,6 +1,7 @@
 using System.Globalization;
 using VideoSplitJoiner.Core.Errors;
 using VideoSplitJoiner.Core.Ffmpeg;
+using VideoSplitJoiner.Core.Io;
 using VideoSplitJoiner.Core.Media;
 
 namespace VideoSplitJoiner.Core.Split;
@@ -41,6 +42,7 @@ public sealed class SplitEngine : ISplitEngine
     private readonly IFfmpegRunner _runner;
     private readonly IMediaProbe _probe;
     private readonly ErrorLogWriter _logWriter;
+    private readonly IDiskSpaceProbe _diskProbe;
 
     /// <summary>Create the engine over the T-002 runner and T-003 probe.</summary>
     public SplitEngine(IFfmpegRunner runner, IMediaProbe probe)
@@ -53,10 +55,20 @@ public sealed class SplitEngine : ISplitEngine
     /// full-error log to a temp directory).
     /// </summary>
     public SplitEngine(IFfmpegRunner runner, IMediaProbe probe, ErrorLogWriter logWriter)
+        : this(runner, probe, logWriter, new DriveInfoDiskSpaceProbe())
+    {
+    }
+
+    /// <summary>
+    /// Full ctor with an explicit <see cref="IDiskSpaceProbe"/> — tests inject a fake to drive the
+    /// SPEC-001 I31 DiskFull / unmeasurable-drive branches of the disk pre-flight deterministically.
+    /// </summary>
+    public SplitEngine(IFfmpegRunner runner, IMediaProbe probe, ErrorLogWriter logWriter, IDiskSpaceProbe diskProbe)
     {
         _runner = runner ?? throw new ArgumentNullException(nameof(runner));
         _probe = probe ?? throw new ArgumentNullException(nameof(probe));
         _logWriter = logWriter ?? throw new ArgumentNullException(nameof(logWriter));
+        _diskProbe = diskProbe ?? throw new ArgumentNullException(nameof(diskProbe));
     }
 
     /// <inheritdoc />
@@ -469,11 +481,12 @@ public sealed class SplitEngine : ISplitEngine
     /// Best-effort disk-space pre-flight. A stream-copy split reproduces roughly the input's byte
     /// count across its output segments, so if the output drive's available free space is knowably
     /// below the input size (plus a small margin), fail early with the friendly DiskFull message
-    /// instead of letting ffmpeg hit ENOSPC (exit -28) mid-write. Any inability to measure —
-    /// unknown/unc drive, permission, or a thrown <see cref="DriveInfo"/> query — silently skips
-    /// the check (never a false-positive block).
+    /// instead of letting ffmpeg hit ENOSPC (exit -28) mid-write. Free space is measured through the
+    /// injected <see cref="IDiskSpaceProbe"/> (SPEC-001 I31 seam): an unmeasurable drive —
+    /// unknown/UNC drive, permission, not-ready — returns <c>null</c> and silently skips the check
+    /// (never a false-positive block).
     /// </summary>
-    private static void EnsureEnoughFreeSpace(string inputPath, string outputDir)
+    private void EnsureEnoughFreeSpace(string inputPath, string outputDir)
     {
         try
         {
@@ -489,19 +502,19 @@ public sealed class SplitEngine : ISplitEngine
                 return;
             }
 
-            var drive = new DriveInfo(root);
-            if (!drive.IsReady)
+            var free = _diskProbe.GetAvailableFreeBytes(root);
+            if (free is null)
             {
-                return;
+                return; // Unmeasurable drive → skip the pre-flight (never a false-positive block).
             }
 
             // Require the input size plus a small fixed margin (segment/container overhead).
             var required = inputSize + (16L * 1024 * 1024);
-            if (drive.AvailableFreeSpace < required)
+            if (free.Value < required)
             {
                 throw new SplitException(
                     "Not enough space to write the output — free up space or choose another output folder. " +
-                    $"(need ~{inputSize / (1024 * 1024)} MB, {drive.AvailableFreeSpace / (1024 * 1024)} MB free on '{root}')");
+                    $"(need ~{inputSize / (1024 * 1024)} MB, {free.Value / (1024 * 1024)} MB free on '{root}')");
             }
         }
         catch (SplitException)
@@ -510,7 +523,7 @@ public sealed class SplitEngine : ISplitEngine
         }
         catch
         {
-            // Any measurement failure (unknown drive, UNC path, security) → skip the pre-flight.
+            // Any measurement failure (FileInfo/Path) → skip the pre-flight.
         }
     }
 

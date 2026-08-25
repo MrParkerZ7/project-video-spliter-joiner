@@ -242,9 +242,9 @@ public partial class BulkRowScrubView : UserControl
         }
 
         var total = dur.TotalSeconds;
-        var introX = Clamp(_row.IntroEnd.Snapped.TotalSeconds / total) * width;
+        var introX = BulkScrubMath.SecondsToX(_row.IntroEnd.Snapped.TotalSeconds, total, width);
         var hasOutro = _row.HasOutro && _row.OutroStart is not null;
-        var outroX = hasOutro ? Clamp(_row.OutroStart!.Snapped.TotalSeconds / total) * width : width;
+        var outroX = hasOutro ? BulkScrubMath.SecondsToX(_row.OutroStart!.Snapped.TotalSeconds, total, width) : width;
 
         // While dragging, paint the grabbed handle at the live cursor X so it does not stick to
         // keyframes mid-drag; the ungrabbed handle stays at its snapped position.
@@ -258,8 +258,7 @@ public partial class BulkRowScrubView : UserControl
         }
 
         // Keep the spans coherent if the two crossed over during a drag.
-        var keepLeft = Math.Min(introX, outroX);
-        var keepRight = Math.Max(introX, outroX);
+        var (keepLeft, keepRight) = BulkScrubMath.KeepSpan(introX, outroX);
 
         // 1. dropped intro [0 → introX] + dropped outro [outroX → width] under the scrim.
         AddRect(0, 0, introX, height, ScrimBrush);
@@ -425,30 +424,18 @@ public partial class BulkRowScrubView : UserControl
     /// <summary>Pick the nearer handle within the hit radius; ties broken by which cap the cursor is closer to.</summary>
     private Handle PickHandle(Point pos, double width, double totalSeconds)
     {
-        var introX = Clamp(_row!.IntroEnd.Snapped.TotalSeconds / totalSeconds) * width;
+        var introX = BulkScrubMath.SecondsToX(_row!.IntroEnd.Snapped.TotalSeconds, totalSeconds, width);
         var hasOutro = _row.HasOutro && _row.OutroStart is not null;
+        double? outroX = hasOutro
+            ? BulkScrubMath.SecondsToX(_row.OutroStart!.Snapped.TotalSeconds, totalSeconds, width)
+            : null;
 
-        var dIntro = Math.Abs(pos.X - introX);
-        var dOutro = double.PositiveInfinity;
-        if (hasOutro)
+        return BulkScrubMath.PickHandle(introX, outroX, pos.X, pos.Y, Track.ActualHeight, HandleHitRadiusPx) switch
         {
-            var outroX = Clamp(_row.OutroStart!.Snapped.TotalSeconds / totalSeconds) * width;
-            dOutro = Math.Abs(pos.X - outroX);
-        }
-
-        var nearest = Math.Min(dIntro, dOutro);
-        if (nearest > HandleHitRadiusPx)
-        {
-            return Handle.None;
-        }
-
-        if (Math.Abs(dIntro - dOutro) < 0.5)
-        {
-            // Equidistant → prefer by vertical: top cap = intro, bottom cap = outro.
-            return pos.Y <= Track.ActualHeight / 2d ? Handle.Intro : Handle.Outro;
-        }
-
-        return dIntro <= dOutro ? Handle.Intro : Handle.Outro;
+            ScrubHandle.Intro => Handle.Intro,
+            ScrubHandle.Outro => Handle.Outro,
+            _ => Handle.None,
+        };
     }
 
     private void SetRequestedFromX(double x, double width, double totalSeconds)

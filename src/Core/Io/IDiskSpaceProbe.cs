@@ -1,9 +1,11 @@
-namespace VideoSplitJoiner.Core.Bulk;
+namespace VideoSplitJoiner.Core.Io;
 
 /// <summary>
-/// Measures free space for the batch disk pre-flight. Abstracted (rather than calling
-/// <see cref="System.IO.DriveInfo"/> inline like <c>SplitEngine.EnsureEnoughFreeSpace</c>) so the
-/// pre-flight's block/skip decision is deterministically unit-testable without filling a real disk.
+/// Measures free space for the disk pre-flight. Abstracted (rather than calling
+/// <see cref="System.IO.DriveInfo"/> inline) so the pre-flight's block/skip decision is
+/// deterministically unit-testable without filling a real disk. Shared by both
+/// <c>SplitEngine.EnsureEnoughFreeSpace</c> (per-run) and <c>BulkTrimEngine</c> (batch) — a
+/// neutral abstraction both engines depend on, not one engine depending on the other.
 /// </summary>
 public interface IDiskSpaceProbe
 {
@@ -16,9 +18,9 @@ public interface IDiskSpaceProbe
 }
 
 /// <summary>
-/// Default <see cref="IDiskSpaceProbe"/> over <see cref="System.IO.DriveInfo"/>, mirroring
-/// <c>SplitEngine.EnsureEnoughFreeSpace</c>'s best-effort semantics: any measurement failure
-/// (unknown drive, UNC path, not ready, thrown query) returns <c>null</c> = "skip this drive".
+/// Default <see cref="IDiskSpaceProbe"/> over <see cref="System.IO.DriveInfo"/>, mirroring the
+/// engines' best-effort semantics: any measurement failure (unknown drive, UNC path, not ready,
+/// thrown query) returns <c>null</c> = "skip this drive".
 /// </summary>
 internal sealed class DriveInfoDiskSpaceProbe : IDiskSpaceProbe
 {

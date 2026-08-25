@@ -231,7 +231,7 @@ public partial class TimelineView : UserControl
 
             for (var c = 0; c < columns; c++)
             {
-                var peak = PeakForColumn(peaks, c, columns);
+                var peak = TimelineMath.PeakForColumn(peaks, c, columns);
                 var half = Math.Max(minBar, peak * mid);
                 var x = c + 0.5d;
                 topPoints.Add(new Point(x, mid - half));
@@ -246,35 +246,6 @@ public partial class TimelineView : UserControl
 
         geometry.Freeze();
         return geometry;
-    }
-
-    /// <summary>
-    /// The normalized peak to draw at pixel column <paramref name="column"/> of <paramref name="columns"/>:
-    /// the MAX peak over the source window mapped to that column (so downsampling to fewer pixels than peaks
-    /// keeps the loudest sample per column rather than dropping it). When there are fewer peaks than columns the
-    /// nearest source peak is used.
-    /// </summary>
-    private static float PeakForColumn(float[] peaks, int column, int columns)
-    {
-        var start = (int)((long)column * peaks.Length / columns);
-        var end = (int)((long)(column + 1) * peaks.Length / columns);
-        if (end <= start)
-        {
-            // Fewer peaks than columns → sample the nearest source peak.
-            var idx = Math.Min(peaks.Length - 1, start);
-            return peaks[idx];
-        }
-
-        var max = 0f;
-        for (var i = start; i < end; i++)
-        {
-            if (peaks[i] > max)
-            {
-                max = peaks[i];
-            }
-        }
-
-        return max;
     }
 
     /// <summary>
@@ -386,20 +357,15 @@ public partial class TimelineView : UserControl
 
     private TimelineTick? NearestTick(double xPx, double width)
     {
-        TimelineTick? best = null;
-        var bestDist = TickHitRadiusPx;
-
-        foreach (var tick in _vm!.MarkerTicks)
+        var ticks = _vm!.MarkerTicks;
+        var normalized = new double[ticks.Count];
+        for (var i = 0; i < ticks.Count; i++)
         {
-            var dist = Math.Abs(tick.Normalized * width - xPx);
-            if (dist <= bestDist)
-            {
-                best = tick;
-                bestDist = dist;
-            }
+            normalized[i] = ticks[i].Normalized;
         }
 
-        return best;
+        var index = TimelineMath.NearestNormalizedIndex(normalized, xPx, width, TickHitRadiusPx);
+        return index >= 0 ? ticks[index] : null;
     }
 
     private static Brush Frozen(string hex)

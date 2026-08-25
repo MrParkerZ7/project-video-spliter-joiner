@@ -2,6 +2,7 @@ using FluentAssertions;
 using VideoSplitJoiner.Core.Bulk;
 using VideoSplitJoiner.Core.Errors;
 using VideoSplitJoiner.Core.Ffmpeg;
+using VideoSplitJoiner.Core.Io;
 using VideoSplitJoiner.Core.Split;
 using Xunit;
 
