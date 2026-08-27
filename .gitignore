@@ -52,3 +52,4 @@ coverage*.info
 # OS files
 .DS_Store
 Thumbs.db
+publish/

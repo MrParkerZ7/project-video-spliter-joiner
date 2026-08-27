@@ -5,7 +5,44 @@ All notable changes to VideoSplitJoiner are documented here. The format is based
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). The `1.0.0` release is the target
 goal; `0.1.0` is the first end-to-end, shippable cut.
 
-## [0.2.0] - Unreleased
+## [1.0.0] - 2026-08-26
+
+**First published release.** The app is feature-complete for its original vision: split, join, and
+bulk-trim video **losslessly** (ffmpeg stream-copy, keyframe-snapped — no re-encode, no quality loss),
+with a full in-app preview player and a themed desktop shell. 922 automated tests green; 98% of the
+documented spec invariants are covered (`docs/specs/`).
+
+> Sections below detail the preview-player era (G-002 → G-016). The scope added after that, shipped
+> across G-017 → G-040, is summarised here:
+
+### Added (G-017 → G-040)
+
+- **Bulk Cut** (G-036–G-040) — a third tab that batch-trims many videos at once: drop a list, set an
+  intro-end (and optional outro-start) per row, keep the middle, run the batch. Includes a mini preview
+  player with jog controls, **reusable cut profiles** (saveable, with optional user-uploaded thumbnails),
+  **frame thumbnails at each cut point**, layout-mode-aware panes, and apply-to-all (per row / by profile).
+- **Audio waveform** above the timeline (G-033) — see speech vs silence to place cuts.
+- **Vertical-monitor mode** (G-032) — flip the two-column layout to a stacked portrait layout.
+- **Hover-thumbnail preview** on the scrub bar (G-030) — the frame at the hovered time.
+- **Progress surfacing** (G-025, G-027) — Windows taskbar-button progress + ETA in the title, per-part
+  split progress, and clear Running / Completed / Cancelled / Failed operation states.
+- **Themed desktop shell** (G-017, G-018, G-019, G-023, G-027, G-029) — a token-driven dark + gold theme
+  across every screen, a custom themed window frame with vector caption icons, themed scrollbars, and
+  a matching typographic system.
+
+### Changed
+
+- Split output now defaults to the loaded file's folder and resets on every load (G-020); cut markers
+  are ordered by time position rather than insertion order (G-026); the Split tool panel was reflowed
+  (G-034, G-035); release builds self-bundle ffmpeg (G-024).
+
+### Fixed
+
+- Clicking the scrub bar seeks to the click point instead of page-stepping (G-028); the app no longer
+  self-closes on split → clear → load-new, backed by a global crash safety net (G-031); jog buttons
+  freeze the preview on the exact frame instead of playing a ~1s burst; Bulk row selection is instant
+  (the heavy preview open is debounced, latest-wins).
+
 
 Goal G-002: an **in-app video preview player** with **visual cut selection** on the Split screen,
 then hardened over G-004→G-007 — the preview now decodes through **FFmpeg** (so it plays what the app
