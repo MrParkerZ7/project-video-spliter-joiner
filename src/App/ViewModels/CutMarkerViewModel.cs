@@ -78,6 +78,7 @@ public sealed class CutMarkerViewModel : ObservableObject
             if (SetProperty(ref _snapped, value))
             {
                 OnPropertyChanged(nameof(Display));
+                RaiseSnapNote();
             }
         }
     }
@@ -91,6 +92,7 @@ public sealed class CutMarkerViewModel : ObservableObject
             if (SetProperty(ref _delta, value))
             {
                 OnPropertyChanged(nameof(Display));
+                RaiseSnapNote();
             }
         }
     }
@@ -108,6 +110,7 @@ public sealed class CutMarkerViewModel : ObservableObject
             if (SetProperty(ref _isSnapPending, value))
             {
                 OnPropertyChanged(nameof(Display));
+                RaiseSnapNote();
             }
         }
     }
@@ -121,6 +124,29 @@ public sealed class CutMarkerViewModel : ObservableObject
         _isSnapPending
             ? $"{FormatClock(Requested)} → snapping…"
             : $"{FormatClock(Requested)} → {FormatClock(Snapped)} ({FormatDelta(Delta)})";
+
+    /// <summary>
+    /// Compact secondary readout for a row that already shows the REQUESTED time (T-119, epic G-041):
+    /// <c>"→ 00:04.0 (−1.0s)"</c>, or <c>"→ snapping…"</c> while the scan is in flight. Empty when the
+    /// request already sits on a keyframe (delta 0) so a fine-GOP file carries no visual noise.
+    ///
+    /// <para>This exists because a cut that snaps to the SAME keyframe as the previous one changes
+    /// nothing on screen when only <see cref="Snapped"/> is shown — making a correct snap
+    /// indistinguishable from a click the app ignored (the G-041 bug report).</para>
+    /// </summary>
+    public string SnapNote =>
+        _isSnapPending
+            ? "→ snapping…"
+            : HasSnapNote ? $"→ {FormatClock(Snapped)} ({FormatDelta(Delta)})" : string.Empty;
+
+    /// <summary>True when there is a snap worth showing (pending, or a non-zero offset).</summary>
+    public bool HasSnapNote => _isSnapPending || _delta != TimeSpan.Zero;
+
+    private void RaiseSnapNote()
+    {
+        OnPropertyChanged(nameof(SnapNote));
+        OnPropertyChanged(nameof(HasSnapNote));
+    }
 
     /// <summary>
     /// Recompute this marker's snap against the current keyframes and clear

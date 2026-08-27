@@ -177,74 +177,29 @@ public partial class BulkCutView : UserControl
         }
 
         var isIntro = (box.Tag as string) == "intro";
-        if (TryParseClock(box.Text, out var t))
+        var marker = isIntro ? row.IntroEnd : row.OutroStart;
+        if (marker is null)
         {
-            if (isIntro)
-            {
-                row.IntroEnd.Requested = t;
-            }
-            else if (row.OutroStart is not null)
-            {
-                row.OutroStart.Requested = t;
-            }
+            return;
         }
 
-        // Normalize the field back to the snapped truth (also reverts an unparseable entry).
+        // T-118: the field renders a VM-produced time (the keyframe-SNAPPED value, truncated to 0.1s).
+        // Committing that back on an untouched focus pass would overwrite the user's real Requested with
+        // the snapped value - destroying the request, zeroing the snap delta, and sending the truncated
+        // time to the engine. Only a genuine, parseable user edit is committed.
+        if (CutTimeCommit.TryResolveEdit(box.Text, marker.Requested, out var t))
+        {
+            marker.Requested = t;
+        }
+
+        // Normalize the field back to the VM truth (also reverts an unparseable entry).
         BindingOperations.GetBindingExpression(box, TextBox.TextProperty)?.UpdateTarget();
     }
 
     /// <summary>Parse <c>mm:ss.f</c> / <c>h:mm:ss.f</c> / plain seconds into a non-negative TimeSpan.</summary>
+    /// <remarks>T-118: the real implementation lives in the WPF-free <see cref="CutTimeCommit"/> so it is unit-testable.</remarks>
     internal static bool TryParseClock(string? text, out TimeSpan value)
-    {
-        value = TimeSpan.Zero;
-        if (string.IsNullOrWhiteSpace(text))
-        {
-            return false;
-        }
-
-        var parts = text.Trim().Split(':');
-        if (parts.Length > 3)
-        {
-            return false;
-        }
-
-        double h = 0, m = 0, s;
-        try
-        {
-            if (parts.Length == 3)
-            {
-                h = double.Parse(parts[0], CultureInfo.InvariantCulture);
-                m = double.Parse(parts[1], CultureInfo.InvariantCulture);
-                s = double.Parse(parts[2], CultureInfo.InvariantCulture);
-            }
-            else if (parts.Length == 2)
-            {
-                m = double.Parse(parts[0], CultureInfo.InvariantCulture);
-                s = double.Parse(parts[1], CultureInfo.InvariantCulture);
-            }
-            else
-            {
-                s = double.Parse(parts[0], CultureInfo.InvariantCulture);
-            }
-        }
-        catch (FormatException)
-        {
-            return false;
-        }
-        catch (OverflowException)
-        {
-            return false;
-        }
-
-        var total = (h * 3600d) + (m * 60d) + s;
-        if (total < 0 || double.IsNaN(total) || double.IsInfinity(total))
-        {
-            return false;
-        }
-
-        value = TimeSpan.FromSeconds(total);
-        return true;
-    }
+        => CutTimeCommit.TryParseClock(text, out value);
 
     // ---- Cut-profile save: themed inline name popup (T-103) ---------------------------------
 

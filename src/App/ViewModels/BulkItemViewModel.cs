@@ -72,8 +72,15 @@ public sealed class BulkItemViewModel : ObservableObject
     // Snap this close to 0 / EOF counts as "at the boundary" for the no-op / tail-warning checks.
     private static readonly TimeSpan BoundaryEpsilon = TimeSpan.FromMilliseconds(500);
 
-    // A mean GOP longer than this is "coarse" — cuts can move noticeably (mirrors the Split screen).
+    // A mean GOP at or beyond this is "coarse" - cuts can move noticeably (mirrors the Split screen).
+    // T-120: the test is >= , not > . A file whose mean GOP is EXACTLY 4.0s is the very grid that makes
+    // snapping surprising (5s and 6s both land on 4s), and the old strict > silently skipped warning it.
     private static readonly TimeSpan CoarseGopThreshold = TimeSpan.FromSeconds(4);
+
+    // T-120: warn whenever a cut ACTUALLY moved more than this, regardless of the mean GOP - the mean
+    // hides a locally-coarse stretch, and what surprises the user is the offset on THEIR cut. Matches
+    // the planner's own rule (SplitPlan).
+    private static readonly TimeSpan NoticeableSnapThreshold = TimeSpan.FromSeconds(0.5);
 
     private static readonly TimeSpan OneSecond = TimeSpan.FromSeconds(1);
 
@@ -409,6 +416,14 @@ public sealed class BulkItemViewModel : ObservableObject
         return IsValidCut ? RowState.Ready : RowState.Invalid;
     }
 
+    /// <summary>Largest absolute snap offset across this row's handles (T-120) — how far the cut really moved.</summary>
+    private TimeSpan MaxSnapOffset()
+    {
+        var intro = IntroEnd.Delta.Duration();
+        var outro = HasOutro ? OutroStart!.Delta.Duration() : TimeSpan.Zero;
+        return intro >= outro ? intro : outro;
+    }
+
     /// <summary>Non-fatal notes: coarse-GOP, "nothing trimmed from the tail", "very short keep", folded with ledger warnings.</summary>
     public string? Warning
     {
@@ -419,9 +434,16 @@ public sealed class BulkItemViewModel : ObservableObject
             if (KeyframesReady && Duration is { } d)
             {
                 var gop = _probe.AverageGop(Keyframes);
-                if (gop > CoarseGopThreshold)
+                if (gop >= CoarseGopThreshold)
                 {
                     notes.Add(string.Create(CultureInfo.InvariantCulture, $"coarse keyframes — cuts may move ~{gop.TotalSeconds:0.0}s"));
+                }
+
+                // T-120: report the snap that actually happened on THIS row, even on a fine mean grid.
+                var worstSnap = MaxSnapOffset();
+                if (worstSnap >= NoticeableSnapThreshold)
+                {
+                    notes.Add(string.Create(CultureInfo.InvariantCulture, $"cut moved {worstSnap.TotalSeconds:0.0}s to the nearest keyframe"));
                 }
 
                 if (HasOutro && d - OutroStartSnapped!.Value <= BoundaryEpsilon && IntroEndSnapped > BoundaryEpsilon)
