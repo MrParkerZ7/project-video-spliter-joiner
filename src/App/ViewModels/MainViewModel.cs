@@ -7,6 +7,7 @@ using VideoSplitJoiner.App.Settings;
 using VideoSplitJoiner.Core.Ffmpeg;
 using VideoSplitJoiner.Core.Join;
 using VideoSplitJoiner.Core.Media;
+using VideoSplitJoiner.App.Io;
 using VideoSplitJoiner.Core.Split;
 using VideoSplitJoiner.Core.Thumbnails;
 using VideoSplitJoiner.Core.Waveform;
@@ -69,7 +70,8 @@ public sealed class MainViewModel : ObservableObject
         var ffmpegRunner = new FfmpegRunner(locator);
 
         var probe = new MediaProbe(ffprobeRunner);
-        var splitEngine = new SplitEngine(ffmpegRunner, probe);
+        // T-122: a replaced original goes to the Recycle Bin, so OutputMode.ReplaceOriginal stays undoable.
+        var splitEngine = new SplitEngine(ffmpegRunner, probe, new RecycleBinOriginalDisposer());
         var joinEngine = new JoinEngine(ffmpegRunner, probe);
 
         // T-077/T-078: the scrub-bar hover thumbnail source — a separate ffmpeg CLI process per frame

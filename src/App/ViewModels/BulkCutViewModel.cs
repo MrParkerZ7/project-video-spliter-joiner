@@ -113,6 +113,7 @@ public sealed class BulkCutViewModel : ObservableObject
     private BulkBatchState _batchState = BulkBatchState.Idle;
     private CollisionPolicy _collisionPolicy = CollisionPolicy.AutoSuffix;
     private bool _overwrite;
+    private bool _replaceOriginal;
     private ApplyToAllReport? _applyToAllReport;
     private IReadOnlyList<BulkTrimItemResult> _lastFailedItems = Array.Empty<BulkTrimItemResult>();
     private BulkItemViewModel? _selectedItem;
@@ -312,6 +313,44 @@ public sealed class BulkCutViewModel : ObservableObject
         get => _overwrite;
         set => SetProperty(ref _overwrite, value);
     }
+
+    /// <summary>
+    /// T-123 (epic G-041): write the trimmed result OVER each original instead of a new <c>_trimmed</c>
+    /// file. Destructive and opt-in - the engine still produces to a temp file and only replaces after a
+    /// verified-complete run, and the replaced original goes to the Recycle Bin, but a wrong cut is far
+    /// costlier here, so <see cref="RunBatchAsync"/> requires an explicit confirmation.
+    ///
+    /// <para>While on, the collision policy is inert (the destination is always the source) - the view
+    /// greys the collision control and <see cref="CollisionIsInert"/> drives that.</para>
+    /// </summary>
+    public bool ReplaceOriginal
+    {
+        get => _replaceOriginal;
+        set
+        {
+            if (SetProperty(ref _replaceOriginal, value))
+            {
+                OnPropertyChanged(nameof(CollisionIsInert));
+                OnPropertyChanged(nameof(OutputNote));
+            }
+        }
+    }
+
+    /// <summary>True when the collision controls have no effect (replace-original owns the destination).</summary>
+    public bool CollisionIsInert => _replaceOriginal;
+
+    /// <summary>The footer's plain-language statement of where output goes - it must never lie.</summary>
+    public string OutputNote =>
+        _replaceOriginal
+            ? "Output → REPLACES each original file · originals go to the Recycle Bin"
+            : "Output → same folder · _trimmed suffix · originals kept";
+
+    /// <summary>
+    /// Confirmation seam for the destructive run (T-123). Given the number of originals that would be
+    /// replaced, returns true to proceed. Defaults to REFUSING, so a host that forgets to wire a prompt
+    /// can never silently destroy the user's masters; the view supplies the real dialog.
+    /// </summary>
+    public Func<int, bool> ConfirmReplaceOriginals { get; set; } = _ => false;
 
     /// <summary>
     /// The most recent apply report (applied count + invalidated rows), or null. Shared surface for
@@ -1066,7 +1105,30 @@ public sealed class BulkCutViewModel : ObservableObject
         // T-115: also cancel any still-pending debounced open so a select-then-immediately-run gesture can't
         // let a stale open fire AFTER this Stop (stop-on-run wins over an in-flight preview open).
         CancelPendingOpen();
-        Player.Stop();
+
+        // T-123: replacing originals is destructive - require an explicit, counted confirmation before
+        // anything runs. Declining leaves the batch entirely untouched (zero engine calls).
+        if (_replaceOriginal)
+        {
+            var atRisk = Items.Count(i => i.IsEnabled && i.IsValidCut);
+            if (!ConfirmReplaceOriginals(atRisk))
+            {
+                return;
+            }
+        }
+
+        // T-100/T-115: stop the preview decode before the batch trims.
+        // T-122: under ReplaceOriginal a Stop is NOT enough - Stop only halts playback, while Unload is
+        // what closes the media element and RELEASES the file handle. A still-open handle on the selected
+        // row would make replacing that very file fail, so unload it outright in this mode.
+        if (_replaceOriginal)
+        {
+            Player.Unload();
+        }
+        else
+        {
+            Player.Stop();
+        }
 
         BatchState = BulkBatchState.Preparing;
         ApplyToAllReport = null;
@@ -1088,7 +1150,9 @@ public sealed class BulkCutViewModel : ObservableObject
             _lastOverall = 0d;
         }
 
-        var options = new BulkTrimOptions(Overwrite ? CollisionPolicy.Overwrite : CollisionPolicy);
+        var options = new BulkTrimOptions(
+            Overwrite ? CollisionPolicy.Overwrite : CollisionPolicy,
+            _replaceOriginal ? OutputMode.ReplaceOriginal : OutputMode.NewFile);
         BatchResult? batch = null;
 
         await Operation.RunWithResultAsync(

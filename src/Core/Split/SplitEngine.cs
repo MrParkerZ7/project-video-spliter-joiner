@@ -43,6 +43,7 @@ public sealed class SplitEngine : ISplitEngine
     private readonly IMediaProbe _probe;
     private readonly ErrorLogWriter _logWriter;
     private readonly IDiskSpaceProbe _diskProbe;
+    private readonly IOriginalDisposer _originalDisposer;
 
     /// <summary>Create the engine over the T-002 runner and T-003 probe.</summary>
     public SplitEngine(IFfmpegRunner runner, IMediaProbe probe)
@@ -51,11 +52,21 @@ public sealed class SplitEngine : ISplitEngine
     }
 
     /// <summary>
+    /// Create the engine with an explicit <see cref="IOriginalDisposer"/> — the app's composition root
+    /// uses this to opt a replaced original into the Recycle Bin (T-122) without needing to construct
+    /// Core's internal default probes.
+    /// </summary>
+    public SplitEngine(IFfmpegRunner runner, IMediaProbe probe, IOriginalDisposer originalDisposer)
+        : this(runner, probe, new ErrorLogWriter(), new DriveInfoDiskSpaceProbe(), originalDisposer)
+    {
+    }
+
+    /// <summary>
     /// Create the engine with an explicit <see cref="ErrorLogWriter"/> (used by tests to redirect the
     /// full-error log to a temp directory).
     /// </summary>
     public SplitEngine(IFfmpegRunner runner, IMediaProbe probe, ErrorLogWriter logWriter)
-        : this(runner, probe, logWriter, new DriveInfoDiskSpaceProbe())
+        : this(runner, probe, logWriter, new DriveInfoDiskSpaceProbe(), new KeepOriginalBackupDisposer())
     {
     }
 
@@ -64,11 +75,27 @@ public sealed class SplitEngine : ISplitEngine
     /// SPEC-001 I31 DiskFull / unmeasurable-drive branches of the disk pre-flight deterministically.
     /// </summary>
     public SplitEngine(IFfmpegRunner runner, IMediaProbe probe, ErrorLogWriter logWriter, IDiskSpaceProbe diskProbe)
+        : this(runner, probe, logWriter, diskProbe, new KeepOriginalBackupDisposer())
+    {
+    }
+
+    /// <summary>
+    /// Full ctor, additionally taking the <see cref="IOriginalDisposer"/> that decides the fate of an
+    /// original's backup after a replace-in-place write (T-122). The app injects a Recycle-Bin
+    /// implementation so a replaced original stays recoverable; Core defaults to KEEPING the backup.
+    /// </summary>
+    public SplitEngine(
+        IFfmpegRunner runner,
+        IMediaProbe probe,
+        ErrorLogWriter logWriter,
+        IDiskSpaceProbe diskProbe,
+        IOriginalDisposer originalDisposer)
     {
         _runner = runner ?? throw new ArgumentNullException(nameof(runner));
         _probe = probe ?? throw new ArgumentNullException(nameof(probe));
         _logWriter = logWriter ?? throw new ArgumentNullException(nameof(logWriter));
         _diskProbe = diskProbe ?? throw new ArgumentNullException(nameof(diskProbe));
+        _originalDisposer = originalDisposer ?? throw new ArgumentNullException(nameof(originalDisposer));
     }
 
     /// <inheritdoc />
@@ -170,7 +197,7 @@ public sealed class SplitEngine : ISplitEngine
             // T-044: ffmpeg finished — entering the finalize phase (temp→move + verify each segment).
             status?.Report(new OperationStatus("Finalizing"));
 
-            var moved = MoveTempSegmentsIntoPlace(tempDir, produced, ct);
+            var moved = MoveTempSegmentsIntoPlace(tempDir, produced, req.InputPath, ct);
 
             progress?.Report(1.0);
             status?.Report(new OperationStatus("Done", null, 1.0));
@@ -440,31 +467,48 @@ public sealed class SplitEngine : ISplitEngine
     /// means a cancel mid-run leaves only temp files (cleaned in finally), never a half-written FINAL
     /// segment. The returned <see cref="SplitResult.Segments"/> lists only the written parts.
     /// </summary>
-    private static IReadOnlyList<SplitSegment> MoveTempSegmentsIntoPlace(
+    private IReadOnlyList<SplitSegment> MoveTempSegmentsIntoPlace(
         string tempDir,
         IReadOnlyList<(PlannedSegment Planned, string TempFile)> produced,
+        string inputPath,
         CancellationToken ct)
     {
+        // T-122: VERIFY EVERY produced part BEFORE touching a single destination. Under
+        // OutputMode.ReplaceOriginal a destination IS the user's original, so discovering a missing
+        // part halfway through the loop would mean an already-clobbered master. Verify-then-replace
+        // is the ordering that makes "a failed run leaves the original intact" true.
+        foreach (var (_, tempFile) in produced)
+        {
+            if (!File.Exists(tempFile))
+            {
+                throw new SplitException(
+                    $"Expected segment '{tempFile}' was not produced by ffmpeg (got fewer segments than planned).");
+            }
+        }
+
+        var inputFull = Path.GetFullPath(inputPath);
         var moved = new List<SplitSegment>(produced.Count);
 
         foreach (var (planned, tempFile) in produced)
         {
             ct.ThrowIfCancellationRequested();
 
-            if (!File.Exists(tempFile))
-            {
-                throw new SplitException(
-                    $"Expected segment '{tempFile}' was not produced by ffmpeg (got fewer segments than planned).");
-            }
-
             var dest = planned.OutputPath;
 
-            if (File.Exists(dest))
+            if (string.Equals(Path.GetFullPath(dest), inputFull, StringComparison.OrdinalIgnoreCase))
             {
-                File.Delete(dest); // Overwrite already permission-checked upstream.
+                // Replace-in-place: never a delete-then-move (that window leaves the bytes nowhere).
+                ReplaceOriginalInPlace(tempFile, dest);
             }
+            else
+            {
+                if (File.Exists(dest))
+                {
+                    File.Delete(dest); // Overwrite already permission-checked upstream.
+                }
 
-            File.Move(tempFile, dest);
+                File.Move(tempFile, dest);
+            }
 
             moved.Add(new SplitSegment(
                 Path: dest,
@@ -475,6 +519,52 @@ public sealed class SplitEngine : ISplitEngine
         }
 
         return moved.AsReadOnly();
+    }
+
+    /// <summary>
+    /// Atomically put <paramref name="tempFile"/> where the user's ORIGINAL lives, keeping a backup
+    /// throughout so the data is never in a state where it exists nowhere (T-122). Prefers
+    /// <see cref="File.Replace(string,string,string)"/>; falls back to rename-original-aside → move →
+    /// dispose for volumes that do not support it (exFAT / some SMB shares). The backup's fate is the
+    /// injected <see cref="IOriginalDisposer"/>'s decision (the app sends it to the Recycle Bin).
+    /// </summary>
+    private void ReplaceOriginalInPlace(string tempFile, string originalPath)
+    {
+        var backup = originalPath + ".vsj-original";
+
+        try
+        {
+            if (File.Exists(backup))
+            {
+                File.Delete(backup); // A stale backup from an earlier interrupted run.
+            }
+        }
+        catch
+        {
+            // Non-fatal — File.Replace/the fallback will surface a real problem below.
+        }
+
+        try
+        {
+            File.Replace(tempFile, originalPath, backup, ignoreMetadataErrors: true);
+        }
+        catch (Exception ex) when (ex is PlatformNotSupportedException or IOException or UnauthorizedAccessException)
+        {
+            // Fallback: move the original aside FIRST, so the bytes always exist under one name or the
+            // other, then put the new file in place. If the second step fails, restore the original.
+            File.Move(originalPath, backup, overwrite: true);
+            try
+            {
+                File.Move(tempFile, originalPath);
+            }
+            catch
+            {
+                File.Move(backup, originalPath, overwrite: true); // Put the user's file back.
+                throw;
+            }
+        }
+
+        _originalDisposer.DisposeOriginalBackup(backup);
     }
 
     /// <summary>

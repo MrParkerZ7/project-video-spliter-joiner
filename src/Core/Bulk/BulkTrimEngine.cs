@@ -66,7 +66,7 @@ public sealed class BulkTrimEngine : IBulkTrimEngine
             var item = items[i];
             try
             {
-                var (eff, ow, skip) = ResolveCollision(item, opts.Collision);
+                var (eff, ow, skip) = ResolveCollision(item, opts);
                 effective[i] = eff;
                 overwrite[i] = ow;
                 if (skip)
@@ -203,16 +203,27 @@ public sealed class BulkTrimEngine : IBulkTrimEngine
     // --- Collision resolution -----------------------------------------------------------------
 
     /// <summary>
-    /// Resolve one item's effective output path + overwrite flag + skip decision per the policy.
-    /// The SOURCE is never a write target: any policy that would resolve to the input path is
-    /// forced onto an AutoSuffix name instead.
+    /// Resolve one item's effective output path + overwrite flag + skip decision per the options.
+    /// Under <see cref="OutputMode.NewFile"/> (the default) the SOURCE is never a write target: any
+    /// policy that would resolve to the input path is forced onto an AutoSuffix name instead. That
+    /// guard is bypassed - deliberately, and only - for the explicitly opt-in
+    /// <see cref="OutputMode.ReplaceOriginal"/>, where the source IS the destination by definition.
     /// </summary>
-    private static (string Effective, bool Overwrite, bool Skip) ResolveCollision(BulkTrimItem item, CollisionPolicy policy)
+    private static (string Effective, bool Overwrite, bool Skip) ResolveCollision(BulkTrimItem item, BulkTrimOptions opts)
     {
         var inputFull = Path.GetFullPath(item.InputPath);
+
+        // T-121: replace-the-original is a destination choice, not a collision outcome - it wins, and
+        // the collision policy is moot (the destination is always taken, by the source itself). The
+        // engine still writes to a temp file and only replaces the original after a verified run.
+        if (opts.Output == OutputMode.ReplaceOriginal)
+        {
+            return (inputFull, true, false);
+        }
+
         var desiredFull = Path.GetFullPath(item.DesiredOutputPath);
 
-        switch (policy)
+        switch (opts.Collision)
         {
             case CollisionPolicy.Overwrite:
                 if (PathsEqual(desiredFull, inputFull))

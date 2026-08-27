@@ -9,6 +9,7 @@
     <UserControl.Resources>
         <conv:NullToCollapsedConverter x:Key="NullToCollapsed" />
         <conv:BoolToVisibilityConverter x:Key="BoolToVisibility" />
+        <conv:InverseBoolConverter x:Key="InverseBool" />
         <conv:BoolToCollapsedConverter x:Key="BoolToCollapsed" />
         <conv:FractionToPercentConverter x:Key="FractionToPercent" />
         <conv:ClockConverter x:Key="Clock" />
@@ -828,13 +829,30 @@
                 </Grid.ColumnDefinitions>
 
                 <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
-                    <TextBlock Text="Output → same folder · _trimmed suffix · originals kept"
+                    <!-- T-123: the note is bound, never hard-coded, so it can never contradict the mode. -->
+                    <TextBlock Text="{Binding OutputNote}"
                                VerticalAlignment="Center"
                                Foreground="{StaticResource TextMutedBrush}" />
+                    <!-- Collision policy: inert (greyed) while replace-original owns the destination. -->
                     <CheckBox Content="Overwrite existing output"
                               Margin="14,0,0,0"
                               VerticalAlignment="Center"
-                              IsChecked="{Binding Overwrite, Mode=TwoWay}" />
+                              IsChecked="{Binding Overwrite, Mode=TwoWay}"
+                              IsEnabled="{Binding CollisionIsInert, Converter={StaticResource InverseBool}}"
+                              ToolTip="Ignored while &quot;Replace originals&quot; is on — the destination is the source file." />
+                    <!-- The destructive choice: deliberately NOT a look-alike peer of the checkbox above -
+                         danger colour-role + warning glyph + bold weight (three differentiators). -->
+                    <CheckBox Margin="18,0,0,0"
+                              VerticalAlignment="Center"
+                              IsChecked="{Binding ReplaceOriginal, Mode=TwoWay}"
+                              ToolTip="Write each trimmed result OVER its original file. Replaced originals go to the Recycle Bin. You will be asked to confirm before the batch runs.">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="⚠" Margin="0,0,5,0" Foreground="{StaticResource DangerBrush}" />
+                            <TextBlock Text="Replace originals"
+                                       FontWeight="SemiBold"
+                                       Foreground="{StaticResource DangerBrush}" />
+                        </StackPanel>
+                    </CheckBox>
                 </StackPanel>
 
                 <StackPanel Grid.Column="1" Orientation="Horizontal">

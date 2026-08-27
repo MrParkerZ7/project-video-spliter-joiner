@@ -28,6 +28,35 @@ public partial class BulkCutView : UserControl
     public BulkCutView()
     {
         InitializeComponent();
+
+        // T-123: supply the real confirmation for the destructive replace-originals run. The VM defaults
+        // to REFUSING, so forgetting this wiring can never silently destroy a user's masters.
+        DataContextChanged += (_, e) =>
+        {
+            if (e.NewValue is BulkCutViewModel vm)
+            {
+                vm.ConfirmReplaceOriginals = ConfirmReplaceOriginals;
+            }
+        };
+    }
+
+    /// <summary>
+    /// Block for an explicit, COUNTED confirmation before a batch replaces originals (T-123). Defaults
+    /// to No, so an accidental Enter/Escape does not destroy anything.
+    /// </summary>
+    private static bool ConfirmReplaceOriginals(int count)
+    {
+        var noun = count == 1 ? "file" : "files";
+        var result = MessageBox.Show(
+            $"This will REPLACE {count} original {noun} with the trimmed result." + Environment.NewLine + Environment.NewLine +
+            "Each replaced original is sent to the Recycle Bin, so you can restore it if something " +
+            "looks wrong. Continue?",
+            "Replace originals?",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Warning,
+            MessageBoxResult.No);
+
+        return result == MessageBoxResult.Yes;
     }
 
     // ---- Add-files picker (mirror JoinView.ShowAddFilesPicker) -------------------------------
