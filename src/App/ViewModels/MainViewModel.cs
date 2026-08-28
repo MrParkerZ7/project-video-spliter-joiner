@@ -105,7 +105,12 @@ public sealed class MainViewModel : ObservableObject
         // settings instances (no second ffmpeg graph); its batch runner defaults over the shared split engine.
         // T-100 — it gets its OWN FfmeMediaPlayer for the shared mini-preview (a second FFME element is
         // fine; Split/Bulk are different tabs and only the active tab decodes — see StopInactiveScreenPlayers).
-        BulkCut = new BulkCutViewModel(probe, splitEngine, thumbnailService, settings, player: new FfmeMediaPlayer());
+        // T-125 (G-042): give Bulk Cut a smart-cut engine so "Exact cut" can honour the requested
+        // time by re-encoding ~1 GOP; without it the mode silently stays lossless.
+        BulkCut = new BulkCutViewModel(
+            probe, splitEngine, thumbnailService, settings,
+            player: new FfmeMediaPlayer(),
+            smartCut: new SmartCutEngine(ffmpegRunner, probe));
 
         ToggleLayoutCommand = new RelayCommand(ToggleLayout);
 

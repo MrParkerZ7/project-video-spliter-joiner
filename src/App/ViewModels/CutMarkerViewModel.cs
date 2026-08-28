@@ -140,7 +140,26 @@ public sealed class CutMarkerViewModel : ObservableObject
             : HasSnapNote ? $"→ {FormatClock(Snapped)} ({FormatDelta(Delta)})" : string.Empty;
 
     /// <summary>True when there is a snap worth showing (pending, or a non-zero offset).</summary>
-    public bool HasSnapNote => _isSnapPending || _delta != TimeSpan.Zero;
+    public bool HasSnapNote => !_suppressSnapNote && (_isSnapPending || _delta != TimeSpan.Zero);
+
+    private bool _suppressSnapNote;
+
+    /// <summary>
+    /// T-125: silence the snap readout when the active cut precision makes it untrue - under EXACT
+    /// cutting the cut lands on the requested time, so advertising a keyframe offset would mislead.
+    /// </summary>
+    public bool SuppressSnapNote
+    {
+        get => _suppressSnapNote;
+        set
+        {
+            if (_suppressSnapNote != value)
+            {
+                _suppressSnapNote = value;
+                RaiseSnapNote();
+            }
+        }
+    }
 
     private void RaiseSnapNote()
     {

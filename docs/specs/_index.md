@@ -12,7 +12,7 @@ One spec per feature; numbered invariants are the source `todo-automate` derives
 
 | Spec | Slug | Area | Invariants | Covered | Gaps |
 |------|------|------|:--:|:--:|:--:|
-| [SPEC-001](SPEC-001-stream-copy-split.md) | stream-copy-split | core | 38 | 37 | 1 |
+| [SPEC-001](SPEC-001-stream-copy-split.md) | stream-copy-split | core | 47 | 46 | 1 |
 | [SPEC-002](SPEC-002-bulk-trim-engine.md) | bulk-trim-engine | core | 32 | 32 | 0 |
 | [SPEC-003](SPEC-003-join-concat.md) | join-concat | core | 31 | 30 | 1 |
 | [SPEC-004](SPEC-004-media-probe.md) | media-probe | core | 32 | 32 | 0 |
@@ -27,9 +27,9 @@ One spec per feature; numbered invariants are the source `todo-automate` derives
 | [SPEC-013](SPEC-013-preview-player.md) | preview-player | app | 48 | 46 | 2 |
 | [SPEC-014](SPEC-014-timeline.md) | timeline | app | 35 | 34 | 1 |
 | [SPEC-015](SPEC-015-app-shell-theming.md) | app-shell-theming | ui | 28 | 24 | 4 |
-| **TOTAL** | | | **565** | **556** | **9** |
+| **TOTAL** | | | **574** | **565** | **9** |
 
-**Coverage: 98% of spec cases** (556/565). T-105 (2026-08-24) closed 7 of the 16 deferred gaps by
+**Coverage: 98% of spec cases** (565/574). T-105 (2026-08-24) closed 7 of the 16 deferred gaps by
 extracting the pure math/seams they needed — `IDiskSpaceProbe` on `SplitEngine` (SPEC-001 I31), the
 `TimelineMath`/`BulkScrubMath` view-geometry helpers (SPEC-014 I31/I32/I33/I35), and
 `WindowChromeMath`/`CrashReport` (SPEC-015 I23/I24) — each now unit-tested, views/handlers delegating

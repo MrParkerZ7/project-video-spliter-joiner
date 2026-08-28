@@ -1,3 +1,4 @@
+using System.Linq;
 using System.Text.RegularExpressions;
 using VideoSplitJoiner.Core.Errors;
 using VideoSplitJoiner.Core.Io;
@@ -23,6 +24,7 @@ public sealed class BulkTrimEngine : IBulkTrimEngine
     private readonly ISplitEngine _splitEngine;
     private readonly IBulkTrimRequestBuilder _requestBuilder;
     private readonly IDiskSpaceProbe _diskProbe;
+    private readonly ISmartCutEngine? _smartCut;
 
     /// <summary>Create the batch runner over the shared split engine and request builder (default disk probe).</summary>
     public BulkTrimEngine(ISplitEngine splitEngine, IBulkTrimRequestBuilder requestBuilder)
@@ -30,12 +32,36 @@ public sealed class BulkTrimEngine : IBulkTrimEngine
     {
     }
 
+    /// <summary>
+    /// Create the batch runner with a smart-cut engine for <see cref="CutPrecision.Exact"/> (T-125),
+    /// defaulting the disk probe. The app's composition root uses this.
+    /// </summary>
+    public BulkTrimEngine(ISplitEngine splitEngine, IBulkTrimRequestBuilder requestBuilder, ISmartCutEngine? smartCut)
+        : this(splitEngine, requestBuilder, new DriveInfoDiskSpaceProbe(), smartCut)
+    {
+    }
+
     /// <summary>Create the batch runner with an explicit disk-space probe (used by tests to force a shortfall / an unmeasurable drive).</summary>
     public BulkTrimEngine(ISplitEngine splitEngine, IBulkTrimRequestBuilder requestBuilder, IDiskSpaceProbe diskProbe)
+        : this(splitEngine, requestBuilder, diskProbe, null)
+    {
+    }
+
+    /// <summary>
+    /// Full ctor, additionally taking the <see cref="ISmartCutEngine"/> used by
+    /// <see cref="CutPrecision.Exact"/> (T-125). Null = exact cutting is unavailable and every row
+    /// takes the lossless path, so existing callers keep working unchanged.
+    /// </summary>
+    public BulkTrimEngine(
+        ISplitEngine splitEngine,
+        IBulkTrimRequestBuilder requestBuilder,
+        IDiskSpaceProbe diskProbe,
+        ISmartCutEngine? smartCut)
     {
         _splitEngine = splitEngine ?? throw new ArgumentNullException(nameof(splitEngine));
         _requestBuilder = requestBuilder ?? throw new ArgumentNullException(nameof(requestBuilder));
         _diskProbe = diskProbe ?? throw new ArgumentNullException(nameof(diskProbe));
+        _smartCut = smartCut;
     }
 
     /// <inheritdoc />
@@ -141,11 +167,43 @@ public sealed class BulkTrimEngine : IBulkTrimEngine
 
             try
             {
-                var req = await _requestBuilder.BuildAsync(item, effective[i], overwrite[i], ct).ConfigureAwait(false);
-                var splitResult = await _splitEngine.SplitAsync(req, rowProgress, ct).ConfigureAwait(false);
+                IReadOnlyList<string> rowWarnings = NoWarnings;
+                var producedExactly = false;
+
+                // T-125: exact cutting honours the requested time by re-encoding ~1 GOP. A source whose
+                // codecs cannot be reproduced (or a cut already on a keyframe) reports FellBack, and the
+                // row silently takes the ordinary lossless path instead of risking a bad file.
+                if (opts.Precision == CutPrecision.Exact && _smartCut is not null)
+                {
+                    var exact = await _smartCut
+                        .CutAsync(item.InputPath, item.IntroEnd, item.OutroStart, effective[i], rowProgress, ct)
+                        .ConfigureAwait(false);
+
+                    if (!exact.FellBack)
+                    {
+                        producedExactly = true;
+                    }
+                    else if (exact.FallbackReason is { } fbReason
+                             && exact.Strategy != SmartCutStrategy.PureCopy)
+                    {
+                        // Only worth telling the user when exact was genuinely unavailable - an
+                        // already-on-a-keyframe cut is exact either way and needs no note.
+                        rowWarnings = new[] { $"exact cut unavailable ({fbReason}) - cut snapped to the nearest keyframe" };
+                    }
+                }
+
+                if (!producedExactly)
+                {
+                    var req = await _requestBuilder.BuildAsync(item, effective[i], overwrite[i], ct).ConfigureAwait(false);
+                    var splitResult = await _splitEngine.SplitAsync(req, rowProgress, ct).ConfigureAwait(false);
+                    if (splitResult?.Warnings is { Count: > 0 } w)
+                    {
+                        rowWarnings = rowWarnings.Count == 0 ? w : rowWarnings.Concat(w).ToList();
+                    }
+                }
 
                 results[i] = new BulkTrimItemResult(
-                    item, ItemOutcome.Done, effective[i], null, splitResult?.Warnings ?? NoWarnings);
+                    item, ItemOutcome.Done, effective[i], null, rowWarnings);
                 runnableDone++;
                 ReportRowComplete(progress, i, n, fileName, runnableDone, runnableTotal);
             }

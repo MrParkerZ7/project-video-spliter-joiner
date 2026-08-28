@@ -371,3 +371,39 @@ Files with **non-ASCII paths** (for example Japanese filenames or folders) work 
 split and join, and any error text shows the real characters rather than garbled ones. **`.ts`
 (mpegts) files** split correctly too. If you ever see an error, the copyable full log will contain
 the exact path and output for troubleshooting.
+
+---
+
+## Why did my cut move? (keyframes, and how to cut exactly)
+
+If you set a cut at **5s** and the app shows **4s**, nothing is broken — and here is why.
+
+A lossless cut copies the original video's bytes without re-encoding, which is what makes it instant
+and quality-preserving. But a copied segment **must begin on a keyframe** (a self-contained frame).
+Keyframes are spaced by the encoder — often every 2–10 seconds — so the cut lands on the nearest one.
+
+Every cut row shows this plainly: the time you asked for, then where it landed and by how much:
+
+```
+00:05.0   → 00:04.0 (−1.0s)
+```
+
+On a coarse grid two nearby requests can land on the **same** keyframe — setting 5s and then 6s on a
+4-second grid both resolve to 4s. That is correct behaviour, not a dropped click; the readout is how
+you can tell.
+
+### Cutting exactly where you set it
+
+Bulk Cut has an **Exact cut** option. With it on, the cut lands on the time you set: the app
+re-encodes just the short fragment between your cut and the next keyframe (about a second of video)
+and stream-copies everything after it, so the rest of the file is still untouched.
+
+| | Lossless *(default)* | Exact cut |
+|---|---|---|
+| Where the cut lands | nearest keyframe | exactly where you set it |
+| Speed | instant | a short re-encode per cut |
+| Quality | byte-identical | one re-encoded fragment; the rest untouched |
+
+Use **Lossless** for most batches. Turn on **Exact cut** when the precise moment matters. If a file's
+codec cannot be re-encoded reliably, that row falls back to a lossless cut and says so rather than
+producing a questionable file.

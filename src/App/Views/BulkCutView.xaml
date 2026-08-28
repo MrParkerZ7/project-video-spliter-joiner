@@ -484,11 +484,11 @@
                             <Button Style="{StaticResource HeroButton}"
                                     Margin="0,0,8,0"
                                     Content="Set intro-end here"
-                                    ToolTip="Set the selected row's intro-end to the preview playhead (snaps to the nearest keyframe)"
+                                    ToolTip="{Binding PrecisionNote}"
                                     Command="{Binding SetIntroAtPlayheadCommand}" />
                             <Button Style="{StaticResource HeroButton}"
                                     Content="Set outro-start here"
-                                    ToolTip="Set the selected row's outro-start to the preview playhead (adds an outro if none; snaps)"
+                                    ToolTip="{Binding PrecisionNote}"
                                     Command="{Binding SetOutroAtPlayheadCommand}" />
                         </WrapPanel>
                     </StackPanel>
@@ -840,6 +840,18 @@
                               IsChecked="{Binding Overwrite, Mode=TwoWay}"
                               IsEnabled="{Binding CollisionIsInert, Converter={StaticResource InverseBool}}"
                               ToolTip="Ignored while &quot;Replace originals&quot; is on — the destination is the source file." />
+                    <!-- T-125: cut precision. Default (unchecked) keeps the lossless identity. -->
+                    <CheckBox Margin="18,0,0,0"
+                              VerticalAlignment="Center"
+                              Content="Exact cut"
+                              IsChecked="{Binding ExactCut, Mode=TwoWay}"
+                              ToolTip="Cut exactly where you set the handles instead of snapping to the nearest keyframe. Re-encodes about a second of video per cut; the rest is still copied untouched." />
+                    <TextBlock Text="{Binding PrecisionNote}"
+                               Margin="8,0,0,0"
+                               VerticalAlignment="Center"
+                               Foreground="{StaticResource TextMutedBrush}"
+                               FontSize="{StaticResource FontSizeSmall}" />
+
                     <!-- The destructive choice: deliberately NOT a look-alike peer of the checkbox above -
                          danger colour-role + warning glyph + bold weight (three differentiators). -->
                     <CheckBox Margin="18,0,0,0"

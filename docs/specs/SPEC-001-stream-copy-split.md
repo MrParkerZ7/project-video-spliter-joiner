@@ -149,3 +149,30 @@ merely reuses this engine); the join engine.
 - Related specs: SPEC (bulk-cut / kept-middle trim) — reuses this engine's per-segment path; SPEC (join engine) — sibling copy operation
 - Key code: `src/Core/Split/SplitEngine.cs` · `SplitArgsBuilder.cs` · `SplitPlan.cs` (`SplitPlanner`) ·
   `SplitRequest.cs` · `SplitResult.cs` · `SplitSegment.cs` · `SplitException.cs`
+
+## Frame-exact ("smart") cutting — SmartCutEngine (T-124, epic G-042)
+
+`SplitEngine` remains **copy-only**: its `-c copy` invariant and `SatisfiesCopyInvariant` assertion are
+unchanged, and nothing below alters them. Frame-exact cutting is a SEPARATE engine
+(`SmartCutEngine`) used when `CutPrecision.Exact` is selected.
+
+- **I40** — `SmartCutPlanner.Plan(start, end, keyframes)` returns `PureCopy` when `start` is on a
+  keyframe (within `OnKeyframeTolerance`, 10ms), so an already-exact request never re-encodes.
+- **I41** — Otherwise it returns `HeadReencode` with `HeadEnd` = the first keyframe strictly after
+  `start`: the head `[start, HeadEnd)` is re-encoded, the tail `[HeadEnd, end)` is stream-copied.
+- **I42** — When no keyframe lies strictly between `start` and `end`, it returns `FullReencode` — there
+  is no copyable tail, and the re-encoded range is by construction shorter than one GOP.
+- **I43** — `Start` is honoured EXACTLY; the planner never moves the user's requested time.
+- **I44** — The head command uses an OUTPUT seek (`-ss` AFTER `-i`) so the fragment begins on the exact
+  requested frame; the tail command is `SplitArgsBuilder.PerSegment`, i.e. byte-identical to what the
+  lossless path would have produced.
+- **I45** — The head is encoded with parameters read from the source's own probe (video codec→encoder,
+  pixel format, resolution; audio codec→encoder, sample rate, channels) so the concat demuxer accepts
+  the join.
+- **I46** — A codec with no known encoder mapping yields a FALLBACK result (`FellBack = true` with a
+  stated reason) — never a guessed encoder and never a silently corrupt concat. The caller then runs
+  the ordinary lossless cut.
+- **I47** — All intermediates live in a `.vsj-smartcut-<guid>` temp dir swept in a `finally`; the final
+  file is moved into place only after it exists (same cancel-safety contract as `SplitEngine`).
+- **I48** — Exactly three ffmpeg invocations for a `HeadReencode` (head encode, tail copy, concat) and
+  one for a `FullReencode` — never one per GOP.

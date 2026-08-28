@@ -5,6 +5,27 @@ All notable changes to VideoSplitJoiner are documented here. The format is based
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). The `1.0.0` release is the target
 goal; `0.1.0` is the first end-to-end, shippable cut.
 
+## [Unreleased]
+
+### Added
+- **Bulk Cut — "Exact cut"** (G-042): cuts land exactly where you set them instead of snapping to the
+  nearest keyframe. Only the fragment between the cut and the next keyframe is re-encoded (~1s); the
+  remainder is still stream-copied. Lossless stays the default. A source whose codecs cannot be
+  reproduced falls back to the lossless cut and reports why, rather than risking a bad file.
+- **Bulk Cut — "Replace originals"** (G-041): opt-in output mode that writes each trimmed result over
+  its original. Produce → verify → atomic replace, with the replaced original sent to the Recycle Bin;
+  a counted confirmation is required and every failure path leaves the original untouched.
+
+### Fixed
+- **Bulk Cut — the snap is now visible** (G-041): rows show the requested time plus where it landed
+  (`00:05.0 → 00:04.0 (−1.0s)`). Previously a cut that snapped to the same keyframe as the previous one
+  changed nothing on screen, making a correct snap indistinguishable from an ignored click.
+- **Bulk Cut — the cut-time field no longer overwrites your request** (G-041): clicking away from the
+  IN/OUT field used to commit the displayed (snapped, 0.1s-truncated) value back over the time you set,
+  and send that truncated value to the engine. Only a genuine edit commits now.
+- **Bulk Cut — coarse-keyframe warning blind spot** (G-041): a file with a mean GOP of exactly 4.0s
+  produced no warning. The advisory now also reports how far a cut actually moved.
+
 ## [1.0.0] - 2026-08-26
 
 **First published release.** The app is feature-complete for its original vision: split, join, and

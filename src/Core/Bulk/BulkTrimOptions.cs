@@ -10,6 +10,12 @@ namespace VideoSplitJoiner.Core.Bulk;
 /// <see cref="OutputMode.ReplaceOriginal"/> takes precedence and <paramref name="Collision"/> is ignored,
 /// because the destination is always occupied - by the source itself.
 /// </param>
+/// <param name="Precision">
+/// How exactly the cut times are honoured (T-125): <see cref="CutPrecision.Lossless"/> snaps to
+/// keyframes and copies every byte (default); <see cref="CutPrecision.Exact"/> re-encodes ~1 GOP so the
+/// cut lands where it was set.
+/// </param>
 public sealed record BulkTrimOptions(
     CollisionPolicy Collision = CollisionPolicy.AutoSuffix,
-    OutputMode Output = OutputMode.NewFile);
+    OutputMode Output = OutputMode.NewFile,
+    CutPrecision Precision = CutPrecision.Lossless);

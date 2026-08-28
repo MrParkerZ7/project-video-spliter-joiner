@@ -114,6 +114,7 @@ public sealed class BulkCutViewModel : ObservableObject
     private CollisionPolicy _collisionPolicy = CollisionPolicy.AutoSuffix;
     private bool _overwrite;
     private bool _replaceOriginal;
+    private bool _exactCut;
     private ApplyToAllReport? _applyToAllReport;
     private IReadOnlyList<BulkTrimItemResult> _lastFailedItems = Array.Empty<BulkTrimItemResult>();
     private BulkItemViewModel? _selectedItem;
@@ -144,13 +145,18 @@ public sealed class BulkCutViewModel : ObservableObject
         TimeSpan? thumbnailDebounce = null,
         Func<TimeSpan, CancellationToken, Task>? thumbnailDelay = null,
         TimeSpan? selectionOpenDebounce = null,
-        Func<TimeSpan, CancellationToken, Task>? selectionOpenDelay = null)
+        Func<TimeSpan, CancellationToken, Task>? selectionOpenDelay = null,
+        ISmartCutEngine? smartCut = null)
     {
         _probe = probe ?? throw new ArgumentNullException(nameof(probe));
         _splitEngine = splitEngine ?? throw new ArgumentNullException(nameof(splitEngine));
         _thumbnails = thumbnails ?? throw new ArgumentNullException(nameof(thumbnails));
         _settings = settings ?? throw new ArgumentNullException(nameof(settings));
-        _bulkTrimEngine = bulkTrimEngine ?? new BulkTrimEngine(_splitEngine, new KeptMiddleRequestBuilder(_probe));
+        // T-125: the default batch runner also gets a smart-cut engine, so CutPrecision.Exact has
+        // something to route to. Only built when a real ffmpeg runner is available (tests inject their
+        // own engine and never reach this branch).
+        _bulkTrimEngine = bulkTrimEngine ?? new BulkTrimEngine(
+            _splitEngine, new KeptMiddleRequestBuilder(_probe), smartCut);
         _thumbnailDebounce = thumbnailDebounce; // T-108 test seams (null ⇒ per-row production defaults)
         _thumbnailDelay = thumbnailDelay;
 
@@ -338,6 +344,35 @@ public sealed class BulkCutViewModel : ObservableObject
 
     /// <summary>True when the collision controls have no effect (replace-original owns the destination).</summary>
     public bool CollisionIsInert => _replaceOriginal;
+
+    /// <summary>
+    /// T-125 (epic G-042): cut EXACTLY where the user set the handles instead of snapping to the
+    /// nearest keyframe. Off by default - the lossless path is the app's identity and the right choice
+    /// for most batches. On, roughly one GOP (~1-2s of video) is re-encoded per cut and the rest is
+    /// still copied untouched; a source whose codecs cannot be reproduced falls back automatically and
+    /// says so on the row.
+    /// </summary>
+    public bool ExactCut
+    {
+        get => _exactCut;
+        set
+        {
+            if (SetProperty(ref _exactCut, value))
+            {
+                OnPropertyChanged(nameof(PrecisionNote));
+                foreach (var row in Items)
+                {
+                    row.SetExactCut(value);
+                }
+            }
+        }
+    }
+
+    /// <summary>Plain-language statement of the active precision, so the trade-off is never hidden.</summary>
+    public string PrecisionNote =>
+        _exactCut
+            ? "Exact — cuts land where you set them (re-encodes ~1s per cut)"
+            : "Lossless — cuts snap to the nearest keyframe (instant, no quality loss)";
 
     /// <summary>The footer's plain-language statement of where output goes - it must never lie.</summary>
     public string OutputNote =>
@@ -1152,7 +1187,8 @@ public sealed class BulkCutViewModel : ObservableObject
 
         var options = new BulkTrimOptions(
             Overwrite ? CollisionPolicy.Overwrite : CollisionPolicy,
-            _replaceOriginal ? OutputMode.ReplaceOriginal : OutputMode.NewFile);
+            _replaceOriginal ? OutputMode.ReplaceOriginal : OutputMode.NewFile,
+            _exactCut ? CutPrecision.Exact : CutPrecision.Lossless);
         BatchResult? batch = null;
 
         await Operation.RunWithResultAsync(

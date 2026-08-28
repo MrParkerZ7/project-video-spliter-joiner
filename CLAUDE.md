@@ -191,6 +191,22 @@ A .NET 8 WPF app that splits and joins video **without re-encoding**. See [READM
   reorder, `DataFormats.FileDrop` = external add), never by guessing — preserve that when touching the
   Join drop handler. Do not add new drop-side business logic; wire it through the existing commands.
 
+## Rebuild before reporting a UI fix done
+
+A green test suite is **not** evidence the user can see a change. G-041 was committed, pushed and
+966-tests-green while the app binary the user actually clicked was over an hour older than the fix —
+so the reported bug looked untouched and had to be reported twice.
+
+**Rule:** any change that affects the running app (view, view-model, engine behaviour) is not "done"
+until the app has been **rebuilt and relaunched**, and the change observed:
+
+```
+powershell -File packaging/package.ps1     # rebuild what the user runs
+# then stop the stale instance and launch dist/publish/VideoSplitJoiner.App.exe
+```
+
+Tests prove the logic; only a rebuild proves the user can reach it.
+
 ## Build / test / package
 
 The .NET 8 SDK lives at `D:\_env_storeage\dotnet` and is **not on PATH** — invoke by full path:

@@ -416,6 +416,29 @@ public sealed class BulkItemViewModel : ObservableObject
         return IsValidCut ? RowState.Ready : RowState.Invalid;
     }
 
+    /// <summary>
+    /// T-125: under EXACT cutting the cut lands on the requested time, so the row must stop advertising
+    /// a keyframe offset that will not happen. Propagated from the tab's precision choice.
+    /// </summary>
+    public void SetExactCut(bool exact)
+    {
+        if (_exactCut == exact)
+        {
+            return;
+        }
+
+        _exactCut = exact;
+        IntroEnd.SuppressSnapNote = exact;
+        if (OutroStart is { } outro)
+        {
+            outro.SuppressSnapNote = exact;
+        }
+
+        OnPropertyChanged(nameof(Warning));
+    }
+
+    private bool _exactCut;
+
     /// <summary>Largest absolute snap offset across this row's handles (T-120) — how far the cut really moved.</summary>
     private TimeSpan MaxSnapOffset()
     {
@@ -440,7 +463,7 @@ public sealed class BulkItemViewModel : ObservableObject
                 }
 
                 // T-120: report the snap that actually happened on THIS row, even on a fine mean grid.
-                var worstSnap = MaxSnapOffset();
+                var worstSnap = _exactCut ? TimeSpan.Zero : MaxSnapOffset();
                 if (worstSnap >= NoticeableSnapThreshold)
                 {
                     notes.Add(string.Create(CultureInfo.InvariantCulture, $"cut moved {worstSnap.TotalSeconds:0.0}s to the nearest keyframe"));
