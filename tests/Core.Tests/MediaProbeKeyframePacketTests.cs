@@ -241,6 +241,78 @@ public class MediaProbeKeyframePacketTests
             File.Delete(tmp);
         }
     }
+
+    // ---- Timestamp source + sorted-distinct accumulation (query-aware fake, no binary) --------
+
+    // SPEC-004#I12 — the packet timestamp is pts_time FALLING BACK to dts_time: a stream whose
+    // packets carry only dts_time still yields keyframes on the fast demux path.
+    [Trait("serves-spec", "SPEC-004")]
+    [Fact]
+    public async Task GetKeyframesAsync_PacketWithoutPtsTime_FallsBackToDtsTime()
+    {
+        const string packetsJson = """
+            {"packets":[
+              {"dts_time":"0.000000","flags":"K__"},
+              {"dts_time":"2.000000","flags":"K__"}
+            ]}
+            """;
+        var fake = new QueryAwareFfprobeRunner(packetsPayload: packetsJson, framesPayload: "{}");
+        var probe = new MediaProbe(fake);
+
+        var tmp = Path.Combine(Path.GetTempPath(), "vsj-dtsonly-" + Guid.NewGuid().ToString("N") + ".mp4");
+        await File.WriteAllTextAsync(tmp, "placeholder");
+        try
+        {
+            var kf = await probe.GetKeyframesAsync(tmp);
+
+            kf.Should().Equal(
+                new[] { TimeSpan.Zero, TimeSpan.FromSeconds(2) },
+                "a keyframe packet with no pts_time falls back to its dts_time");
+            probe.LastScanPath.Should().Be(KeyframeScanPath.Packets, "dts-only packets still yield keyframes, so the packet path stands");
+            fake.FrameCallCount.Should().Be(0, "the packet path produced keyframes — the decode fallback must not run");
+        }
+        finally
+        {
+            File.Delete(tmp);
+        }
+    }
+
+    // SPEC-004#I11 — keyframes come back SORTED ASCENDING AND DISTINCT (SortedSet accumulator),
+    // whatever order the demuxer reported the packets in and however often it repeated one.
+    [Trait("serves-spec", "SPEC-004")]
+    [Fact]
+    public async Task GetKeyframesAsync_UnsortedDuplicatePackets_ReturnsSortedDistinct()
+    {
+        // Reported out of order (2.0, 0.0, 2.0, 1.0) with 2.0s appearing twice.
+        const string packetsJson = """
+            {"packets":[
+              {"pts_time":"2.000000","dts_time":"2.000000","flags":"K__"},
+              {"pts_time":"0.000000","dts_time":"0.000000","flags":"K__"},
+              {"pts_time":"2.000000","dts_time":"2.000000","flags":"K__"},
+              {"pts_time":"1.000000","dts_time":"1.000000","flags":"K__"}
+            ]}
+            """;
+        var fake = new QueryAwareFfprobeRunner(packetsPayload: packetsJson, framesPayload: "{}");
+        var probe = new MediaProbe(fake);
+
+        var tmp = Path.Combine(Path.GetTempPath(), "vsj-unsorted-" + Guid.NewGuid().ToString("N") + ".mp4");
+        await File.WriteAllTextAsync(tmp, "placeholder");
+        try
+        {
+            var kf = await probe.GetKeyframesAsync(tmp);
+
+            kf.Should().Equal(
+                new[] { TimeSpan.Zero, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(2) },
+                "out-of-order packets are re-sorted ascending and the duplicate 2s keyframe is collapsed");
+            kf.Should().BeInAscendingOrder();
+            kf.Should().OnlyHaveUniqueItems("the SortedSet accumulator de-duplicates repeated keyframe timestamps");
+            kf.Count.Should().Be(3, "four keyframe packets carrying three distinct timestamps yield three entries");
+        }
+        finally
+        {
+            File.Delete(tmp);
+        }
+    }
 }
 
 /// <summary>

@@ -161,4 +161,68 @@ public sealed class MainViewModelLayoutToggleTests
         vm.HorizontalSplitRatio.Should().BeLessThanOrEqualTo(0.95);
         vm.VerticalSplitRatio.Should().BeGreaterThanOrEqualTo(0.05);
     }
+
+    // ==== Spec gaps (todo-automate) ==========================================================
+
+    // SPEC-011#I68 (view-model half) — the Bulk split remembers its OWN position: per-axis Bulk
+    // ratios default to 0.4 / 0.5, clamp to the same [0.05, 0.95] band, write through to their own
+    // IAppSettings keys, and are kept deliberately SEPARATE from the Split tab's ratios so dragging
+    // one tab's splitter never disturbs the other's.
+    [Fact]
+    [Trait("serves-spec", "SPEC-011")]
+    public void BulkSplitRatios_DefaultPerAxis_WriteThrough_AndDoNotDisturbTheSplitTab()
+    {
+        var settings = new FakeSettings();
+        var vm = BuildViewModel(settings);
+
+        vm.BulkHorizontalSplitRatio.Should().Be(0.4, "the Bulk tab has its own horizontal default");
+        vm.BulkVerticalSplitRatio.Should().Be(0.5, "…and its own vertical default (D6 — independent per axis)");
+
+        vm.BulkHorizontalSplitRatio = 0.66;
+        vm.BulkVerticalSplitRatio = 0.33;
+
+        settings.BulkHorizontalSplitRatio.Should().Be(0.66, "the Bulk horizontal ratio persists on its OWN key");
+        settings.BulkVerticalSplitRatio.Should().Be(0.33, "…and the Bulk vertical ratio on its own key");
+
+        settings.HorizontalSplitRatio.Should().BeNull("dragging the Bulk splitter never writes the Split tab's key");
+        settings.VerticalSplitRatio.Should().BeNull();
+        vm.HorizontalSplitRatio.Should().Be(0.7, "the Split tab's ratios are untouched by a Bulk drag");
+        vm.VerticalSplitRatio.Should().Be(0.62);
+
+        // Same sane band as the Split ratios.
+        vm.BulkHorizontalSplitRatio = 5.0;
+        vm.BulkVerticalSplitRatio = -1.0;
+
+        vm.BulkHorizontalSplitRatio.Should().Be(0.95, "an absurd drag clamps to the upper bound");
+        vm.BulkVerticalSplitRatio.Should().Be(0.05, "…and to the lower bound");
+    }
+
+    // SPEC-015#I15 — HorizontalSplitRatio / VerticalSplitRatio are SEEDED from settings (falling back
+    // to 0.7 / 0.62 when never persisted), written through to their own independent keys, and every
+    // set is clamped to [0.05, 0.95] — the CLAMPED value being what persists.
+    [Fact]
+    [Trait("serves-spec", "SPEC-015")]
+    public void SplitRatios_SeedFromSettings_AndFallBackToDefaults()
+    {
+        var fresh = BuildViewModel(new FakeSettings());
+
+        fresh.HorizontalSplitRatio.Should().Be(0.7, "a never-set horizontal ratio falls back to its default");
+        fresh.VerticalSplitRatio.Should().Be(0.62, "…and the vertical ratio to its own, different default");
+
+        var seeded = BuildViewModel(new FakeSettings { HorizontalSplitRatio = 0.33, VerticalSplitRatio = 0.88 });
+
+        seeded.HorizontalSplitRatio.Should().Be(0.33, "a persisted ratio is restored on construction");
+        seeded.VerticalSplitRatio.Should().Be(0.88);
+
+        var settings = new FakeSettings();
+        var vm = BuildViewModel(settings);
+
+        vm.HorizontalSplitRatio = 0.99;
+        vm.VerticalSplitRatio = 0.01;
+
+        vm.HorizontalSplitRatio.Should().Be(0.95, "an out-of-band drag clamps to the upper bound");
+        vm.VerticalSplitRatio.Should().Be(0.05, "…and to the lower bound");
+        settings.HorizontalSplitRatio.Should().Be(0.95, "the CLAMPED value is what persists, never the raw one");
+        settings.VerticalSplitRatio.Should().Be(0.05);
+    }
 }

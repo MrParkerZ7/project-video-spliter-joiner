@@ -80,4 +80,27 @@ public class JoinArgsInvariantTests
         JoinArgsBuilder.QuoteConcatPath("plain.mp4").Should().Be("'plain.mp4'");
         JoinArgsBuilder.QuoteConcatPath("a'b.mp4").Should().Be(@"'a'\''b.mp4'");
     }
+
+    // SPEC-003#I24 — the "each path made absolute" clause: a RELATIVE input is resolved through
+    // Path.GetFullPath before it reaches the list file. It matters because the concat demuxer
+    // resolves relative list entries against the LIST FILE's own folder (a temp dir), which would
+    // silently break the join.
+    [Trait("serves-spec", "SPEC-003")]
+    [Fact]
+    public void RenderConcatList_RelativePath_IsMadeAbsolute()
+    {
+        var rel = Path.Combine("sub", "clip.mp4");
+        var abs = Path.GetFullPath(rel);
+
+        var body = JoinArgsBuilder.RenderConcatList(new[] { rel });
+
+        body.Should().Be($"file '{abs}'\n", "each input path is made absolute before it is written to the concat list");
+        body.Should().NotContain($"file '{rel}'", "the relative form must never be emitted");
+
+        // Parse the emitted path back out of the line and assert it is rooted, not relative.
+        var emitted = body.TrimEnd('\n');
+        emitted.Should().StartWith("file '").And.EndWith("'");
+        var emittedPath = emitted["file '".Length..^1];
+        Path.IsPathFullyQualified(emittedPath).Should().BeTrue("the concat-list path is absolute");
+    }
 }

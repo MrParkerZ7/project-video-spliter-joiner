@@ -100,4 +100,55 @@ public sealed class SnapVisibilityTests
         NewMarker(grid, 6).Snapped.Should().Be(TimeSpan.FromSeconds(6));
         NewMarker(grid, 6).HasSnapNote.Should().BeFalse();
     }
+
+    // ---- SPEC-011#I76 — the pending (scan-in-flight) note and how it resolves ------------------
+
+    // While the row's background keyframe scan is in flight the marker reads "→ snapping…" with
+    // HasSnapNote true, and resolves to the real note when ResolveSnap clears IsSnapPending.
+    [Trait("serves-spec", "SPEC-011")]
+    [Fact]
+    public void WhileTheScanIsInFlight_TheNoteReadsSnapping_ThenResolves()
+    {
+        var grid = Grid(stepSeconds: 4, totalSeconds: 60);
+        var marker = new CutMarkerViewModel(new BulkFakeProbe(), () => grid, TimeSpan.FromSeconds(5), snapPending: true);
+
+        // In flight: the note is the "snapping…" hint and the snap is a provisional identity.
+        marker.IsSnapPending.Should().BeTrue();
+        marker.HasSnapNote.Should().BeTrue("a pending snap is always worth showing, even before any delta exists");
+        marker.SnapNote.Should().Be("→ snapping…");
+        marker.Snapped.Should().Be(TimeSpan.FromSeconds(5), "the provisional snap is the identity (Snapped == Requested)");
+        marker.Delta.Should().Be(TimeSpan.Zero);
+
+        var raised = new List<string>();
+        marker.PropertyChanged += (_, e) => raised.Add(e.PropertyName ?? string.Empty);
+
+        marker.ResolveSnap();
+
+        marker.IsSnapPending.Should().BeFalse("ResolveSnap clears the pending flag");
+        marker.Snapped.Should().Be(TimeSpan.FromSeconds(4), "5s resolves onto the 4s keyframe once the scan lands");
+        marker.HasSnapNote.Should().BeTrue("the resolved delta is non-zero, so the note stays visible");
+        marker.SnapNote.Should().Be(NewMarker(grid, 5).SnapNote,
+            "the resolved note is exactly what the keyframes-ready path renders for the same request");
+        raised.Should().Contain(nameof(CutMarkerViewModel.SnapNote), "the readout re-renders when the scan resolves");
+        raised.Should().Contain(nameof(CutMarkerViewModel.HasSnapNote));
+    }
+
+    // The other half of I76: a pending snap can resolve to EMPTY — the hint disappears entirely when
+    // the request turns out to already sit on a keyframe (no noise on a fine grid).
+    [Trait("serves-spec", "SPEC-011")]
+    [Fact]
+    public void APendingSnapThatResolvesOntoItsOwnKeyframe_FallsSilent()
+    {
+        var grid = Grid(stepSeconds: 4, totalSeconds: 60);
+        var marker = new CutMarkerViewModel(new BulkFakeProbe(), () => grid, TimeSpan.FromSeconds(8), snapPending: true);
+
+        marker.HasSnapNote.Should().BeTrue("while the scan is in flight the hint shows regardless of the eventual delta");
+        marker.SnapNote.Should().Be("→ snapping…");
+
+        marker.ResolveSnap();
+
+        marker.Delta.Should().Be(TimeSpan.Zero, "8s already sits on a keyframe of the 4s grid");
+        marker.HasSnapNote.Should().BeFalse("a pending snap can also resolve to NOTHING worth showing");
+        marker.SnapNote.Should().BeEmpty();
+    }
 }

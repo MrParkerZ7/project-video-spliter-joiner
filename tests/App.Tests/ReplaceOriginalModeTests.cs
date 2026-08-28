@@ -1,7 +1,10 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using FluentAssertions;
+using VideoSplitJoiner.App.Media;
 using VideoSplitJoiner.App.ViewModels;
 using VideoSplitJoiner.Core.Bulk;
 using Xunit;
@@ -22,6 +25,114 @@ public sealed class ReplaceOriginalModeTests
         var vm = new BulkCutViewModel(
             probe, new ThrowingFakeSplitEngine(), new FakeThumbnailService(), new FakeSettings(), engine);
         return (vm, probe, engine);
+    }
+
+    /// <summary>
+    /// Records Open(path) / Unload / Stop / Play / Pause / Seek in call order — the I88 seam. Mirrors the
+    /// private recorder in <c>BulkCutViewModelPreviewTests</c> / <c>BulkCutViewModelDebouncedPreviewTests</c>
+    /// (each of those is private to its own class; duplicating it here keeps this file self-contained and
+    /// needs no production change).
+    /// </summary>
+    private sealed class RecordingMediaPlayer : IMediaPlayer
+    {
+        /// <summary>Ordered op log, e.g. "Open", "Unload", "Stop".</summary>
+        public List<string> Calls { get; } = new();
+
+        /// <summary>Every path handed to <see cref="Open"/>, in order.</summary>
+        public List<string> Opened { get; } = new();
+
+        public int OpenCount => Opened.Count;
+
+        public int UnloadCount => Calls.Count(c => c == "Unload");
+
+        public int StopCount => Calls.Count(c => c == "Stop");
+
+        public TimeSpan Position { get; set; }
+
+        public TimeSpan? Duration { get; private set; }
+
+        public bool IsPlaying { get; private set; }
+
+        public double Volume { get; set; } = 1.0;
+
+        public bool IsMuted { get; set; }
+
+        public double SpeedRatio { get; set; } = 1.0;
+
+        public void Open(string path)
+        {
+            Calls.Add("Open");
+            Opened.Add(path);
+            IsPlaying = false;
+            Duration = null;
+        }
+
+        public void Play()
+        {
+            Calls.Add("Play");
+            IsPlaying = true;
+        }
+
+        public void Pause()
+        {
+            Calls.Add("Pause");
+            IsPlaying = false;
+        }
+
+        public void Stop()
+        {
+            Calls.Add("Stop");
+            IsPlaying = false;
+            Position = TimeSpan.Zero;
+        }
+
+        public void Seek(TimeSpan t)
+        {
+            Calls.Add("Seek");
+            Position = t;
+        }
+
+        public void Unload()
+        {
+            Calls.Add("Unload");
+            Duration = null;
+            IsPlaying = false;
+            Position = TimeSpan.Zero;
+        }
+
+        public void StepFrame(int direction) => Calls.Add("StepFrame");
+
+#pragma warning disable CS0067 // Raised by the real player; the recorder never fires them.
+        public event EventHandler? PositionChanged;
+
+        public event EventHandler? Seeked;
+
+        public event EventHandler? DurationAvailable;
+
+        public event EventHandler? Ended;
+
+        public event EventHandler<string>? Failed;
+#pragma warning restore CS0067
+    }
+
+    /// <summary>
+    /// An immediate (non-parking) debounce seam for the T-115 preview-open, so the auto-selected row's
+    /// open lands synchronously and the Stop/Unload assertions need no pump (mirrors the helper in
+    /// <c>BulkCutViewModelPreviewTests</c>).
+    /// </summary>
+    private static Task Immediate(TimeSpan _, CancellationToken ct) =>
+        ct.IsCancellationRequested ? Task.FromCanceled(ct) : Task.CompletedTask;
+
+    private static (BulkCutViewModel Vm, BulkFakeProbe Probe, FakeBulkTrimEngine Engine, RecordingMediaPlayer Player)
+        BuildWithPlayer()
+    {
+        var probe = new BulkFakeProbe();
+        var engine = new FakeBulkTrimEngine();
+        var player = new RecordingMediaPlayer();
+        var vm = new BulkCutViewModel(
+            probe, new ThrowingFakeSplitEngine(), new FakeThumbnailService(), new FakeSettings(), engine,
+            player, selectionOpenDelay: Immediate);
+        return (vm, probe, engine, player);
     }
 
     private static async Task AddValidRowAsync(BulkCutViewModel vm, BulkFakeProbe probe, string path)
@@ -141,5 +252,46 @@ public sealed class ReplaceOriginalModeTests
 
         asked.Should().Be(0, "the safe mode must not nag");
         engine.ReceivedOptions!.Output.Should().Be(OutputMode.NewFile);
+    }
+
+    // ---- The preview file handle: Unload, not Stop ---------------------------------------------
+
+    [Trait("serves-spec", "SPEC-011")]
+    [Fact]
+    public async Task ReplaceOriginalRun_UnloadsThePreview_SoTheFileHandleIsReleased()
+    {
+        var (vm, probe, engine, player) = BuildWithPlayer();
+        await AddValidRowAsync(vm, probe, @"C:\v\a.mp4"); // auto-selected -> opened in the shared player
+        player.OpenCount.Should().Be(1, "precondition: the row's file is open in the shared preview");
+
+        vm.ReplaceOriginal = true;
+        vm.ConfirmReplaceOriginals = _ => true;
+
+        await vm.RunBatchAsync();
+
+        engine.CallCount.Should().Be(1, "precondition: the batch actually ran");
+        player.UnloadCount.Should().BeGreaterThanOrEqualTo(
+            1,
+            "Unload closes the media element and RELEASES the file handle — a still-open handle on the "
+            + "selected row would make replacing that very file fail");
+        player.StopCount.Should().Be(
+            0, "Stop only halts playback and leaves the file open, so it is NOT enough in this mode");
+        player.Calls.Should().ContainInOrder("Open", "Unload");
+    }
+
+    [Trait("serves-spec", "SPEC-011")]
+    [Fact]
+    public async Task TheSafeMode_KeepsThePlainStop_AndNeverUnloadsThePreview()
+    {
+        var (vm, probe, engine, player) = BuildWithPlayer();
+        await AddValidRowAsync(vm, probe, @"C:\v\a.mp4");
+
+        await vm.RunBatchAsync();
+
+        engine.CallCount.Should().Be(1, "precondition: the batch actually ran");
+        player.StopCount.Should().BeGreaterThanOrEqualTo(
+            1, "the safe mode still halts the preview decode before ffmpeg does the real work");
+        player.UnloadCount.Should().Be(
+            0, "nothing is being overwritten, so the preview keeps the file open — Stop is the whole story");
     }
 }

@@ -74,6 +74,20 @@ public sealed class SplitViewModelNonBlockingLoadTests
         public void Release(string path, IReadOnlyList<TimeSpan> keyframes)
             => Gate(path).TrySetResult(keyframes);
 
+        /// <summary>
+        /// FAULT the gated keyframe scan for <paramref name="path"/> (ffprobe blew up). Test-only
+        /// failure injection beside <see cref="Release"/> — the third source of the identity-snap
+        /// fallback (fail / cancel / empty), alongside the empty-list release.
+        /// </summary>
+        public void Fail(string path, Exception ex) => Gate(path).TrySetException(ex);
+
+        /// <summary>
+        /// CANCEL the gated keyframe scan for <paramref name="path"/> without touching the VM's own
+        /// index CTS, so the cancelled-scan fallback can be exercised while the marker's resolve is
+        /// still the current file's. Test-only cancel injection beside <see cref="Release"/>.
+        /// </summary>
+        public void CancelScan(string path) => Gate(path).TrySetCanceled();
+
         private TaskCompletionSource<IReadOnlyList<TimeSpan>> Gate(string path)
         {
             if (!_gates.TryGetValue(path, out var tcs))
@@ -708,6 +722,84 @@ public sealed class SplitViewModelNonBlockingLoadTests
 
             vm.Keyframes.Should().BeEquivalentTo(bKeyframes, "A's cancelled scan can never overwrite B");
             vm.IsIndexingKeyframes.Should().BeFalse();
+        });
+    }
+
+    // ---- Identity-snap fallback when the index fails / is cancelled (I16, SPEC-010) -----------
+
+    // SPEC-010#I16 — when the keyframe index FAILS, is CANCELLED, or returns an EMPTY list, snapping
+    // falls back to an identity snap (Snapped == Requested, Delta zero), the pending flag resolves,
+    // the indexing flag clears, and nothing throws. PendingCut_IndexFails_DoesNotCrash_IdentitySnap
+    // covers the EMPTY-list source (despite its name); these two cover the FAULTED and CANCELLED
+    // sources of the same fallback.
+
+    [Fact]
+    [Trait("serves-spec", "SPEC-010")]
+    public void PendingCut_WhenIndexFaults_FallsBackToIdentitySnap_ClearsIndexing_NoCrash()
+    {
+        WithPump(pump =>
+        {
+            var (vm, probe, _) = Build();
+            var load = vm.LoadAsync(PathA);
+            pump.RunUntil(() => load.IsCompleted);
+            vm.IsIndexingKeyframes.Should().BeTrue();
+
+            // A cut placed mid-index rides the in-flight scan (pending, provisional identity snap).
+            vm.AddCutAt(TimeSpan.FromSeconds(3.4));
+            vm.Markers.Should().ContainSingle();
+            vm.Markers[0].IsSnapPending.Should().BeTrue();
+
+            // The scan FAULTS (ffprobe blew up) instead of returning a keyframe list.
+            var act = () =>
+            {
+                probe.Fail(PathA, new InvalidOperationException("ffprobe failed to read packets"));
+                pump.RunUntil(() => !vm.IsIndexingKeyframes && !vm.Markers[0].IsSnapPending);
+            };
+
+            act.Should().NotThrow("a faulted keyframe index is absorbed, never surfaced as a crash");
+
+            vm.Markers.Should().ContainSingle();
+            vm.Markers[0].IsSnapPending.Should().BeFalse("the pending snap resolves even when the index failed");
+            vm.Markers[0].Snapped.Should().Be(TimeSpan.FromSeconds(3.4), "no keyframes → identity snap");
+            vm.Markers[0].Delta.Should().Be(TimeSpan.Zero, "an identity snap carries a zero delta");
+            vm.Keyframes.Should().BeEmpty("a faulted scan commits no keyframes");
+            vm.IsIndexingKeyframes.Should().BeFalse("the indexing flag clears on failure, not only on success");
+            vm.KeyframeWarning.Should().BeNull("no keyframes → no coarse-GOP warning");
+        });
+    }
+
+    [Fact]
+    [Trait("serves-spec", "SPEC-010")]
+    public void PendingCut_WhenIndexIsCancelled_FallsBackToIdentitySnap_ClearsIndexing_NoCrash()
+    {
+        WithPump(pump =>
+        {
+            var (vm, probe, _) = Build();
+            var load = vm.LoadAsync(PathA);
+            pump.RunUntil(() => load.IsCompleted);
+            vm.IsIndexingKeyframes.Should().BeTrue();
+
+            vm.AddCutAt(TimeSpan.FromSeconds(5.7));
+            vm.Markers.Should().ContainSingle();
+            vm.Markers[0].IsSnapPending.Should().BeTrue();
+
+            // The scan is CANCELLED (the VM's own index CTS is untouched, so this marker's resolve is
+            // still the current file's — the cancelled-scan branch, not the stale-load branch).
+            var act = () =>
+            {
+                probe.CancelScan(PathA);
+                pump.RunUntil(() => !vm.IsIndexingKeyframes && !vm.Markers[0].IsSnapPending);
+            };
+
+            act.Should().NotThrow("a cancelled keyframe index is absorbed, never surfaced as a crash");
+
+            vm.Markers.Should().ContainSingle();
+            vm.Markers[0].IsSnapPending.Should().BeFalse("the pending snap resolves even when the index was cancelled");
+            vm.Markers[0].Snapped.Should().Be(TimeSpan.FromSeconds(5.7), "no keyframes → identity snap");
+            vm.Markers[0].Delta.Should().Be(TimeSpan.Zero, "an identity snap carries a zero delta");
+            vm.Keyframes.Should().BeEmpty("a cancelled scan commits no keyframes");
+            vm.IsIndexingKeyframes.Should().BeFalse("the indexing flag clears on cancellation too");
+            vm.KeyframeWarning.Should().BeNull("no keyframes → no coarse-GOP warning");
         });
     }
 }

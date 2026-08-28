@@ -319,6 +319,121 @@ public class SplitEngineUnitTests
             try { Directory.Delete(dir, recursive: true); } catch { /* best-effort */ }
         }
     }
+
+    // SPEC-001#I28 — the plan's FINAL selected part omits `-to` and extracts to END OF FILE
+    // (SelectedSegment.IsFinalPart); interior parts pass an explicit end. Selecting ONLY the last part
+    // is the case that proves the EOF branch — a stray `-to` here would silently truncate the tail.
+    [Trait("serves-spec", "SPEC-001")]
+    [Fact]
+    public async Task SplitAsync_SelectingTheFinalPart_OmitsTo_ExtractsToEof()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "vsj-finalpart-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        var input = Path.Combine(dir, "clip.mp4");
+        await File.WriteAllTextAsync(input, "placeholder");
+        var outDir = Path.Combine(dir, "out");
+        Directory.CreateDirectory(outDir);
+
+        try
+        {
+            // 10s file, 1s GOP. Cuts at 3 & 6 → 3 parts. Select ONLY the last one (index 3).
+            var runner = new RecordingFakeRunner();
+            var probe = new FakeProbe(
+                TimeSpan.FromSeconds(10),
+                Enumerable.Range(0, 11).Select(i => TimeSpan.FromSeconds(i)).ToList());
+            var engine = new SplitEngine(runner, probe);
+
+            var req = new SplitRequest(
+                input,
+                new[] { TimeSpan.FromSeconds(3), TimeSpan.FromSeconds(6) },
+                outDir,
+                SelectedSegmentIndices: new[] { 3 });
+
+            var result = await engine.SplitAsync(req);
+
+            runner.Commands.Should().ContainSingle("only the one selected part is written");
+            var tokens = runner.Commands[0].ToList();
+
+            // THE INVARIANT: no -to at all — the final part runs to EOF.
+            tokens.Should().NotContain("-to");
+
+            var ss = tokens.IndexOf("-ss");
+            ss.Should().BeGreaterThanOrEqualTo(0);
+            tokens[ss + 1].Should().Be("6", "the final part starts at the LAST snapped cut");
+
+            SplitArgsBuilder.SatisfiesCopyInvariant(tokens).Should().BeTrue();
+
+            // The produced part keeps its ORIGINAL 1-based index and carries the requested boundaries.
+            result.Segments.Should().ContainSingle();
+            Path.GetFileName(result.Segments[0].Path).Should().Be("clip_part03.mp4");
+            result.Segments[0].Start.Should().Be(TimeSpan.FromSeconds(6), "the requested start is the previous cut");
+            result.Segments[0].End.Should().Be(TimeSpan.FromSeconds(10), "the final part's end IS the file duration");
+            Directory.GetFiles(outDir, "*.mp4").Select(Path.GetFileName)
+                .Should().BeEquivalentTo(new[] { "clip_part03.mp4" });
+        }
+        finally
+        {
+            try { Directory.Delete(dir, recursive: true); } catch { /* best-effort */ }
+        }
+    }
+
+    // SPEC-001#I37 — each written SplitSegment records the REQUESTED Start/End alongside the snapped
+    // ActualStart and the signed Delta, and the planner's non-fatal warnings survive onto the result
+    // (an out-of-bounds cut is DROPPED with a warning, not raised as an exception). The produced
+    // segments tile the whole file — their durations sum to the duration, with no gap or overlap.
+    [Trait("serves-spec", "SPEC-001")]
+    [Fact]
+    public async Task SplitAsync_SurfacesPlannerWarnings_AndRecordsRequestedBoundaries()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "vsj-warnrec-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        var input = Path.Combine(dir, "clip.mp4");
+        await File.WriteAllTextAsync(input, "placeholder");
+        var outDir = Path.Combine(dir, "out");
+        Directory.CreateDirectory(outDir);
+
+        try
+        {
+            // 10s file, 1s GOP. The 10.5s cut is beyond the file bounds and is dropped (with a
+            // warning); only the 3s cut survives → 2 contiguous parts, [0..3] and [3..10].
+            var runner = new RecordingFakeRunner();
+            var probe = new FakeProbe(
+                TimeSpan.FromSeconds(10),
+                Enumerable.Range(0, 11).Select(i => TimeSpan.FromSeconds(i)).ToList());
+            var engine = new SplitEngine(runner, probe);
+
+            var req = new SplitRequest(
+                input,
+                new[] { TimeSpan.FromSeconds(3), TimeSpan.FromSeconds(10.5) },
+                outDir);
+
+            var result = await engine.SplitAsync(req);
+
+            result.Warnings.Should().Contain(
+                w => w.Contains("outside the file bounds"),
+                "an out-of-range cut is a non-fatal ADJUSTMENT the user is told about, not a hard failure");
+
+            result.Segments.Should().HaveCount(2, "only the in-bounds cut survives, giving [0..3] and [3..10]");
+
+            result.Segments[0].Start.Should().Be(TimeSpan.Zero);
+            result.Segments[0].End.Should().Be(TimeSpan.FromSeconds(3), "End is the REQUESTED boundary, pre-snap");
+            result.Segments[0].ActualStart.Should().Be(TimeSpan.Zero, "the first part always starts at zero");
+            result.Segments[0].Delta.Should().Be(TimeSpan.Zero, "no boundary moved, so the signed offset is zero");
+
+            result.Segments[1].Start.Should().Be(TimeSpan.FromSeconds(3), "the requested start is the previous cut");
+            result.Segments[1].End.Should().Be(TimeSpan.FromSeconds(10), "the last part's requested end is the duration");
+            result.Segments[1].ActualStart.Should().Be(TimeSpan.FromSeconds(3), "3s already sits on the 1s keyframe grid");
+            result.Segments[1].Delta.Should().Be(TimeSpan.Zero, "a cut landing ON a keyframe has a zero snap offset");
+
+            // The parts tile the file: no gap, no overlap.
+            result.Segments.Sum(s => (s.End - s.Start).TotalSeconds)
+                .Should().BeApproximately(10d, 0.001, "the segment durations sum to the WHOLE file");
+        }
+        finally
+        {
+            try { Directory.Delete(dir, recursive: true); } catch { /* best-effort */ }
+        }
+    }
 }
 
 /// <summary>Fake probe returning a fixed duration + keyframe list, no binary.</summary>

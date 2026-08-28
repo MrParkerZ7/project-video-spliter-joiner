@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -659,5 +660,224 @@ public sealed class JoinViewModelTests
 
         vm.Items.Should().HaveCount(2);
         engine.CompatCheckCount.Should().Be(checksBefore, "a null/foreign remove changes nothing → no compat recheck");
+    }
+
+    // SPEC-012#I2 — AddFilesAsync appends one item per NON-BLANK path, preserving order; blank /
+    // whitespace-only entries are skipped and duplicates are deliberately permitted (no dedup).
+    // An all-blank set adds nothing and short-circuits before the engine is touched.
+    [Fact]
+    [Trait("serves-spec", "SPEC-012")]
+    public async Task AddFiles_SkipsBlankPaths_KeepsDuplicates_AndPreservesOrder()
+    {
+        var (vm, engine, _) = Build();
+
+        await vm.AddFilesAsync(new[] { Clip1, "", "   ", Clip1, Clip2 });
+
+        vm.Items.Select(i => i.Path).Should().Equal(new[] { Clip1, Clip1, Clip2 },
+            "blank/whitespace-only entries are skipped, duplicates are kept, and order is preserved");
+        engine.LastCheckedPaths.Should().Equal(new[] { Clip1, Clip1, Clip2 },
+            "the engine is asked about exactly the queued set, in list order");
+
+        // An all-blank add queues nothing → the added.Count == 0 early return skips the recheck.
+        var checksBefore = engine.CompatCheckCount;
+        await vm.AddFilesAsync(new[] { "", "   " });
+
+        vm.Items.Should().HaveCount(3, "an all-blank set adds no items");
+        engine.CompatCheckCount.Should().Be(checksBefore, "nothing was queued → no compat recheck runs");
+    }
+
+    // SPEC-012#I3 — Display is the path's filename, FALLING BACK to the full path when the filename is
+    // empty; SizeBytes is the clip's real on-disk byte size, or 0 when the file cannot be read
+    // (SafeFileSize never throws). Needs real files on disk, hence the temp dir.
+    [Fact]
+    [Trait("serves-spec", "SPEC-012")]
+    public async Task AddFiles_ReadsOnDiskSize_ZeroWhenUnreadable_AndDisplayFallsBackToFullPath()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "vsj-join-size-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var sized = Path.Combine(dir, "sized.mp4");
+            File.WriteAllBytes(sized, new byte[1234]);
+            var missing = Path.Combine(dir, "definitely-missing.mp4");
+            var trailingSeparator = dir + Path.DirectorySeparatorChar; // GetFileName → "" → falls back
+
+            var (vm, _, _) = Build();
+
+            await vm.AddFilesAsync(new[] { sized, missing, trailingSeparator });
+
+            vm.Items.Should().HaveCount(3);
+            vm.Items[0].Display.Should().Be("sized.mp4", "Display is the filename of the path");
+            vm.Items[0].SizeBytes.Should().Be(1234, "SizeBytes is the clip's real on-disk byte size");
+            vm.Items[1].SizeBytes.Should().Be(0, "an unreadable/missing file contributes 0 — SafeFileSize never throws");
+            vm.Items[2].Display.Should().Be(trailingSeparator, "an empty filename falls back to the full path");
+            vm.Items[2].SizeBytes.Should().Be(0, "a non-file path is unreadable → 0 bytes, not an exception");
+        }
+        finally
+        {
+            try { Directory.Delete(dir, recursive: true); } catch { /* best-effort */ }
+        }
+    }
+
+    // SPEC-012#I4 — the info chip's non-video branches: "audio only" when there is no video stream but
+    // audio is present, the CONTAINER string when there is neither, and a failed probe leaving both
+    // InfoText and Duration null without throwing. The existing add test covers only the video branch.
+    [Fact]
+    [Trait("serves-spec", "SPEC-012")]
+    public async Task InfoChip_AudioOnly_ContainerFallback_AndProbeFailureLeavesChipNull()
+    {
+        var (vm, _, probe) = Build();
+
+        // (a) audio present, no video stream → "audio only"; the probed duration is still captured.
+        probe.ProbeResultToReturn = ProbeResult.Success(new MediaInfo(
+            TimeSpan.FromSeconds(3),
+            "mka",
+            Array.Empty<StreamInfo>(),
+            new[] { new StreamInfo(0, "aac", "audio", null, null, null, 48000, 2, null) }));
+        await vm.AddFilesAsync(new[] { Clip1 });
+
+        vm.Items[0].InfoText.Should().Be("audio only", "a probed set with no video stream reads as audio only");
+        vm.Items[0].Duration.Should().Be(TimeSpan.FromSeconds(3), "the probed duration is captured on success");
+
+        // (b) neither video nor audio → the container string is the chip's fallback.
+        probe.ProbeResultToReturn = ProbeResult.Success(new MediaInfo(
+            TimeSpan.FromSeconds(4),
+            "matroska,webm",
+            Array.Empty<StreamInfo>(),
+            Array.Empty<StreamInfo>()));
+        await vm.AddFilesAsync(new[] { Clip2 });
+
+        vm.Items[1].InfoText.Should().Be("matroska,webm", "with no streams at all the chip falls back to the container");
+
+        // (c) a failed probe leaves the chip AND the duration null — best-effort, never throws.
+        probe.ProbeResultToReturn = ProbeResult.Failure("ffprobe exited 1");
+        var act = async () => await vm.AddFilesAsync(new[] { Clip3 });
+
+        await act.Should().NotThrowAsync("the info chip is best-effort — a probe failure never breaks the add");
+        vm.Items[2].InfoText.Should().BeNull("a failed probe leaves the info chip blank");
+        vm.Items[2].Duration.Should().BeNull("a failed probe contributes no duration to the estimate");
+    }
+
+    // SPEC-012#I13 — CanMoveUp is true ONLY for index > 0; CanMoveDown ONLY for 0 ≤ index < Count-1.
+    // The existing single-item test pins both ends at once; this pins the interior rows of a 3-clip
+    // queue plus the not-in-the-list (IndexOf → -1), null, and non-item parameters.
+    [Fact]
+    [Trait("serves-spec", "SPEC-012")]
+    public async Task CanMoveUpDown_TrueForInteriorIndices_FalseAtEndsAndForForeignItems()
+    {
+        var (vm, _, _) = Build();
+        await vm.AddFilesAsync(new[] { Clip1, Clip2, Clip3 });
+
+        vm.MoveUpCommand.CanExecute(vm.Items[0]).Should().BeFalse("index 0 has nowhere to move up to");
+        vm.MoveUpCommand.CanExecute(vm.Items[1]).Should().BeTrue("an interior row can move up");
+        vm.MoveUpCommand.CanExecute(vm.Items[2]).Should().BeTrue("the last row can still move up");
+
+        vm.MoveDownCommand.CanExecute(vm.Items[0]).Should().BeTrue("the first row can move down");
+        vm.MoveDownCommand.CanExecute(vm.Items[1]).Should().BeTrue("an interior row can move down");
+        vm.MoveDownCommand.CanExecute(vm.Items[2]).Should().BeFalse("the last index has nowhere to move down to");
+
+        // A foreign item (never queued here → IndexOf -1), null, and a non-item parameter are all gated off.
+        var foreign = new JoinItemViewModel(@"C:\videos\d.mp4");
+        vm.MoveUpCommand.CanExecute(foreign).Should().BeFalse("an item not in the list has no index");
+        vm.MoveDownCommand.CanExecute(foreign).Should().BeFalse("an item not in the list has no index");
+        vm.MoveUpCommand.CanExecute(null).Should().BeFalse();
+        vm.MoveDownCommand.CanExecute(null).Should().BeFalse();
+        vm.MoveUpCommand.CanExecute("not an item").Should().BeFalse("a non-item parameter never enables the reorder");
+    }
+
+    // SPEC-012#I20 — the derived guards are re-raised by every source that can invalidate them:
+    // an item-collection change (CanRunJoin/CanClear/HasClips/RunLabel), the OutputPath setter and an
+    // IsCompatible flip (CanRunJoin), and an Operation running/state change (CanClear).
+    [Fact]
+    [Trait("serves-spec", "SPEC-012")]
+    public async Task DerivedGuards_RaisePropertyChanged_OnItemsOutputPathAndOperationState()
+    {
+        var (vm, engine, _) = Build();
+        engine.CompatToReturn = CompatReport.Ok();
+
+        var seen = new List<string>();
+        vm.PropertyChanged += (_, e) => seen.Add(e.PropertyName!);
+
+        // (a) collection change → the four item-derived readouts.
+        await vm.AddFilesAsync(new[] { Clip1, Clip2 });
+
+        seen.Should().Contain(new[]
+        {
+            nameof(JoinViewModel.CanRunJoin),
+            nameof(JoinViewModel.CanClear),
+            nameof(JoinViewModel.HasClips),
+            nameof(JoinViewModel.RunLabel),
+        }, "an item-collection change re-raises every item-derived guard");
+
+        // (b) the OutputPath setter re-raises the run guard.
+        seen.Clear();
+        vm.OutputPath = Output;
+
+        seen.Should().Contain(nameof(JoinViewModel.OutputPath))
+            .And.Contain(nameof(JoinViewModel.CanRunJoin), "OutputPath feeds CanRunJoin");
+
+        // (c) an IsCompatible flip re-raises the run guard too.
+        seen.Clear();
+        engine.CompatToReturn = Incompatible("codec", "clip 2 is hevc, reference (clip 1) is h264");
+        await vm.RefreshCompatAsync();
+
+        vm.IsCompatible.Should().BeFalse("precondition: the verdict flipped");
+        seen.Should().Contain(nameof(JoinViewModel.IsCompatible))
+            .And.Contain(nameof(JoinViewModel.CanRunJoin), "IsCompatible feeds CanRunJoin");
+
+        // (d) an Operation running/state change re-raises the Clear guard.
+        engine.CompatToReturn = CompatReport.Ok();
+        await vm.RefreshCompatAsync();
+        var gate = new TaskCompletionSource<JoinResult>();
+        engine.JoinTaskHandler = _ => gate.Task;
+
+        seen.Clear();
+        var run = vm.RunJoinAsync();
+
+        vm.Operation.IsRunning.Should().BeTrue("precondition: the join is in flight");
+        seen.Should().Contain(nameof(JoinViewModel.CanClear), "an operation state change re-raises the Clear guard");
+
+        gate.SetResult(JoinResult.Ok(Output));
+        await run;
+    }
+
+    // SPEC-012#I27 — Clear() deliberately PRESERVES OutputPath (the destination is usually still where
+    // the next join goes) and is a NO-OP whenever CanClear is false (mid-run, or with an empty list).
+    [Fact]
+    [Trait("serves-spec", "SPEC-012")]
+    public async Task Clear_PreservesOutputPath_AndIsNoOpWhileRunning()
+    {
+        var (vm, engine, _) = Build();
+        engine.CompatToReturn = CompatReport.Ok();
+        await vm.AddFilesAsync(new[] { Clip1, Clip2 });
+        vm.OutputPath = Output;
+
+        vm.Clear();
+
+        vm.Items.Should().BeEmpty();
+        vm.OutputPath.Should().Be(Output, "Clear deliberately keeps the chosen destination for the next join");
+
+        // Mid-run: CanClear is false → Clear() must change nothing (list intact, run untouched).
+        await vm.AddFilesAsync(new[] { Clip1, Clip2 });
+        var gate = new TaskCompletionSource<JoinResult>();
+        engine.JoinTaskHandler = _ => gate.Task;
+        var run = vm.RunJoinAsync();
+        vm.Operation.IsRunning.Should().BeTrue("precondition: the join is in flight");
+
+        vm.Clear();
+
+        vm.Items.Should().HaveCount(2, "Clear is a no-op while CanClear is false");
+        vm.Operation.IsRunning.Should().BeTrue("a no-op Clear must not reset the running operation");
+
+        gate.SetResult(JoinResult.Ok(Output));
+        await run;
+
+        // Once the run ends Clear works again — and a second Clear on the empty list is a harmless no-op.
+        vm.Clear();
+        vm.Items.Should().BeEmpty();
+
+        var again = () => vm.Clear();
+        again.Should().NotThrow("Clear with no items is a no-op, not an error");
+        vm.OutputPath.Should().Be(Output, "OutputPath survives every Clear");
     }
 }

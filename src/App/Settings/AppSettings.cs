@@ -307,7 +307,7 @@ public sealed class AppSettings : IAppSettings
         foreach (var dto in dtos)
         {
             var name = NullIfBlank(dto?.Name);
-            if (name is null || !IsFiniteNonNegative(dto!.IntroSeconds))
+            if (name is null || !TryToSeconds(dto!.IntroSeconds, out var intro))
             {
                 continue;
             }
@@ -315,19 +315,22 @@ public sealed class AppSettings : IAppSettings
             TimeSpan? outro = null;
             if (dto.OutroSeconds is double outroSeconds)
             {
-                if (!IsFiniteNonNegative(outroSeconds))
+                // A finite, non-negative value can STILL be outside TimeSpan's range (e.g. 1e300), and
+                // TimeSpan.FromSeconds would throw. That throw used to escape this loop and abort the whole
+                // load, so ONE corrupt row silently wiped every saved profile. Range is validated up front.
+                if (!TryToSeconds(outroSeconds, out var parsedOutro))
                 {
                     continue;
                 }
 
-                outro = TimeSpan.FromSeconds(outroSeconds);
+                outro = parsedOutro;
             }
 
             CutProfile profile;
             try
             {
                 // T-106: an absent thumbnailPath (older file) → null; the record normalizes blank → null.
-                profile = new CutProfile(name, TimeSpan.FromSeconds(dto.IntroSeconds), outro, NullIfBlank(dto.ThumbnailPath));
+                profile = new CutProfile(name, intro, outro, NullIfBlank(dto.ThumbnailPath));
             }
             catch
             {
@@ -345,6 +348,32 @@ public sealed class AppSettings : IAppSettings
 
     private static bool IsFiniteNonNegative(double value) =>
         !double.IsNaN(value) && !double.IsInfinity(value) && value >= 0;
+
+    /// <summary>
+    /// Convert a persisted seconds value to a <see cref="TimeSpan"/>, rejecting anything
+    /// <see cref="TimeSpan.FromSeconds(double)"/> could not represent — NaN, infinity, negative, OR a
+    /// finite-but-out-of-range magnitude such as <c>1e300</c>. The last case is the one that mattered:
+    /// it passes a naive finite/non-negative check yet throws on conversion, and that throw used to
+    /// escape the profile-mapping loop and take every VALID sibling profile down with it.
+    /// </summary>
+    private static bool TryToSeconds(double value, out TimeSpan result)
+    {
+        result = TimeSpan.Zero;
+        if (!IsFiniteNonNegative(value) || value > TimeSpan.MaxValue.TotalSeconds)
+        {
+            return false;
+        }
+
+        try
+        {
+            result = TimeSpan.FromSeconds(value);
+            return true;
+        }
+        catch (OverflowException)
+        {
+            return false; // belt-and-braces: never let a corrupt row abort the load
+        }
+    }
 
     /// <summary>
     /// Parse the persisted layout string case-insensitively; anything missing/unknown → the

@@ -453,6 +453,31 @@ public class FfmpegThumbnailServiceTests : IDisposable
         runner.CallCount.Should().Be(4, "B was evicted as the true LRU at the C insert, so re-grabbing it re-runs ffmpeg");
     }
 
+    // SPEC-005#I19 — best-effort throughout: any NON-cancellation failure raised while extracting (I/O,
+    // security, a missing ffmpeg locator) is swallowed by the catch-all and resolves to null —
+    // GetThumbnailAsync never throws. Distinct from the already-covered branches: the cancellation catch
+    // (GetThumbnailAsync_Cancelled_ReturnsNull_NoThrow) and the non-throwing early returns for a failed
+    // exit code / missing output file — no test anywhere drives a runner that THROWS a plain exception.
+    [Trait("serves-spec", "SPEC-005")]
+    [Fact]
+    public async Task GetThumbnailAsync_RunnerThrowsNonCancellation_ReturnsNull_NoThrow()
+    {
+        var input = MakeInput();
+        var runner = new ThrowingThumbRunner();
+        var svc = NewService(runner);
+
+        var act = async () => await svc.GetThumbnailAsync(input, TimeSpan.FromSeconds(5), 160, CancellationToken.None);
+
+        var result = await act.Should().NotThrowAsync(
+            "an I/O failure raised mid-extraction is swallowed — a thumbnail problem must never surface to the caller");
+        result.Which.Should().BeNull("the swallowed failure resolves to 'no thumbnail'");
+
+        // A thrown failure is no more cacheable than a failed exit code — the retry re-attempts.
+        var retry = await svc.GetThumbnailAsync(input, TimeSpan.FromSeconds(5), 160, CancellationToken.None);
+        retry.Should().BeNull();
+        runner.CallCount.Should().Be(2, "a thrown failure must not be cached");
+    }
+
     private static void TryDelete(string dir)
     {
         try { if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true); }
@@ -532,4 +557,23 @@ internal sealed class NoFileSuccessRunner : IFfmpegRunner
         IProgress<double>? progress = null,
         CancellationToken ct = default) =>
         Task.FromResult(new FfmpegResult(0, new List<string>().AsReadOnly()));
+}
+
+/// <summary>
+/// Runner that THROWS a non-cancellation failure (models an I/O error / a missing ffmpeg locator) — the
+/// service's catch-all must swallow it and resolve to null. Counts calls so "not cached" is assertable.
+/// </summary>
+internal sealed class ThrowingThumbRunner : IFfmpegRunner
+{
+    public int CallCount { get; private set; }
+
+    public Task<FfmpegResult> RunAsync(
+        FfmpegArgs args,
+        TimeSpan? totalDuration = null,
+        IProgress<double>? progress = null,
+        CancellationToken ct = default)
+    {
+        CallCount++;
+        throw new IOException("the thumbnail temp volume went away");
+    }
 }

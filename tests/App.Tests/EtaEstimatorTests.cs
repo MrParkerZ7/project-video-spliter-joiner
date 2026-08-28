@@ -261,4 +261,39 @@ public sealed class EtaEstimatorTests
         ((Action)(() => new EtaEstimator(alpha: 1.0)))
             .Should().NotThrow("1.0 is the inclusive upper bound of (0, 1]");
     }
+
+    // SPEC-008#I35 (the done-latch + fraction-estimate-flag clauses) — Reset() clears the smoothed
+    // estimate, the DONE LATCH, the duration seed AND the fraction-estimate flag, so a reused
+    // estimator behaves exactly like a fresh one: the next sample seeds again and the duration-based
+    // fallback is live again. (The smoothed-estimate and duration-seed halves are covered above.)
+    [Fact]
+    [Trait("serves-spec", "SPEC-008")]
+    public void Reset_ClearsDoneLatch_AndFractionEstimateFlag()
+    {
+        // (a) The done latch — once fraction ≥ 1 latches done, every later sample stays null…
+        var eta = new EtaEstimator();
+        eta.Update(TimeSpan.FromSeconds(10), 1.0).Should().BeNull("fraction ≥ 1 latches done");
+        eta.Update(TimeSpan.FromSeconds(11), 0.25).Should().BeNull("the latch swallows later samples");
+
+        eta.Reset();
+
+        eta.CurrentEstimate().Should().BeNull("reset clears the smoothed estimate");
+        eta.Update(TimeSpan.FromSeconds(10), 0.25)!.Value.TotalSeconds.Should().BeApproximately(30d, 0.001,
+            "…and with the latch cleared the next sample seeds fresh again — 10s × 0.75/0.25 = 30s");
+
+        // (b) The fraction-estimate flag — once a real fraction has seeded the EMA the duration-based
+        //     fallback is disabled for the REST OF THAT RUN. Reset must re-arm it for the next one.
+        var reused = new EtaEstimator();
+        reused.SeedDuration(TimeSpan.FromSeconds(40));
+        reused.Update(TimeSpan.FromSeconds(10), 0.5).Should().NotBeNull("a real fraction seeds the fraction-based estimate");
+
+        reused.Reset();
+
+        reused.Update(TimeSpan.FromSeconds(2), 0.0).Should().BeNull(
+            "reset also dropped the duration seed, so a zero fraction is unknowable again");
+
+        reused.SeedDuration(TimeSpan.FromSeconds(40));
+        reused.Update(TimeSpan.FromSeconds(2), 0.0).Should().NotBeNull(
+            "the fraction-estimate flag was cleared too — a re-seeded duration fallback fires on the next run");
+    }
 }

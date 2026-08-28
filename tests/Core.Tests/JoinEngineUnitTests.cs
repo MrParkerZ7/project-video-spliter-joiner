@@ -440,4 +440,184 @@ public class JoinEngineUnitTests
         // CompatChecker, before any ffmpeg launch.
         runner.CallCount.Should().Be(0, "an incompatible set is refused before ffmpeg — no I/O on reject");
     }
+
+    /// <summary>
+    /// Runner that materializes the requested output (last token) and THEN reports a non-zero exit —
+    /// models ffmpeg dying part-way through the concat, leaving a partial file behind that the engine
+    /// must sweep. Records the built token list so the test can name the exact temp path.
+    /// </summary>
+    private sealed class WritingFailingJoinRunner : IFfmpegRunner
+    {
+        private readonly int _exitCode;
+        private readonly IReadOnlyList<string> _stderr;
+
+        public WritingFailingJoinRunner(int exitCode, string stderr)
+        {
+            _exitCode = exitCode;
+            _stderr = stderr.Split('\n').Select(s => s.TrimEnd('\r')).ToList().AsReadOnly();
+        }
+
+        public List<string> LastTokens { get; } = new();
+
+        public Task<FfmpegResult> RunAsync(
+            FfmpegArgs args,
+            TimeSpan? totalDuration = null,
+            IProgress<double>? progress = null,
+            CancellationToken ct = default)
+        {
+            LastTokens.Clear();
+            LastTokens.AddRange(args.ToList());
+
+            // ffmpeg got far enough to create the temp output before it died.
+            File.WriteAllText(LastTokens[^1], "partial-bytes");
+
+            return Task.FromResult(new FfmpegResult(_exitCode, _stderr));
+        }
+    }
+
+    /// <summary>
+    /// STRICT success runner: writes the requested output (last token) WITHOUT creating its parent
+    /// directory. It therefore throws <see cref="DirectoryNotFoundException"/> unless the ENGINE
+    /// created the destination folder first — which is exactly the invariant under test.
+    /// </summary>
+    private sealed class StrictWritingJoinRunner : IFfmpegRunner
+    {
+        public Task<FfmpegResult> RunAsync(
+            FfmpegArgs args,
+            TimeSpan? totalDuration = null,
+            IProgress<double>? progress = null,
+            CancellationToken ct = default)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            // Deliberately NO Directory.CreateDirectory — the parent must already exist.
+            File.WriteAllText(args.ToList()[^1], "joined-bytes");
+            return Task.FromResult(new FfmpegResult(0, new List<string>().AsReadOnly()));
+        }
+    }
+
+    // SPEC-003#I28 — an ffmpeg concat failure refuses under the "ffmpeg" field AND deletes the
+    // partial temp output, so a failed run leaves NOTHING behind next to the destination (the
+    // log-path / full-stderr threading is asserted alongside).
+    [Trait("serves-spec", "SPEC-003")]
+    [Fact]
+    public async Task JoinAsync_FfmpegFailure_DeletesTempOutput_AndNamesFfmpegField()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "vsj-jointemp-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var a = Path.Combine(dir, "a.mp4");
+            var b = Path.Combine(dir, "b.mp4");
+            await File.WriteAllTextAsync(a, "x");
+            await File.WriteAllTextAsync(b, "x");
+            var outPath = Path.Combine(dir, "joined.mp4");
+            var logDir = Path.Combine(dir, "logs");
+
+            // The runner writes the temp output and THEN fails: a partial file genuinely exists at
+            // the moment ffmpeg reports the non-zero exit.
+            var runner = new WritingFailingJoinRunner(exitCode: 1, stderr: "Invalid data found when processing input");
+            var engine = new JoinEngine(
+                runner,
+                new StubProbe(_ => ProbeResult.Success(CompatibleClip())),
+                new ErrorLogWriter(logDir));
+
+            var result = await engine.JoinAsync(new JoinRequest(new[] { a, b }, outPath));
+
+            result.Success.Should().BeFalse();
+            result.OutputPath.Should().BeNull();
+            result.Refusal.Should().NotBeNull();
+            result.Refusal!.Mismatches.Should().Contain(
+                m => m.Field == "ffmpeg",
+                "a failed concat run is reported under the 'ffmpeg' field");
+
+            // The temp output the runner actually created is swept — no partial file left behind.
+            runner.LastTokens.Should().NotBeEmpty();
+            var tempOut = runner.LastTokens[^1];
+            tempOut.Should().NotBe(Path.GetFullPath(outPath), "the engine writes to a temp file, then moves it into place");
+            File.Exists(tempOut).Should().BeFalse("the partial temp output is deleted when ffmpeg fails");
+            File.Exists(Path.GetFullPath(outPath)).Should().BeFalse("a failed join leaves no output");
+            Directory.EnumerateFiles(dir)
+                .Where(f => Path.GetFileName(f).Contains(".vsj-join-", StringComparison.Ordinal))
+                .Should().BeEmpty("no join temp artefact survives a failure");
+
+            // RefusedWithLog threads the saved log path + the complete stderr onto the result.
+            result.FullStdErr.Should().NotBeNullOrEmpty();
+            result.FullStdErr!.Should().Contain("Invalid data found when processing input");
+            result.LogFilePath.Should().NotBeNull();
+            File.Exists(result.LogFilePath!).Should().BeTrue();
+        }
+        finally { try { Directory.Delete(dir, recursive: true); } catch { /* best-effort */ } }
+    }
+
+    // SPEC-003#I30 — the multi-input half of the Joining stage detail: "{N} clips" (the
+    // single-input "1 clip" half is pinned by JoinAsync_SingleInput_JoiningDetail_IsOneClip).
+    [Trait("serves-spec", "SPEC-003")]
+    [Fact]
+    public async Task JoinAsync_MultiInput_JoiningDetail_IsNClips()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "vsj-joinmany-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var a = Path.Combine(dir, "a.mp4");
+            var b = Path.Combine(dir, "b.mp4");
+            var c = Path.Combine(dir, "c.mp4");
+            await File.WriteAllTextAsync(a, "x");
+            await File.WriteAllTextAsync(b, "x");
+            await File.WriteAllTextAsync(c, "x");
+            var outPath = Path.Combine(dir, "joined.mp4");
+
+            var status = new RecordingProgress<OperationStatus>();
+            var engine = new JoinEngine(new WritingFakeRunner(), new StubProbe(_ => ProbeResult.Success(CompatibleClip())));
+
+            var result = await engine.JoinAsync(
+                new JoinRequest(new[] { a, b, c }, outPath), progress: null, ct: default, status: status);
+
+            result.Success.Should().BeTrue();
+            status.Reports.Should().Contain(
+                s => s.Stage == "Joining" && s.Detail == "3 clips",
+                "the Joining detail pluralizes to '<N> clips' for a multi-clip join");
+            status.Reports.Should().NotContain(
+                s => s.Detail == "1 clip",
+                "three inputs are never described as one clip");
+        }
+        finally { try { Directory.Delete(dir, recursive: true); } catch { /* best-effort */ } }
+    }
+
+    // SPEC-003#I26 — the "parent directory is created if absent" clause: with a destination two
+    // levels deep that does not exist yet, the ENGINE creates the tree before launching ffmpeg.
+    // The strict runner writes its output without creating any directory, so the join can only
+    // succeed if the engine did it.
+    [Trait("serves-spec", "SPEC-003")]
+    [Fact]
+    public async Task JoinAsync_MissingParentDirectory_IsCreated()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "vsj-joinmkdir-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var a = Path.Combine(dir, "a.mp4");
+            var b = Path.Combine(dir, "b.mp4");
+            await File.WriteAllTextAsync(a, "x");
+            await File.WriteAllTextAsync(b, "x");
+
+            var outPath = Path.Combine(dir, "nested", "deep", "joined.mp4");
+            Directory.Exists(Path.Combine(dir, "nested")).Should().BeFalse("precondition: the destination tree is absent");
+
+            var engine = new JoinEngine(
+                new StrictWritingJoinRunner(),
+                new StubProbe(_ => ProbeResult.Success(CompatibleClip())));
+
+            var result = await engine.JoinAsync(new JoinRequest(new[] { a, b }, outPath));
+
+            result.Success.Should().BeTrue("the engine creates the missing parent directory itself");
+            result.OutputPath.Should().Be(Path.GetFullPath(outPath));
+            Directory.Exists(Path.GetDirectoryName(Path.GetFullPath(outPath))!)
+                .Should().BeTrue("the parent directory is created if absent");
+            File.Exists(outPath).Should().BeTrue();
+            File.ReadAllText(outPath).Should().Be("joined-bytes", "the temp output is moved into the freshly created folder");
+        }
+        finally { try { Directory.Delete(dir, recursive: true); } catch { /* best-effort */ } }
+    }
 }

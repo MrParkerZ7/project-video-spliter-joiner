@@ -234,6 +234,66 @@ public sealed class TimelineTests
     }
 
     // =========================================================================================
+    // SPEC-014 timeline gaps (todo-automate) — re-projection triggers + tick-routing guard
+    // =========================================================================================
+
+    // SPEC-014#I12 — a player Position, Duration OR IsReady change re-projects the strip (playhead +
+    // ticks recomputed; OnPlayerChanged filters on exactly those three names). The Position leg is
+    // covered above; this pins the Duration/IsReady leg — a position AND a marker that exist BEFORE
+    // the duration is known are both re-scaled the moment it arrives.
+    [Fact]
+    [Trait("serves-spec", "SPEC-014")]
+    public async Task Projection_Reprojects_WhenDurationBecomesKnown()
+    {
+        var (vm, probe, player) = Build();
+        probe.KeyframesToReturn = Enumerable.Range(0, 11).Select(i => TimeSpan.FromSeconds(i)).ToArray();
+        await vm.LoadAsync(FakePath);
+
+        player.RaisePositionChanged(TimeSpan.FromSeconds(5));
+        vm.AddCutAt(TimeSpan.FromSeconds(4));
+
+        vm.Timeline.PlayheadNormalized.Should().Be(0d, "duration is still unknown — there is nothing to scale against");
+        vm.Timeline.MarkerTicks.Should().ContainSingle();
+        vm.Timeline.MarkerTicks[0].Normalized.Should().Be(0d, "the tick collapses to 0 while the duration is unknown");
+
+        // DurationAvailable moves PlayerViewModel.Duration (and with it IsReady) — either one re-projects.
+        player.RaiseDurationAvailable(TimeSpan.FromSeconds(10));
+
+        vm.Timeline.PlayheadNormalized.Should().BeApproximately(0.5, 1e-9,
+            "the already-known playhead is re-projected against the newly-known duration");
+        vm.Timeline.MarkerTicks[0].Normalized.Should().BeApproximately(0.4, 1e-9,
+            "the ticks are recomputed too — the whole strip re-projects, not just the playhead");
+        vm.Timeline.MarkerTicks[0].Time.Should().Be(TimeSpan.FromSeconds(4));
+    }
+
+    // SPEC-014#I18 — SeekMarkerTick routes to the owner's SeekToMarkerCommand ONLY when the tick's Ref
+    // is a CutMarkerViewModel and that command can execute; anything else — a foreign Ref, a null tick
+    // — is a silent no-op: never a throw, never a stray seek.
+    [Fact]
+    [Trait("serves-spec", "SPEC-014")]
+    public async Task SeekMarkerTick_NonMarkerRef_OrNull_IsNoOp()
+    {
+        var (vm, _, player) = await BuildLoadedReadyAsync();
+        player.RaisePositionChanged(TimeSpan.FromSeconds(30.4));
+        vm.SetCutAtPlayhead();
+        player.Seeks.Clear();
+
+        // A hand-built tick whose Ref is NOT a marker (Ref is typed object — this is the defensive branch).
+        FluentActions
+            .Invoking(() => vm.Timeline.SeekMarkerTick(new TimelineTick(0.5, TimeSpan.FromSeconds(30), Ref: "not-a-marker")))
+            .Should().NotThrow();
+        player.Seeks.Should().BeEmpty("a non-marker Ref never reaches the seek command");
+
+        FluentActions.Invoking(() => vm.Timeline.SeekMarkerTick(null!))
+            .Should().NotThrow("a null tick is a no-op, not a crash");
+        player.Seeks.Should().BeEmpty();
+
+        // Sanity: a REAL marker tick does route — so the guard above is a genuine filter, not a dead path.
+        vm.Timeline.SeekMarkerTick(vm.Timeline.MarkerTicks[0]);
+        player.Seeks.Should().ContainSingle().Which.Should().Be(TimeSpan.FromSeconds(30));
+    }
+
+    // =========================================================================================
     // Fakes + builders (mirror SplitViewModelPlayheadTests)
     // =========================================================================================
 

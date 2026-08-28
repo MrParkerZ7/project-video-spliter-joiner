@@ -155,6 +155,27 @@ public class MediaProbeSnapTests
             File.Delete(tmp);
         }
     }
+
+    // SPEC-004#I32 — the mean-spacing average is computed on DEFENSIVELY-SORTED input, so an
+    // unsorted keyframe list still yields (max - min) / (count - 1) rather than a negative span
+    // derived from the raw first/last entries.
+    [Trait("serves-spec", "SPEC-004")]
+    [Fact]
+    public void AverageGop_UnsortedInput_UsesSortedSpan()
+    {
+        var probe = MakeProbe();
+
+        // Raw order is 4s, 0s, 2s — last-minus-first would be -4s without the defensive sort.
+        var gop = probe.AverageGop(new[]
+        {
+            TimeSpan.FromSeconds(4),
+            TimeSpan.Zero,
+            TimeSpan.FromSeconds(2),
+        });
+
+        gop.Should().Be(TimeSpan.FromSeconds(2), "(max - min) / (count - 1) = 4s / 2 regardless of input order");
+        gop.Should().BeGreaterThan(TimeSpan.Zero, "an unsorted list must never produce a negative average GOP");
+    }
 }
 
 /// <summary>

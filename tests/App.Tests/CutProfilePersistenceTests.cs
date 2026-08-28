@@ -249,4 +249,34 @@ public sealed class CutProfilePersistenceTests : IDisposable
         profile.IntroFromStart.Should().Be(TimeSpan.FromSeconds(10));
         profile.OutroFromEnd.Should().Be(TimeSpan.FromSeconds(4));
     }
+
+    // ---- SPEC-009 — corrupt-row skip: the out-of-TimeSpan-range branch (I21) ------------------
+
+    // SPEC-009#I21 — a persisted row whose outroSeconds is finite and non-negative, yet too large to
+    // become a TimeSpan (1e300 seconds overflows TimeSpan.FromSeconds), is one more CORRUPT ROW: it must
+    // be SKIPPED, leaving its valid sibling rows — and the sibling top-level fields — intact.
+    // IsFiniteNonNegative admits 1e300 (it is neither NaN, infinite, nor negative), so the failure lands
+    // on the TimeSpan conversion rather than on the record's own validation. CorruptProfileEntry_IsSkipped_
+    // ValidOnesSurvive already covers the blank-name and negative-offset branches; this pins the
+    // out-of-range one, where "skipped" must still mean "the load itself survives".
+    [Fact]
+    [Trait("serves-spec", "SPEC-009")]
+    public void ProfileRow_WithOutOfRangeOutroSeconds_IsSkipped_SiblingsSurvive()
+    {
+        Directory.CreateDirectory(_dir);
+        File.WriteAllText(_file,
+            "{ \"lastInputDir\": \"D:\\\\keep\", \"cutProfiles\": [" +
+            "{ \"name\": \"Overflow\", \"introSeconds\": 1, \"outroSeconds\": 1e300 }," +
+            "{ \"name\": \"Good\", \"introSeconds\": 10, \"outroSeconds\": 4 }" +
+            "] }");
+
+        var settings = new AppSettings(_file);
+
+        settings.CutProfiles.Select(p => p.Name).Should().Equal(new[] { "Good" },
+            "an out-of-TimeSpan-range outroSeconds is a corrupt row — it is skipped, never taking the valid sibling rows down with it");
+        settings.CutProfiles[0].IntroFromStart.Should().Be(TimeSpan.FromSeconds(10));
+        settings.CutProfiles[0].OutroFromEnd.Should().Be(TimeSpan.FromSeconds(4));
+        settings.LastInputDir.Should().Be(@"D:\keep",
+            "skipping one bad profile row must never degrade into the whole-file corrupt-JSON fallback — the sibling top-level fields survive");
+    }
 }

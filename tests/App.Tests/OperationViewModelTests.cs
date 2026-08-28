@@ -515,4 +515,51 @@ public sealed class OperationViewModelTests
         etas.Should().NotContain(v => v != null && v.Contains("left"),
             "a zero/non-positive seed leaves the duration fallback disabled (fraction-only behaviour)");
     }
+
+    // SPEC-008#I9 (the "cancels any in-flight run" clause) — Reset() cancels the running operation's
+    // token FIRST, then lands on Idle with Error / ResultSummary / Progress / StatusText / EtaText all
+    // cleared. The body parks on a test-owned gate (never on the token) so nothing can race the
+    // post-Reset assertions: the cancelled run only unwinds once the test releases it.
+    [Fact]
+    [Trait("serves-spec", "SPEC-008")]
+    public async Task Reset_WhileRunning_CancelsInFlightRun()
+    {
+        var vm = new OperationViewModel();
+        var started = new TaskCompletionSource();
+        var release = new TaskCompletionSource();
+        CancellationToken captured = default;
+
+        var run = vm.RunAsync(async (progress, token) =>
+        {
+            captured = token;
+            vm.ResultSummary = "a line left over from this run";
+            progress.Report(0.4);
+            started.SetResult();
+            await release.Task;                   // only the test releases the body…
+            token.ThrowIfCancellationRequested(); // …which then observes Reset's cancel
+        }, "Working…");
+
+        await started.Task;
+        await Task.Delay(20); // let the marshalled Progress<T> post land
+        vm.IsRunning.Should().BeTrue("precondition — the run is in flight");
+        vm.Progress.Should().Be(0.4);
+
+        vm.Reset();
+
+        captured.IsCancellationRequested.Should().BeTrue(
+            "Reset cancels the in-flight run before resetting — it never abandons a running operation");
+        vm.State.Should().Be(OperationState.Idle, "Reset lands on Idle without waiting for the body to unwind");
+        vm.Progress.Should().Be(0d, "Reset zeroes the bar");
+        vm.StatusText.Should().BeEmpty("Reset clears the status line");
+        vm.EtaText.Should().BeNull("Reset clears the ETA");
+        vm.Error.Should().BeNull();
+        vm.ResultSummary.Should().BeNull("Reset drops any lingering success line");
+
+        release.SetResult();
+        await run;
+
+        vm.State.Should().Be(OperationState.Cancelled,
+            "the cancelled body funnels through RunAsync's OperationCanceledException path");
+        vm.EtaText.Should().BeNull("EndRun leaves the ETA cleared on every terminal path");
+    }
 }

@@ -341,4 +341,116 @@ public sealed class BulkCutViewModelTests
         vm.BatchState.Should().Be(BulkBatchState.Idle);
         vm.CanRunBatch.Should().BeFalse();
     }
+
+    // ==== SPEC-011 gaps (todo-automate) ======================================================
+    //
+    // Both progress gaps below run under an INLINE synchronization context. The batch fans progress
+    // through two Progress<T> channels (engine sample → OnBatchProgress → the overall bar), and each
+    // marshals onto the context captured when it was constructed; running those posts inline is what
+    // makes the fan-out ORDERED and observable MID-RUN — i.e. before the ledger folds terminal row
+    // states on. Under the default thread-pool posting the samples land unordered and after the run.
+
+    /// <summary>Runs every posted callback inline, in order (see the note above).</summary>
+    private sealed class InlineContext : SynchronizationContext
+    {
+        public override void Post(SendOrPostCallback d, object? state) => d(state);
+
+        public override void Send(SendOrPostCallback d, object? state) => d(state);
+    }
+
+    // SPEC-011#I42 — the reported overall bar is monotonic-clamped: OnBatchProgress only ever reports
+    // a value ≥ the last one it reported (_progressLock / _lastOverall), so a late/out-of-order engine
+    // sample whose raw weighted overall is LOWER can never pull the bar backwards.
+    [Fact]
+    [Trait("serves-spec", "SPEC-011")]
+    public async Task OverallProgress_NeverGoesBackwards_WhenTheEngineReportsOutOfOrder()
+    {
+        var prior = SynchronizationContext.Current;
+        SynchronizationContext.SetSynchronizationContext(new InlineContext());
+        try
+        {
+            var (vm, probe, _, engine) = Build();
+            await AddRowAsync(vm, probe, @"C:\v\a.mp4", 30, 2, introSeconds: 4);
+            await AddRowAsync(vm, probe, @"C:\v\b.mp4", 90, 2, introSeconds: 6);
+
+            var seen = new List<double>();
+            vm.Operation.PropertyChanged += (_, e) =>
+            {
+                if (e.PropertyName == nameof(OperationViewModel.Progress))
+                {
+                    seen.Add(vm.Operation.Progress);
+                }
+            };
+
+            // Deliberately out of order: the batch races ahead to "row 1 finished" (overall 1.0), then
+            // two STALE samples arrive whose raw weighted overall is far lower.
+            engine.ProgressScript = new[]
+            {
+                new BulkTrimProgress(0, 2, "a.mp4", 0.5, 0.10, BulkTrimPhase.Item),
+                new BulkTrimProgress(1, 2, "b.mp4", 1.0, 1.00, BulkTrimPhase.Item),
+                new BulkTrimProgress(0, 2, "a.mp4", 0.25, 0.05, BulkTrimPhase.Item), // stale + lower
+                new BulkTrimProgress(1, 2, "b.mp4", 0.1, 0.20, BulkTrimPhase.Item),  // stale + lower
+            };
+
+            await vm.RunBatchAsync();
+
+            seen.Should().NotBeEmpty("the overall bar was reported while the batch ran");
+            seen.Should().BeInAscendingOrder(
+                "every report is clamped to the running maximum (_lastOverall) — the bar never rewinds");
+            seen[^1].Should().Be(1d, "the highest overall reached (row 1 finished) is what stays on the bar");
+            vm.Operation.Progress.Should().Be(1d, "the two later, lower samples never pulled the bar back");
+        }
+        finally
+        {
+            SynchronizationContext.SetSynchronizationContext(prior);
+        }
+    }
+
+    // SPEC-011#I43 — per-row progress fans out by ItemIndex: ONLY the addressed row is advanced to
+    // Running and given that sample's ItemFraction. A row no Item sample addresses (and a batch-level,
+    // non-Item sample naming it) leaves the row exactly as MarkQueued left it.
+    [Fact]
+    [Trait("serves-spec", "SPEC-011")]
+    public async Task PerRowProgress_FansOutByItemIndex_AdvancingOnlyTheAddressedRow()
+    {
+        var prior = SynchronizationContext.Current;
+        SynchronizationContext.SetSynchronizationContext(new InlineContext());
+        try
+        {
+            var (vm, probe, _, engine) = Build();
+            var r1 = await AddRowAsync(vm, probe, @"C:\v\a.mp4", 30, 2, introSeconds: 4);
+            var r2 = await AddRowAsync(vm, probe, @"C:\v\b.mp4", 90, 2, introSeconds: 6);
+
+            engine.ProgressScript = new[]
+            {
+                new BulkTrimProgress(0, 2, "a.mp4", 0.25, 0.1, BulkTrimPhase.Item),
+
+                // A batch-level (non-Item) sample naming row 1 must NOT advance that row.
+                new BulkTrimProgress(1, 2, string.Empty, 0.9, 0.5, BulkTrimPhase.Running),
+            };
+
+            // Observe the rows MID-RUN: BeforeReturn fires after the samples replay but before the
+            // ledger folds terminal states (Done/Failed/…) onto every row.
+            RowState addressedState = default, otherState = default;
+            double addressedProgress = -1d, otherProgress = -1d;
+            engine.BeforeReturn = () =>
+            {
+                addressedState = r1.RowState;
+                addressedProgress = r1.Progress;
+                otherState = r2.RowState;
+                otherProgress = r2.Progress;
+            };
+
+            await vm.RunBatchAsync();
+
+            addressedState.Should().Be(RowState.Running, "the addressed row (ItemIndex 0) is advanced to Running");
+            addressedProgress.Should().Be(0.25, "…and takes that sample's ItemFraction verbatim");
+            otherState.Should().Be(RowState.Queued, "a row no Item sample addressed stays as MarkQueued left it");
+            otherProgress.Should().Be(0d, "…with its per-row fraction untouched");
+        }
+        finally
+        {
+            SynchronizationContext.SetSynchronizationContext(prior);
+        }
+    }
 }

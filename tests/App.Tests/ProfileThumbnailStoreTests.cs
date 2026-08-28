@@ -281,4 +281,76 @@ public sealed class ProfileThumbnailStoreTests : IDisposable
             TryDelete(settingsDir);
         }
     }
+
+    // SPEC-007#I59 — the delete-cascade fires BOTH halves: store.Delete(name) removes whatever sits at
+    // the recomputed safe-name path, AND store.DeleteByPath(removedProfile.ThumbnailPath) removes the
+    // exact recorded path — which is the only half that can reach a directly-set thumbnail whose name
+    // diverges from the safe name. DeleteProfile_CascadesToThumbnailFile only exercises the case where
+    // both halves happen to address the SAME file (the path came from Save), so the divergent-path
+    // branch is untested there.
+    [Fact]
+    [Trait("serves-spec", "SPEC-007")]
+    public void DeleteProfile_CascadesToADirectlySetThumbnailPath_ThatDivergesFromTheSafeName()
+    {
+        var settingsDir = Path.Combine(Path.GetTempPath(), "vsj-cascade-divergent-" + Guid.NewGuid().ToString("N"));
+        var settingsFile = Path.Combine(settingsDir, "settings.json");
+        try
+        {
+            var store = new ProfileThumbnailStore(_root);
+            var settings = new AppSettings(settingsFile, store);
+
+            // (a) the safe-name file the store itself would resolve for the profile...
+            var safeNameThumb = store.Save("Series", MakeSource());
+
+            // (b) ...and a hand-written thumbnail whose filename deliberately does NOT match the safe name,
+            // recorded directly on the profile (a path the user/UI set rather than one Save produced).
+            var handWritten = Path.Combine(_root, "hand-written-thumb.png");
+            File.WriteAllText(handWritten, "bytes");
+            Path.GetFileNameWithoutExtension(handWritten).Should().NotBe(
+                ProfileThumbnailStore.SafeFileName("Series"),
+                "precondition: the recorded path diverges from the recomputed safe-name path, so only the DeleteByPath half can reach it");
+
+            settings.SaveProfile(new CutProfile("Series", TimeSpan.FromSeconds(8), null, handWritten));
+            File.Exists(safeNameThumb).Should().BeTrue("precondition: both files exist before the delete");
+            File.Exists(handWritten).Should().BeTrue();
+
+            settings.DeleteProfile("Series");
+
+            File.Exists(handWritten).Should().BeFalse(
+                "the cascade also deletes by the EXACT recorded path, covering a directly-set thumbnail the safe-name half would miss");
+            File.Exists(safeNameThumb).Should().BeFalse(
+                "the safe-name half of the cascade still runs — both files go, not one or the other");
+            Directory.EnumerateFiles(_root).Should().BeEmpty("nothing is left behind for the deleted profile");
+            settings.CutProfiles.Should().BeEmpty("the profile itself is also removed");
+        }
+        finally
+        {
+            TryDelete(settingsDir);
+        }
+    }
+
+    // SPEC-007#I58 (second half) — construction is SIDE-EFFECT-FREE: the injected root is only resolved
+    // to a string, so no directory is created until the first Save. The best-effort deletes are equally
+    // read-only about the root — they must not materialize it either. (The first half, "the root is
+    // injectable", is implicit in every other test here; this pins the no-I/O-on-construction clause.)
+    [Fact]
+    [Trait("serves-spec", "SPEC-007")]
+    public void Construction_AndBestEffortDeletes_CreateNoDirectory_UntilFirstSave()
+    {
+        var store = new ProfileThumbnailStore(_root);
+
+        Directory.Exists(_root).Should().BeFalse("constructing the store only resolves a root string — no I/O");
+        store.Root.Should().Be(_root, "the root is injectable, so no test ever touches the real per-user folder");
+
+        store.Delete("never-saved");
+        store.DeleteByPath(Path.Combine(_root, "never-written.png"));
+
+        Directory.Exists(_root).Should().BeFalse(
+            "the best-effort deletes short-circuit on a missing root — they never create the folder as a side effect");
+
+        var stored = store.Save("Series", MakeSource());
+
+        Directory.Exists(_root).Should().BeTrue("the root folder is created lazily, on the first Save");
+        File.Exists(stored).Should().BeTrue("that first Save is what materializes both the folder and the thumbnail");
+    }
 }

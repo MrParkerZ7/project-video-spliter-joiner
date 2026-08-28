@@ -980,4 +980,97 @@ public sealed class SplitViewModelTests
         engine.LastRequest!.NamingPattern.Should().Be(SplitRequest.DefaultNamingPattern,
             "a blank naming pattern is substituted with SplitRequest.DefaultNamingPattern");
     }
+
+    // SPEC-010#I26 — CanRunSplit is true iff InputPath is set AND there is >=1 marker AND OutputDir is
+    // set AND >=1 segment is selected. The file / marker / selection clauses are pinned by the tests
+    // above; this pins the OutputDir clause — with everything else satisfied, a blank destination
+    // alone disables the run, and restoring it re-enables it.
+    [Fact]
+    [Trait("serves-spec", "SPEC-010")]
+    public async Task CanRunSplit_False_WhenOutputDirBlank_EvenWithFileMarkerAndSelection()
+    {
+        var (vm, _) = await BuildLoaded15mAsync();
+        vm.AddMarker(TimeSpan.FromMinutes(5));
+
+        vm.CanRunSplit.Should().BeTrue("precondition: file + marker + selection + an anchored OutputDir");
+
+        vm.OutputDir = "   ";
+        vm.CanRunSplit.Should().BeFalse("a whitespace-only destination fails the OutputDir clause alone");
+        vm.RunSplitCommand.CanExecute(null).Should().BeFalse("the command guard tracks CanRunSplit");
+
+        vm.OutputDir = string.Empty;
+        vm.CanRunSplit.Should().BeFalse("an empty destination fails the same clause");
+
+        // The other three clauses were never disturbed — restoring the destination re-enables the run.
+        vm.InputPath.Should().NotBeNull();
+        vm.Markers.Should().ContainSingle();
+        vm.SelectedSegmentCount.Should().BeGreaterThan(0);
+
+        vm.OutputDir = @"C:\out";
+        vm.CanRunSplit.Should().BeTrue("restoring the destination satisfies the last clause again");
+        vm.RunSplitCommand.CanExecute(null).Should().BeTrue();
+    }
+
+    // SPEC-010#I25 — SelectAllSegmentsCommand / SelectNoSegmentsCommand set every part's IsSelected
+    // true/false AND are enabled ONLY when Segments.Count > 0. The set-behaviour half is pinned by
+    // Segments_ZeroSelected_DisablesRun; this pins the ENABLEMENT half on both commands — disabled
+    // with no projection, enabled once parts exist, disabled again once the projection is dropped.
+    [Fact]
+    [Trait("serves-spec", "SPEC-010")]
+    public async Task SelectAllAndNoneCommands_Disabled_WhenNoPartsProjected_EnabledOnceProjected()
+    {
+        var (vm, _, _) = Build();
+
+        vm.Segments.Should().BeEmpty("a fresh VM has no segment projection");
+        vm.SelectAllSegmentsCommand.CanExecute(null).Should().BeFalse("no parts to select");
+        vm.SelectNoSegmentsCommand.CanExecute(null).Should().BeFalse("no parts to deselect");
+
+        var (loaded, _) = await BuildLoaded15mAsync();
+        loaded.AddMarker(TimeSpan.FromMinutes(5));
+        loaded.Segments.Should().HaveCount(2, "precondition: one cut projects two parts");
+
+        loaded.SelectAllSegmentsCommand.CanExecute(null).Should().BeTrue("parts exist → select-all is enabled");
+        loaded.SelectNoSegmentsCommand.CanExecute(null).Should().BeTrue("parts exist → select-none is enabled");
+
+        // Both commands act on EVERY row while enabled.
+        loaded.SelectNoSegmentsCommand.Execute(null);
+        loaded.Segments.Should().OnlyContain(s => !s.IsSelected, "select-none clears every part");
+        loaded.SelectAllSegmentsCommand.Execute(null);
+        loaded.Segments.Should().OnlyContain(s => s.IsSelected, "select-all sets every part");
+
+        // Losing the projection disables both again.
+        loaded.Clear();
+        loaded.Segments.Should().BeEmpty("Clear drops the projection");
+        loaded.SelectAllSegmentsCommand.CanExecute(null).Should().BeFalse("no parts left to select");
+        loaded.SelectNoSegmentsCommand.CanExecute(null).Should().BeFalse("no parts left to deselect");
+    }
+
+    // SPEC-010#I24 — RunLabel is "Split N parts" when all are selected, "Split M of N parts" for a
+    // subset, and a bare "Split" when there are no parts at all. The all-selected plural and the
+    // subset branches are pinned above; this pins the ZERO-part branch and the SINGULAR ("1 part")
+    // branch — an uncut loaded file projects exactly one whole-file part.
+    [Fact]
+    [Trait("serves-spec", "SPEC-010")]
+    public async Task RunLabel_IsBareSplit_WithNoParts_AndSingular_ForOnePart()
+    {
+        var (vm, _, _) = Build();
+
+        vm.SegmentCount.Should().Be(0);
+        vm.RunLabel.Should().Be("Split", "no projection yet → a bare label");
+
+        var (loaded, _) = await BuildLoaded15mAsync();
+        loaded.Markers.Should().BeEmpty("precondition: no cuts placed yet");
+        loaded.SegmentCount.Should().Be(1, "an uncut file projects exactly one part — the whole clip");
+        loaded.SelectedSegmentCount.Should().Be(1, "parts default to selected");
+        loaded.RunLabel.Should().Be("Split 1 part", "the singular branch reads 'part', not 'parts'");
+
+        // Deselecting the only part crosses into the subset branch (still "N parts" plural there).
+        loaded.Segments[0].IsSelected = false;
+        loaded.RunLabel.Should().Be("Split 0 of 1 parts", "a partial selection uses the 'M of N' branch");
+
+        // Dropping the projection returns to the bare label.
+        loaded.Clear();
+        loaded.SegmentCount.Should().Be(0);
+        loaded.RunLabel.Should().Be("Split", "clearing the file removes the projection → the bare label again");
+    }
 }

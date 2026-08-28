@@ -1131,4 +1131,76 @@ public sealed class PlayerViewModelTests
         vm.IsReady.Should().BeTrue("the freshly-opened file is ready after its duration arrives");
         vm.Position.Should().Be(TimeSpan.FromSeconds(20), "the live-scrub seek pins the display at the new target");
     }
+
+    // SPEC-013#I6 — the Failed event surfaces its reason in PreviewFailedReason, but a BLANK reason
+    // (empty or whitespace-only, as a bare FFME failure can produce) falls back to the fixed default
+    // message so the banner is never empty. Failed_SetsPreviewFailed_SurfacesReason_NoCrash already
+    // pins the non-blank arm; this pins the fallback arm of the same branch.
+    [Fact]
+    [Trait("serves-spec", "SPEC-013")]
+    public void Failed_WithBlankReason_FallsBackToTheDefaultMessage()
+    {
+        var (vm, player) = BuildReady(60);
+        vm.PlayPause();
+        vm.IsPlaying.Should().BeTrue("precondition: the preview is playing when the failure arrives");
+
+        var act = () => player.RaiseFailed("   ");
+
+        act.Should().NotThrow("a blank failure reason must not crash the preview");
+        vm.PreviewFailed.Should().BeTrue();
+        vm.PreviewFailedReason.Should().Be("The video could not be played.",
+            "a whitespace-only reason falls back to the default message — the banner is never blank");
+        vm.IsPlaying.Should().BeFalse("a failed preview stops playback");
+
+        // The empty-string reason takes the same fallback arm.
+        player.RaiseFailed(string.Empty);
+        vm.PreviewFailedReason.Should().Be("The video could not be played.",
+            "an empty reason falls back to the same default message");
+    }
+
+    // SPEC-013#I11 — SkipCommand's parameter is a number of SECONDS, accepted as a double, an int, or
+    // a string such as "10" / "-5" / "2.5" parsed in INVARIANT culture; an unparseable (or absent)
+    // parameter parses to 0 → the jog is a no-op and the playhead does not move.
+    // SkipCommand_ParsesSecondsParameter_AndSeeks already covers the plain-integer string arm; this
+    // pins the double / int / invariant-decimal / unparseable arms of the same switch.
+    [Fact]
+    [Trait("serves-spec", "SPEC-013")]
+    public void SkipCommand_AcceptsDoubleIntAndString_AndIgnoresAnUnparseableParameter()
+    {
+        var (vm, player) = BuildReady(60);
+        player.RaisePositionChanged(TimeSpan.FromSeconds(20)); // establish the current position (not seeking)
+
+        // (a) double parameter.
+        vm.SkipCommand.Execute(5.0);
+        player.Seeks[^1].Should().Be(TimeSpan.FromSeconds(25), "a double parameter jogs by that many seconds");
+        player.RaiseSeeked(TimeSpan.FromSeconds(25)); // settle → releases the T-033 hold before the next jog
+
+        // (b) int parameter.
+        vm.SkipCommand.Execute(5);
+        player.Seeks[^1].Should().Be(TimeSpan.FromSeconds(30), "an int parameter jogs by that many seconds");
+        player.RaiseSeeked(TimeSpan.FromSeconds(30));
+
+        // (c) string parameter, negative.
+        vm.SkipCommand.Execute("-10");
+        player.Seeks[^1].Should().Be(TimeSpan.FromSeconds(20), "a string parameter is parsed as seconds");
+        player.RaiseSeeked(TimeSpan.FromSeconds(20));
+
+        // (d) string parameter with a decimal point — parsed under the INVARIANT culture, so it works
+        //     regardless of the ambient culture's decimal separator.
+        vm.SkipCommand.Execute("2.5");
+        player.Seeks[^1].Should().Be(TimeSpan.FromSeconds(22.5), "'2.5' is parsed with the invariant culture");
+        player.RaiseSeeked(TimeSpan.FromSeconds(22.5));
+
+        // (e) unparseable parameter → 0 seconds → the playhead stays exactly where it was.
+        vm.SkipCommand.Execute("not-a-number");
+        vm.Position.Should().Be(TimeSpan.FromSeconds(22.5), "an unparseable parameter parses to 0 — no jog");
+        player.Seeks[^1].Should().Be(TimeSpan.FromSeconds(22.5),
+            "an unparseable parameter never moves the playhead off the current frame");
+        player.RaiseSeeked(TimeSpan.FromSeconds(22.5));
+
+        // (f) a missing parameter takes the same zero-jog arm.
+        vm.SkipCommand.Execute(null);
+        vm.Position.Should().Be(TimeSpan.FromSeconds(22.5), "a null parameter parses to 0 — no jog");
+        player.Seeks[^1].Should().Be(TimeSpan.FromSeconds(22.5));
+    }
 }

@@ -156,4 +156,34 @@ public class SplitArgsInvariantTests
         to.Should().BeGreaterThanOrEqualTo(0);
         tokens[to + 1].Should().Be("0", "a negative (end - start) duration clamps to 0");
     }
+
+    // SPEC-001#I19 — the PerSegment copy command maps ALL streams (`-map 0`), copies (`-c copy`), and
+    // zeroes negative timestamps (`-avoid_negative_ts make_zero`). The coverage above asserts those
+    // FLAGS are present but never their VALUES — a `-map 1` (video only, audio silently dropped) or an
+    // `-avoid_negative_ts auto` would sail straight through the existing guards.
+    [Trait("serves-spec", "SPEC-001")]
+    [Fact]
+    public void PerSegment_MapsAllStreams_AndZeroesNegativeTimestamps()
+    {
+        var tokens = SplitArgsBuilder.PerSegment(
+            @"C:\in.mp4", TimeSpan.FromSeconds(3), TimeSpan.FromSeconds(6), @"C:\out\seg.mp4").ToList().ToList();
+
+        var map = tokens.IndexOf("-map");
+        map.Should().BeGreaterThanOrEqualTo(0);
+        tokens[map + 1].Should().Be("0", "-map 0 keeps EVERY stream — video, audio, subtitles — not just the first");
+
+        var codec = tokens.IndexOf("-c");
+        codec.Should().BeGreaterThanOrEqualTo(0);
+        tokens[codec + 1].Should().Be("copy", "the segment is a pure stream copy, never a re-encode");
+
+        var avoid = tokens.IndexOf("-avoid_negative_ts");
+        avoid.Should().BeGreaterThanOrEqualTo(0);
+        tokens[avoid + 1].Should().Be("make_zero", "the copied segment must start at zero, not at a negative pts");
+
+        tokens[^1].Should().Be(@"C:\out\seg.mp4", "the output path is the last positional token");
+
+        // …and the bare `copy` token is present with no encoder contamination.
+        tokens.Should().Contain("copy");
+        SplitArgsBuilder.SatisfiesCopyInvariant(tokens).Should().BeTrue();
+    }
 }

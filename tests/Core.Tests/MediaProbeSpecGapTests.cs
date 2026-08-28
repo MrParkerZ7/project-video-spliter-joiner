@@ -188,6 +188,68 @@ public class MediaProbeSpecGapTests
 
         act.Should().Throw<ArgumentNullException>();
     }
+
+    // SPEC-004#I6 — on success every StreamInfo field is mapped from the ffprobe stream, streams
+    // are partitioned by codec_type into VideoStreams/AudioStreams IN CONTAINER ORDER (anything
+    // that is neither video nor audio lands in neither list), and a payload with no format block
+    // resolves Container to the literal "unknown".
+    [Trait("serves-spec", "SPEC-004")]
+    [Fact]
+    public async Task ProbeAsync_MapsEveryStreamField_AndPartitionsByCodecType()
+    {
+        // Deliberately NO "format" block → Container must fall back to "unknown".
+        // Stream order is video(0) · audio(1) · video(2) · subtitle(3) so container order is visible.
+        const string json = """
+            {"streams":[
+              {"index":0,"codec_type":"video","codec_name":"h264","width":1920,"height":1080,"pix_fmt":"yuv420p","time_base":"1/30"},
+              {"index":1,"codec_type":"audio","codec_name":"aac","sample_rate":"48000","channels":2,"time_base":"1/48000"},
+              {"index":2,"codec_type":"video","codec_name":"hevc","width":640,"height":360,"pix_fmt":"yuv420p10le","time_base":"1/25"},
+              {"index":3,"codec_type":"subtitle","codec_name":"subrip"}
+            ]}
+            """;
+        var file = NewTempFile("streammap");
+        try
+        {
+            var probe = MakeProbe(new FakeFfprobeRunner(json));
+
+            var result = await probe.ProbeAsync(file);
+
+            result.Should().BeOfType<ProbeResult.ProbeSucceeded>();
+            var info = ((ProbeResult.ProbeSucceeded)result).Info;
+
+            info.Container.Should().Be("unknown", "an absent format block falls back to the literal unknown container");
+            info.HasVideo.Should().BeTrue("HasVideo reflects the video stream count");
+            info.HasAudio.Should().BeTrue("HasAudio reflects the audio stream count");
+
+            // Partitioned by codec_type, in container order; the subtitle stream lands in neither list.
+            info.VideoStreams.Select(s => s.Index).Should().Equal(new[] { 0, 2 }, "video streams keep container order");
+            info.AudioStreams.Select(s => s.Index).Should().Equal(new[] { 1 }, "the single audio stream is partitioned out on its own");
+            (info.VideoStreams.Count + info.AudioStreams.Count).Should().Be(3, "a subtitle stream is neither video nor audio");
+
+            var video = info.VideoStreams[0];
+            video.CodecName.Should().Be("h264");
+            video.Type.Should().Be("video");
+            video.IsVideo.Should().BeTrue();
+            video.Width.Should().Be(1920);
+            video.Height.Should().Be(1080);
+            video.PixFmt.Should().Be("yuv420p");
+            video.TimeBase.Should().Be("1/30");
+            video.SampleRate.Should().BeNull("a video stream reports no sample rate");
+            video.Channels.Should().BeNull("a video stream reports no channel count");
+
+            var audio = info.AudioStreams[0];
+            audio.CodecName.Should().Be("aac");
+            audio.Type.Should().Be("audio");
+            audio.IsAudio.Should().BeTrue();
+            audio.SampleRate.Should().Be(48000, "ffprobe emits sample_rate as a string and it is parsed to an int");
+            audio.Channels.Should().Be(2);
+            audio.TimeBase.Should().Be("1/48000");
+            audio.Width.Should().BeNull("an audio stream reports no dimensions");
+            audio.Height.Should().BeNull("an audio stream reports no dimensions");
+            audio.PixFmt.Should().BeNull("an audio stream reports no pixel format");
+        }
+        finally { File.Delete(file); }
+    }
 }
 
 /// <summary>Ffprobe runner that throws <see cref="OperationCanceledException"/> — models a cancelled probe.</summary>
