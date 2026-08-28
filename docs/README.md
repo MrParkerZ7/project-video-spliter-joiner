@@ -11,13 +11,13 @@ video **losslessly** (ffmpeg stream-copy, keyframe-snapped, no re-encode). Start
 
 ## Architecture & design
 - **[ARCHITECTURE.md](ARCHITECTURE.md)** — as-built structure: Core (engines) ↔ App (WPF-free VMs + views), the reuse map.
-- **[adr/README.md](adr/README.md)** — Architecture Decision Records (0001–0016): why stream-copy-only, FFME over
+- **[adr/README.md](adr/README.md)** — Architecture Decision Records (0001-0018): why stream-copy-only, FFME over
   MediaElement, hand-rolled MVVM, the bulk-trim-reuses-split decision, licensing, and more.
 - **[design/](design/)** — sealed feature designs `D-001`…`D-004` (vertical mode · audio waveform · 50/50 panel · Bulk Cut).
 
 ## Specifications (living specs)
 - **[specs/_index.md](specs/_index.md)** — the living-spec layer: one `SPEC-NNN` per feature, numbered invariants,
-  `serves-spec:` test traceability (15 specs · ~97% covered). The source `todo-automate` derives test cases from.
+  `serves-spec:` test traceability (15 specs, ~99% covered). The source `todo-automate` derives test cases from.
 - **[standards/_index.md](standards/_index.md)** — project standards (e.g. the Feature-Spec Structure standard).
 
 ## Contributing / development
@@ -32,7 +32,7 @@ ARCHITECTURE.md      ← as-built architecture
 DEV.md               ← build / test / conventions
 GLOSSARY.md          ← domain terms
 ROADMAP.md           ← status matrix (shipped + future)
-adr/                 ← 16 ADRs + index (design decisions)
+adr/                 <- 18 ADRs + index (design decisions)
 design/              ← D-001..D-004 sealed feature designs
 specs/               ← 15 SPEC-NNN living specs + standard-conformance + _index
 standards/           ← project standards + index

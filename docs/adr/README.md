@@ -5,9 +5,8 @@ Markdown file per decision, capturing the context, the choice made, and its
 consequences. Each ADR is immutable once accepted; a later decision supersedes
 an earlier one rather than editing it in place.
 
-The table below indexes every ADR currently on disk. The numbering is now
-contiguous — records 0001 through 0016, one file each — and the index reflects
-the **actual** records present.
+The table below indexes every ADR currently on disk — one file per record, in
+numbering order. The index reflects the **actual** records present.
 
 | #  | Decision | Status |
 |----|----------|--------|
@@ -27,3 +26,5 @@ the **actual** records present.
 | [0014](0014-no-ci-yet.md) | Deferred CI gate despite 517 tests + CoreIsUiFree guard | Accepted |
 | [0015](0015-bulk-trim-reuses-split-single-segment.md) | Batch intro/outro trim reuses SplitEngine's single-segment path — no second ffmpeg code path | Accepted |
 | [0016](0016-shared-bulk-preview-player-and-cut-profiles.md) | One shared Bulk Cut preview player bound to the selected row (not per-row) + cut profiles persisted in AppSettings | Accepted |
+| [0017](0017-output-mode-replace-original.md) | Opt-in "replace originals" as a separate OutputMode axis (not a 4th CollisionPolicy) — verify-all, then replace in place via a Recycle-Bin backup | Accepted |
+| [0018](0018-smart-cut-exact-trimming.md) | Frame-exact ("smart") cutting as a separate opt-in engine — re-encode one head GOP, copy the rest; stream copy stays the default | Accepted |

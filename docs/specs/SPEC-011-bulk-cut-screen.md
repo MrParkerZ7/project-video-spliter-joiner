@@ -7,11 +7,13 @@ status: current
 sources:
   - src/App/ViewModels/BulkCutViewModel.cs
   - src/App/ViewModels/BulkItemViewModel.cs
+  - src/App/ViewModels/CutMarkerViewModel.cs
+  - src/App/ViewModels/CutTimeCommit.cs
   - src/App/ViewModels/CutProfileApplier.cs
   - src/App/ViewModels/RelayCommand.cs
   - src/App/ViewModels/MainViewModel.cs
-serves-goal: [G-036, G-037, G-038, G-039, G-040]
-updated: 2026-08-24
+serves-goal: [G-036, G-037, G-038, G-039, G-040, G-041, G-042]
+updated: 2026-08-28
 ---
 
 ## What
@@ -41,11 +43,19 @@ apply-to-all, cut-profile commands, shared preview player + selection, set-at-pl
 thumbnail gate, `CanRunBatch`, `RunBatchAsync` delegation, progress fan-out, ledger routing, batch-state mapping)
 and `BulkItemViewModel` (per-row handles, keyframe scan, computed validity/`RowState`/`KeptDuration`/`Warning`,
 `IsEnabled` auto-disable, the per-row cut-point frame thumbnails `IntroThumbnailPath`/`OutroThumbnailPath`, request
-builders, batch fan-out hooks), plus `CutProfileApplier` (pure apply/build for profiles as used by the tab).
+builders, batch fan-out hooks), plus `CutProfileApplier` (pure apply/build for profiles as used by the tab),
+the **row-facing snap readout** on `CutMarkerViewModel` (`SnapNote`/`HasSnapNote`/`SuppressSnapNote`, G-041/G-042)
+and the WPF-free IN/OUT commit guard `CutTimeCommit`, and the two batch-wide output/precision choices the tab
+owns (`ReplaceOriginal` + `CollisionIsInert`/`OutputNote` + the counted `ConfirmReplaceOriginals` seam;
+`ExactCut` + `PrecisionNote`) as they appear on this screen.
 
 **Out:** the batch execution engine itself (`IBulkTrimEngine` / `BulkTrimEngine` — collision policy resolution,
 disk pre-flight, the per-item ffmpeg trim, `BatchResult`/`BatchOutcome` construction); the kept-segment request
-math (`KeptSegmentSelector`, T-094); keyframe snapping internals (`CutMarkerViewModel`); the reopen sequencing
+math (`KeptSegmentSelector`, T-094); keyframe snapping internals (`CutMarkerViewModel.Resnap` /
+`IMediaProbe.SnapToNearestKeyframe` — the readout that surfaces the result *is* In, I74–I76); the engine-side
+execution of `OutputMode.ReplaceOriginal` (verify-every-part-before-replace, `File.Replace` with a backup,
+`IOriginalDisposer`) and of `CutPrecision.Exact` (`SmartCutPlanner` / `SmartCutArgsBuilder` / `SmartCutEngine`
+and the per-row fall-back routing) — this screen only *chooses* those modes; the reopen sequencing
 inside `FfmeMediaPlayer`/`MediaReopenGuard` (T-080); cut-profile persistence (`IAppSettings.CutProfiles`,
 `CutProfile`, T-102) and the **profile-thumbnail** model/store/persistence + the T-107 auto-default/upload/clear
 glue (`ProfileThumbnailStore`, `SaveProfileWithAutoThumbnailAsync`/`UploadThumbnail`/`ClearThumbnail`, T-106/107 —
@@ -331,25 +341,140 @@ SPEC-007); the shared `IThumbnailService`/`FfmpegThumbnailService` frame source 
 > **layout-reachability** property (view-only WPF render, not unit-testable — the deferred-gap class of
 > [_GAPS.md](_GAPS.md)). (`BulkCutView.xaml`)
 
+### Visible keyframe snapping — requested **and** where it landed (G-041 / T-119)
+- **I74** — the row surfaces the user's **requested** time as the editable IN/OUT value and the keyframe it
+  lands on as a **separate** readout: `SnapNote` is `→ <snapped> (<±delta>)` (e.g. `→ 00:04.0 (−1.0s)`),
+  shown only while `HasSnapNote` is true — i.e. the snap is still pending **or** the delta is non-zero. An
+  identity snap (a request already sitting on a keyframe, or a fine grid where 6s lands on 6s) leaves
+  `HasSnapNote == false` and `SnapNote` **empty**, so a fine-GOP file carries no visual noise
+  (`CutMarkerViewModel.SnapNote`/`HasSnapNote`; `BulkCutView.xaml` `IntroEnd.Requested` + `IntroEnd.SnapNote`).
+- **I75** — the readout re-renders when `Requested` changes **even when `Snapped` does not move**. On a ~4s
+  grid both 5s and 6s snap to 4s (nearest keyframe, exact ties resolving to the **earlier** one), so a row
+  that showed only `Snapped` was pixel-identical before and after the second gesture — a correct snap made
+  indistinguishable from a click the app ignored (the G-041 bug report). Writing `Requested = 6s` keeps
+  `Snapped` at 4s but moves the note from `(−1.0s)` to `(−2.0s)` and raises `PropertyChanged` for **both**
+  `Requested` and `SnapNote` (`Requested` setter → `Resnap()` → the `Delta` setter → `RaiseSnapNote`).
+- **I76** — while the row's background keyframe scan is in flight the marker reads `→ snapping…` with
+  `HasSnapNote` true, and resolves to the real note (or to empty) when `ResolveSnap` clears `IsSnapPending`
+  (`SnapNote`, `IsSnapPending`, `ResolveSnap`).
+
+### Editable IN/OUT commit guard (G-041 / T-118)
+- **I77** — an **untouched** field never commits: `CutTimeCommit.IsUnchanged` compares the box text
+  (surrounding whitespace trimmed, ordinal) against the VM's **own** render of the value the field currently
+  displays (`CutMarkerViewModel.FormatClock`), and `TryResolveEdit` returns false on a match — so a bare
+  focus pass can never write a VM-rendered value back into `Requested`. That write-back was the pre-T-118
+  corruption: the field rendered the **snapped**, 0.1s-truncated time and re-committed it on every
+  `LostFocus`, replacing a real 5s request with 4s, zeroing the snap delta (the only evidence a snap
+  occurred) and sending the truncated value to the engine. The same guard preserves sub-tenth precision — a
+  real 4.06s request renders `00:04.0` and is **not** overwritten by it (`CutTimeCommit.IsUnchanged`,
+  `TryResolveEdit`).
+- **I78** — a **genuine, parseable** edit still commits, with the typed value (`00:06.0` → 6s); unparseable
+  input returns false with `TimeSpan.Zero`, so the caller writes nothing and instead normalizes the field
+  back to VM truth by refreshing the binding — which also reverts the bad text (`TryResolveEdit`,
+  `BulkCutView.xaml.cs` `CommitCutTime` → `UpdateTarget()`).
+- **I79** — `TryParseClock` accepts plain seconds (`12`), `mm:ss` (`01:30`), `mm:ss.f` (`00:04.5`) and
+  `h:mm:ss` (`1:00:00`), tolerating surrounding whitespace, and rejects null / empty / whitespace-only,
+  non-numeric text, more than three segments, and negatives — every rejection yielding `TimeSpan.Zero`
+  (`CutTimeCommit.TryParseClock`).
+
+### Coarse-keyframe advisory (G-041 / T-120)
+- **I80** — the coarse-grid note fires at `AverageGop` **`≥ 4s`** — inclusive, **refining I16**, whose strict
+  `>` silently skipped the exactly-4.0s grid that produces the reported "5s and 6s both cut at 4s" — reading
+  `coarse keyframes — cuts may move ~Ns` (`CoarseGopThreshold`, `Warning`).
+- **I81** — the row **also** reports the offset the cut actually took: when the largest absolute handle delta
+  across `IntroEnd`/`OutroStart` is `≥ 0.5s`, `Warning` adds `cut moved Ns to the nearest keyframe`, so a
+  locally-coarse stretch on an otherwise fine mean grid is surfaced too. A sub-threshold snap (0.1s on a 1s
+  grid) and an exact-keyframe request (delta 0) add nothing (`MaxSnapOffset`, `NoticeableSnapThreshold`,
+  `Warning`).
+- **I82** — both notes are **derived from the already-loaded keyframes**: reading `Warning` repeatedly runs no
+  additional `GetKeyframesAsync`/ffprobe work (`Warning` computed from `Keyframes` + `_probe.AverageGop` +
+  the handles' `Delta`).
+
+### Replace-originals output mode (G-041 / T-123)
+- **I83** — the default is the **non-destructive** mode: `ReplaceOriginal == false`, `CollisionIsInert ==
+  false`, and `OutputNote` reads `Output → same folder · _trimmed suffix · originals kept` — a user who
+  ignores this feature keeps every original (`ReplaceOriginal`, `CollisionIsInert`, `OutputNote`).
+- **I84** — turning it on makes the collision control **inert** and re-states the destination: the setter
+  raises `CollisionIsInert` (now true — the view greys the "Overwrite existing output" checkbox, because a
+  destination that is always the source makes collision policy meaningless) **and** `OutputNote`, which now
+  reads `Output → REPLACES each original file · originals go to the Recycle Bin`. The note is **bound, never
+  hard-coded**, so it can never contradict the active mode (`ReplaceOriginal` setter, `BulkCutView.xaml`
+  `IsEnabled="{Binding CollisionIsInert, …InverseBool}"`).
+- **I85** — under this mode `RunBatchAsync` blocks on a **counted** confirmation before anything runs:
+  `ConfirmReplaceOriginals(atRisk)` is called **exactly once**, with `atRisk` = the number of
+  `IsEnabled && IsValidCut` rows (so the prompt names the blast radius), ahead of the preview release, the
+  `Preparing` state, and any item build (`RunBatchAsync` `if (_replaceOriginal)` gate).
+- **I86** — declining performs **zero** engine calls: `RunBatchAsync` returns immediately — no
+  `IBulkTrimEngine.RunAsync`, no ledger, and `BatchState` never reaches `Completed`. The seam **defaults to
+  refusing** (`ConfirmReplaceOriginals = _ => false`), so a host that forgot to wire a prompt can never
+  silently replace the user's masters; the view supplies the real dialog, itself defaulting to **No**
+  (`ConfirmReplaceOriginals`, `BulkCutView.xaml.cs` `ConfirmReplaceOriginals` → `MessageBoxResult.No`).
+- **I87** — the choice reaches the engine on the run's options: accepting sends `BulkTrimOptions.Output ==
+  OutputMode.ReplaceOriginal`, while the safe mode **never prompts** and sends `OutputMode.NewFile`. It is an
+  axis **orthogonal** to collision policy — the VM keeps passing `Overwrite ? CollisionPolicy.Overwrite :
+  CollisionPolicy` unchanged (I40) (`RunBatchAsync` → `new BulkTrimOptions(...)`).
+- **I88** — under `ReplaceOriginal` the shared preview is **`Unload()`ed, not `Stop()`ped**, before the batch:
+  `Stop` only halts playback while `Unload` closes the media element and **releases the file handle**, and a
+  still-open handle on the selected row would make replacing that very file fail. The safe mode keeps the
+  plain `Player.Stop()` (refines I31; the pending-open cancel of I73 still runs first) (`RunBatchAsync`
+  `Player.Unload()` / `Player.Stop()`).
+
+### Cut precision — lossless vs exact (G-042 / T-125)
+- **I89** — `ExactCut` defaults **false** (the lossless stream-copy path is the app's identity and stays the
+  default) and `PrecisionNote` says so: `Lossless — cuts snap to the nearest keyframe (instant, no quality
+  loss)`; the run sends `BulkTrimOptions.Precision == CutPrecision.Lossless` (`ExactCut`, `PrecisionNote`,
+  `RunBatchAsync`).
+- **I90** — turning it on states the **cost up front, before the run**: `PrecisionNote` becomes `Exact — cuts
+  land where you set them (re-encodes ~1s per cut)`, and the run sends `CutPrecision.Exact` — a third axis on
+  `BulkTrimOptions`, orthogonal to both `Collision` and `Output` (`ExactCut` setter, `PrecisionNote`,
+  `RunBatchAsync`).
+- **I91** — flipping the toggle propagates to **every row currently in `Items`** through `SetExactCut`, which
+  sets `SuppressSnapNote` on `IntroEnd` (and on `OutroStart` when the row has one): under Exact the row's
+  `HasSnapNote` is false and `SnapNote` empty — advertising a 4s keyframe for a cut that will land on 5s
+  would mislead — while `Requested` itself is **untouched**, so switching back to Lossless restores the full
+  readout of I74 (`ExactCut` setter, `BulkItemViewModel.SetExactCut`, `CutMarkerViewModel.SuppressSnapNote`).
+- **I92** — Exact also suppresses the **snap-magnitude** advisory of I81 (`cut moved Ns…`), because under
+  exact cutting that offset will not occur; the **grid** advisory of I80 (`coarse keyframes…`) describes the
+  source file itself and still shows (`Warning` → `var worstSnap = _exactCut ? TimeSpan.Zero :
+  MaxSnapOffset()`).
+- **I93** — flipping precision is **pure VM state**: it re-raises the note and the rows' readouts and performs
+  **no** probe work — no `GetKeyframesAsync`, no re-scan (`ExactCut` setter, `SetExactCut`).
+
 ## Links
 - Design: D-004 (Bulk Cut screen)
 - Goals: G-036 (batch trim), G-037 (shared preview + set-at-playhead + reusable cut profiles), G-038 (profile
   thumbnails + per-row cut-point frame previews — feature task T-108 for the per-row thumbnails here), G-039
   (Bulk Cut polish — layout-mode-aware body T-112, profiles-card regroup T-113, apply-to-all re-activation T-111),
-  G-040 (Bulk Cut fixes — debounced preview-open T-115 (I72–I73), apply-to-all discoverability T-116 (view-only note))
-- Related specs: the T-095 batch engine (`IBulkTrimEngine` / `BulkTrimEngine`) spec — not yet authored; T-094
-  kept-segment request (`KeptSegmentSelector`); T-080 media reopen guard (`MediaReopenGuard`); T-102 cut-profile
+  G-040 (Bulk Cut fixes — debounced preview-open T-115 (I72–I73), apply-to-all discoverability T-116 (view-only note)),
+  G-041 (make keyframe snapping visible + the replace-originals output mode — commit guard T-118 (I77–I79),
+  requested→snapped readout T-119 (I74–I76), real-snap-magnitude advisory T-120 (I80–I82), replace-originals
+  UI T-123 (I83–I88)), G-042 (frame-exact cutting — the precision choice T-125 (I89–I93))
+- Related specs: SPEC-002 (the T-095 batch engine `IBulkTrimEngine` / `BulkTrimEngine` — incl. the engine-side
+  handling of the `OutputMode`/`CutPrecision` axes this screen selects, kept orthogonal to `CollisionPolicy`'s
+  own "what if the destination is taken?" question); T-094 kept-segment request (`KeptSegmentSelector`);
+  T-080 media reopen guard (`MediaReopenGuard`); T-102 cut-profile
   persistence (`CutProfile` / `IAppSettings.CutProfiles`); SPEC-007 (cut profiles — incl. the T-106/107
   profile-thumbnail model/store/glue); SPEC-005 (`IThumbnailService` frame source the cut-point grabs reuse);
   SPEC-009 (app settings — the Bulk-specific per-axis split ratios I68 persists, I23–I25); SPEC-015 (app shell —
-  the `OrientedSplitPanel` axis-flip container I68 reuses, I16/I17).
+  the `OrientedSplitPanel` axis-flip container I68 reuses, I16/I17); SPEC-001 (stream-copy split — the
+  `SmartCutEngine` that services `CutPrecision.Exact`).
 - Key code: `src/App/ViewModels/BulkCutViewModel.cs` (`_thumbnailGate`, `RaiseProfileCommandStates`,
-  `RaiseRunState`), `src/App/ViewModels/BulkItemViewModel.cs` (`IntroThumbnailPath`/`OutroThumbnailPath`,
-  `HandleThumbnailGrabber`), `src/App/ViewModels/CutProfileApplier.cs`,
+  `RaiseRunState`; `ReplaceOriginal`/`CollisionIsInert`/`OutputNote`/`ConfirmReplaceOriginals` — T-123;
+  `ExactCut`/`PrecisionNote` — T-125), `src/App/ViewModels/BulkItemViewModel.cs`
+  (`IntroThumbnailPath`/`OutroThumbnailPath`, `HandleThumbnailGrabber`; `CoarseGopThreshold`/
+  `NoticeableSnapThreshold`/`MaxSnapOffset` — T-120; `SetExactCut` — T-125),
+  `src/App/ViewModels/CutMarkerViewModel.cs` (`SnapNote`/`HasSnapNote` — T-119; `SuppressSnapNote` — T-125),
+  `src/App/ViewModels/CutTimeCommit.cs` (`IsUnchanged`/`TryResolveEdit`/`TryParseClock` — T-118),
+  `src/App/ViewModels/CutProfileApplier.cs`,
   `src/App/ViewModels/RelayCommand.cs` (`RaiseCanExecuteChanged` — T-111 deterministic notify),
   `src/App/ViewModels/MainViewModel.cs` (`BulkHorizontalSplitRatio`/`BulkVerticalSplitRatio` — T-112),
   `src/App/Views/BulkCutView.xaml` (`OrientedSplitPanel` body — T-112; "Profiles" card — T-113).
 - Tests: `tests/App.Tests/BulkItemThumbnailTests.cs` (T-108 cut-point thumbnails) · `tests/App.Tests/BulkSpecGapTests.cs`
   · `tests/App.Tests/BulkCutApplyToAllReactivationTests.cs` (T-111 apply-to-all re-fires — I69–I71) ·
   `tests/App.Tests/AppSettingsTests.cs` (T-112 Bulk-ratio round-trip — I68's persisted ratios, tagged `serves-spec=SPEC-011`) ·
-  `tests/App.Tests/BulkCutViewModelDebouncedPreviewTests.cs` (T-115 debounced preview-open — I72–I73, 4 tests tagged `serves-spec=SPEC-011`).
+  `tests/App.Tests/BulkCutViewModelDebouncedPreviewTests.cs` (T-115 debounced preview-open — I72–I73, 4 tests tagged `serves-spec=SPEC-011`) ·
+  `tests/App.Tests/CutTimeCommitTests.cs` (T-118 commit guard + clock parser — I77–I79, 7 test methods) ·
+  `tests/App.Tests/SnapVisibilityTests.cs` (T-119 requested→snapped readout — I74–I76, 5 tests) ·
+  `tests/App.Tests/SnapWarningTests.cs` (T-120 coarse-GOP + real-snap advisory — I80–I82, 5 tests) ·
+  `tests/App.Tests/ReplaceOriginalModeTests.cs` (T-123 replace-originals UI — I83–I88, 7 tests) ·
+  `tests/App.Tests/ExactCutModeTests.cs` (T-125 precision choice — I89–I93, 8 tests) — all tagged `serves-spec=SPEC-011`.

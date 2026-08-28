@@ -7,8 +7,11 @@ VideoSplitJoiner is a .NET 8 WPF desktop app split into two assemblies:
   to a bundled FFmpeg through a single runner choke-point.
 
 Every split/join operation is a lossless stream copy (`ffmpeg -c copy`) or a decode-only probe pass
-— the engine never re-encodes. The in-app preview *does* decode (through FFME/FFmpeg), but only to
-display frames on screen; it never touches the file that is cut.
+— the split and join engines never re-encode. The in-app preview *does* decode (through FFME/FFmpeg),
+but only to display frames on screen; it never touches the file that is cut. The single deliberate
+exception is the **opt-in** frame-exact cut (G-042), which re-encodes roughly one GOP inside a
+**separate** engine (`SmartCutEngine`) precisely so `SplitEngine` itself stays copy-only — see
+*Frame-exact cut* below.
 
 ## Layering
 
@@ -26,23 +29,35 @@ display frames on screen; it never touches the file that is cut.
  │  Themes/ Tokens · Controls  (dark+gold token system, Plex font)│
  │  ObservableObject · RelayCommand  (hand-rolled MVVM)           │
  │  App.xaml.cs = FFME init + global crash safety-net             │
+ │  Io/ RecycleBinOriginalDisposer (Core's IOriginalDisposer)     │
  └───────────────┬───────────────────────────────────────────────┘
-                 │  interfaces (ISplitEngine, IJoinEngine,
-                 │  IMediaProbe, IThumbnailService)
+                 │  interfaces (ISplitEngine, ISmartCutEngine,
+                 │  IJoinEngine, IBulkTrimEngine, IMediaProbe,
+                 │  IThumbnailService) — and, the other way, App/Io/
+                 │  implementing Core's IOriginalDisposer seam
  ┌───────────────▼───────────────────────────────────────────────┐
  │  VideoSplitJoiner.Core  (UI-free)                             │
  │                                                               │
- │   Split/       Join/          Media/       Thumbnails/         │
- │   SplitEngine  JoinEngine     MediaProbe   FfmpegThumbnail-    │
- │   PartProgress +Compat-       (probe,      Service            │
- │   PartMapping   Checker        keyframes,  (hover frame grab) │
- │        │          │            snap, GOP)      │              │
- │        └──────────┴─────────┬──────┴───────────┘              │
- │                            ▼                                   │
- │            Ffmpeg/  FfmpegRunner · FfprobeRunner               │
+ │   Split/       Join/          Media/       Thumbnails/        │
+ │   SplitEngine  JoinEngine     MediaProbe   FfmpegThumbnail-   │
+ │   SmartCut*    +Compat-       (probe,      Service            │
+ │   PartProgress  Checker        keyframes,  (hover frame grab) │
+ │   PartMapping                  snap, GOP)                     │
+ │   (* Planner · ArgsBuilder · Engine — frame-exact, SEPARATE   │
+ │      from SplitEngine, which stays copy-only)                 │
+ │                                                               │
+ │   Bulk/  BulkTrimEngine (batch loop over SplitEngine)         │
+ │          BulkTrimOptions = CollisionPolicy · OutputMode       │
+ │                            · CutPrecision (3 orthogonal axes) │
+ │        │          │            │              │               │
+ │        └──────────┴─────────┬──┴──────────────┘               │
+ │                             ▼                                 │
+ │            Ffmpeg/  FfmpegRunner · FfprobeRunner              │
  │                     (the SINGLE exec choke-point)             │
- │                     FfmpegBinaryLocator · FfmpegArgs           │
- │            Errors/  FfmpegErrorMapper · UserFacingError        │
+ │                     FfmpegBinaryLocator · FfmpegArgs          │
+ │            Errors/  FfmpegErrorMapper · UserFacingError       │
+ │            Io/      IDiskSpaceProbe · IOriginalDisposer       │
+ │                     (seams; Recycle-Bin impl lives in App/Io/)│
  └───────────────────────┬───────────────────────────────────────┘
                          ▼
         one bundled ffmpeg SHARED build  (app-local ffmpeg/ folder)
@@ -109,10 +124,13 @@ satisfies both mechanisms.
 
 ## Engine contracts
 
-Both engines share the same guarantees: they build their command through a dedicated
+The two **lossless** engines share the same guarantees: they build their command through a dedicated
 args-builder that **structurally cannot** emit an encoder flag, and they **re-assert the invariant
 at runtime** before launching (so a mis-built command is refused, not run). The invariants are also
-asserted by unit tests on the produced token lists.
+asserted by unit tests on the produced token lists. A third engine — the opt-in `SmartCutEngine`
+(*Frame-exact cut*, below) — is deliberately a **separate** class precisely so those two keep that
+contract unconditionally: nothing about frame-exact cutting reaches `SplitEngine`, which remains
+copy-only.
 
 ### Split — `SplitEngine` (`Core/Split/`)
 
@@ -139,6 +157,17 @@ asserted by unit tests on the produced token lists.
   the **actual snapped boundary**, and the **signed delta** — plus non-fatal warnings. Segments are
   extracted to a temp dir and moved into place only after FFmpeg succeeds, so a cancel never leaves a
   half-written final segment.
+- **Verify-then-replace, when a destination *is* the input (T-122 / G-041).** The Bulk
+  `OutputMode.ReplaceOriginal` route (below) plans a part straight onto the user's own file, so
+  `MoveTempSegmentsIntoPlace` now **verifies that every produced part exists before touching a single
+  destination** — discovering a missing part halfway through the move loop would mean an
+  already-clobbered master. The replacement itself is **never a delete-then-move**:
+  `ReplaceOriginalInPlace` prefers `File.Replace(temp, original, "<original>.vsj-original",
+  ignoreMetadataErrors: true)`, so the bytes exist under one name or the other at every instant, and
+  falls back — on volumes that do not support it (exFAT / some SMB shares) — to *rename the original
+  aside → move the new file in → **restore the original** if that second move throws*. The backup's
+  fate is the injected `IOriginalDisposer`'s decision (*Injectable I/O seams*, below), never the
+  engine's; Core defaults to keeping it.
 
 ### Join — `JoinEngine` + `CompatChecker` (`Core/Join/`)
 
@@ -158,6 +187,70 @@ asserted by unit tests on the produced token lists.
   reports **Checking compatibility → Joining → Finalizing → Done** as it enters each phase.
 - **Output:** a `JoinResult` — success (with the written path) or refusal (with the report).
 
+### Frame-exact cut — `SmartCutPlanner` / `SmartCutArgsBuilder` / `SmartCutEngine` (`Core/Split/`)
+
+The bug behind G-042 was not a bug: an intro set at 5s cut at 4s, and moving the handle to 6s still
+cut at 4s. That is exactly right for a stream copy — a copied segment **must** start on a keyframe,
+and `MediaProbe.SnapToNearestKeyframe` resolves an exact tie to the **earlier** keyframe, so on a 4s
+keyframe grid both 5s and 6s snap to 4s. G-041 made that offset *visible* (see the Bulk row's snap
+readout); only re-encoding the fragment between the request and the next keyframe can make the cut
+*land* on 5s. That is this engine — **opt-in, and a separate class**, so `SplitEngine` never grows a
+re-encode branch.
+
+- **`SmartCutPlanner` — pure decision logic.** `Plan(start, end, keyframes)` returns a `SmartCutPlan`
+  carrying one of three strategies: **`PureCopy`** (the request already sits on a keyframe, within the
+  10ms `OnKeyframeTolerance`, so the lossless path already produces exactly this — no pointless
+  re-encode over floating-point noise), **`HeadReencode`** (the request falls mid-GOP → re-encode
+  `[start, nextKeyframe)` and stream-copy `[nextKeyframe, end)`), and **`FullReencode`** (no keyframe
+  between the request and the end → there is no copyable tail, so the whole — necessarily short —
+  range is re-encoded). It **never re-encodes more than one GOP**, and the plan exposes
+  `ReencodedDuration`, the cost actually paid. I/O- and WPF-free, so it is unit-tested directly.
+- **`SmartCutArgsBuilder` — parameters read from the source, never guessed.** The re-encoded head has
+  to be compatible enough with the copied tail for the concat demuxer to accept the join, so
+  `HeadReencode` reproduces the **probed** stream shape rather than assuming one: `-c:v <encoder>` plus
+  the source's `-pix_fmt` and `-s WxH`, and `-c:a <encoder>` plus its `-ar` / `-ac`. Its seek is an
+  **OUTPUT seek** (`-ss` placed *after* `-i`, the opposite of the thumbnail path's fast input-seek) —
+  that is what makes the start frame-exact, at a decode cost bounded by one GOP. The codec→encoder
+  mapping is an explicit table (`h264`/`avc1` → `libx264`, `hevc`/`h265` → `libx265`, `vp9` →
+  `libvpx-vp9`, `aac` → `aac`, `mp3` → `libmp3lame`, …); a codec that is not in it makes
+  **`TryResolveEncoders` return a *reason*** instead of a guess, because a mismatched encoder surfaces
+  as a corrupt or failed concat. The tail is not a second implementation — `TailCopy` delegates to
+  `SplitArgsBuilder.PerSegment`, so it is the very command the lossless path would have run.
+- **`SmartCutEngine` — head-encode → tail-copy → concat.** It probes, fetches keyframes, and plans;
+  a `PureCopy` plan **and** an unresolvable codec both return `SmartCutResult` with **`FellBack = true`
+  and a `FallbackReason`**, writing nothing and handing the range back to the caller's lossless path
+  (never shipping a file it is not sure of). Otherwise it runs **at most three ffmpeg passes** — the
+  head re-encode, the tail `-c copy`, and a concat that **reuses `JoinArgsBuilder.RenderConcatList` /
+  `ConcatCopy`** (again, no second implementation) — with a `FullReencode` needing only the first.
+  Every intermediate lands in a `.vsj-smartcut-<guid>` temp dir **swept in a `finally`**, and only the
+  finished file is moved onto the destination (replacing whatever is there), so a failed or cancelled
+  run leaves no partial output. Progress is coarse by nature: 0.5 after the head, 0.8 after the tail,
+  1.0 at the end.
+
+### Injectable I/O seams — `IDiskSpaceProbe` / `IOriginalDisposer` (`Core/Io/`)
+
+Two small interfaces exist so the engines' riskiest side-effects are deterministically testable — and,
+where the real implementation is OS-specific, implementable *outside* Core:
+
+- **`IDiskSpaceProbe`** — `GetAvailableFreeBytes(driveRoot)`, returning `null` for a drive that cannot
+  be measured (unknown / UNC / removable / not ready). Abstracting `DriveInfo` is what lets a test
+  drive the pre-flight's **block-vs-skip** decision without filling a real disk; `null` always means
+  *skip this drive*, never a false-positive block. `DriveInfoDiskSpaceProbe` is the default, and
+  **both** `SplitEngine.EnsureEnoughFreeSpace` (per-run) and `BulkTrimEngine`'s batch pre-flight take
+  it — a neutral abstraction both engines depend on, rather than one engine depending on the other.
+- **`IOriginalDisposer`** — `DisposeOriginalBackup(backupPath)`, deciding the fate of the
+  pre-replacement copy of a user's original. The engine calls it **only after** a verified-complete
+  output has taken the original's place, so a failed or cancelled run never reaches it. Core ships
+  `KeepOriginalBackupDisposer` (**the default** — nothing is ever destroyed, at the cost of a leftover
+  `.vsj-original` beside the output) and `DeleteOriginalBackupDisposer`. The Windows **Recycle-Bin**
+  implementation lives in the App assembly instead — `App/Io/RecycleBinOriginalDisposer`, over
+  `Microsoft.VisualBasic.FileIO.FileSystem.DeleteFile(…, RecycleOption.SendToRecycleBin)` — because
+  Core targets plain `net8.0` and stays OS- and UI-free while the Recycle Bin is a Windows shell
+  concept. `MainViewModel` wires that one in, which is what keeps "replace the original" undoable
+  after the batch ends and even after the app exits. Every implementation is **best-effort by
+  contract**: failing to dispose a backup leaves a recoverable file and must never fail an otherwise
+  successful run.
+
 ## Bulk Cut tab — batch intro/outro trim (`Core/Bulk/`, `App/ViewModels/`, `App/Views/`)
 
 The **third tab** (`SelectedTabIndex == 2`, sibling to Split (0) / Join (1)) batch-trims the intro —
@@ -169,26 +262,33 @@ idea is a **reuse**, recorded as **[ADR 0015](adr/0015-bulk-trim-reuses-split-si
 > EOF)]` — one of the parts a two-cut Split already produces. Bulk adds a **list**, **two cut points
 > per row**, an **apply-to-all** gesture, and a **batch runner** — it adds **no new ffmpeg path**.
 
-Every row therefore funnels through the *existing* `ISplitEngine.SplitAsync` per-segment `-c copy`
-path (the T-049 subset path), so the copy invariant, keyframe-snap, temp-then-move cancel-safety, and
-disk pre-flight are all inherited rather than re-implemented. The pieces:
+Every row **at the default lossless precision** therefore funnels through the *existing*
+`ISplitEngine.SplitAsync` per-segment `-c copy` path (the T-049 subset path), so the copy invariant,
+keyframe-snap, temp-then-move cancel-safety, and disk pre-flight are all inherited rather than
+re-implemented. The one documented departure is the opt-in `CutPrecision.Exact` (G-042), which routes
+a row to the separate `ISmartCutEngine` and falls back to this path per row — see *Three orthogonal
+option axes* below. The pieces:
 
 ### The batch engine — `BulkTrimEngine` (`Core/Bulk/`)
 
 The batch loop lives in **Core**, not the view model. `BulkTrimEngine` (behind `IBulkTrimEngine`) takes
 a list of `BulkTrimItem`s (source path, requested intro-end, optional outro-start, desired output path)
-plus `BulkTrimOptions` (the collision policy), and runs them **sequentially and failure-isolated**:
+plus `BulkTrimOptions` (three orthogonal axes — collision policy, output destination, cut precision;
+see below), and runs them **sequentially and failure-isolated**:
 
 - **Collision pre-resolve** (per item, before any run) → an effective output path + overwrite flag +
   skip decision. Default **`CollisionPolicy.AutoSuffix`** appends `_2`, `_3`, … until a free path is
   found (never clobbers); a per-run **`Overwrite`** toggle replaces in place; **under every policy the
   source path is never a write target** (a resolution that would hit the input is forced onto an
-  AutoSuffix name).
+  AutoSuffix name) — the sole, deliberate bypass being the explicitly opt-in
+  `OutputMode.ReplaceOriginal`, where the source *is* the destination by definition.
 - **Batch disk pre-flight** blocks the *whole* batch before any ffmpeg runs only on a knowable per-drive
   shortfall (source size is a safe upper bound on each output); an unmeasurable drive skips the check —
   never a false-positive block.
 - **Sequential run**, one row at a time. Each row's request is assembled by an `IBulkTrimRequestBuilder`
-  (`KeptMiddleRequestBuilder`) and handed to `SplitEngine.SplitAsync`. A row that throws is recorded
+  (`KeptMiddleRequestBuilder`) and handed to `SplitEngine.SplitAsync` — unless the run is
+  `CutPrecision.Exact`, in which case the row is offered to `ISmartCutEngine.CutAsync` first and only
+  falls through to this path when that reports `FellBack`. A row that throws is recorded
   `Failed` (a mid-run ENOSPC on one large file never aborts a smaller later one); a both-boundaries-
   collapse trim surfaces as `NoOpTrimException` → `Skipped`; **Cancel** stops before the next row,
   classifies the in-flight row `Cancelled` (its temp already swept by the split path — no partial is
@@ -197,6 +297,38 @@ plus `BulkTrimOptions` (the collision policy), and runs them **sequentially and 
   `Blocked`) carrying one `BulkTrimItemResult` per row (outcome, written path, size, warnings, error),
   and reports a `BulkTrimProgress` stream (per-item fraction + a batch overall). It is **UI-free** — BCL
   + Core types only.
+
+### Three orthogonal option axes — collision · destination · precision (G-041 / G-042)
+
+`BulkTrimOptions` is a record of three **independent** enums, and keeping them independent is the
+design point — each answers a different question, so folding any of them into another would make the
+remaining one lie about what it means:
+
+- **`CollisionPolicy` — "what if the chosen destination is already taken?"** `AutoSuffix` (default) /
+  `Overwrite` / `Skip`, resolved per item before any run (above).
+- **`OutputMode` — "which destination?" (T-121).** `NewFile` (the default, non-destructive `_trimmed`
+  file beside the source) or `ReplaceOriginal`, which writes over the input. It is deliberately **not a
+  fourth `CollisionPolicy` value**: collision policy answers what to do when a destination is occupied,
+  while this answers which destination is chosen at all — folding them together would falsify
+  `CollisionPolicy`'s own header invariant (and SPEC-002 I22). Under `ReplaceOriginal` the collision
+  policy is simply **moot** (the destination is always occupied — by the source itself), so
+  `ResolveCollision` short-circuits to the input path with overwrite on. Everything downstream then
+  falls out of machinery that already existed: the request builder plans the single kept segment
+  straight onto the input path, and `SplitEngine` recognises `destination == input` and takes its
+  verify-every-part-then-`File.Replace`-with-a-backup route (*Split*, above), with the backup's fate
+  left to the injected `IOriginalDisposer` — the app's Recycle-Bin one.
+- **`CutPrecision` — "how exactly are the requested times honoured?" (T-125).** `Lossless` (default —
+  snap to keyframes, copy every byte, instant) or `Exact`. On an `Exact` row the engine calls
+  `ISmartCutEngine.CutAsync` **first** and only falls through to the lossless path when the result
+  reports `FellBack` — **per row**, so one source with an unmappable codec never costs the rest of the
+  batch its exactness. A genuine fallback is surfaced as a row warning naming the reason
+  (*"exact cut unavailable (…) - cut snapped to the nearest keyframe"*); an already-on-a-keyframe
+  `PureCopy` fallback is deliberately **not** warned about, because that cut is exact either way. A
+  `BulkTrimEngine` built through the older ctors — with no `ISmartCutEngine` — simply stays lossless,
+  so every pre-existing caller keeps working unchanged.
+
+The batch disk pre-flight, failure isolation, cancel semantics, and the result ledger are untouched by
+all three axes.
 
 ### The kept-index cure — `KeptSegmentSelector` (`Core/Split/`)
 
@@ -248,13 +380,64 @@ clamped overall fraction (`WeightedOverall`, kept-duration weighted). `MainViewM
 `switch` on `SelectedTabIndex` (0/1/2) for `CurrentOperation`, `CurrentClearCommand`, `CurrentLoadLabel`
 ("Add videos…"), and `CurrentClearLabel` ("Clear all"), re-pointed on tab switch.
 
+### Making the snap visible, and gating the destructive run (G-041 / G-042)
+
+- **The row shows the request *and* where it landed.** `CutMarkerViewModel` gained a compact secondary
+  readout — **`SnapNote`** (`"→ 00:04.0 (−1.0s)"`, or `"→ snapping…"` while the background scan is in
+  flight) plus **`HasSnapNote`**, false when the delta is zero so a fine-GOP file carries no visual
+  noise. It exists because when a row showed only the *snapped* time, a cut that snapped to the **same**
+  keyframe as the previous one changed nothing on screen — making a correct snap indistinguishable from
+  a click the app had ignored (the G-041 report). The row's IN/OUT field is therefore bound **one-way to
+  `Requested`**, with the offset carried beside it rather than replacing it.
+- **That editable field no longer commits the displayed value back over the request — `CutTimeCommit`
+  (`App/ViewModels/`).** The field commits on `LostFocus`, and before T-118 it committed on *every*
+  focus loss, parsing the **VM-rendered** text — the snapped time, truncated to 0.1s — back into
+  `Requested`: destroying the user's real request, zeroing the delta that is the only evidence a snap
+  occurred, and sending the truncated value to the engine. The decision of *whether a commit should
+  happen at all* now lives in the pure, WPF-free `CutTimeCommit`: `IsUnchanged` compares the box text
+  against exactly what the VM rendered, and `TryResolveEdit` commits **only** a genuine, parseable user
+  edit (`TryParseClock` takes `mm:ss.f` / `h:mm:ss.f` / plain seconds, non-negative). Anything else —
+  untouched field, or unparseable text — is reverted by refreshing the binding. The code-behind keeps
+  only the `TextBox` plumbing, so the rule itself is unit-tested.
+- **The coarse-keyframe advisory fires on the grid *and* on the snap that actually happened (T-120).**
+  `BulkItemViewModel.Warning` notes a mean GOP at or beyond 4s — the test is `>=`, not `>`, because a
+  file whose mean GOP is *exactly* 4.0s is the very grid that makes snapping surprising (5s and 6s both
+  landing on 4s) and the old strict `>` silently skipped it — **and**, independently, whenever a cut
+  **actually moved** ≥ 0.5s, since a fine mean hides a locally-coarse stretch and what surprises the
+  user is the offset on *their* cut. The second note is measured on the row's own worst handle delta,
+  and is suppressed under `Exact` (that offset will not happen).
+- **`ExactCut` / `ReplaceOriginal` are VM toggles that never hide their cost.** `ExactCut` selects
+  `CutPrecision.Exact`, publishes a plain-language **`PrecisionNote`** ("Exact — cuts land where you set
+  them (re-encodes ~1s per cut)" vs "Lossless — cuts snap to the nearest keyframe (instant, no quality
+  loss)"), and pushes `SetExactCut` into every row so each marker's **`SuppressSnapNote`** silences a
+  readout that would now be untrue. `ReplaceOriginal` selects `OutputMode.ReplaceOriginal`, rewrites the
+  footer's **`OutputNote`** ("Output → REPLACES each original file · originals go to the Recycle Bin"),
+  and raises **`CollisionIsInert`** so the view greys the now-meaningless collision controls.
+- **The destructive run is gated by a COUNTED confirmation whose seam defaults to REFUSING.**
+  `RunBatchAsync` will not start a `ReplaceOriginal` batch unless **`ConfirmReplaceOriginals(count)`**
+  returns true, where `count` is the number of enabled, valid rows actually at risk. The seam is a
+  `Func<int, bool>` **initialised to `_ => false`**, so a host that forgets to wire a prompt can never
+  silently destroy the user's masters; `BulkCutView`'s code-behind supplies the real Yes/No dialog on
+  `DataContextChanged`, itself defaulting to **No** so a stray Enter/Escape destroys nothing. Declining
+  leaves the batch entirely untouched — zero engine calls.
+- **In that mode the shared preview `Unload`s, not just `Stop`s.** Every batch stops the preview decode
+  before trimming; under `ReplaceOriginal` a `Stop` is not enough, because it only halts playback while
+  `Unload` is what closes the media element and **releases the file handle** — and a still-open handle
+  on the selected row would make replacing that very file fail.
+
 ### The view — `BulkCutView` / `BulkRowScrubView` (`App/Views/`)
 
 The tab's XAML is **view-only**: `BulkRowScrubView` renders the per-row **dual-handle scrub bar** (a
 `Canvas` drawn in code-behind — gold `▸` intro-end handle, blue `◂` outro-start handle, the kept span
 highlighted gold, hover frame preview) and `BulkCutView` lays out the list + tool panel, but neither
-holds cut logic — all of it is on the WPF-free VMs. Keeping the batch engine, the kept-index selector,
-and the request builder in Core (referencing no WPF) is what keeps **`CoreIsUiFreeTests` green**. A new
+holds cut logic — all of it is on the WPF-free VMs. The strip's **geometry** is not in the code-behind
+either: **`BulkScrubMath`** (`App/ViewModels/`, pure and WPF-free, extracted by T-105) owns the
+seconds→pixel mapping (`SecondsToX`, clamped to the strip), the kept-span extents (`KeepSpan` — the
+min/max of the two handle X's) and the handle hit-test (`PickHandle` — the nearer handle within a pixel
+radius, an equidistant tie broken by vertical position: top half = intro, bottom half = outro), so the
+drag/snap math is unit-testable without a visual while the view keeps only live widths, drag-override
+and drawing. Keeping the batch engine, the smart-cut engine, the kept-index selector, and the request
+builder in Core (referencing no WPF) is what keeps **`CoreIsUiFreeTests` green**. A new
 `DropScrimBrush` token backs the drag-drop highlight.
 
 **Layout-mode-aware body (G-039 / T-112).** The tab's preview pane and row-list are the two children of an
@@ -419,7 +602,12 @@ the fake player.
 - **`TimelineMath`** — a pure, WPF-free pair of inverse mappings: `ToNormalized(time, duration)` →
   `[0,1]` (for rendering: tick X = normalized × width) and `FromNormalized(x, duration)` → time (for
   a track click). Both clamp their inputs, so a click past either edge or a zero/unknown duration can
-  never divide by zero or escape the box.
+  never divide by zero or escape the box. T-105 moved two further **pixel-space** helpers out of the
+  timeline code-behind and onto it: `NearestNormalizedIndex` (the marker-tick hit test — the nearest
+  tick within a pixel radius, a tie going to the later entry, `-1` when nothing is in range) and
+  `PeakForColumn` (the audio-waveform band's downsample — the **max** peak over the source window
+  mapped to a pixel column, so drawing fewer columns than there are peaks keeps the loudest sample
+  instead of dropping it).
 - **`TimelineViewModel`** — a projection over the owning `SplitViewModel`. It observes the player's
   Position/Duration and the `Markers` collection and re-projects a `PlayheadNormalized` plus a flat,
   bindable `MarkerTicks` list whenever anything moves.
@@ -597,8 +785,9 @@ so the UI's "Details" surface can show real FFmpeg output — a bare stderr stri
   An out-of-space write often leaves only an unrelated benign mpegts warning (`start time for stream N
   is not set…`) in the tail, so keying on the phrase alone would mis-classify it as `Unknown` and
   surface the warning as the headline. `SplitEngine` also runs a **best-effort pre-flight free-space
-  check** (`EnsureEnoughFreeSpace` via `DriveInfo`) so an obviously-too-small output drive fails early
-  with the friendly `DiskFull` message rather than mid-write; any inability to measure skips the check.
+  check** (`EnsureEnoughFreeSpace`, measuring through the injected `IDiskSpaceProbe` — *Injectable I/O
+  seams*, above) so an obviously-too-small output drive fails early with the friendly `DiskFull` message
+  rather than mid-write; any inability to measure skips the check.
 - **Copyable error + saved full log.** `UserFacingError` carries `FullText` (the complete diagnostic
   text — headline + full stderr, not just the tail) and `LogFilePath` (the on-disk log for the run),
   and exposes computed `CopyText` / `DetailText` / `HasLogFile` so the copy surface and read-only
@@ -636,11 +825,14 @@ enabled-state could go stale after first use — the app-wide fix behind the Bul
 every time" behavior (SPEC-011). The automatic input-driven and cross-command requery is fully preserved.
 
 - **`MainViewModel`** is the **composition root**. Its parameterless ctor builds the real Core graph
-  once — `FfmpegBinaryLocator` → `FfprobeRunner`/`FfmpegRunner` → `MediaProbe` → `SplitEngine`,
+  once — `FfmpegBinaryLocator` → `FfprobeRunner`/`FfmpegRunner` → `MediaProbe` → `SplitEngine`
+  (constructed with the app's `RecycleBinOriginalDisposer`, so a replaced original stays recoverable),
   `JoinEngine`, plus the `FfmpegThumbnailService` (hover-frame source) and the shared `AppSettings` — and
-  shares the probe across both screens. A second, DI-style ctor lets tests inject already-composed screen
-  view models with fakes. It also owns the active-tab `CurrentOperation` / `WindowTitle` binding that
-  drives the taskbar + title progress (G-025, above).
+  shares the probe across both screens. The Bulk Cut screen is additionally handed a
+  `new SmartCutEngine(ffmpegRunner, probe)`, which is what gives its "Exact cut" mode an engine to route
+  to — without it the mode silently stays lossless. A second, DI-style ctor lets tests inject
+  already-composed screen view models with fakes. It also owns the active-tab `CurrentOperation` /
+  `WindowTitle` binding that drives the taskbar + title progress (G-025, above).
 - **`SplitViewModel`** / **`JoinViewModel`** are the two screens, each constructor-injected with Core
   interfaces (so they are fully unit-testable without FFmpeg).
 - **`OperationViewModel`** is composed into both screens to give split/join a shared
@@ -719,7 +911,11 @@ still drags (WindowChrome, with a `DragMove` fallback), resizes on all edges, an
 monitor work area without covering the taskbar** — `MainWindow.xaml.cs` hooks `WM_GETMINMAXINFO` on
 `SourceInitialized` and clamps the maximized bounds to `rcWork`, and a `WindowState`→margin/border-
 thickness converter pair collapses the 1px frame line and adds the maximized content margin so nothing
-spills off-screen.
+spills off-screen. The clamp itself is pure: **`WindowChromeMath.MaximizedWorkAreaBounds`**
+(`App/ViewModels/`, WPF- and Win32-free, extracted by T-105) turns the raw monitor work-rect plus the
+full monitor rect's origin into the `ptMaxPosition` / `ptMaxSize` the message expects, so the
+maximized-bounds math is unit-tested without a real window or monitor and the handler keeps only the
+P/Invoke.
 
 ### Dark + gold theme tokens (G-017)
 
@@ -761,7 +957,12 @@ process (no dialog, no log). All three managed sinks are wired:
 
 - **`DispatcherUnhandledException`** (UI thread) — logs the crash, shows a **friendly, copyable** dialog
   naming the saved log path (reusing the `UserFacingError` / `ErrorActions` copy affordance), and marks
-  it **`Handled = true`** so a recoverable UI error does **not** tear down the app.
+  it **`Handled = true`** so a recoverable UI error does **not** tear down the app. The dialog's body is
+  composed by **`CrashReport.ComposeMessage`** (`App/ViewModels/`, pure and WPF-free, extracted by
+  T-105) — headline, exception message, an "A crash log was saved to …" line **only** when a log was
+  actually written, and the clipboard-copied footer — so the exact words the user reads (and pastes
+  into a bug report) are unit-tested without raising a real dispatcher exception; the handler still
+  owns the logging, the clipboard copy, and the `MessageBox`.
 - **`AppDomain.CurrentDomain.UnhandledException`** — last-ditch synchronous log (the process is going
   down regardless; managed handlers can't recover this).
 - **`TaskScheduler.UnobservedTaskException`** (e.g. a faulted keyframe index / thumbnail grab) — logs it
@@ -825,6 +1026,17 @@ The most load-bearing ones, each shaping a core seam of the app:
   ffmpeg code path** — so the copy invariant, keyframe-snap, and cancel-safety are
   inherited; Bulk adds only orchestration (list, two cut points per row, a Core
   `BulkTrimEngine` batch runner).
+- **[ADR 0017 — "Replace originals" is its own `OutputMode` axis](adr/0017-output-mode-replace-original.md):**
+  writing *over* the input is a **destination** choice, orthogonal to the
+  **collision** question, so it is a separate enum on `BulkTrimOptions` rather
+  than a fourth `CollisionPolicy` value — and the write is ordered
+  produce-all → verify-all → `File.Replace` with a Recycle-Bin backup, so a
+  failed or cancelled run always leaves the originals intact.
+- **[ADR 0018 — Frame-exact cutting as a separate opt-in engine](adr/0018-smart-cut-exact-trimming.md):**
+  honouring a requested time exactly requires a re-encode, so it re-encodes
+  **one head GOP** and stream-copies the rest — inside `SmartCutEngine`, a class
+  of its own, leaving `SplitEngine` and the `-c copy` default of ADR 0001
+  untouched.
 
 The stream-copy (`-c copy`) cutting invariant — now recorded as
 [ADR 0001](adr/0001-stream-copy-only.md) above — underpins ADR 0004, 0009, and
