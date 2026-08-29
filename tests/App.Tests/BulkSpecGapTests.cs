@@ -248,7 +248,7 @@ public sealed class BulkSpecGapTests
         var source = await AddRowAsync(vm, probe, @"C:\v\a.mp4", 60, 2, introSeconds: 12);
 
         var unticked = await AddRowAsync(vm, probe, @"C:\v\b.mp4", 60, 2, introSeconds: 4);
-        unticked.IsEnabled = false; // the user unticked the checkbox → IsCheckedByUser is false
+        unticked.IsCheckedByUser = false; // the user unticked the checkbox → IsCheckedByUser is false
 
         // c's keyframe scan stays parked at the gate → probed (has a Duration) but NOT KeyframesReady.
         probe.SetUniform(@"C:\v\c.mp4", TimeSpan.FromSeconds(60), 2);

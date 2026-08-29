@@ -89,8 +89,8 @@ public sealed class BulkCutApplyToAllReactivationTests
         vm.SelectedProfile = null;
         vm.SelectedProfile = vm.Profiles.First();
         // (2) … and so is the checked-row set.
-        a.IsEnabled = false;
-        a.IsEnabled = true;
+        a.IsCheckedByUser = false;
+        a.IsCheckedByUser = true;
 
         raised.Should().BeGreaterThan(0,
             "the Apply→all command must re-raise its OWN CanExecuteChanged when the profile selection or the checked-row set changes");

@@ -4,6 +4,7 @@ using System.Collections.ObjectModel;
 using System.Collections.Specialized;
 using System.ComponentModel;
 using System.Globalization;
+using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -53,6 +54,35 @@ public enum BulkBatchState
 /// <param name="AppliedCount">Number of target rows the source's cut points were copied to.</param>
 /// <param name="InvalidatedRows">The subset whose copied cut no longer produces a valid trim.</param>
 public sealed record ApplyToAllReport(int AppliedCount, IReadOnlyList<BulkItemViewModel> InvalidatedRows);
+
+/// <summary>
+/// Why a profile-thumbnail attach attempt ended the way it did (T-107 store-and-attach, T-129 reporting).
+/// <see cref="Attached"/> is success; every other member is a distinct, user-explainable failure. The
+/// DELIBERATE gesture (<see cref="BulkCutViewModel.UploadThumbnail"/>) turns a failure into a message on
+/// the screen's existing error surface; the AUTO capture on save
+/// (<see cref="BulkCutViewModel.SaveProfileWithAutoThumbnailAsync"/>) keeps ignoring it, because a
+/// best-effort side effect of "Save" must never interrupt the save.
+/// </summary>
+public enum ThumbnailAttachOutcome
+{
+    /// <summary>The image was copied into the store and its path folded onto the profile.</summary>
+    Attached,
+
+    /// <summary>No profile was supplied — there is nothing to hang a thumbnail off.</summary>
+    NoProfile,
+
+    /// <summary>No image path was supplied (null / blank) — nothing was chosen.</summary>
+    NoImageChosen,
+
+    /// <summary>The named profile is not persisted yet, so a thumbnail cannot be attached to it.</summary>
+    ProfileNotSaved,
+
+    /// <summary>The chosen image is missing or unusable as a source (the store refused it).</summary>
+    ImageUnreadable,
+
+    /// <summary>The store could not copy the image in (locked target, unwritable root, I/O error).</summary>
+    StoreFailed,
+}
 
 /// <summary>
 /// The Bulk Cut tab view-model (D-004 / T-096): a list of <see cref="BulkItemViewModel"/> rows, an
@@ -107,6 +137,10 @@ public sealed class BulkCutViewModel : ObservableObject
     // starts, so a stale open can never land after an Unload / after the run's Stop.
     private CancellationTokenSource? _openCts;
 
+    // T-128 / review finding #3: set while a bulk selection write is in flight so the per-row
+    // PropertyChanged fan-out does not trigger one O(N) batch refresh per row.
+    private bool _suspendRunStateRefresh;
+
     private readonly object _progressLock = new();
     private double _lastOverall;
 
@@ -119,6 +153,10 @@ public sealed class BulkCutViewModel : ObservableObject
     private IReadOnlyList<BulkTrimItemResult> _lastFailedItems = Array.Empty<BulkTrimItemResult>();
     private BulkItemViewModel? _selectedItem;
     private CutProfile? _selectedProfile;
+
+    // T-129: the LAST failure this VM reported for an explicit thumbnail upload, remembered only so a
+    // later successful upload retracts ITS OWN message and never a batch failure sharing the surface.
+    private UserFacingError? _thumbnailUploadError;
 
     /// <summary>
     /// Create the tab VM sharing the App's media probe / split engine / thumbnail service / settings.
@@ -181,6 +219,8 @@ public sealed class BulkCutViewModel : ObservableObject
         RemoveCommand = new RelayCommand(p => Remove(p as BulkItemViewModel), _ => true);
         ClearCommand = new RelayCommand(_ => Clear(), _ => CanClear);
         ApplyToAllCommand = new RelayCommand(p => ApplyToAll(p as BulkItemViewModel), _ => Items.Count > 1);
+        SelectAllItemsCommand = new RelayCommand(_ => SetAllItemsChecked(true), _ => CanChangeSelection);
+        SelectNoItemsCommand = new RelayCommand(_ => SetAllItemsChecked(false), _ => CanChangeSelection);
         RunBatchCommand = new RelayCommand(_ => _ = RunBatchAsync(), _ => CanRunBatch);
         SetIntroAtPlayheadCommand = new RelayCommand(_ => SetIntroAtPlayhead(), _ => CanSetCutAtPlayhead);
         SetOutroAtPlayheadCommand = new RelayCommand(_ => SetOutroAtPlayhead(), _ => CanSetCutAtPlayhead);
@@ -461,6 +501,9 @@ public sealed class BulkCutViewModel : ObservableObject
     /// <summary>Clear all is enabled with ≥1 row and no run in flight.</summary>
     public bool CanClear => Items.Count > 0 && !Operation.IsRunning;
 
+    /// <summary>T-128 — select all / select none are enabled with ≥1 row and no run in flight.</summary>
+    public bool CanChangeSelection => Items.Count > 0 && !Operation.IsRunning;
+
     /// <summary>
     /// The two "set at playhead" gestures (T-101) are enabled only when a row is selected AND the
     /// shared preview <see cref="Player"/> is ready (its duration is known — i.e. there is a real
@@ -481,6 +524,12 @@ public sealed class BulkCutViewModel : ObservableObject
 
     /// <summary>Copy one row's cut points to every other enabled row (parameter = the source row).</summary>
     public RelayCommand ApplyToAllCommand { get; }
+
+    /// <summary>T-128 — tick every row in one gesture. Mirrors the Split screen's Select all.</summary>
+    public RelayCommand SelectAllItemsCommand { get; }
+
+    /// <summary>T-128 — untick every row in one gesture. Mirrors the Split screen's Select none.</summary>
+    public RelayCommand SelectNoItemsCommand { get; }
 
     /// <summary>Run the batch through the engine (guarded by <see cref="CanRunBatch"/>).</summary>
     public RelayCommand RunBatchCommand { get; }
@@ -819,6 +868,35 @@ public sealed class BulkCutViewModel : ObservableObject
     // ---- Apply-to-all (§2.3) ----------------------------------------------------------------
 
     /// <summary>
+    /// T-128 — write the user's checkbox INTENT across every row in one pass. Deliberately writes
+    /// <see cref="BulkItemViewModel.IsCheckedByUser"/>, never the computed <c>IsEnabled</c>: intent is what
+    /// the user is expressing, and a row the app currently excludes (no cut set yet) keeps that intent so it
+    /// joins the batch the moment it becomes eligible. Pure VM state — no probe, no thumbnail grab, no scan.
+    /// </summary>
+    public void SetAllItemsChecked(bool checkedByUser)
+    {
+        // Review finding #3: each row's setter raises BOTH IsCheckedByUser and IsEnabled, and OnItemChanged
+        // fans EITHER out to RaiseRunState() — whose getters are themselves O(N). Without this guard a
+        // single "Select all" on a large batch costs ~2N whole-list re-projections on the UI thread, so the
+        // "refresh once" this method claimed was a comment, not a behaviour. Suspend the per-row fan-out for
+        // the duration of the write and refresh exactly once at the end.
+        _suspendRunStateRefresh = true;
+        try
+        {
+            foreach (var item in Items)
+            {
+                item.IsCheckedByUser = checkedByUser;
+            }
+        }
+        finally
+        {
+            _suspendRunStateRefresh = false;
+        }
+
+        RaiseRunState();
+    }
+
+    /// <summary>
     /// Copy <paramref name="source"/>'s <b>requested</b> cut points to every other checked, keyframes-ready
     /// row: the intro-end absolute (time-from-start), the outro <b>from END</b> (<c>Duration − outroStart</c>)
     /// so uneven-length episodes align (D-004 open-decision 1). Each target re-snaps (setting
@@ -961,17 +1039,44 @@ public sealed class BulkCutViewModel : ObservableObject
     /// <summary>
     /// Override <paramref name="profile"/>'s thumbnail with a user-chosen <paramref name="imagePath"/> (T-107):
     /// copies the image into the <see cref="ProfileThumbnailStore"/> and folds the stored path onto the
-    /// profile (re-persist + refresh + reselect). Best-effort — a null profile / blank-or-missing image / a
-    /// store copy failure is a silent no-op that leaves the profile's current thumbnail untouched.
+    /// profile (re-persist + refresh + reselect). Returns <c>true</c> only when the thumbnail was actually
+    /// attached.
+    /// <para><b>T-129 — this is a DELIBERATE user gesture, so it REPORTS.</b> "I picked this file" and
+    /// getting neither a picture nor a word is indistinguishable from a broken button, so every failure —
+    /// no profile selected, nothing chosen, a profile that was never saved, an unreadable/missing image, a
+    /// store copy failure — is surfaced on the screen's existing error block via
+    /// <see cref="OperationViewModel.ReportFailure"/>. What does NOT change: the profile's current thumbnail
+    /// is still left untouched on failure, and this still never throws. A subsequent successful upload
+    /// retracts the message it reported (and only that message — a batch failure sharing the surface
+    /// survives). The AUTO capture on save (<see cref="SaveProfileWithAutoThumbnailAsync"/>) is deliberately
+    /// NOT changed: it stays best-effort and silent.</para>
     /// </summary>
-    public void UploadThumbnail(CutProfile? profile, string? imagePath)
+    public bool UploadThumbnail(CutProfile? profile, string? imagePath)
     {
-        if (profile is null || string.IsNullOrWhiteSpace(imagePath))
+        ThumbnailAttachOutcome outcome;
+        var detail = string.Empty;
+
+        if (profile is null)
         {
-            return;
+            outcome = ThumbnailAttachOutcome.NoProfile;
+        }
+        else if (string.IsNullOrWhiteSpace(imagePath))
+        {
+            outcome = ThumbnailAttachOutcome.NoImageChosen;
+        }
+        else
+        {
+            outcome = TryAttachThumbnail(profile.Name, imagePath, out detail);
         }
 
-        AttachThumbnail(profile.Name, imagePath);
+        if (outcome == ThumbnailAttachOutcome.Attached)
+        {
+            ClearThumbnailUploadError();
+            return true;
+        }
+
+        ReportThumbnailUploadFailure(outcome, profile?.Name, imagePath, detail);
+        return false;
     }
 
     /// <summary>
@@ -999,17 +1104,31 @@ public sealed class BulkCutViewModel : ObservableObject
     }
 
     /// <summary>
-    /// Shared store-and-attach step for the auto-default (<see cref="SaveProfileWithAutoThumbnailAsync"/>) and
-    /// upload (<see cref="UploadThumbnail"/>) paths: copy <paramref name="imagePath"/> into the store under the
-    /// persisted profile's name, fold the returned stored path onto the profile, then re-persist + refresh +
-    /// reselect. Best-effort — an un-saved profile or a store failure (blank/missing source, locked target)
-    /// leaves the profile unchanged.
+    /// The SILENT store-and-attach wrapper the auto-default (<see cref="SaveProfileWithAutoThumbnailAsync"/>)
+    /// uses: attempt the attach and discard the outcome. Best-effort by design — an un-saved profile or a
+    /// store failure (blank/missing source, locked target) leaves the profile unchanged and says nothing,
+    /// because the thumbnail is a side effect of "Save" and must never interrupt the save (T-107 / T-129).
     /// </summary>
     private void AttachThumbnail(string profileName, string imagePath)
+        => TryAttachThumbnail(profileName, imagePath, out _);
+
+    /// <summary>
+    /// Shared store-and-attach step for the auto-default and upload paths: copy <paramref name="imagePath"/>
+    /// into the store under the persisted profile's name, fold the returned stored path onto the profile,
+    /// then re-persist + refresh + reselect. Never throws — it CLASSIFIES instead, so the deliberate
+    /// upload gesture can report what went wrong (T-129) while the auto path keeps ignoring it.
+    /// <para>On any failure it returns before writing anything: no profile upsert, no
+    /// <see cref="RefreshProfiles"/> re-projection, and no file I/O beyond the single store call that
+    /// refused — which is what leaves the profile's current thumbnail exactly as it was.</para>
+    /// </summary>
+    /// <param name="detail">The refusing exception's message (empty on success) — the copyable detail line.</param>
+    private ThumbnailAttachOutcome TryAttachThumbnail(string profileName, string imagePath, out string detail)
     {
+        detail = string.Empty;
+
         if (FindPersistedProfile(profileName) is not { } existing)
         {
-            return; // the profile must be saved before a thumbnail can hang off it
+            return ThumbnailAttachOutcome.ProfileNotSaved; // the profile must be saved before a thumbnail can hang off it
         }
 
         string storedPath;
@@ -1017,14 +1136,93 @@ public sealed class BulkCutViewModel : ObservableObject
         {
             storedPath = _thumbnailStore.Save(existing.Name, imagePath);
         }
-        catch
+        catch (Exception ex)
         {
-            return; // blank/missing source or a copy failure — keep the profile's current thumbnail
+            detail = ex.Message;
+
+            // A blank/missing source is the PICK being wrong; anything else (locked target, unwritable
+            // root, I/O error) is the STORE failing to take the copy — two different things to tell a user.
+            return ex is FileNotFoundException or DirectoryNotFoundException or ArgumentException
+                ? ThumbnailAttachOutcome.ImageUnreadable
+                : ThumbnailAttachOutcome.StoreFailed;
         }
 
         _settings.SaveProfile(existing with { ThumbnailPath = storedPath });
         RefreshProfiles();
         SelectedProfile = FindBarProfile(existing.Name);
+        return ThumbnailAttachOutcome.Attached;
+    }
+
+    /// <summary>
+    /// T-129: turn a failed <see cref="UploadThumbnail"/> into a message on the screen's EXISTING error
+    /// surface (<see cref="OperationViewModel.Error"/> — headline + hint + Copy details), the same block
+    /// a failed batch uses. Each outcome gets its own headline and the one action that fixes it; the chosen
+    /// path plus the refusing exception's message become the copyable detail.
+    /// </summary>
+    private void ReportThumbnailUploadFailure(
+        ThumbnailAttachOutcome outcome,
+        string? profileName,
+        string? imagePath,
+        string detail)
+    {
+        var (category, message, hint) = outcome switch
+        {
+            ThumbnailAttachOutcome.NoProfile => (
+                ErrorCategory.InvalidArgument,
+                "No cut profile is selected, so there is nothing to give a thumbnail to.",
+                "Pick a profile in the profile bar first, then choose an image."),
+            ThumbnailAttachOutcome.NoImageChosen => (
+                ErrorCategory.InvalidArgument,
+                "No image was chosen, so the profile thumbnail was not changed.",
+                "Choose a PNG or JPG (or another image file) and try again."),
+            ThumbnailAttachOutcome.ProfileNotSaved => (
+                ErrorCategory.InvalidArgument,
+                string.Create(CultureInfo.InvariantCulture, $"'{profileName}' is not a saved profile yet, so its thumbnail could not be stored."),
+                "Save the profile first (Save current as…), then set its thumbnail."),
+            ThumbnailAttachOutcome.ImageUnreadable => (
+                ErrorCategory.CorruptInput,
+                "That image could not be read, so the profile thumbnail was not changed.",
+                "The file may have been moved, renamed or deleted. Choose another image."),
+            _ => (
+                ErrorCategory.PermissionDenied,
+                "That image could not be stored as the profile's thumbnail.",
+                "The file may be open in another program, or the thumbnails folder may not be writable. Try another image."),
+        };
+
+        var parts = new List<string>(2);
+        if (!string.IsNullOrWhiteSpace(imagePath))
+        {
+            parts.Add(imagePath!);
+        }
+
+        if (!string.IsNullOrWhiteSpace(detail))
+        {
+            parts.Add(detail);
+        }
+
+        var error = new UserFacingError(category, message, string.Join(Environment.NewLine, parts), hint);
+        _thumbnailUploadError = error;
+        Operation.ReportFailure(error);
+    }
+
+    /// <summary>
+    /// T-129: retract the upload failure THIS VM reported, once a later upload succeeds. Deliberately
+    /// reference-scoped — the same surface also carries batch failures (e.g. a Blocked disk pre-flight),
+    /// and a successful thumbnail upload must never erase one of those.
+    /// </summary>
+    private void ClearThumbnailUploadError()
+    {
+        if (_thumbnailUploadError is null)
+        {
+            return;
+        }
+
+        if (ReferenceEquals(Operation.Error, _thumbnailUploadError))
+        {
+            Operation.ReportFailure(null);
+        }
+
+        _thumbnailUploadError = null;
     }
 
     /// <summary>The persisted profile whose name matches (case-insensitive), or null.</summary>
@@ -1322,6 +1520,7 @@ public sealed class BulkCutViewModel : ObservableObject
         if (e.PropertyName is nameof(BulkItemViewModel.KeyframesReady)
             or nameof(BulkItemViewModel.IsValidCut)
             or nameof(BulkItemViewModel.IsEnabled)
+            or nameof(BulkItemViewModel.IsCheckedByUser)
             or nameof(BulkItemViewModel.RowState)
             or nameof(BulkItemViewModel.KeptDuration))
         {
@@ -1339,12 +1538,20 @@ public sealed class BulkCutViewModel : ObservableObject
 
     private void RaiseRunState()
     {
+        if (_suspendRunStateRefresh)
+        {
+            return;
+        }
+
         OnPropertyChanged(nameof(CanRunBatch));
         OnPropertyChanged(nameof(RunLabel));
         OnPropertyChanged(nameof(CanClear));
+        OnPropertyChanged(nameof(CanChangeSelection));
         RunBatchCommand.RaiseCanExecuteChanged();
         ClearCommand.RaiseCanExecuteChanged();
         ApplyToAllCommand.RaiseCanExecuteChanged();
+        SelectAllItemsCommand.RaiseCanExecuteChanged();
+        SelectNoItemsCommand.RaiseCanExecuteChanged();
 
         // T-111: the profile Apply→all gate (CanApplyProfileToAll) ALSO depends on the checked-row set
         // (Items.Any(IsCheckedByUser)) and on Items membership, both of which change here (rows added/

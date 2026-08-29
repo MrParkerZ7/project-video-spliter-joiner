@@ -344,11 +344,25 @@ public sealed class BulkItemViewModel : ObservableObject
 
     private TimeSpan IntroEndSnapped => IntroEnd.Snapped;
 
+    /// <summary>
+    /// The intro-end the BATCH will actually cut at — <c>Snapped</c> on the lossless path, <c>Requested</c>
+    /// under Exact cut (T-127 review finding #1). Eligibility (<see cref="IsValidCut"/>,
+    /// <see cref="IsNoOpTrim"/>, <see cref="KeptDuration"/>) must be computed from this, not from the
+    /// snapped value: <see cref="BuildBulkTrimItem"/> hands the engine <c>IntroEnd.Requested</c>, so on a
+    /// coarse GOP an Exact-mode row whose request snaps back to 0 would otherwise be judged a no-op and
+    /// excluded — and, since T-127, told "nothing to trim yet" for a trim Exact mode performs correctly.
+    /// </summary>
+    private TimeSpan EffectiveIntroEnd => _exactCut ? IntroEnd.Requested : IntroEnd.Snapped;
+
+    /// <summary>The outro-start the batch will actually cut at — see <see cref="EffectiveIntroEnd"/>.</summary>
+    private TimeSpan? EffectiveOutroStart =>
+        HasOutro ? (_exactCut ? OutroStart!.Requested : OutroStart!.Snapped) : (TimeSpan?)null;
+
     private TimeSpan? OutroStartSnapped => HasOutro ? OutroStart!.Snapped : (TimeSpan?)null;
 
     /// <summary>Kept-middle length <c>(OutroStartSnapped ?? Duration) − IntroEndSnapped</c>; null until keyframes ready.</summary>
     public TimeSpan? KeptDuration =>
-        KeyframesReady && Duration is { } d ? (OutroStartSnapped ?? d) - IntroEndSnapped : null;
+        KeyframesReady && Duration is { } d ? (EffectiveOutroStart ?? d) - EffectiveIntroEnd : null;
 
     /// <summary>Minimum meaningful kept span — <c>max(1s, 1 GOP)</c> (D-004 open-decision 4).</summary>
     public TimeSpan MinKeptSpan
@@ -370,10 +384,10 @@ public sealed class BulkItemViewModel : ObservableObject
                 return false;
             }
 
-            var upper = OutroStartSnapped ?? d;
-            return IntroEndSnapped >= TimeSpan.Zero
+            var upper = EffectiveOutroStart ?? d;
+            return EffectiveIntroEnd >= TimeSpan.Zero
                 && upper <= d
-                && IntroEndSnapped < upper - MinKeptSpan;
+                && EffectiveIntroEnd < upper - MinKeptSpan;
         }
     }
 
@@ -387,8 +401,8 @@ public sealed class BulkItemViewModel : ObservableObject
                 return false;
             }
 
-            var introAtStart = IntroEndSnapped <= BoundaryEpsilon;
-            var outroAtEof = HasOutro && d - OutroStartSnapped!.Value <= BoundaryEpsilon;
+            var introAtStart = EffectiveIntroEnd <= BoundaryEpsilon;
+            var outroAtEof = HasOutro && d - EffectiveOutroStart!.Value <= BoundaryEpsilon;
             return introAtStart && (!HasOutro || outroAtEof);
         }
     }
@@ -434,7 +448,9 @@ public sealed class BulkItemViewModel : ObservableObject
             outro.SuppressSnapNote = exact;
         }
 
-        OnPropertyChanged(nameof(Warning));
+        // Review finding #1: the precision flip changes which cut point eligibility is measured against
+        // (EffectiveIntroEnd), so it must recompute the whole derived set — not just the warning text.
+        RecomputeAll();
     }
 
     private bool _exactCut;
@@ -486,25 +502,95 @@ public sealed class BulkItemViewModel : ObservableObject
         }
     }
 
-    /// <summary>Row-in-batch checkbox; auto-forced false when Invalid / NoOpTrim / LoadFailed.</summary>
-    public bool IsEnabled
+    /// <summary>
+    /// The user's raw checkbox intent — what the row checkbox binds to (T-127). Independent of whether the
+    /// row is currently ELIGIBLE: a freshly imported row is a no-op trim and therefore excluded, but the
+    /// user's intent to include it is still <c>true</c>, so it starts ticked and stays ticked until they
+    /// untick it. Used by apply-to-all targeting (SPEC-011 I56) and as one half of <see cref="IsEnabled"/>.
+    /// </summary>
+    /// <remarks>
+    /// Before T-127 the checkbox bound to <see cref="IsEnabled"/>, which conflated intent with eligibility:
+    /// the getter answered false for every freshly imported row while the backing intent field was already
+    /// true, so a click wrote true over true, the setter's <c>!=</c> guard short-circuited, and no
+    /// <c>PropertyChanged</c> was raised. The gesture was dead, and because nothing pushed the getter back
+    /// to the target the box could sit rendering ticked while the row was excluded. Clicking twice wrote
+    /// false and silently poisoned the row: it then stayed excluded even after a real cut was set, and
+    /// apply-to-all skipped it. Intent is now its own property, and it always notifies.
+    /// </remarks>
+    public bool IsCheckedByUser
     {
-        get => _isEnabledByUser && !IsAutoDisabled;
+        get => _isEnabledByUser;
         set
         {
             if (_isEnabledByUser != value)
             {
                 _isEnabledByUser = value;
                 OnPropertyChanged();
+                OnPropertyChanged(nameof(IsEnabled));
+                OnPropertyChanged(nameof(ExclusionReason));
+                OnPropertyChanged(nameof(IsExcludedDespiteBeingChecked));
             }
         }
     }
 
+    /// <summary>
+    /// Whether this row will actually be run: the user wants it AND the app judges it usable. Read-only —
+    /// the engine and <c>CanRunBatch</c> filter on this; the user toggles <see cref="IsCheckedByUser"/>.
+    /// </summary>
+    public bool IsEnabled => _isEnabledByUser && !IsAutoDisabled;
+
     // Auto-disabled once the row is known-ineligible (Loading is NOT auto-disabled — CanRunBatch waits on it).
     private bool IsAutoDisabled => _loadFailed || (KeyframesReady && (IsNoOpTrim || !IsValidCut));
 
-    /// <summary>The user's raw checkbox intent, independent of auto-disable — used by apply-to-all targeting.</summary>
-    internal bool IsCheckedByUser => _isEnabledByUser;
+    /// <summary>
+    /// True when the user has ticked this row but the app is still excluding it — the state that used to be
+    /// invisible. The UI shows <see cref="ExclusionReason"/> for these rows so "ticked but not counted" is
+    /// never silent.
+    /// </summary>
+    public bool IsExcludedDespiteBeingChecked => _isEnabledByUser && IsAutoDisabled;
+
+    /// <summary>
+    /// Why a ticked row is nonetheless excluded, or null when it is not excluded. Phrased as a state, not an
+    /// error — "nothing to trim yet" is the normal condition of a row you just imported.
+    /// </summary>
+    public string? ExclusionReason
+    {
+        get
+        {
+            if (!_isEnabledByUser || !IsAutoDisabled)
+            {
+                return null;
+            }
+
+            if (_loadFailed)
+            {
+                return "can't read this file";
+            }
+
+            // A row that is still scanning is not excluded at all — IsAutoDisabled is false while
+            // KeyframesReady is false, so the !IsAutoDisabled guard above has already returned null.
+
+            if (IsNoOpTrim)
+            {
+                return "nothing to trim yet — set an intro or outro";
+            }
+
+            // IsValidCut fails for two materially different reasons and they need different sentences
+            // (review finding #2): a handle genuinely outside the file, versus handles that are both
+            // inside it but too close together to keep anything.
+            if (Duration is { } dur)
+            {
+                var upper = EffectiveOutroStart ?? dur;
+                if (EffectiveIntroEnd >= TimeSpan.Zero && upper <= dur)
+                {
+                    return string.Create(CultureInfo.InvariantCulture,
+                        $"intro and outro are too close — keep at least {MinKeptSpan.TotalSeconds:0.0}s");
+                }
+            }
+
+            return "cut is outside the video";
+        }
+    }
 
     /// <summary>Per-row progress fraction 0..1 (forwarded from the batch progress fan-out).</summary>
     public double Progress
@@ -566,6 +652,12 @@ public sealed class BulkItemViewModel : ObservableObject
         previous?.Dispose();
 
         IsIndexingKeyframes = true;
+
+        // Review finding #4: every OTHER mutator of the eligibility inputs funnels through RecomputeAll.
+        // This one did not, so RESTARTING a scan on an already-scanned row flipped KeyframesReady (and
+        // therefore IsAutoDisabled, IsEnabled and ExclusionReason) with nothing pushed to the view — a
+        // stale "nothing to trim yet" line and a stale checkbox meaning, the exact bug class T-127 fixes.
+        RecomputeAll();
         OnPropertyChanged(nameof(RowState));
 
         var task = ScanBodyAsync(cts);
@@ -781,6 +873,8 @@ public sealed class BulkItemViewModel : ObservableObject
         OnPropertyChanged(nameof(IsNoOpTrim));
         OnPropertyChanged(nameof(Warning));
         OnPropertyChanged(nameof(IsEnabled));
+        OnPropertyChanged(nameof(ExclusionReason));
+        OnPropertyChanged(nameof(IsExcludedDespiteBeingChecked));
         OnPropertyChanged(nameof(OutputPath));
         OnPropertyChanged(nameof(HasOutro));
         OnPropertyChanged(nameof(RowState));

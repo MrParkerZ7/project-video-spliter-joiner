@@ -116,12 +116,30 @@ public sealed class ProfileThumbnailStore
 
         Directory.CreateDirectory(_root);
 
-        // Overwrite any prior thumbnail for this profile (any extension) before copying the new one in.
-        DeleteExistingFor(safeName);
-
         var destination = Path.Combine(_root, safeName + NormalizeExtension(sourceImageOrFramePath));
-        File.Copy(sourceImageOrFramePath, destination, overwrite: true);
-        return destination;
+
+        // Copy to a temp file FIRST, then swap. Deleting the prior thumbnail before the copy (the original
+        // order) meant a copy that failed part-way — a source locked by another program, a full or
+        // read-only volume — destroyed the picture the profile already had: the caller correctly reported
+        // the failure and left CutProfile.ThumbnailPath untouched, but the path then pointed at a file that
+        // no longer existed and the profile silently reverted to the placeholder. A failed Save must leave
+        // the existing thumbnail exactly as it was.
+        var staging = Path.Combine(_root, safeName + ".incoming" + NormalizeExtension(sourceImageOrFramePath));
+        try
+        {
+            File.Copy(sourceImageOrFramePath, staging, overwrite: true);
+
+            // The new bytes are safely on disk; only now is it safe to drop the old thumbnail (which may
+            // carry a different extension, so the destination alone is not enough to displace it).
+            DeleteExistingFor(safeName);
+            File.Move(staging, destination, overwrite: true);
+            return destination;
+        }
+        catch
+        {
+            TryDeleteFile(staging); // never leave a stray .incoming behind
+            throw;
+        }
     }
 
     /// <summary>

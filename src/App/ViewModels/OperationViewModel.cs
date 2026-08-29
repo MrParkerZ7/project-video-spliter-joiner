@@ -390,6 +390,46 @@ public sealed class OperationViewModel : ObservableObject
         State = OperationState.Idle;
     }
 
+    /// <summary>
+    /// T-129: report a user-facing failure for a deliberate gesture that is NOT a tracked run — e.g. the
+    /// Bulk Cut profile-thumbnail upload, which copies a single file and has no progress/ETA of its own.
+    /// It sets <see cref="Error"/>, the SAME surface a failed run uses, so the screen's existing error
+    /// block (headline + hint + Copy details / Open log) renders it instead of the gesture failing
+    /// silently. Purely additive: no run is started, no progress/ETA/stopwatch is touched, and the
+    /// cancellation source is left alone.
+    /// <para>When no run is in flight the state also moves to <see cref="OperationState.Failed"/> (and the
+    /// success line is cleared), keeping the mutually-exclusive Running/Completed/Cancelled surfaces
+    /// honest — a stale green "Completed ✓" must not sit beside a red error. While a run IS in flight the
+    /// state is deliberately left untouched: the run owns its own lifecycle and must not be derailed by a
+    /// side gesture, so only the error line appears.</para>
+    /// <para>Passing <c>null</c> retracts a previously reported failure (what a later SUCCESSFUL gesture
+    /// does) and, when the state is <see cref="OperationState.Failed"/>, returns it to
+    /// <see cref="OperationState.Idle"/> so no red taskbar lingers with nothing to explain it. Callers are
+    /// expected to retract only the error they themselves reported — see
+    /// <c>BulkCutViewModel.ClearThumbnailUploadError</c>.</para>
+    /// </summary>
+    public void ReportFailure(UserFacingError? error)
+    {
+        if (IsRunning)
+        {
+            // A run owns its own State; only surface the message beside it.
+            Error = error;
+            return;
+        }
+
+        Error = error;
+
+        if (error is not null)
+        {
+            ResultSummary = null;
+            State = OperationState.Failed;
+        }
+        else if (State == OperationState.Failed)
+        {
+            State = OperationState.Idle;
+        }
+    }
+
     private void Cancel()
     {
         _cts?.Cancel();

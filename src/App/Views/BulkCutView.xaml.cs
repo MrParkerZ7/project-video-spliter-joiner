@@ -272,8 +272,14 @@ public partial class BulkCutView : UserControl
     /// <summary>
     /// Pick an image and hand it to the VM to store as the SELECTED profile's thumbnail (T-107). The VM
     /// copies it into the T-106 <c>ProfileThumbnailStore</c>, folds the stored path onto the profile, and
-    /// re-persists — best-effort, so a cancel / bad pick is a no-op. The OpenFileDialog lives here (View),
-    /// keeping the VM WPF-free.
+    /// re-persists. The OpenFileDialog lives here (View), keeping the VM WPF-free.
+    /// <para>T-129: a CANCELLED picker is still a no-op — the user changed their mind, that is not a
+    /// failure — but a chosen file that cannot be stored is no longer swallowed:
+    /// <see cref="BulkCutViewModel.UploadThumbnail"/> returns false and reports the reason on the screen's
+    /// existing error surface (<c>Operation.Error</c> — headline + hint + Copy details), which this
+    /// screen already renders. No MessageBox: the failure belongs on the same surface as every other Bulk
+    /// Cut failure. The early return below is the no-selected-profile case, which the button's
+    /// <c>IsEnabled="{Binding HasSelectedProfile}"</c> already prevents.</para>
     /// </summary>
     private void OnUploadThumbnailClicked(object sender, RoutedEventArgs e)
     {

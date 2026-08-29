@@ -12,8 +12,8 @@ sources:
   - src/App/ViewModels/CutProfileApplier.cs
   - src/App/ViewModels/RelayCommand.cs
   - src/App/ViewModels/MainViewModel.cs
-serves-goal: [G-036, G-037, G-038, G-039, G-040, G-041, G-042]
-updated: 2026-08-28
+serves-goal: [G-036, G-037, G-038, G-039, G-040, G-041, G-042, G-043]
+updated: 2026-08-29
 ---
 
 ## What
@@ -39,11 +39,13 @@ disk pre-flight inside the T-095 engine (not the VM) keeps this screen a thin, t
 
 ## Scope
 **In:** the Bulk Cut tab view-models — `BulkCutViewModel` (list management, dedup, throttled scan gate,
-apply-to-all, cut-profile commands, shared preview player + selection, set-at-playhead, the dedicated cut-point
-thumbnail gate, `CanRunBatch`, `RunBatchAsync` delegation, progress fan-out, ledger routing, batch-state mapping)
-and `BulkItemViewModel` (per-row handles, keyframe scan, computed validity/`RowState`/`KeptDuration`/`Warning`,
-`IsEnabled` auto-disable, the per-row cut-point frame thumbnails `IntroThumbnailPath`/`OutroThumbnailPath`, request
-builders, batch fan-out hooks), plus `CutProfileApplier` (pure apply/build for profiles as used by the tab),
+apply-to-all, select-all/select-none intent writes, cut-profile commands, shared preview player + selection,
+set-at-playhead, the dedicated cut-point thumbnail gate, `CanRunBatch`, `RunBatchAsync` delegation, progress
+fan-out, ledger routing, batch-state mapping) and `BulkItemViewModel` (per-row handles, keyframe scan, computed
+validity/`RowState`/`KeptDuration`/`Warning`, the checkbox-**intent** vs computed-**eligibility** split
+(`IsCheckedByUser` → `IsEnabled` / `IsExcludedDespiteBeingChecked` / `ExclusionReason`), the per-row cut-point
+frame thumbnails `IntroThumbnailPath`/`OutroThumbnailPath`, request builders, batch fan-out hooks), plus
+`CutProfileApplier` (pure apply/build for profiles as used by the tab),
 the **row-facing snap readout** on `CutMarkerViewModel` (`SnapNote`/`HasSnapNote`/`SuppressSnapNote`, G-041/G-042)
 and the WPF-free IN/OUT commit guard `CutTimeCommit`, and the two batch-wide output/precision choices the tab
 owns (`ReplaceOriginal` + `CollisionIsInert`/`OutputNote` + the counted `ConfirmReplaceOriginals` seam;
@@ -69,8 +71,10 @@ SPEC-007); the shared `IThumbnailService`/`FfmpegThumbnailService` frame source 
   a source already present (within the same call or across calls) never yields a second row (`AddFilesAsync`,
   `NormalizePath`).
 - **I2** — a row that cannot be probed is marked `LoadFailed` and excluded from the batch: `RowState ==
-  LoadFailed` and `IsEnabled == false` (`PopulateAsync` catch → `MarkLoadFailed`; `BulkItemViewModel.MarkLoadFailed`,
-  `IsAutoDisabled`).
+  LoadFailed` and `IsEnabled == false` **whatever the user's checkbox says** — the exclusion is eligibility-side
+  and never writes `IsCheckedByUser`, so a ticked load-failed row reads ticked-but-excluded with
+  `ExclusionReason == "can't read this file"` (I96–I98) (`PopulateAsync` catch → `MarkLoadFailed`;
+  `BulkItemViewModel.MarkLoadFailed`, `IsAutoDisabled`).
 - **I3** — background keyframe scans are bounded to **at most 3 concurrent** `GetKeyframesAsync` calls through the
   single `SemaphoreSlim(3,3)` owned by the tab VM and shared into every row (`_scanGate`,
   `BulkItemViewModel.ScanBodyAsync` `_scanGate.WaitAsync/Release`).
@@ -97,8 +101,11 @@ SPEC-007); the shared `IThumbnailService`/`FfmpegThumbnailService` frame source 
   (`RowState`, `ComputeBaseRowState`).
 - **I12** — `KeptDuration` is `(OutroStartSnapped ?? Duration) − IntroEndSnapped`, and is null until keyframes are
   ready (`KeptDuration`).
-- **I13** — `IsEnabled` is auto-forced false once a row is known-ineligible (`LoadFailed`, or `KeyframesReady` with
-  `NoOpTrim`/`!IsValidCut`); a still-`Loading` row is **not** auto-disabled (`IsEnabled`, `IsAutoDisabled`).
+- **I13** — **eligibility** is auto-withdrawn once a row is known-ineligible: `IsAutoDisabled` is true for
+  `LoadFailed`, or for `KeyframesReady` with `NoOpTrim`/`!IsValidCut`; a still-`Loading` row is **not**
+  auto-disabled (`CanRunBatch` waits on it instead, I37). Since T-127 this is one half of the **read-only**
+  `IsEnabled` — the other half being the user's intent (I96) — and it never writes the user's checkbox
+  (`IsEnabled`, `IsAutoDisabled`).
 - **I14** — `StartKeyframeScanAsync` supersedes any in-flight scan (`Interlocked.Exchange` of the per-row CTS
   cancels + disposes the prior one) and a superseded scan's result is dropped — only the current CTS commits
   `Keyframes` (`StartKeyframeScanAsync`, `ScanBodyAsync` `if (!ReferenceEquals(_scanCts, cts)) return`).
@@ -129,7 +136,9 @@ SPEC-007); the shared `IThumbnailService`/`FfmpegThumbnailService` frame source 
 - **I21** — `ApplyToAll` returns null and mutates nothing when the source is null, not `KeyframesReady`, or has no
   `Duration` (`ApplyToAll` guard).
 - **I22** — `ApplyToAll` only touches other rows that are `IsCheckedByUser`, `KeyframesReady`, and have a
-  `Duration`; the source row itself is skipped (`ApplyToAll` `foreach` filter).
+  `Duration`; the source row itself is skipped. The filter is the user's raw **intent**, not eligibility
+  (I94/I96) — so a target the app is currently excluding for having no cut set yet is still a legitimate apply
+  target, which is exactly how the copied cut makes it eligible (`ApplyToAll` `foreach` filter).
 - **I23** — when the source has **no** outro, `ApplyToAll` calls `ClearOutro()` on each applied target so it mirrors
   the source's keep-to-EOF shape (`ApplyToAll` `else target.ClearOutro()`).
 - **I24** — `ApplyToAll` records `AppliedCount` and collects every target the copied cut left invalid into
@@ -169,8 +178,11 @@ SPEC-007); the shared `IThumbnailService`/`FfmpegThumbnailService` frame source 
 
 ### Run batch — delegation to the engine (§4)
 - **I37** — `CanRunBatch` is true iff there is ≥1 `IsEnabled && IsValidCut` row, no run is in flight
-  (`!Operation.IsRunning`), and **every** enabled row is `KeyframesReady` (`CanRunBatch`).
-- **I38** — `RunLabel` is `Run bulk cut (N)` counting the `IsEnabled && IsValidCut` rows (`RunLabel`).
+  (`!Operation.IsRunning`), and **every** enabled row is `KeyframesReady`. It filters on the computed `IsEnabled`
+  (intent **and** eligibility — I96), never on intent alone (`CanRunBatch`).
+- **I38** — `RunLabel` is `Run bulk cut (N)` counting the `IsEnabled && IsValidCut` rows — so a ticked row the
+  app excludes is **not** counted, and says why through `ExclusionReason` (I98) instead of dropping out silently
+  (`RunLabel`).
 - **I39** — `RunBatchAsync` **delegates**: it calls `IBulkTrimEngine.RunAsync` exactly once with one
   `BulkTrimItem` per enabled+valid row (no-op/invalid rows excluded) and never calls `ISplitEngine.SplitAsync`
   directly — the VM owns no batch loop (`RunBatchAsync`).
@@ -217,9 +229,11 @@ SPEC-007); the shared `IThumbnailService`/`FfmpegThumbnailService` frame source 
 - **I55** — `ApplyProfileToSelected` applies `SelectedProfile` to the selected row and surfaces the returned
   report through `ApplyToAllReport`; it is a no-op returning null without both a profile and a selection
   (`ApplyProfileToSelected`, `CanApplyProfileToSelected`).
-- **I56** — `ApplyProfileToAll` applies `SelectedProfile` to every `IsCheckedByUser` row (raw checkbox intent, so a
-  profile can re-validate a currently-invalid checked row) and reports invalidated rows through `ApplyToAllReport`;
-  no-op without a profile (`ApplyProfileToAll`, `CanApplyProfileToAll`).
+- **I56** — `ApplyProfileToAll` applies `SelectedProfile` to every `IsCheckedByUser` row — the user's **intent**,
+  which since T-127 is the very property the row checkbox binds to (I94), so this is the plain reading of "every
+  ticked row" rather than a special case. Targeting intent (not `IsEnabled`) is what lets a profile re-validate a
+  row the app is currently excluding for having no usable cut yet. Invalidated rows are reported through
+  `ApplyToAllReport`; no-op without a profile (`ApplyProfileToAll`, `CanApplyProfileToAll`).
 - **I57** — `CutProfileApplier.ApplyProfile` sets each ready target's intro to `IntroFromStart` clamped to
   `[0, Duration]`; when the profile has an `OutroFromEnd` tail it sets the outro at `Duration − tail` (clamped,
   from end) else clears the outro; it skips rows that are not `KeyframesReady`/have no `Duration` (not counted as
@@ -229,7 +243,8 @@ SPEC-007); the shared `IThumbnailService`/`FfmpegThumbnailService` frame source 
   and re-points the selection at the first remaining profile (or null when none remain); no-op when unset
   (`DeleteSelectedProfile`).
 - **I59** — the profile-command gates reflect state: `HasProfiles` (`Profiles.Count > 0`), `HasSelectedProfile`,
-  `CanApplyProfileToSelected` (profile + selection), `CanApplyProfileToAll` (profile + ≥1 checked row)
+  `CanApplyProfileToSelected` (profile + selection), `CanApplyProfileToAll` (profile + ≥1 `IsCheckedByUser`
+  row — intent again, I94, so it is live even for a list of freshly imported rows)
   (`HasProfiles`, `HasSelectedProfile`, `CanApplyProfileToSelected`, `CanApplyProfileToAll`).
 - **I60** — `ApplyToAllReport` is the single shared surface for **both** the per-row apply-to-all gesture and the
   profile-apply commands (same property instance is returned/surfaced) (`ApplyToAllReport`, `ApplyProfileToSelected`
@@ -440,6 +455,67 @@ SPEC-007); the shared `IThumbnailService`/`FfmpegThumbnailService` frame source 
 - **I93** — flipping precision is **pure VM state**: it re-raises the note and the rows' readouts and performs
   **no** probe work — no `GetKeyframesAsync`, no re-scan (`ExactCut` setter, `SetExactCut`).
 
+### Row checkbox intent vs computed eligibility (G-043 / T-127)
+- **I94** — the row checkbox binds **two-way to the user's intent**, `IsCheckedByUser` — never to the computed
+  `IsEnabled`. Intent defaults **true** for every row and is independent of eligibility: a freshly imported row
+  has intro 0 and no outro, so it is a no-op trim and therefore ineligible, yet it starts (and stays) **ticked**
+  until the user unticks it. Nothing on the eligibility path ever writes intent — a failed probe, a resolving
+  scan, an out-of-range cut all leave `IsCheckedByUser` untouched. (Pre-T-127 the box bound to `IsEnabled`, whose
+  getter answered false for every imported row while the backing intent field was already true: a click wrote
+  `true` over `true`, the setter's `!=` guard short-circuited, no `PropertyChanged` was raised, and the gesture
+  was **dead** — while a second click wrote `false`, which *did* take, silently dropping that row from
+  apply-to-all and from the run.) (`BulkItemViewModel.IsCheckedByUser`, `BulkCutView.xaml`
+  `IsChecked="{Binding IsCheckedByUser, Mode=TwoWay}"`)
+- **I95** — an intent change **always notifies**, and notifies the whole derived set: setting `IsCheckedByUser` to
+  a new value raises `PropertyChanged` for `IsCheckedByUser`, `IsEnabled`, `ExclusionReason` **and**
+  `IsExcludedDespiteBeingChecked` — so the row's reason line and the batch projections (`CanRunBatch`/`RunLabel`,
+  via `OnItemChanged` → `RaiseRunState`) re-evaluate on every tick. The setter keeps its `!=` idempotence guard,
+  which is harmless now precisely because the checkbox binds to the *same* property the guard compares: a
+  same-value write is a genuine no-op instead of a swallowed gesture (`IsCheckedByUser` setter,
+  `BulkCutViewModel.OnItemChanged`).
+- **I96** — `IsEnabled` is **read-only computed eligibility**: `IsCheckedByUser && !IsAutoDisabled` — the user
+  wants the row **and** the app judges it usable. It has **no setter**, so nothing outside the row can force a row
+  into the batch or overwrite the user's intent; the engine-facing filters read it (`CanRunBatch`, `RunLabel`, the
+  `BulkTrimItem` build — I37–I39) while every user gesture writes intent. The auto-disable rule itself is
+  unchanged (I13) (`IsEnabled`, `IsAutoDisabled`).
+- **I97** — `IsExcludedDespiteBeingChecked` is exactly `IsCheckedByUser && IsAutoDisabled` — the previously
+  invisible "ticked but not counted" state, now a first-class property of the row
+  (`IsExcludedDespiteBeingChecked`).
+- **I98** — `ExclusionReason` names that state in the user's words, and is **null whenever it does not apply**:
+  null for an unticked row (`!IsCheckedByUser`) and null for an eligible one (`!IsAutoDisabled`) — which includes
+  a still-scanning row, since loading is not auto-disabled (I13). When it does apply it is `can't read this file`
+  for a load-failed row; otherwise (keyframes are ready by then) `nothing to trim yet — set an intro or outro`
+  for a no-op trim and `cut is out of range` for an invalid cut. Phrased as a **state, not an error** — "nothing
+  to trim yet" is the normal condition of a row you just imported. The row renders it as a muted italic line,
+  collapsed while null, so a ticked-but-excluded row is never silent about why `Run bulk cut (N)` does not count
+  it (`ExclusionReason`, `BulkCutView.xaml` `Visibility="{Binding ExclusionReason, …NullToCollapsed}"`).
+- **I99** — an **eligibility-side** change republishes the same trio: `RecomputeAll` — run on every handle
+  `Requested`/`Snapped` move, on scan completion, and on `MarkLoadFailed` — raises `IsEnabled`, `ExclusionReason`
+  and `IsExcludedDespiteBeingChecked` alongside the other computed row properties, so setting a real cut clears
+  the reason line and lights the row without the user touching the checkbox (`RecomputeAll`, `OnHandleChanged`,
+  `MarkLoadFailed`).
+
+### Select all / select none for the item list (G-043 / T-128)
+- **I100** — `SetAllItemsChecked(bool)` — behind `SelectAllItemsCommand` / `SelectNoItemsCommand` — writes
+  **intent** across every row: `IsCheckedByUser`, never the computed `IsEnabled`. Select-all therefore ticks
+  auto-excluded rows too; they stay excluded-with-a-reason (I98) until they have a real cut, at which point the
+  preserved intent puts them straight into the batch — which is also what makes *select all* followed by
+  *apply profile → all* (I56) compose as the user expects (`SetAllItemsChecked`, `SelectAllItemsCommand`,
+  `SelectNoItemsCommand`).
+- **I101** — the bulk write is **pure O(N) VM state**: a single `foreach` over `Items` setting a bool, with **no**
+  probe, no keyframe scan, no thumbnail grab and no re-snap triggered by it. It ends with **one** trailing
+  `RaiseRunState()` so the batch projections (`CanRunBatch`/`RunLabel`/`CanClear`/`CanChangeSelection` plus the
+  run / clear / apply-to-all / select-all / select-none / apply-profile-to-all command gates) are published for
+  the whole write even when no row's value actually changed (an already-all-ticked list raises nothing per row).
+  Rows that *did* change also notify individually through `OnItemChanged`, so the refresh is O(N) notifications of
+  O(1) work each — never per-row I/O (`SetAllItemsChecked`, `RaiseRunState`, `OnItemChanged`).
+- **I102** — both commands are gated by `CanChangeSelection` = `Items.Count > 0 && !Operation.IsRunning`
+  (mirroring `CanClear`): dead on an empty list and for the duration of a run. `RaiseRunState` re-raises
+  `CanChangeSelection` **and** both commands' `CanExecuteChanged`, so adds/removes/`Clear` and the run's start/end
+  re-evaluate the two buttons deterministically (I69's own-subscriber notify); the header strip that carries them
+  is itself collapsed while the list is empty (`CanChangeSelection`, the two command predicates, `RaiseRunState`,
+  `BulkCutView.xaml` header `Visibility`).
+
 ## Links
 - Design: D-004 (Bulk Cut screen)
 - Goals: G-036 (batch trim), G-037 (shared preview + set-at-playhead + reusable cut profiles), G-038 (profile
@@ -448,7 +524,9 @@ SPEC-007); the shared `IThumbnailService`/`FfmpegThumbnailService` frame source 
   G-040 (Bulk Cut fixes — debounced preview-open T-115 (I72–I73), apply-to-all discoverability T-116 (view-only note)),
   G-041 (make keyframe snapping visible + the replace-originals output mode — commit guard T-118 (I77–I79),
   requested→snapped readout T-119 (I74–I76), real-snap-magnitude advisory T-120 (I80–I82), replace-originals
-  UI T-123 (I83–I88)), G-042 (frame-exact cutting — the precision choice T-125 (I89–I93))
+  UI T-123 (I83–I88)), G-042 (frame-exact cutting — the precision choice T-125 (I89–I93)), G-043 (tick the
+  rows you want and have Run agree — the checkbox-intent/eligibility split T-127 (I94–I99), select all /
+  select none T-128 (I100–I102))
 - Related specs: SPEC-002 (the T-095 batch engine `IBulkTrimEngine` / `BulkTrimEngine` — incl. the engine-side
   handling of the `OutputMode`/`CutPrecision` axes this screen selects, kept orthogonal to `CollisionPolicy`'s
   own "what if the destination is taken?" question); T-094 kept-segment request (`KeptSegmentSelector`);
@@ -460,15 +538,19 @@ SPEC-007); the shared `IThumbnailService`/`FfmpegThumbnailService` frame source 
   `SmartCutEngine` that services `CutPrecision.Exact`).
 - Key code: `src/App/ViewModels/BulkCutViewModel.cs` (`_thumbnailGate`, `RaiseProfileCommandStates`,
   `RaiseRunState`; `ReplaceOriginal`/`CollisionIsInert`/`OutputNote`/`ConfirmReplaceOriginals` — T-123;
-  `ExactCut`/`PrecisionNote` — T-125), `src/App/ViewModels/BulkItemViewModel.cs`
-  (`IntroThumbnailPath`/`OutroThumbnailPath`, `HandleThumbnailGrabber`; `CoarseGopThreshold`/
+  `ExactCut`/`PrecisionNote` — T-125; `SelectAllItemsCommand`/`SelectNoItemsCommand`/`SetAllItemsChecked`/
+  `CanChangeSelection` — T-128), `src/App/ViewModels/BulkItemViewModel.cs`
+  (`IsCheckedByUser`/`IsEnabled`/`IsAutoDisabled`/`IsExcludedDespiteBeingChecked`/`ExclusionReason` — T-127;
+  `IntroThumbnailPath`/`OutroThumbnailPath`, `HandleThumbnailGrabber`; `CoarseGopThreshold`/
   `NoticeableSnapThreshold`/`MaxSnapOffset` — T-120; `SetExactCut` — T-125),
   `src/App/ViewModels/CutMarkerViewModel.cs` (`SnapNote`/`HasSnapNote` — T-119; `SuppressSnapNote` — T-125),
   `src/App/ViewModels/CutTimeCommit.cs` (`IsUnchanged`/`TryResolveEdit`/`TryParseClock` — T-118),
   `src/App/ViewModels/CutProfileApplier.cs`,
   `src/App/ViewModels/RelayCommand.cs` (`RaiseCanExecuteChanged` — T-111 deterministic notify),
   `src/App/ViewModels/MainViewModel.cs` (`BulkHorizontalSplitRatio`/`BulkVerticalSplitRatio` — T-112),
-  `src/App/Views/BulkCutView.xaml` (`OrientedSplitPanel` body — T-112; "Profiles" card — T-113).
+  `src/App/Views/BulkCutView.xaml` (`OrientedSplitPanel` body — T-112; "Profiles" card — T-113; the row
+  checkbox bound to `IsCheckedByUser` + the `ExclusionReason` line — T-127; the Select all / Select none
+  header — T-128).
 - Tests: `tests/App.Tests/BulkItemThumbnailTests.cs` (T-108 cut-point thumbnails) · `tests/App.Tests/BulkSpecGapTests.cs`
   · `tests/App.Tests/BulkCutApplyToAllReactivationTests.cs` (T-111 apply-to-all re-fires — I69–I71) ·
   `tests/App.Tests/AppSettingsTests.cs` (T-112 Bulk-ratio round-trip — I68's persisted ratios, tagged `serves-spec=SPEC-011`) ·
@@ -478,3 +560,5 @@ SPEC-007); the shared `IThumbnailService`/`FfmpegThumbnailService` frame source 
   `tests/App.Tests/SnapWarningTests.cs` (T-120 coarse-GOP + real-snap advisory — I80–I82, 5 tests) ·
   `tests/App.Tests/ReplaceOriginalModeTests.cs` (T-123 replace-originals UI — I83–I88, 7 tests) ·
   `tests/App.Tests/ExactCutModeTests.cs` (T-125 precision choice — I89–I93, 8 tests) — all tagged `serves-spec=SPEC-011`.
+  The intent-side targeting filters are additionally asserted by `tests/App.Tests/BulkCutProfileCommandsTests.cs`
+  (I56) and `tests/App.Tests/BulkSpecGapTests.cs` (I22), both reading `IsCheckedByUser` directly.

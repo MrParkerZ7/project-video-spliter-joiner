@@ -280,6 +280,21 @@
                             </StackPanel>
                         </Border>
 
+                        <!-- T-129: change the selected profile's picture from the ALWAYS-VISIBLE profile
+                             bar. The upload/clear pair also lives inside the "Save current as…" popup, but
+                             that popup only opens when saving a NEW profile (and is itself gated on
+                             CanSaveProfile), so for a user who just wants to re-picture an existing profile
+                             the gesture was effectively unreachable — the likeliest reason it read as
+                             missing. Reuses the same handler as the popup's button. -->
+                        <Button Style="{StaticResource ProfileSegmentButton}"
+                                Content="🖼 Thumbnail…"
+                                Margin="8,0,0,0"
+                                VerticalAlignment="Center"
+                                ToolTip="Choose a picture for the selected profile's thumbnail"
+                                IsEnabled="{Binding HasSelectedProfile}"
+                                Click="OnUploadThumbnailClicked"
+                                Visibility="{Binding HasProfiles, Converter={StaticResource BoolToVisibility}}" />
+
                         <!-- MUTED: Delete — muted ✕, danger-on-hover. -->
                         <Button Style="{StaticResource ProfileDangerButton}"
                                 Content="✕"
@@ -526,12 +541,42 @@
                 BorderThickness="1"
                 CornerRadius="{StaticResource RadiusMd}">
             <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+
+                <!-- T-128: list header — select all / none for the whole item list, mirroring the Split
+                     screen's Select all / Select none. Both write the user's INTENT (IsCheckedByUser),
+                     never the computed eligibility, so a row with no cut set yet keeps the intent and
+                     joins the batch the moment it becomes eligible. -->
+                <StackPanel Grid.Row="0"
+                            Orientation="Horizontal"
+                            Margin="8,8,8,0"
+                            Visibility="{Binding Items.Count, Converter={StaticResource PositiveCountToVisible}}">
+                    <Button Content="Select all"
+                            Padding="8,3"
+                            Command="{Binding SelectAllItemsCommand}"
+                            ToolTip="Tick every video in the list. Ticked rows are the ones Run cuts — and the ones Apply to all / Apply profile write to." />
+                    <Button Content="Select none"
+                            Margin="6,0,0,0"
+                            Padding="8,3"
+                            Command="{Binding SelectNoItemsCommand}"
+                            ToolTip="Untick every video in the list. Unticked rows are skipped by Run and left alone by Apply to all / Apply profile." />
+                    <TextBlock Text="{Binding RunLabel}"
+                               Margin="12,0,0,0"
+                               VerticalAlignment="Center"
+                               FontSize="{StaticResource FontSizeSmall}"
+                               Foreground="{StaticResource TextMutedBrush}" />
+                </StackPanel>
+
                 <!-- ListBox (T-101): each row is selectable; SelectedItem two-way drives the preview
                      pane above. The ItemContainerStyle drops the default selection chrome for a gold
                      accent ring around the selected card, and carries the inter-card gap (the card's
                      own bottom margin moved here) so the ring hugs the card. The ListBox scrolls
                      internally — no outer ScrollViewer needed. -->
                 <ListBox x:Name="RowsList"
+                         Grid.Row="1"
                          ItemsSource="{Binding Items}"
                          SelectedItem="{Binding SelectedItem, Mode=TwoWay}"
                          Background="Transparent"
@@ -572,6 +617,21 @@
                                         BorderBrush="{StaticResource BorderBrush}"
                                         BorderThickness="1"
                                         CornerRadius="{StaticResource RadiusMd}">
+                                    <!-- T-127 review finding #6/#8: a row the user has ticked but the app is
+                                         still excluding now carries visual weight, not just one more line of
+                                         muted grey text. Without this, N ticked checkboxes sit above a
+                                         "Run bulk cut (0)" with nothing saying none of them will run. -->
+                                    <Border.Style>
+                                        <Style TargetType="Border">
+                                            <Setter Property="Opacity" Value="1" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding IsExcludedDespiteBeingChecked}" Value="True">
+                                                    <Setter Property="Opacity" Value="0.55" />
+                                                    <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Border.Style>
                                     <DockPanel LastChildFill="True">
 
                                         <!-- ===== T-116: stable apply-to-all + remove action cluster =====
@@ -634,12 +694,16 @@
                                             <ColumnDefinition Width="Auto" />   <!-- 5: per-row state chip -->
                                         </Grid.ColumnDefinitions>
 
-                                        <!-- Row-in-batch checkbox -->
+                                        <!-- Row-in-batch checkbox. T-127: binds to the user's INTENT, not the
+                                             computed eligibility. Binding it to IsEnabled conflated the two,
+                                             so a freshly imported (no-op) row read unticked while the intent
+                                             was already true and the click could not move it. -->
                                         <CheckBox Grid.Column="0"
                                                   VerticalAlignment="Center"
                                                   Margin="0,0,8,0"
-                                                  IsChecked="{Binding IsEnabled, Mode=TwoWay}"
-                                                  ToolTip="Include this video in the batch" />
+                                                  IsChecked="{Binding IsCheckedByUser, Mode=TwoWay}"
+                                                  IsEnabled="{Binding DataContext.CanChangeSelection, RelativeSource={RelativeSource AncestorType=ListBox}}"
+                                                  ToolTip="Include this video in the batch. Also makes it a target for Apply to all / Apply profile." />
 
                                         <!-- Name + keep-line + warning -->
                                         <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,8,0">
@@ -667,6 +731,17 @@
                                                        FontSize="{StaticResource FontSizeSmall}"
                                                        Foreground="{StaticResource TextMutedBrush}"
                                                        Visibility="{Binding Warning, Converter={StaticResource NullToCollapsed}}" />
+
+                                            <!-- T-127: a row the user has TICKED but the app is still excluding
+                                                 says so here. Without this the checkbox reads "in the batch"
+                                                 while "Run bulk cut (N)" silently does not count it. -->
+                                            <TextBlock Text="{Binding ExclusionReason}"
+                                                       Margin="0,2,0,0"
+                                                       TextWrapping="Wrap"
+                                                       FontSize="{StaticResource FontSizeSmall}"
+                                                       FontStyle="Italic"
+                                                       Foreground="{StaticResource TextMutedBrush}"
+                                                       Visibility="{Binding ExclusionReason, Converter={StaticResource NullToCollapsed}}" />
                                         </StackPanel>
 
                                         <!-- The view-only dual-handle scrub bar -->
@@ -787,7 +862,8 @@
                 </ListBox>
 
                 <!-- Empty state (Join-style hint + gold/blue legend) — shown while there are no rows. -->
-                <Border IsHitTestVisible="False"
+                <Border Grid.Row="1"
+                        IsHitTestVisible="False"
                         Background="Transparent"
                         Visibility="{Binding Items.Count, Converter={StaticResource EmptyCountToVisible}}">
                     <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
