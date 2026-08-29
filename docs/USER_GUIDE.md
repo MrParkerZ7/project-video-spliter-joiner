@@ -219,8 +219,10 @@ scope for v1.
 The Bulk Cut screen **trims the intro — and optionally the outro — off many videos at once**, keeping
 the middle of each. It's built for the repetitive case: a folder of episodes with the same opening
 titles (and maybe the same end card) you want stripped in one pass. Every trim is the same lossless
-stream-copy, keyframe-snapped cut as the Split screen — just applied to a whole list — and **your
-original files are never touched**: each trim is written to a **new** `_trimmed` file beside its source.
+stream-copy, keyframe-snapped cut as the Split screen — just applied to a whole list — and **by
+default your original files are never touched**: each trim is written to a **new** `_trimmed` file beside
+its source. (If you would rather the trims take their place, there is an opt-in
+[Replace originals](#replacing-the-originals) mode.)
 
 A **preview pane shares the tab with the list**: select any row and it plays there, so you can watch a
 video and set its cut points by eye — then save a cut you like as a **reusable profile** and apply it
@@ -261,14 +263,24 @@ The Bulk tab **remembers its own split position per layout**, independent of the
    (blue-ringed) — so you can confirm a cut by eye without opening the preview. They **update as you drag**
    each handle (a beat behind, once the cut settles), and show a muted placeholder while a frame loads or
    if it can't be read. A row whose handles leave nothing meaningful to keep is marked invalid and excluded.
-4. **Apply cut points to all (optional).** Set one row the way you want, then click the **⧉ "all"** button
-   on that row to **apply its cut points to every other row** so you don't mark each by hand (it sits with
+4. **Choose which videos run — the row checkboxes.** Every row carries a **checkbox** at its left edge,
+   and every video you add starts **ticked**. Above the list, **Select all** / **Select none** tick or
+   untick the whole list in one click, with the same running total the Run button shows
+   (`Run bulk cut (3)`) sitting beside them. Ticking is a statement of *intent* and it sticks: tick a row
+   before you have marked any cut on it and it stays ticked, joining the batch the moment it has a real
+   cut to make. Unticked rows are simply skipped by the run. **Ticked rows are also what the two "apply"
+   gestures write to** — the per-row **⧉ "all"** button (step 5) and the profile **Apply → all** (step 6)
+   both target every ticked row. Worth knowing before you reach for it: **Select all** therefore also
+   widens what those gestures overwrite, so if you only mean to re-cut a few rows, untick the rest first.
+   (The two buttons and the row checkboxes are unavailable while a batch is running.)
+5. **Apply cut points to all (optional).** Set one row the way you want, then click the **⧉ "all"** button
+   on that row to **apply its cut points to every other ticked row** so you don't mark each by hand (it sits with
    the row's remove **✕** in the action cluster at the row's right edge, reachable in both layout modes). The intro-end copies as an absolute time from the
    start, but **the outro is measured from the *end* of each file** — so a set of episodes of *different
    lengths* still line up (you trim the same amount off every tail, not to the same absolute timestamp).
    If a copied cut doesn't fit a shorter video, that row is **flagged for you to fix**, never silently
    dropped.
-5. **Save a cut once and reuse it — cut profiles (optional).** Once a row's intro (and optional outro)
+6. **Save a cut once and reuse it — cut profiles (optional).** Once a row's intro (and optional outro)
    are set the way you want, save them as a **named profile** and reuse them on any list later — handy
    when a series always has the same-length opening titles and end card. The profile controls are grouped
    into a bordered **"Profiles" card** — a thumbnail picker, a **Save current as…** button, a paired
@@ -292,19 +304,73 @@ The Bulk tab **remembers its own split position per layout**, independent of the
      under the card — e.g. *"Applied to 8 row(s) · 1 now invalid (see the red rows)"* — never silently
      dropped.
    - **Delete** removes the selected profile.
-6. **Run.** Click **Run bulk cut** (the button shows how many rows will run). The videos are trimmed
+7. **Run.** Click **Run bulk cut** (the button shows how many rows will run; if it counts fewer than you
+   ticked, see [Why a ticked video isn't counted](#why-a-ticked-video-isnt-counted)). The videos are trimmed
    **one after another**, with each row's progress plus an overall bar on the **Windows taskbar and the
    window title**. **One bad row never stops the batch** — it's recorded and the run moves on, and at the
    end any failures are offered for a **Retry failed** pass. **Cancel** stops before the next file: every
    already-finished trim is kept, and only the one in progress is rolled back (you never get a
    half-written file).
-7. **Output.** Each trim is written as `<name>_trimmed<ext>` in the **same folder as its source** (e.g.
-   `episode1.mkv` → `episode1_trimmed.mkv`). **The original is never modified.** If a `_trimmed` file
-   already exists, the app **auto-suffixes** the new one (`_trimmed_2`, `_trimmed_3`, …) so nothing is
-   ever clobbered — unless you tick **Overwrite**, which replaces the existing output in place. (Even
-   then, the source file itself is never a write target.)
+8. **Output.** Each trim is written as `<name>_trimmed<ext>` in the **same folder as its source** (e.g.
+   `episode1.mkv` → `episode1_trimmed.mkv`). **The original is never modified** unless you deliberately
+   turn on [Replace originals](#replacing-the-originals). If a `_trimmed` file already exists, the app
+   **auto-suffixes** the new one (`_trimmed_2`, `_trimmed_3`, …) so nothing is ever clobbered — unless
+   you tick **Overwrite**, which replaces the existing output in place. (Even then, the source file
+   itself is never a write target.)
 
 Press **Clear all** (when no run is in progress) to empty the list and start a fresh set.
+
+### Why a ticked video isn't counted
+
+The **Run bulk cut (N)** button counts the rows that are **both ticked and ready to cut** — so it is
+perfectly normal, right after adding files, to see every box ticked and the button still reading **(0)**.
+A row you have ticked that the app is nonetheless not counting **dims**, and a short italic line under
+its name says why:
+
+- **"nothing to trim yet — set an intro or outro"** — the row's cut points would keep the whole file
+  (the intro-end still sits at the very start, and there is no outro or the outro sits at the very end).
+  This is the normal state of a video you just added. Drag the gold intro-end handle to where the intro
+  ends, or add an outro, and the row counts itself in.
+- **"intro and outro are too close — keep at least N s"** — both handles are inside the file, but they
+  leave too little in the middle to be worth writing. The threshold shown is that file's own minimum:
+  one second, or the average gap between its keyframes when that gap is longer. Move the handles apart.
+- **"cut is outside the video"** — a handle has ended up past the end of the file, which usually means a
+  copied cut (apply-to-all, or a profile) did not fit this shorter video. Re-set the handle on this row.
+- **"can't read this file"** — the file could not be read at all, so there is nothing this screen can do
+  with it; remove the row.
+
+A row still running its background keyframe scan is **not** excluded and shows no explanation — it is
+simply not ready yet. The Run button stays greyed until every ticked row has finished scanning.
+
+### Replacing the originals
+
+By default a batch writes new `_trimmed` files and leaves your sources alone. Tick **⚠ Replace originals**
+in the footer if you would rather the trimmed result **take each original's place** — same folder, same
+name, nothing to tidy up afterwards. It is deliberately marked in red: it is the one Bulk Cut option that
+changes files you already have.
+
+With it on:
+
+- The note beside it changes to **"Output → REPLACES each original file · originals go to the Recycle
+  Bin"**, so the screen can never contradict what is about to happen, and **Overwrite existing output**
+  greys out (there is no separate output file left for it to be about).
+- Pressing Run first raises a **counted confirmation** — *"This will REPLACE 8 original files with the
+  trimmed result…"* — which opens on **No**. Declining runs nothing at all; not one file is touched.
+- The preview closes as the batch starts, so the file being replaced is not held open.
+- **Each replaced original is sent to the Recycle Bin**, so it stays restorable — after the batch, and
+  after you close the app — if a cut turns out wrong. (If it cannot be binned for some reason, the
+  original is left beside the new file with a `.vsj-original` suffix — `episode1.mkv.vsj-original` —
+  rather than being destroyed.)
+- **A failure leaves the original alone.** Every trim is written to a temporary file first and only takes
+  the original's place once the whole file has been written and checked. A row that fails, and a batch
+  you cancel, leave their sources exactly as they were.
+
+**Exact cut and Replace originals do not combine.** If both are on, the row is cut **losslessly** (to the
+nearest keyframe) and says so on the row: *"exact cut unavailable (replacing originals) — cut snapped to
+the nearest keyframe"*. Replacing an original is only safe because the new file is written and checked
+before anything is overwritten, and the old file is kept until the swap succeeds; the exact-cut path does
+not yet go through that machinery, so it is not allowed to write over your source. Turn Replace originals
+off if you need the cut to land exactly where you set it.
 
 ## Progress, cancel, and errors
 

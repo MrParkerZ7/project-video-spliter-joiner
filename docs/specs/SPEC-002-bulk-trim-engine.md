@@ -250,8 +250,17 @@ preview player, and cut profiles (G-037) — those are app-layer specs.
   resolution + source safety (I19–I23, I33–I39), the batch disk pre-flight (I24–I26), cancel (I17), failure
   isolation (I16), and ledger completeness (I27–I32) all apply identically to `Exact` and `Lossless` rows.
 - **I53** — On the Exact route the produced file is put in place by `SmartCutEngine`'s own delete-then-move
-  (`MoveIntoPlace`), not by `ReplaceOriginalInPlace` — so I42–I44's backup + disposer guarantees describe the
+  (`MoveIntoPlace`), not by `ReplaceOriginalInPlace` — so I42-I44's backup + disposer guarantees describe the
   **lossless** route into a `ReplaceOriginal` destination.
+- **I54** — Because of I53, `CutPrecision.Exact` is **refused** when `Output == ReplaceOriginal`: the row
+  takes the lossless path and the smart cutter is never handed a destination that is its own source. Under
+  `ReplaceOriginal` the resolved destination IS the input (I40), and `MoveIntoPlace` deletes its destination
+  before moving — which would hard-delete the user's original with no backup, no disposer and no
+  restore-on-failure, and lose the file outright if the move then failed.
+- **I55** — The I54 refusal is **announced, never silent**: the row carries
+  `"exact cut unavailable (replacing originals) - cut snapped to the nearest keyframe"`, reusing I51's
+  fallback wording, because the user asked for exact cutting and did not get it. The refusal is scoped to
+  `ReplaceOriginal` — an ordinary Exact row writing beside its source is unaffected.
 
 ## Links
 - Design: D-004 (`docs/design/D-004/README.md`, `docs/design/D-004/core-flow.md`)

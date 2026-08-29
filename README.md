@@ -64,6 +64,50 @@ never a silent window.
 - **Join** compatible clips head-to-tail. A compatibility pre-flight compares codec, resolution,
   pixel format, time base, and audio layout; an incompatible set is **refused with a named reason**
   rather than producing a broken file. v1 never re-encodes to force a fit.
+- **Bulk Cut — trim the same intro (and optional outro) off many videos in one run.** A third screen
+  beside Split and Join: add or drop a batch of files, mark where the intro ends on each one (and, if
+  you want, where the outro starts), then one Run trims them all, keeping only the middle of each file.
+  It is the same lossless stream copy — each result lands beside its source with a `_trimmed` suffix,
+  originals are kept, and an existing output is not overwritten by default (the name gains `_2`, `_3`,
+  … instead). Files are cut one at a time and a failure stays on its own row: the rest of the batch
+  still runs, the failures are listed with their errors and a **Retry failed** button, and cancelling
+  keeps everything already finished. A batch that clearly will not fit on the output drive is stopped
+  before the first file is written.
+- **One shared preview for the whole batch** — click a row and it opens in the Bulk Cut screen's own
+  player (the same transport, scrubbing, skips and hover-thumbnails as Split); **"Set intro-end here"**
+  and **"Set outro-start here"** then write that row's cut from the playhead. Each row shows the time
+  you asked for plus a small `→ 00:04.0 (−1.0s)` note saying where the cut actually landed on the
+  keyframe grid — your typed time is never rewritten to the snapped one — and reads `→ snapping…`
+  while that file's keyframe scan is still running. Rows also carry a frame preview at each cut point,
+  and the scans run a few files at a time in the background so a long list stays usable.
+- **Select all / Select none, and rows that explain themselves** — tick the videos you want in the
+  batch; ticking records your intention and sticks even before you have set a cut on that file. A
+  ticked video the app cannot include yet stays ticked, dims, and says why on the row ("nothing to
+  trim yet — set an intro or outro", "intro and outro are too close", "can't read this file") instead
+  of quietly dropping out of the run. Ticked rows are also what **Apply to all** and **Apply profile**
+  write to, so selecting everything widens what those overwrite as well.
+- **Copy one cut across the batch, or save it as a reusable profile** — the ⧉ **all** button on a row
+  copies its intro/outro to every ticked row and reports how many rows it applied to and how many that
+  left invalid. A cut worth keeping can be **saved as a named profile** with a picture (grabbed from
+  the intro-end frame on save, or choose your own with **Thumbnail…**) and applied later to one row or
+  to every ticked row. A profile's outro is measured **from the end of the file**, so "drop the last 12
+  seconds of credits" lands correctly on a 22-minute and a 24-minute episode alike. Profiles persist in
+  `settings.json`; their pictures live in `%LOCALAPPDATA%/VideoSplitJoiner/profile-thumbs/`.
+- **Exact cut (optional)** — a bulk cut normally snaps to the nearest keyframe like everything else in
+  the app. Tick **Exact cut** and each cut lands exactly where you set it instead: only the short
+  fragment between your cut point and the next keyframe is re-encoded (roughly a second of video), and
+  the rest of the file is still copied untouched. A source whose codecs cannot be reproduced falls back
+  to the ordinary lossless cut and says so on the row rather than guessing. **Treat this one as new:**
+  it is covered by unit tests only and has not yet been proven against real media, so check the first
+  result before trusting it with a large batch. Lossless stream copy remains the default and the point
+  of the app.
+- **Replace originals (optional, destructive)** — off by default. Turn it on and each trimmed result is
+  written over its source file instead of beside it, with the replaced original sent to the **Recycle
+  Bin** so it stays recoverable. The path there is deliberately careful: the trim is produced to a
+  temporary file first, every produced part is verified before a single original is touched, and the
+  swap keeps a backup throughout so your video never exists nowhere. You are asked to confirm with the
+  exact number of files at stake, and that prompt defaults to No. A run that fails or is cancelled
+  leaves every original exactly as it was.
 - **Drag and drop** — drag video files from Explorer onto the **Split** screen to load (the first
   file) or onto the **Join** screen to add them all in drop order, and **drag Join clips to reorder**
   them (same effect as the Up/Down buttons). Non-video files are ignored.

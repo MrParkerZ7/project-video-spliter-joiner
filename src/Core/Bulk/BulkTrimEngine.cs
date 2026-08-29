@@ -173,7 +173,22 @@ public sealed class BulkTrimEngine : IBulkTrimEngine
                 // T-125: exact cutting honours the requested time by re-encoding ~1 GOP. A source whose
                 // codecs cannot be reproduced (or a cut already on a keyframe) reports FellBack, and the
                 // row silently takes the ordinary lossless path instead of risking a bad file.
-                if (opts.Precision == CutPrecision.Exact && _smartCut is not null)
+                // SAFETY (2026-08-30): exact cutting is NOT available when the destination is the user's
+                // original. SmartCutEngine finishes with MoveIntoPlace, which File.Delete()s the
+                // destination before moving the result in — and under ReplaceOriginal the destination IS
+                // the source. That would hard-delete the original with no backup, no Recycle Bin and no
+                // restore-on-failure, bypassing the entire verify-then-replace guarantee the lossless path
+                // provides (SplitEngine.ReplaceOriginalInPlace). Until the exact path is routed through
+                // that same machinery, replace-originals falls back to the lossless cut and SAYS SO --
+                // reusing the established FellBack idiom rather than silently doing the dangerous thing.
+                if (opts.Precision == CutPrecision.Exact && opts.Output == OutputMode.ReplaceOriginal)
+                {
+                    rowWarnings = new[]
+                    {
+                        "exact cut unavailable (replacing originals) - cut snapped to the nearest keyframe",
+                    };
+                }
+                else if (opts.Precision == CutPrecision.Exact && _smartCut is not null)
                 {
                     var exact = await _smartCut
                         .CutAsync(item.InputPath, item.IntroEnd, item.OutroStart, effective[i], rowProgress, ct)

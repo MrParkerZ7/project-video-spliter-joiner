@@ -9,8 +9,8 @@ sources:
   - src/App/ViewModels/EtaEstimator.cs
   - src/App/ViewModels/OperationState.cs
   - src/Core/Ffmpeg/OperationStatus.cs
-serves-goal: [G-013]
-updated: 2026-08-22
+serves-goal: [G-013, G-044]
+updated: 2026-08-30
 ---
 
 ## What
@@ -23,7 +23,10 @@ human-readable `StatusText` that tracks the engine's actual stage (Preparing →
 Finalizing → Done), a friendly result summary on success, and a live "~40s left" ETA computed by
 `EtaEstimator` from real elapsed time versus reported progress. The ETA converges to a decreasing
 number even on a sparse `-c copy` pass (via a seeded duration-based fallback) instead of reading
-"estimating…" for the whole run, and shows nothing at all for a genuinely instant op.
+"estimating…" for the whole run, and shows nothing at all for a genuinely instant op. Beside the run
+lifecycle it exposes one out-of-band seam, `ReportFailure`, so a deliberate one-shot gesture that is
+NOT a tracked run (the Bulk Cut profile-thumbnail upload) can put a friendly failure on the very same
+error surface a failed run uses instead of failing silently.
 
 ## Why
 Users reported that a fast `-c copy` split "looks stuck": ffmpeg's `time=` output is sparse or
@@ -38,12 +41,14 @@ present identical, correct progress feedback — and it stays verifiable off the
 **In:** the `OperationViewModel` lifecycle state machine and its `Run*` entry points; `Progress` /
 `IsIndeterminate`; `StatusText` and staged-status formatting (`FormatStatus`); `EtaText` wiring;
 `TaskbarProgressState`; `CancelCommand` / `CanCancel`; `ResultSummary` / `IsCompleted` /
-`IsCancelled`; `SeedEstimatedDuration`; and the full `EtaEstimator` (EMA math, `MinUsableFraction`,
-duration-based fallback, `Reset`, `FormatEta`).
+`IsCancelled`; `SeedEstimatedDuration`; the out-of-band `ReportFailure` entry point (T-129) and its
+own `State` rules; and the full `EtaEstimator` (EMA math, `MinUsableFraction`, duration-based
+fallback, `Reset`, `FormatEta`).
 **Out:** the concrete per-engine stage sequences and per-part progress emitted by `SplitEngine` /
 `JoinEngine` (their own specs); `PartProgress` per-part reporting (the T-069 channel is only noted
 here as additive, not specified); `UserFacingError` mapping content and the error-log affordance
-(the error/diagnostics spec); the XAML bindings and converters that render these properties.
+(the error/diagnostics spec); the callers of `ReportFailure` and the wording they compose (SPEC-007 —
+the Bulk Cut profile-thumbnail upload); the XAML bindings and converters that render these properties.
 
 ## Current behavior & invariants
 
@@ -103,9 +108,15 @@ here as additive, not specified); `UserFacingError` mapping content and the erro
 - **I39** — `FormatEta` granularity: under a minute → `"~Ns left"`; a minute or more → `"~Xm Ys left"`, with a whole-"0s" tail dropped to `"~Xm left"`. *(`FormatEta`)*
 - **I40** — `FormatEta`: a sub-second remaining rounds up to `"~1s left"`, never `"~0s"`. *(`FormatEta`)*
 
+**Out-of-band failure reporting — `ReportFailure` (T-129)**
+- **I41** — `ReportFailure(error)` with a non-null error and **no run in flight** puts that failure on the same surface a failed run uses: `Error` becomes it, `ResultSummary` is cleared, and `State = Failed` — so the Completed / Cancelled surfaces drop (I18) and the taskbar goes red (I13). A deliberate gesture that is not a tracked run therefore never fails silently, and a stale green "done" line never sits beside a fresh red error. *(`ReportFailure`)*
+- **I42** — `ReportFailure(error)` **while a run is in flight** (`IsRunning`) sets `Error` and nothing else: `State` stays `Running`, `ResultSummary` is left alone, and the run keeps its own lifecycle (`CanCancel` still true) and still ends in its own Completed / Cancelled / Failed — a side gesture cannot derail it. The run's own end does not clear that error either: it survives onto the run's terminal surface until the next `BeginRun` or `Reset` clears it (I2 / I9). *(`ReportFailure` `IsRunning` early return; `Complete` / `EndRun` leave `Error` untouched)*
+- **I43** — `ReportFailure(null)` **retracts** a previously reported failure: `Error` goes back to null, and a `State` of `Failed` returns to `Idle` so no red taskbar lingers with nothing left to explain it (I13 / I14). Every other state (`Idle` / `Completed` / `Cancelled`, or a run in flight) is left exactly as it is, and a `ResultSummary` an earlier report cleared is **not** restored. *(`ReportFailure` null branch)*
+- **I44** — `ReportFailure` starts no run and ends none — it is purely additive: `Progress`, `StatusText`, `EtaText`, the stopwatch, the estimator and the run's `CancellationTokenSource` are all left as they were (neither `BeginRun` nor `EndRun` runs). Reporting from a fresh/idle VM therefore leaves `Progress == 0`, `EtaText == null` and `CanCancel == false`; reporting after a completed run leaves that run's `Progress == 1` in place. *(`ReportFailure`)*
+
 ## Links
 - Design: —
-- Goals: G-013 (staged status Preparing→…→Done)
-- Related specs: — (adjacent: split-engine, join-engine, per-part progress, error/diagnostics specs)
+- Goals: G-013 (staged status Preparing→…→Done) · G-044 (a failed thumbnail upload reaches the screen — `ReportFailure`)
+- Related specs: SPEC-007 (cut-profiles — the profile-thumbnail upload that calls `ReportFailure` and composes its messages) (adjacent: split-engine, join-engine, per-part progress, error/diagnostics specs)
 - Key code: `src/App/ViewModels/OperationViewModel.cs`, `src/App/ViewModels/EtaEstimator.cs`, `src/App/ViewModels/OperationState.cs`, `src/Core/Ffmpeg/OperationStatus.cs`
-- Tests: `tests/App.Tests/OperationViewModelTests.cs`, `tests/App.Tests/EtaEstimatorTests.cs`, `tests/App.Tests/TaskbarProgressStateTests.cs`, `tests/App.Tests/OperationLifecycleSurfaceTests.cs`, `tests/App.Tests/OperationProgressVisibilityTests.cs`, `tests/App.Tests/StagedStatusWiringTests.cs`
+- Tests: `tests/App.Tests/OperationViewModelTests.cs`, `tests/App.Tests/EtaEstimatorTests.cs`, `tests/App.Tests/TaskbarProgressStateTests.cs`, `tests/App.Tests/OperationLifecycleSurfaceTests.cs`, `tests/App.Tests/OperationProgressVisibilityTests.cs`, `tests/App.Tests/StagedStatusWiringTests.cs`, `tests/App.Tests/BulkCutProfileThumbnailTests.cs` (`ReportFailure`, reached only through SPEC-007's upload path — no direct test)

@@ -227,6 +227,14 @@ re-encode branch.
   run leaves no partial output. Progress is coarse by nature: 0.5 after the head, 0.8 after the tail,
   1.0 at the end.
 
+**Verified against fakes only — never against real media.** The planner, the args builder, and the engine's
+three-pass orchestration are covered by unit tests (`SmartCutTests`, `CutPrecisionRoutingTests`,
+`ExactCutModeTests`) driven by a fake `IFfmpegRunner` and probe results supplied by the test. There is
+**no real-media integration test** for this path — unlike split and join, which have
+`SplitEngineIntegrationTests` / `MpegtsSplitIntegrationTests` / `JoinEngineIntegrationTests` running real
+ffmpeg. What is proven is the decision logic and the emitted argument tokens; that a genuinely re-encoded
+head concatenates cleanly onto a genuinely copied tail is **not** demonstrated by the suite.
+
 ### Injectable I/O seams — `IDiskSpaceProbe` / `IOriginalDisposer` (`Core/Io/`)
 
 Two small interfaces exist so the engines' riskiest side-effects are deterministically testable — and,
@@ -351,27 +359,36 @@ translating the planner's both-collapse `SplitException` into the distinct `NoOp
 Both are **WPF-free** (`ObservableObject` + Core/BCL types), mirroring `JoinViewModel` / `JoinItemViewModel`:
 
 - **`BulkCutViewModel`** — the tab VM: an `ObservableCollection<BulkItemViewModel>` in add order, the
-  apply-to-all gesture, and **`RunBatchAsync`**, which builds each runnable row's `BulkTrimItem` and
-  **delegates the whole batch** to `IBulkTrimEngine.RunAsync` — it owns **no** batch loop, collision
-  resolution, disk pre-flight, or cancel-sweep (all inherited from the engine). It fans the engine's
-  progress back onto the rows and holds the **aggregate `OperationViewModel`** (see below). It owns and
-  shares a single **`SemaphoreSlim(3)`** scan gate into every row, so adding N videos fires at most three
+  apply-to-all gesture, **Select all / Select none** (`SetAllItemsChecked`, which writes every row's
+  *intent* and never the computed eligibility, gated by `CanChangeSelection`), and **`RunBatchAsync`**,
+  which builds each runnable row's `BulkTrimItem` and **delegates the whole batch** to
+  `IBulkTrimEngine.RunAsync` — it owns **no** batch loop, collision resolution, disk pre-flight, or
+  cancel-sweep (all inherited from the engine). It fans the engine's progress back onto the rows and
+  holds the **aggregate `OperationViewModel`** (see below). It owns and shares a single
+  **`SemaphoreSlim(3)`** scan gate into every row, so adding N videos fires at most three
   concurrent keyframe scans (the thundering-herd throttle). `CanRunBatch` gates on every enabled row being
   keyframes-ready, so a request is never built on un-snapped identity times.
 - **`BulkItemViewModel`** — one row: the Join-item shape (path / duration / size), **two
   `CutMarkerViewModel` handles** (intro-end required, outro-start optional/nullable — both created
   optimistically `snapPending` and resolved when the row's background scan lands), a per-file keyframe
-  scan through the shared gate, computed validity (`IsValidCut` / `IsNoOpTrim` / `RowState`), its **own**
-  per-row `OperationViewModel`, and the request builders (`BuildRequest` for the preview/validity cross-
-  check via `KeptSegmentSelector`, `BuildBulkTrimItem` for the batch). Output path is the deterministic
-  `<dir>/<name>_trimmed<ext>` until a Done ledger entry supplies the collision-resolved written path.
+  scan through the shared gate, the intent/eligibility pair (`IsCheckedByUser` / `IsEnabled` — see
+  *MVVM / composition-root shape*), computed validity (`IsValidCut` / `IsNoOpTrim` / `RowState`)
+  measured against the time the run will **actually** cut at (`EffectiveIntroEnd` /
+  `EffectiveOutroStart` — the snapped time under `Lossless`, the **requested** time under `Exact`, since
+  that is what each path honours), its **own** per-row `OperationViewModel`, and the request builders
+  (`BuildRequest` for the preview/validity cross-check via `KeptSegmentSelector`, `BuildBulkTrimItem`
+  for the batch). Output path is the deterministic `<dir>/<name>_trimmed<ext>` until a Done ledger entry
+  supplies the collision-resolved written path.
 
 **Apply-to-all — outro measured from END.** `ApplyToAll(source)` copies the source row's requested
 cut points to every other checked, keyframes-ready row: the intro-end as an **absolute time-from-start**,
 the outro as a **time-from-end** (`Duration − outroStart`) re-anchored on each target's own duration, so
 same-series episodes of *different* lengths align. Each target **re-snaps against its own keyframes and
 re-validates**; rows the copy invalidated are returned in an `ApplyToAllReport` and **reported, never
-silently dropped**.
+silently dropped**. "Checked" here means the user's raw **intent** (`IsCheckedByUser`), not the computed
+`IsEnabled` — so an apply-to-all (or an applied profile) can rescue a row that is currently excluded for
+having no cut set yet. The accepted cost of one flag answering two questions is that **Select all** widens
+the batch *and* widens what the next apply-to-all overwrites.
 
 **Aggregate-vs-per-row operation pattern.** Each row has its own `OperationViewModel` (per-row state /
 progress / error), but the Windows taskbar button and window title bind exactly **one**
@@ -823,6 +840,21 @@ on WPF's heuristic, weak-referenced global requery. Previously `CanExecuteChange
 `CommandManager.RequerySuggested`, so a subscribed handler saw zero direct callbacks and a command's
 enabled-state could go stale after first use — the app-wide fix behind the Bulk "apply-to-all re-fires
 every time" behavior (SPEC-011). The automatic input-driven and cross-command requery is fully preserved.
+
+**User INTENT and computed ELIGIBILITY are separate properties (G-043 / T-127).** Wherever a control lets
+the user state what they want *and* the app also has an opinion about whether that is currently possible,
+those are **two** members: a stored, always-notifying **intent** — the only one a two-way binding may bind
+to — and a **read-only computed eligibility** derived from it, which **every mutator of its inputs must
+re-raise**. Collapsing them into one read/write property is a silent trap: the setter's `!=` guard compares
+the incoming value against the stored *intent* while the getter answers *eligibility*, so writing back the
+value the getter itself just reported is swallowed — no `PropertyChanged` is raised, nothing pushes the
+getter's answer to the target, and the control is left rendering one state while the view model believes
+another. `BulkItemViewModel` is the shipped instance: the row checkbox binds two-way to `IsCheckedByUser`
+alone, `IsEnabled` (`IsCheckedByUser && !IsAutoDisabled`) is read-only and is what the batch and
+`CanRunBatch` filter on, and every path that can move an eligibility input funnels through the single
+`RecomputeAll` that re-raises the whole derived set. Where the two legitimately disagree the VM makes the
+disagreement **visible** rather than silent — `IsExcludedDespiteBeingChecked` plus a plain-language
+`ExclusionReason` on the row.
 
 - **`MainViewModel`** is the **composition root**. Its parameterless ctor builds the real Core graph
   once — `FfmpegBinaryLocator` → `FfprobeRunner`/`FfmpegRunner` → `MediaProbe` → `SplitEngine`
