@@ -7,7 +7,11 @@ goal; `0.1.0` is the first end-to-end, shippable cut.
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-08-29
+
 ### Added
+- **Bulk Cut — Select all / Select none** (G-043): tick or untick every video in the list in one gesture,
+  matching the Split screen. Ticked rows are the ones Run cuts — and the ones Apply to all writes to.
 - **Bulk Cut — "Exact cut"** (G-042): cuts land exactly where you set them instead of snapping to the
   nearest keyframe. Only the fragment between the cut and the next keyframe is re-encoded (~1s); the
   remainder is still stream-copied. Lossless stays the default. A source whose codecs cannot be
@@ -23,7 +27,24 @@ goal; `0.1.0` is the first end-to-end, shippable cut.
 - **Bulk Cut — the cut-time field no longer overwrites your request** (G-041): clicking away from the
   IN/OUT field used to commit the displayed (snapped, 0.1s-truncated) value back over the time you set,
   and send that truncated value to the engine. Only a genuine edit commits now.
-- **Bulk Cut — coarse-keyframe warning blind spot** (G-041): a file with a mean GOP of exactly 4.0s
+- **Bulk Cut — ticking a row now works** (G-043): the row checkbox and the app's own eligibility check
+  shared one property, so every freshly imported row read as unticked while the underlying intent was
+  already set. Clicking did nothing; clicking twice silently dropped the video from the batch — it stayed
+  excluded even after you set a cut on it, and "Apply to all" skipped it. Intent and eligibility are now
+  separate: a ticked row stays ticked, and a row the app is excluding says why ("nothing to trim yet —
+  set an intro or outro") and dims instead of looking identical to a row that will run.
+- **Bulk Cut — Exact cut no longer excludes rows it can cut** (G-043): eligibility was measured against
+  the keyframe-snapped time while Exact mode cuts at the time you set. On a coarse keyframe grid a short
+  intro snapped back to zero, so the row was excluded as "nothing to trim" for a trim Exact performs
+  correctly.
+- **Cut profiles — changing a thumbnail is reachable** (G-044): the upload existed but only inside the
+  "Save current as…" popup, so re-picturing an existing profile was effectively impossible. There is now
+  a **Thumbnail…** button in the profile bar, and a failed upload reports the problem instead of quietly
+  doing nothing.
+- **Cut profiles — a failed thumbnail upload no longer destroys the old one** (G-044): the previous
+  picture was deleted before the new one was copied, so a copy that failed part-way left the profile
+  with no image at all.
+- **Bulk Cut — the coarse-keyframe warning blind spot** (G-041): a file with a mean GOP of exactly 4.0s
   produced no warning. The advisory now also reports how far a cut actually moved.
 
 ## [1.0.0] - 2026-08-26
