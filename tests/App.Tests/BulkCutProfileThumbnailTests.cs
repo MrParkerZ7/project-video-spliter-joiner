@@ -5,6 +5,7 @@ using System.Threading.Tasks;
 using FluentAssertions;
 using VideoSplitJoiner.App.Settings;
 using VideoSplitJoiner.App.ViewModels;
+using VideoSplitJoiner.Core.Profiles;
 using Xunit;
 
 namespace VideoSplitJoiner.App.Tests;
@@ -92,6 +93,9 @@ public sealed class BulkCutProfileThumbnailTests : IDisposable
 
         thumbs.GetThumbnailCallCount.Should().Be(1, "the auto-default grabbed exactly one frame");
         grabbedAt.Should().Be(row.IntroEnd.Snapped, "the default thumbnail is the row's snapped intro-end frame");
+        thumbs.Requests[0].Width.Should().Be(96,
+            "the auto-default grabs at the NAMED ProfileThumbnailWidth (96), not an arbitrary size");
+        thumbs.Requests[0].InputPath.Should().Be(row.Path, "and from the row's own source file");
 
         var saved = settings.CutProfiles.Single();
         saved.Name.Should().Be("Anime OP");
@@ -185,6 +189,38 @@ public sealed class BulkCutProfileThumbnailTests : IDisposable
         settings.CutProfiles.Single().ThumbnailPath.Should().BeNull("a missing source leaves the profile unchanged (never throws)");
     }
 
+    // SPEC-007#I66 (the null-profile / blank-path guard) — Upload_MissingImage_IsNoOp covers exactly one
+    // of the three named branches: a path to a nonexistent file, which reaches AttachThumbnail's try/catch
+    // around the store copy. The EARLIER guard (BulkCutViewModel.cs:969 — `profile is null ||
+    // string.IsNullOrWhiteSpace(imagePath)`) is never entered, and neither branch is checked against a
+    // profile that ALREADY has a thumbnail — "leaves the profile's current thumbnail untouched" is
+    // strictly stronger than "leaves it null".
+    [Fact]
+    [Trait("serves-spec", "SPEC-007")]
+    public async Task Upload_NullProfileOrBlankPath_IsNoOp_KeepsExistingThumbnail()
+    {
+        var (vm, probe, settings, _, _) = Build();
+        var row = await AddRowAsync(vm, probe, @"C:\v\ep01.mp4", 100, 2, introSeconds: 10);
+        vm.SelectedItem = row;
+        vm.SaveProfile("Series");
+        vm.UploadThumbnail(vm.SelectedProfile, MakeImage("cover.png"));
+
+        var stored = settings.CutProfiles.Single().ThumbnailPath;
+        stored.Should().NotBeNull("precondition: the profile carries a real thumbnail before the no-op calls");
+
+        ((Action)(() =>
+        {
+            vm.UploadThumbnail(null, MakeImage("other.png")); // no profile to hang the image off
+            vm.UploadThumbnail(vm.SelectedProfile, "   ");    // blank image path
+            vm.UploadThumbnail(vm.SelectedProfile, null);     // no image path at all
+        })).Should().NotThrow("upload is best-effort — a null profile / blank image is a silent no-op");
+
+        settings.CutProfiles.Single().ThumbnailPath.Should().Be(stored,
+            "a null profile / blank image leaves the EXISTING thumbnail untouched");
+        File.Exists(stored!).Should().BeTrue("the previously stored file is neither replaced nor deleted");
+        vm.SelectedProfile!.ThumbnailPath.Should().Be(stored, "and the bar's selection still points at it");
+    }
+
     // ---- Clear ------------------------------------------------------------------------------
 
     [Fact]
@@ -206,5 +242,61 @@ public sealed class BulkCutProfileThumbnailTests : IDisposable
         settings.CutProfiles.Single().ThumbnailPath.Should().BeNull("clear nulls the profile's thumbnail path");
         File.Exists(storedPath!).Should().BeFalse("clear best-effort deletes the stored thumbnail file");
         vm.SelectedProfile!.ThumbnailPath.Should().BeNull("the bar's selection reflects the cleared thumbnail");
+    }
+
+    // SPEC-007#I67 (the no-op guard) — Clear_DeletesStoredFile_AndNullsThePath covers the happy path only.
+    // The guard at BulkCutViewModel.cs:985 (`profile is null || FindPersistedProfile(...) is not {} existing`)
+    // has no assertion anywhere: clearing an unset profile, or one that was never persisted, must write
+    // nothing — in particular it must NOT upsert the unpersisted profile into settings on its way out —
+    // and must never throw.
+    [Fact]
+    [Trait("serves-spec", "SPEC-007")]
+    public void Clear_NullOrUnpersistedProfile_IsNoOp_NeverThrows()
+    {
+        var (vm, _, settings, _, _) = Build();
+
+        ((Action)(() =>
+        {
+            vm.ClearThumbnail(null);
+            vm.ClearThumbnail(new CutProfile("never-saved", TimeSpan.FromSeconds(1), null, @"C:\x.png"));
+        })).Should().NotThrow("clear is best-effort on an unset / unpersisted profile");
+
+        settings.CutProfiles.Should().BeEmpty("clearing an unset / unpersisted profile writes nothing");
+        vm.Profiles.Should().BeEmpty("and never materializes a phantom entry in the bar");
+        vm.SelectedProfile.Should().BeNull("the bar's selection is untouched by a no-op clear");
+    }
+
+    // SPEC-007#I67 (the "by the exact recorded path" half) — Clear_DeletesStoredFile_AndNullsThePath only
+    // exercises the case where BOTH delete halves address the SAME file (its path came from the store's own
+    // Save, so it already sits at the safe name). A directly-set ThumbnailPath whose filename diverges from
+    // the safe name is reachable ONLY by the DeleteByPath half (BulkCutViewModel.cs:993) — delete that line
+    // and the happy-path test still passes.
+    [Fact]
+    [Trait("serves-spec", "SPEC-007")]
+    public void Clear_AlsoDeletesADirectlySetPath_ThatDivergesFromTheSafeName()
+    {
+        var (vm, _, settings, _, store) = Build();
+
+        // (a) the safe-name file the store itself resolves for the profile...
+        var safeNameThumb = store.Save("Series", MakeImage("frame.jpg"));
+
+        // (b) ...and a hand-written thumbnail recorded DIRECTLY on the profile, whose filename deliberately
+        //     does not match the safe name (a path the UI/user set rather than one Save produced).
+        var handWritten = Path.Combine(store.Root, "hand-written-thumb.png");
+        File.WriteAllText(handWritten, "bytes");
+        Path.GetFileNameWithoutExtension(handWritten).Should().NotBe(
+            ProfileThumbnailStore.SafeFileName("Series"),
+            "precondition: the recorded path diverges from the safe-name path, so only the by-path half can reach it");
+
+        settings.SaveProfile(new CutProfile("Series", TimeSpan.FromSeconds(8), null, handWritten));
+
+        vm.ClearThumbnail(settings.CutProfiles.Single());
+
+        File.Exists(handWritten).Should().BeFalse(
+            "clear also deletes by the EXACT recorded path, covering a directly-set thumbnail the by-name half would miss");
+        File.Exists(safeNameThumb).Should().BeFalse(
+            "the by-name half still runs — both files go, not one or the other");
+        settings.CutProfiles.Single().ThumbnailPath.Should().BeNull("the profile's path is nulled either way");
+        vm.SelectedProfile!.Name.Should().Be("Series", "and the bar's selection is re-pointed at the refreshed instance");
     }
 }

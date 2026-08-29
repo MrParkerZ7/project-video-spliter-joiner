@@ -74,6 +74,25 @@ public sealed class ProfileThumbnailStoreTests : IDisposable
         stored.Should().EndWith(".png", "an unrecognized source extension falls back to .png");
     }
 
+    // SPEC-007#I43 (the "lowercased" clause) — Save_CopiesSourceIntoRoot_ReturnsStoredPath sources a
+    // "frame.jpg" whose extension is ALREADY lowercase, so NormalizeExtension's ext.ToLowerInvariant()
+    // is never observably exercised. KnownImageExtensions is an OrdinalIgnoreCase set, so an uppercase
+    // ".JPG" source IS recognized (it must NOT fall through to the .png default) — and the stored file
+    // must carry the case-FOLDED extension, so one profile resolves to one stable filename however the
+    // chosen source happened to be cased.
+    [Fact]
+    [Trait("serves-spec", "SPEC-007")]
+    public void Save_UppercaseRecognizedExtension_IsPreservedLowercased()
+    {
+        var store = new ProfileThumbnailStore(_root);
+
+        var stored = store.Save("Upper", MakeSource("FRAME.JPG"));
+
+        Path.GetExtension(stored).Should().Be(".jpg",
+            "a recognized extension is preserved LOWERCASED — neither left uppercase nor defaulted to .png");
+        File.Exists(stored).Should().BeTrue("the copy still lands under the store root");
+    }
+
     [Fact]
     [Trait("serves-spec", "SPEC-007")]
     public void Save_OverwritesPriorThumbnail_IncludingAcrossExtensionChange()

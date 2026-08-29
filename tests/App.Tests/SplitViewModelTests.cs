@@ -1073,4 +1073,68 @@ public sealed class SplitViewModelTests
         loaded.SegmentCount.Should().Be(0);
         loaded.RunLabel.Should().Be("Split", "clearing the file removes the projection → the bare label again");
     }
+
+    // SPEC-010#I21 — Segments projects from the distinct snapped marker times STRICTLY INSIDE
+    // (0, duration), plus the file duration. The general projection is pinned by
+    // Segments_MarkersAt5And10On15mClip_ProjectsThreeParts_AllSelected (interior markers only); this
+    // pins the BOUNDARY FILTER — a marker snapped to exactly 0, or to exactly the duration, is not an
+    // interior cut and must never manufacture a zero-length part.
+    [Fact]
+    [Trait("serves-spec", "SPEC-010")]
+    public async Task Segments_MarkersAtExactlyZeroAndDuration_AreNotBoundaries_OneWholePart()
+    {
+        var (vm, _) = await BuildLoaded15mAsync();
+
+        // The 1s keyframe grid runs 0..900s, so both requests snap to themselves — exactly the two
+        // excluded boundary values.
+        vm.AddMarker(TimeSpan.Zero);
+        vm.AddMarker(TimeSpan.FromMinutes(15));
+
+        vm.Markers.Should().HaveCount(2, "both markers exist in the cut list");
+        vm.Markers.Select(m => m.Snapped).Should().ContainInOrder(TimeSpan.Zero, TimeSpan.FromMinutes(15));
+
+        vm.Segments.Should().ContainSingle(
+            "boundaries at exactly 0 and exactly the duration are not interior cuts — no zero-length part");
+        vm.SegmentCount.Should().Be(1);
+        vm.Segments[0].Index.Should().Be(1);
+        vm.Segments[0].Start.Should().Be(TimeSpan.Zero);
+        vm.Segments[0].End.Should().Be(TimeSpan.FromMinutes(15));
+        vm.Segments[0].Duration.Should().Be(TimeSpan.FromMinutes(15), "the single part spans the whole clip");
+
+        // Only the boundary times are filtered — a genuine interior cut alongside them still projects.
+        vm.AddMarker(TimeSpan.FromMinutes(5));
+
+        vm.Markers.Should().HaveCount(3);
+        vm.Segments.Should().HaveCount(2, "the interior cut is the only real boundary of the three markers");
+        vm.Segments[0].Start.Should().Be(TimeSpan.Zero);
+        vm.Segments[0].End.Should().Be(TimeSpan.FromMinutes(5));
+        vm.Segments[1].Start.Should().Be(TimeSpan.FromMinutes(5));
+        vm.Segments[1].End.Should().Be(TimeSpan.FromMinutes(15));
+    }
+
+    // SPEC-010#I36 — NewMarkerPosition follows the live playhead until the user types a differing
+    // value (which pins it), and RE-ARMS following after a load OR a Clear.
+    // NewMarkerPosition_FollowsPlayhead_UntilUserTypesAnExactTime pins the follow + the pin, and
+    // NewMarkerPosition_ReFollowsPlayhead_AfterReload pins the re-arm-after-LOAD half; this pins the
+    // re-arm-after-CLEAR half — Clear resets the field to 00:00 AND re-arms follow, exactly as a load does.
+    [Fact]
+    [Trait("serves-spec", "SPEC-010")]
+    public async Task NewMarkerPosition_ReFollowsPlayhead_AfterClear()
+    {
+        var (vm, player) = await BuildWithMovablePlayerAsync();
+
+        vm.NewMarkerPosition = TimeSpan.FromSeconds(200); // user types an exact time → follow turns off
+        player.MoveTo(TimeSpan.FromSeconds(60));
+        vm.NewMarkerPosition.Should().Be(TimeSpan.FromSeconds(200),
+            "precondition: the field is pinned by the user's typed value");
+
+        vm.ClearCommand.Execute(null);
+
+        vm.NewMarkerPosition.Should().Be(TimeSpan.Zero, "Clear resets the field back to the start");
+
+        player.MoveTo(TimeSpan.FromSeconds(15));
+
+        vm.NewMarkerPosition.Should().Be(TimeSpan.FromSeconds(15),
+            "Clear re-armed playhead-follow, exactly as a load does");
+    }
 }

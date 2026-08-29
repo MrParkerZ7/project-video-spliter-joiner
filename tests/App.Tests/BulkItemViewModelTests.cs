@@ -169,6 +169,25 @@ public sealed class BulkItemViewModelTests
         req.SelectedSegmentIndices.Should().BeEquivalentTo(new[] { 2 });
     }
 
+    // SPEC-011#I18 — BuildRequest REFUSES to run before the file is probed: without a Duration there is
+    // no plan to resolve the kept index against, so it throws rather than inventing one.
+    [Fact]
+    [Trait("serves-spec", "SPEC-011")]
+    public void BuildRequest_BeforeTheFileIsProbed_Throws()
+    {
+        var probe = new BulkFakeProbe();
+        var row = new BulkItemViewModel(Path60, probe, Gate()); // constructed only — never probed, never scanned
+
+        row.Duration.Should().BeNull("precondition: the row has no probed duration yet");
+
+        Action act = () => _ = row.BuildRequest();
+
+        act.Should().Throw<InvalidOperationException>()
+            .WithMessage(
+                "*before the file is probed*",
+                "the kept-segment index cannot be resolved without the file's duration");
+    }
+
     [Fact]
     public async Task BuildBulkTrimItem_CarriesCutsAndTagsTheRow()
     {

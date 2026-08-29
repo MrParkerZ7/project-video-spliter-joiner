@@ -6,6 +6,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using FluentAssertions;
 using VideoSplitJoiner.Core.Bulk;
+using VideoSplitJoiner.Core.Errors;
 using VideoSplitJoiner.Core.Split;
 using Xunit;
 
@@ -46,6 +47,12 @@ public sealed class CutPrecisionRoutingTests
         /// <summary>Per-call result factory; default = a successful exact cut.</summary>
         public Func<string, SmartCutResult>? ResultFactory { get; set; }
 
+        /// <summary>
+        /// Optional passthrough invoked with the per-row reporter the batch handed down, so a test can
+        /// prove an exact row reports through the SAME channel a lossless row uses (SPEC-002 I52).
+        /// </summary>
+        public Action<IProgress<double>?>? ProgressAction { get; set; }
+
         public Task<SmartCutResult> CutAsync(
             string inputPath, TimeSpan start, TimeSpan? end, string outputPath,
             IProgress<double>? progress = null, CancellationToken ct = default)
@@ -54,6 +61,7 @@ public sealed class CutPrecisionRoutingTests
             Inputs.Add(inputPath);
             Outputs.Add(outputPath);
             Starts.Add(start);
+            ProgressAction?.Invoke(progress);
 
             var result = ResultFactory?.Invoke(inputPath)
                 ?? new SmartCutResult(outputPath, SmartCutStrategy.HeadReencode, false, null, TimeSpan.FromSeconds(3));
@@ -61,8 +69,7 @@ public sealed class CutPrecisionRoutingTests
         }
     }
 
-    private static async Task<BatchResult> RunAsync(
-        string dir, BulkTrimOptions opts, FakeSplitEngine split, FakeSmartCutEngine? smart, params string[] names)
+    private static List<BulkTrimItem> BuildItems(string dir, params string[] names)
     {
         var items = new List<BulkTrimItem>();
         foreach (var n in names)
@@ -72,9 +79,25 @@ public sealed class CutPrecisionRoutingTests
             items.Add(new BulkTrimItem(input, TimeSpan.FromSeconds(5), null, Path.Combine(dir, "out_" + n), Tag: n));
         }
 
+        return items;
+    }
+
+    private static async Task<BatchResult> RunAsync(
+        string dir, BulkTrimOptions opts, FakeSplitEngine split, FakeSmartCutEngine? smart, params string[] names)
+    {
         var engine = new BulkTrimEngine(
             split, new FakeRequestBuilder(), new FakeDiskSpaceProbe(long.MaxValue), smart);
-        return await engine.RunAsync(items, opts);
+        return await engine.RunAsync(BuildItems(dir, names), opts);
+    }
+
+    /// <summary>Same batch, with the batch-level progress reporter attached (SPEC-002 I52).</summary>
+    private static async Task<BatchResult> RunWithProgressAsync(
+        string dir, BulkTrimOptions opts, FakeSplitEngine split, FakeSmartCutEngine? smart,
+        IProgress<BulkTrimProgress> progress, params string[] names)
+    {
+        var engine = new BulkTrimEngine(
+            split, new FakeRequestBuilder(), new FakeDiskSpaceProbe(long.MaxValue), smart);
+        return await engine.RunAsync(BuildItems(dir, names), opts, progress);
     }
 
     // ---- Lossless (the default) never reaches the smart cutter --------------------------------
@@ -188,6 +211,37 @@ public sealed class CutPrecisionRoutingTests
         finally { Cleanup(dir); }
     }
 
+    // SPEC-002#I51 (append clause) - the fallback note is PREPENDED to, never substituted for, the
+    // warnings the lossless pass raises for that same row, so I29's warning surface is unchanged.
+    [Trait("serves-spec", "SPEC-002")]
+    [Fact]
+    public async Task AFellBackRow_KeepsBothTheFallbackReason_AndTheSplitWarnings()
+    {
+        var dir = NewDir();
+        try
+        {
+            // The lossless pass that actually cuts this row has something of its own to say.
+            var split = new FakeSplitEngine(successWarnings: new[] { "coarse GOP — cuts may move ~1s" });
+            var smart = new FakeSmartCutEngine
+            {
+                ResultFactory = _ => new SmartCutResult(
+                    null, SmartCutStrategy.HeadReencode, FellBack: true, "unsupported codec", TimeSpan.Zero),
+            };
+
+            var result = await RunAsync(
+                dir, new BulkTrimOptions(Precision: CutPrecision.Exact), split, smart, "a.mp4");
+
+            var row = result.Items.Single();
+            row.Outcome.Should().Be(ItemOutcome.Done);
+            row.Warnings.Should().HaveCount(2, "the fallback note must not displace the split's own warnings");
+            row.Warnings[0].Should().Contain("exact cut unavailable").And.Contain("unsupported codec",
+                "the reason the row is not frame-exact leads");
+            row.Warnings[1].Should().Contain("coarse GOP",
+                "and the lossless run's own warnings are APPENDED - I29's warning surface is preserved");
+        }
+        finally { Cleanup(dir); }
+    }
+
     [Trait("serves-spec", "SPEC-002")]
     [Fact]
     public async Task FallbackIsPerRow_NotPerBatch()
@@ -237,6 +291,84 @@ public sealed class CutPrecisionRoutingTests
             split.CallCount.Should().Be(1, "the row is cut losslessly, which is exact in this case");
             result.Items.Single().Warnings.Should().BeEmpty(
                 "a cut that was already exact needs no explanation — warning only when exact was genuinely unavailable");
+        }
+        finally { Cleanup(dir); }
+    }
+
+    // ---- The rest of the batch contract applies identically to an Exact row (I52) --------------
+
+    // SPEC-002#I52 (progress clause) - an exact row is reported through the SAME per-row reporter the
+    // lossless route uses, so the batch rollup (pre-flight sample, monotonic overall, terminal 1.0) is
+    // identical whichever engine actually cut the row.
+    [Trait("serves-spec", "SPEC-002")]
+    [Fact]
+    public async Task AnExactRow_ReportsThroughTheSameRowProgress()
+    {
+        var dir = NewDir();
+        try
+        {
+            var split = new FakeSplitEngine();
+            var smart = new FakeSmartCutEngine { ProgressAction = p => p?.Report(0.5) };
+            var progress = new RecordingProgress<BulkTrimProgress>();
+
+            var result = await RunWithProgressAsync(
+                dir, new BulkTrimOptions(Precision: CutPrecision.Exact), split, smart, progress, "a.mp4", "b.mp4");
+
+            split.CallCount.Should().Be(0, "both rows were cut exactly - every sample below came from the smart cutter");
+            progress.Reports.Should().NotBeEmpty();
+            progress.Reports[0].Phase.Should().Be(
+                BulkTrimPhase.Preflight, "an exact batch still opens with the pre-flight sample");
+
+            var rowSamples = progress.Reports
+                .Where(r => r.Phase == BulkTrimPhase.Item && r.ItemFraction == 0.5)
+                .ToList();
+            rowSamples.Should().HaveCount(2, "each exact row forwarded its own local fraction to the batch");
+            rowSamples.Select(r => r.CurrentFileName).Should().Equal("a.mp4", "b.mp4");
+            rowSamples.Select(r => r.ItemIndex).Should().Equal(new[] { 0, 1 }, "each sample is tagged with its own row");
+
+            var overalls = progress.Reports.Select(r => r.OverallFraction).ToList();
+            overalls.Should().BeInAscendingOrder("the batch rollup stays monotonic on the exact route too");
+            overalls[^1].Should().Be(1.0, "and still reaches 1.0 on completion");
+            result.Outcome.Should().Be(BatchOutcome.Completed);
+        }
+        finally { Cleanup(dir); }
+    }
+
+    // SPEC-002#I52 (failure-isolation + ledger clause) - a HARD failure on the exact route (not a
+    // FellBack) fails only its own row, is mapped through the same ffmpeg error mapper, and leaves the
+    // ledger complete and in input order - exactly as a lossless row's failure does (I16, I27-I32).
+    [Trait("serves-spec", "SPEC-002")]
+    [Fact]
+    public async Task AnExactRowThatFails_IsIsolated_LikeAnyOther()
+    {
+        var dir = NewDir();
+        try
+        {
+            var split = new FakeSplitEngine();
+            var smart = new FakeSmartCutEngine
+            {
+                // Only the middle file blows up - and it BLOWS UP; it does not report FellBack.
+                ResultFactory = input => Path.GetFileName(input) == "b.mp4"
+                    ? throw new SplitException(
+                        "The exact cut of 'b.mp4' failed (ffmpeg exit -28).",
+                        logFilePath: null,
+                        fullStdErr: "No space left on device")
+                    : new SmartCutResult(input, SmartCutStrategy.HeadReencode, false, null, TimeSpan.FromSeconds(2)),
+            };
+
+            var result = await RunAsync(
+                dir, new BulkTrimOptions(Precision: CutPrecision.Exact), split, smart, "a.mp4", "b.mp4", "c.mp4");
+
+            smart.CallCount.Should().Be(3, "one row blowing up never aborts the batch - every row is still attempted");
+            split.CallCount.Should().Be(0, "a hard failure is not a fallback - the row is not quietly re-cut losslessly");
+
+            result.Outcome.Should().Be(BatchOutcome.CompletedWithFailures);
+            result.Items.Select(r => r.Outcome).Should()
+                .Equal(ItemOutcome.Done, ItemOutcome.Failed, ItemOutcome.Done);
+            result.Items[1].Error!.Category.Should().Be(
+                ErrorCategory.DiskFull, "an exact row's ffmpeg failure is mapped exactly like a lossless row's");
+            result.Items[1].OutputPath.Should().BeNull("a failed row records no output path");
+            result.Items.Select(r => r.Item.Tag).Should().Equal("a.mp4", "b.mp4", "c.mp4");
         }
         finally { Cleanup(dir); }
     }

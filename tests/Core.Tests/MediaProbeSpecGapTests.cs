@@ -110,6 +110,38 @@ public class MediaProbeSpecGapTests
         finally { File.Delete(file); }
     }
 
+    // SPEC-004#I7 - the LAST rung of the duration ladder: when NEITHER a format duration nor any stream
+    // duration is available, ResolveDuration defaults to TimeSpan.Zero (a probe SUCCESS, never a throw).
+    // Sibling of ProbeAsync_NoFormatDuration_FallsBackToLongestStream above: that pins the longest-stream
+    // rung, this one pins the "neither is available" default - including the "N/A" branch of TryParseSeconds,
+    // which is how ffprobe actually reports an unknown duration for a streaming container.
+    [Trait("serves-spec", "SPEC-004")]
+    [Fact]
+    public async Task ProbeAsync_NoDurationAnywhere_DurationIsZero()
+    {
+        // format.duration is the literal "N/A" and the single stream carries no duration field at all.
+        const string json = """
+            {"streams":[
+              {"index":0,"codec_type":"video","codec_name":"h264"}
+            ],"format":{"format_name":"mpegts","duration":"N/A"}}
+            """;
+        var file = NewTempFile("nodurationanywhere");
+        try
+        {
+            var probe = MakeProbe(new FakeFfprobeRunner(json));
+
+            var result = await probe.ProbeAsync(file);
+
+            result.Should().BeOfType<ProbeResult.ProbeSucceeded>(
+                "an undeterminable duration is a Zero duration, not a probe failure");
+            var info = ((ProbeResult.ProbeSucceeded)result).Info;
+            info.Duration.Should().Be(TimeSpan.Zero,
+                "no format duration and no stream duration resolves to Zero, not a throw");
+            info.Container.Should().Be("mpegts", "the format block is still read for the container name");
+        }
+        finally { File.Delete(file); }
+    }
+
     // SPEC-004#I8 — cancellation surfaces as OperationCanceledException (not swallowed into a failure).
     [Trait("serves-spec", "SPEC-004")]
     [Fact]

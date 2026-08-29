@@ -237,6 +237,46 @@ public sealed class BulkSpecGapTests
         target.HasOutro.Should().BeFalse("a no-outro source clears every applied target's outro (mirror keep-to-EOF)");
     }
 
+    // SPEC-011#I22 — the per-TARGET filter: only rows that are IsCheckedByUser AND KeyframesReady AND
+    // have a probed Duration are applied to; the source row itself is skipped. An unticked row and a
+    // still-indexing row are both left exactly as they were.
+    [Fact]
+    [Trait("serves-spec", "SPEC-011")]
+    public async Task ApplyToAll_SkipsTheSource_UncheckedRows_AndStillIndexingRows()
+    {
+        var (vm, probe, _) = BuildVm();
+        var source = await AddRowAsync(vm, probe, @"C:\v\a.mp4", 60, 2, introSeconds: 12);
+
+        var unticked = await AddRowAsync(vm, probe, @"C:\v\b.mp4", 60, 2, introSeconds: 4);
+        unticked.IsEnabled = false; // the user unticked the checkbox → IsCheckedByUser is false
+
+        // c's keyframe scan stays parked at the gate → probed (has a Duration) but NOT KeyframesReady.
+        probe.SetUniform(@"C:\v\c.mp4", TimeSpan.FromSeconds(60), 2);
+        probe.GatedPaths.Add(@"C:\v\c.mp4");
+        await vm.AddFilesAsync(new[] { @"C:\v\c.mp4" });
+        var stillIndexing = vm.Items.Single(i => i.Path == @"C:\v\c.mp4");
+
+        var eligible = await AddRowAsync(vm, probe, @"C:\v\d.mp4", 60, 2, introSeconds: 4);
+
+        unticked.IsCheckedByUser.Should().BeFalse("precondition: b carries the raw unticked intent");
+        stillIndexing.KeyframesReady.Should().BeFalse("precondition: c is still indexing");
+        var untickedIntroBefore = unticked.IntroEnd.Requested;
+
+        var report = vm.ApplyToAll(source);
+
+        report!.AppliedCount.Should().Be(
+            1, "only the checked, keyframes-ready, probed target is eligible — the other two are filtered out");
+        eligible.IntroEnd.Requested.Should().Be(
+            TimeSpan.FromSeconds(12), "the one eligible target took the source's requested intro");
+        unticked.IntroEnd.Requested.Should().Be(untickedIntroBefore, "an unchecked row is never touched");
+        stillIndexing.IntroEnd.Requested.Should().Be(TimeSpan.Zero, "a still-indexing row is never touched");
+        source.IntroEnd.Requested.Should().Be(
+            TimeSpan.FromSeconds(12), "the source row itself is skipped, never re-applied to");
+
+        probe.ReleaseScans();
+        await stillIndexing.CurrentScanTask;
+    }
+
     // ---- I24: ApplyToAllCommand.CanExecute needs > 1 row ------------------------------------
 
     // SPEC-011#I24 — ApplyToAllCommand.CanExecute is true only when Items.Count > 1.
@@ -279,5 +319,43 @@ public sealed class BulkSpecGapTests
 
         row.RowState.Should().Be(RowState.Done, "a late MarkRunning after a terminal state is ignored");
         row.Progress.Should().Be(1.0, "a late SetProgress after a terminal state is ignored");
+    }
+
+    // ---- I2: an unprobeable source becomes a LoadFailed row, excluded from the batch ---------
+
+    // SPEC-011#I2 — PopulateAsync's failed-ProbeResult branch marks the row LoadFailed: it is auto-
+    // disabled, its indexing flag is cleared (it never spins), it does not hold the run gate hostage,
+    // and the engine's batch input never contains it.
+    [Fact]
+    [Trait("serves-spec", "SPEC-011")]
+    public async Task AddFiles_UnprobeableFile_BecomesLoadFailedRow_ExcludedFromTheBatch()
+    {
+        var probe = new BulkFakeProbe();
+        var engine = new FakeBulkTrimEngine();
+        var vm = new BulkCutViewModel(
+            probe, new ThrowingFakeSplitEngine(), new FakeThumbnailService(), new FakeSettings(), engine);
+
+        probe.FailProbePaths.Add(@"C:\v\bad.mp4"); // ProbeAsync returns ProbeResult.Failure
+        probe.SetUniform(@"C:\v\good.mp4", TimeSpan.FromSeconds(60), 2);
+
+        await vm.AddFilesAsync(new[] { @"C:\v\bad.mp4", @"C:\v\good.mp4" });
+
+        var bad = vm.Items.Single(i => i.Path == @"C:\v\bad.mp4");
+        var good = vm.Items.Single(i => i.Path == @"C:\v\good.mp4");
+        good.IntroEnd.Requested = TimeSpan.FromSeconds(10);
+
+        bad.RowState.Should().Be(RowState.LoadFailed, "a failed probe marks the row LoadFailed");
+        bad.IsEnabled.Should().BeFalse("a LoadFailed row is auto-disabled — it can never be ticked into a batch");
+        bad.IsIndexingKeyframes.Should().BeFalse(
+            "the failed row clears its indexing flag instead of spinning on a scan that will never run");
+
+        vm.CanRunBatch.Should().BeTrue("the excluded row must not hold the run gate hostage");
+        vm.RunLabel.Should().Be("Run bulk cut (1)", "only the probed row counts toward the batch");
+
+        await vm.RunBatchAsync();
+
+        engine.ReceivedItems.Should()
+            .ContainSingle("the unprobeable row is excluded from the batch handed to the engine")
+            .Which.InputPath.Should().Be(@"C:\v\good.mp4");
     }
 }

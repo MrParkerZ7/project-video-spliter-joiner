@@ -478,6 +478,42 @@ public class FfmpegThumbnailServiceTests : IDisposable
         runner.CallCount.Should().Be(2, "a thrown failure must not be cached");
     }
 
+    // SPEC-005#I6 - the temp-path layout is <cacheRoot>/<hash>/<bucketMs>.jpg, where <hash> is the first
+    // 16 bytes of SHA-256(inputPath) as lowercase hex. The <bucketMs>.jpg half is already pinned
+    // (GetThumbnailAsync_FractionalTime_FlooredToBucket_ForSeekAndPath asserts "7000.jpg"); the
+    // <cacheRoot>/<hash> half is not - GetThumbnailAsync_PreexistingOnDiskFile_ReusedWithoutFfmpeg_ThenCached
+    // only compares the service against its OWN ResolveTempPath, i.e. self-consistency. This pins the
+    // composition against an INDEPENDENTLY computed hash, mirroring the waveform suite's sibling test.
+    [Trait("serves-spec", "SPEC-005")]
+    [Fact]
+    public void ResolveTempPath_ComposesCacheRootHashBucketMsJpg()
+    {
+        const string input = @"C:\videos\clip.mp4";
+        var svc = NewService(new WritingFakeRunner());
+
+        // <hash> = first 16 bytes of SHA-256(inputPath UTF-8) as lowercase hex.
+        var hashBytes = System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(input));
+        var sb = new System.Text.StringBuilder(32);
+        for (var i = 0; i < 16; i++)
+        {
+            sb.Append(hashBytes[i].ToString("x2", System.Globalization.CultureInfo.InvariantCulture));
+        }
+
+        var hash = sb.ToString();
+        hash.Should().HaveLength(32, "the sub-folder is the first 16 SHA-256 bytes rendered as two hex chars each");
+
+        svc.ResolveTempPath(input, TimeSpan.FromSeconds(7))
+            .Should().Be(Path.Combine(_cacheRoot, hash, "7000.jpg"),
+                "the temp path is <cacheRoot>/<hash>/<bucketMs>.jpg");
+
+        // The hash sub-folder is a property of the INPUT alone: the bucket only varies the file name.
+        svc.InputCacheDir(input).Should().Be(Path.Combine(_cacheRoot, hash));
+        svc.ResolveTempPath(input, TimeSpan.Zero).Should().Be(Path.Combine(_cacheRoot, hash, "0.jpg"));
+
+        // A different input lands under a DIFFERENT sub-folder (the hash discriminates inputs).
+        svc.InputCacheDir(@"C:\videos\other.mp4").Should().NotBe(Path.Combine(_cacheRoot, hash));
+    }
+
     private static void TryDelete(string dir)
     {
         try { if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true); }

@@ -106,6 +106,33 @@ public sealed class ExactCutModeTests
 
     [Trait("serves-spec", "SPEC-011")]
     [Fact]
+    public async Task UnderExact_TheOutroHandleAlsoStopsShowingASnapOffset()
+    {
+        var (vm, probe, _) = Build();
+        await AddRowAsync(vm, probe, @"C:\v\a.mp4", 5);
+        var row = vm.Items.Single();
+        row.AddOutro(TimeSpan.FromSeconds(45)); // 45s on the same 4s grid snaps back to 44s
+
+        // Lossless: the outro really does move, and the row says so.
+        row.OutroStart!.Snapped.Should().Be(TimeSpan.FromSeconds(44));
+        row.OutroStart!.HasSnapNote.Should().BeTrue();
+
+        vm.ExactCut = true;
+
+        row.OutroStart!.HasSnapNote.Should().BeFalse(
+            "the precision flip propagates to the OUTRO handle too, not just the intro");
+        row.OutroStart!.SnapNote.Should().BeEmpty();
+        row.OutroStart!.Requested.Should().Be(TimeSpan.FromSeconds(45), "the request itself is untouched");
+        row.IntroEnd.HasSnapNote.Should().BeFalse("both handles are suppressed in the same pass");
+
+        vm.ExactCut = false;
+
+        row.OutroStart!.HasSnapNote.Should().BeTrue(
+            "flipping back restores the outro's offset readout, exactly as it does the intro's");
+    }
+
+    [Trait("serves-spec", "SPEC-011")]
+    [Fact]
     public async Task SwitchingBackToLossless_RestoresTheSnapReadout()
     {
         var (vm, probe, _) = Build();

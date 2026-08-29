@@ -802,4 +802,53 @@ public sealed class SplitViewModelNonBlockingLoadTests
             vm.KeyframeWarning.Should().BeNull("no keyframes → no coarse-GOP warning");
         });
     }
+
+    // ---- A re-load drops the prior file's result + warning (I3, SPEC-010) --------------------
+
+    // SPEC-010#I3 — on a successful probe the VM commits Info/InputPath and opens the preview AND
+    // clears the prior file's Markers, LastResult and KeyframeWarning — all BEFORE any keyframe scan
+    // reports. Load_ShowsPreviewAndInfo_BeforeKeyframeScanCompletes pins the commit half and
+    // PendingCut_WhenFileChanges_DoesNotCorruptNewFilesMarkers pins the Markers half; neither the
+    // stale-LastResult nor the stale-KeyframeWarning clause is asserted anywhere (every other
+    // load-after-a-split path in the suite calls Clear() in between, which resets both by another
+    // route). B's keyframe scan is held GATED throughout, so a cleared warning here can only be the
+    // LOAD clearing it — never B's scan reporting a fine GOP.
+    [Fact]
+    [Trait("serves-spec", "SPEC-010")]
+    public void SecondLoad_ClearsStaleResultAndKeyframeWarning_BeforeNewScanCompletes()
+    {
+        WithPump(pump =>
+        {
+            var (vm, probe, player) = Build();
+
+            // File A: load it and let its COARSE-GOP scan report, so a KeyframeWarning is on screen.
+            var loadA = vm.LoadAsync(PathA);
+            pump.RunUntil(() => loadA.IsCompleted);
+            probe.Release(PathA, new[] { TimeSpan.Zero, TimeSpan.FromSeconds(6), TimeSpan.FromSeconds(12) });
+            pump.RunUntil(() => !vm.IsIndexingKeyframes);
+            vm.KeyframeWarning.Should().NotBeNull("precondition: 6s GOP is coarse → A's warning is on screen");
+
+            // … then run a split on A so a LastResult panel is on screen too.
+            vm.OutputDir = @"C:\out";
+            vm.AddCutAt(TimeSpan.FromSeconds(6));
+            vm.Markers.Should().ContainSingle();
+
+            var run = vm.RunSplitAsync();
+            pump.RunUntil(() => run.IsCompleted);
+            vm.LastResult.Should().NotBeNull("precondition: A's result panel is on screen");
+
+            // File B: its keyframe scan stays GATED — nothing B-side has reported when we assert below.
+            var loadB = vm.LoadAsync(PathB);
+            pump.RunUntil(() => loadB.IsCompleted);
+
+            vm.InputPath.Should().Be(PathB);
+            player.Opened.Should().HaveCount(2);
+            player.Opened[^1].Should().Be(PathB, "the successful probe opens the preview on the new file");
+            vm.IsIndexingKeyframes.Should().BeTrue("B's scan is still gated — asserted before it completes");
+
+            vm.LastResult.Should().BeNull("a new load drops the previous file's result panel");
+            vm.KeyframeWarning.Should().BeNull("the stale coarse-GOP warning is cleared before B's scan reports");
+            vm.Markers.Should().BeEmpty("a new load drops the previous file's cuts");
+        });
+    }
 }

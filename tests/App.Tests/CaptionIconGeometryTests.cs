@@ -24,6 +24,12 @@ public sealed class CaptionIconGeometryTests
     // Maximize is authored as a RectangleGeometry Rect="0.5,0.5,10,10" in XAML.
     private static readonly Rect MaximizeRect = new(0.5, 0.5, 10, 10);
 
+    // T-086 layout-toggle glyphs: each is a GeometryGroup of two RectangleGeometry panes on the same
+    // 10x10 .5-aligned field (LayoutVerticalCaptionGeometry / LayoutHorizontalCaptionGeometry in
+    // Controls.xaml). Kept in lock-step with those resources, like the path strings above.
+    private static readonly Rect[] LayoutVerticalPanes = { new(0.5, 0.5, 10, 4), new(0.5, 6.5, 10, 4) };
+    private static readonly Rect[] LayoutHorizontalPanes = { new(0.5, 0.5, 4, 10), new(6.5, 0.5, 4, 10) };
+
     [Theory]
     [InlineData(Minimize)]
     [InlineData(Restore)]
@@ -49,6 +55,16 @@ public sealed class CaptionIconGeometryTests
         }
 
         box.Contains(MaximizeRect).Should().BeTrue();
+
+        // The layout-toggle panes share the very same field.
+        foreach (var pane in new[]
+                 {
+                     LayoutVerticalPanes[0], LayoutVerticalPanes[1],
+                     LayoutHorizontalPanes[0], LayoutHorizontalPanes[1],
+                 })
+        {
+            box.Contains(pane).Should().BeTrue($"pane {pane} should fit the caption icon field");
+        }
     }
 
     [Fact]
@@ -65,5 +81,27 @@ public sealed class CaptionIconGeometryTests
     {
         MaximizeRect.Width.Should().Be(10);
         MaximizeRect.Height.Should().Be(10);
+    }
+
+    // SPEC-015#I20 (the layout-toggle clause) — the min/max/restore/close glyphs are pinned above;
+    // the two layout-toggle glyphs are the remaining members of the same icon family and must read
+    // as TWO-PANE SPLIT RECTANGLES (D5: the icon shows the mode the click switches TO), not as a
+    // single box: two panes, full-width stacked for vertical, full-height side-by-side for
+    // horizontal, separated by the 2px gap that makes the split legible at 10x10.
+    [Fact]
+    [Trait("serves-spec", "SPEC-015")]
+    public void Layout_toggle_glyphs_are_two_pane_split_rectangles()
+    {
+        LayoutVerticalPanes.Should().HaveCount(2, "the vertical-layout glyph is a two-pane split");
+        LayoutVerticalPanes.Should().OnlyContain(r => r.Width == 10,
+            "vertical mode = two full-width STACKED panes");
+        (LayoutVerticalPanes[1].Top - LayoutVerticalPanes[0].Bottom).Should().Be(2,
+            "a 2px gap keeps the stacked panes readable as two panes");
+
+        LayoutHorizontalPanes.Should().HaveCount(2, "the horizontal-layout glyph is a two-pane split");
+        LayoutHorizontalPanes.Should().OnlyContain(r => r.Height == 10,
+            "horizontal mode = two full-height SIDE-BY-SIDE panes");
+        (LayoutHorizontalPanes[1].Left - LayoutHorizontalPanes[0].Right).Should().Be(2,
+            "a 2px gap keeps the side-by-side panes readable as two panes");
     }
 }

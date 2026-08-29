@@ -250,6 +250,44 @@ public class BulkTrimEngineTests
         finally { Cleanup(dir); }
     }
 
+    // SPEC-002#I25 (the other half of "never a false-positive block") — the source size is only a SAFE
+    // UPPER BOUND, so when it cannot be read at all (the file vanished between queueing and the run)
+    // that root's check is skipped and the batch still runs. Sibling of
+    // Preflight_UnmeasurableDrive_SkipsCheck_BatchRuns above, which covers the unmeasurable-DRIVE half.
+    [Trait("serves-spec", "SPEC-002")]
+    [Fact]
+    public async Task Preflight_UnsizableInput_SkipsThatRoot_NeverAFalsePositiveBlock()
+    {
+        var dir = NewDir();
+        try
+        {
+            const long oneMb = 1024 * 1024;
+            var tight = new FakeDiskSpaceProbe(1000); // 1000 bytes free ≪ margin + 1 MB.
+
+            // Control: with a READABLE source size, this very probe blocks the batch — so anything that
+            // runs below runs because the size was unreadable, not because the budget was roomy.
+            var sizable = MakeSizedItem(dir, "sizable", oneMb);
+            var blocked = await Engine(new FakeSplitEngine(), new FakeRequestBuilder(), tight)
+                .RunAsync(new[] { sizable }, new BulkTrimOptions());
+            blocked.Outcome.Should().Be(BatchOutcome.Blocked, "control: a knowable shortfall on this probe does block");
+
+            // Same probe; this source vanished after it was queued, so FileInfo.Length cannot size it.
+            var gone = MakeSizedItem(dir, "gone", oneMb);
+            File.Delete(gone.InputPath);
+
+            var split = new FakeSplitEngine();
+            var result = await Engine(split, new FakeRequestBuilder(), tight)
+                .RunAsync(new[] { gone }, new BulkTrimOptions());
+
+            result.Outcome.Should().NotBe(
+                BatchOutcome.Blocked, "an unsizable input skips its root's check rather than blocking the batch");
+            result.Items[0].Outcome.Should().Be(
+                ItemOutcome.Done, "the row is dispatched normally — the pre-flight never fires on a size it could not read");
+            split.CallCount.Should().Be(1, "the batch runs; the shortfall estimate simply excluded the root it could not size");
+        }
+        finally { Cleanup(dir); }
+    }
+
     [Fact]
     public async Task MidRun_DiskFull_IsolatedPerRow_BatchContinues()
     {

@@ -173,4 +173,28 @@ public sealed class ErrorLogWriterTests : IDisposable
             try { File.Delete(blocker); } catch { /* best-effort */ }
         }
     }
+
+    // SPEC-015#I25 - the "(Guid-suffixed on same-second collision)" clause of the crash-log naming rule.
+    // TryWriteCrash_WritesFile_WithType_Message_AndStack pins the crash-<sanitized-source>-<stamp>.log shape
+    // for ONE write; nothing anywhere writes TWO crash logs, so the collision branch (File.Exists -> re-name
+    // with a Guid suffix) was unexecuted. A crash storm must not leave only a single surviving report.
+    [Trait("serves-spec", "SPEC-015")]
+    [Fact]
+    public void TryWriteCrash_TwiceInSameSecond_DoesNotClobberTheFirstLog()
+    {
+        var writer = new ErrorLogWriter(_dir);
+
+        var first = writer.TryWriteCrash("Dispatcher", new InvalidOperationException("the first crash"));
+        var second = writer.TryWriteCrash("Dispatcher", new InvalidOperationException("the second crash"));
+
+        first.Should().NotBeNull();
+        second.Should().NotBeNull();
+        second.Should().NotBe(first!, "a same-second second crash gets a Guid suffix instead of clobbering");
+
+        // Asserted on distinct paths + file COUNT + content rather than on the suffix itself, so the test is
+        // still correct if the two calls happen to straddle a second boundary (distinct stamps, same outcome).
+        Directory.GetFiles(_dir, "crash-dispatcher-*.log").Should().HaveCount(2, "both crash reports survive on disk");
+        File.ReadAllText(first!).Should().Contain("the first crash", "the earlier report was not overwritten");
+        File.ReadAllText(second!).Should().Contain("the second crash");
+    }
 }

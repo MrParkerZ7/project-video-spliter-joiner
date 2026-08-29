@@ -562,4 +562,37 @@ public sealed class OperationViewModelTests
             "the cancelled body funnels through RunAsync's OperationCanceledException path");
         vm.EtaText.Should().BeNull("EndRun leaves the ETA cleared on every terminal path");
     }
+
+    // SPEC-008#I2 (the Progress-reset clause) — BeginRun zeroes Progress BEFORE the work body runs.
+    // The sibling clauses are pinned elsewhere (Running/CanCancel, StatusText, Error, ResultSummary);
+    // the bar reset is the one that is only observable from INSIDE a second run's body, because the
+    // previous run left Progress clamped at 1. Without it a re-run would open on a stale full bar.
+    [Fact]
+    [Trait("serves-spec", "SPEC-008")]
+    public async Task SecondRun_ResetsProgressToZero_BeforeWorkBody()
+    {
+        var vm = new OperationViewModel();
+
+        await vm.RunAsync((_, _) => Task.CompletedTask, "Working…");
+        vm.Progress.Should().Be(1d, "precondition — the finished run left the bar full");
+
+        double progressAtStart = -1;
+        var indeterminateAtStart = false;
+        var gate = new TaskCompletionSource();
+
+        var run = vm.RunAsync(async (_, _) =>
+        {
+            progressAtStart = vm.Progress;
+            indeterminateAtStart = vm.IsIndeterminate;
+            await gate.Task;
+        }, "Working…");
+
+        await Task.Yield();
+        progressAtStart.Should().Be(0d, "BeginRun resets the bar before the work body runs");
+        indeterminateAtStart.Should().BeTrue(
+            "a fresh run reopens as an indeterminate busy pulse, not a stale full bar");
+
+        gate.SetResult();
+        await run;
+    }
 }

@@ -610,6 +610,32 @@ public class FfmpegWaveformServiceTests : IDisposable
         runner.CallCount.Should().Be(4, "the coldest key(3) was the LRU victim and must re-extract");
     }
 
+    // SPEC-006#I15 - the defensive copy covers BOTH return paths, not just one. The existing
+    // GetPeaksAsync_CacheHit_ReturnsIndependentCopy mutates the FRESH-COMPUTE result, so it pins only the
+    // `return (float[])peaks.Clone();` at the end of the compute path - the cache-hit return could hand back
+    // the cached array itself and that test would still pass. This pins the OTHER half: it mutates a result
+    // that was ITSELF served from the cache, then re-reads the cache to prove the stored array is untouched.
+    [Trait("serves-spec", "SPEC-006")]
+    [Fact]
+    public async Task GetPeaksAsync_MutatingACacheHitResult_DoesNotCorruptTheCache()
+    {
+        var input = MakeInput();
+        var runner = new WritingPcmRunner(Pcm(16384, 16384));
+        var svc = NewService(runner);
+
+        var first = await svc.GetPeaksAsync(input, buckets: 1, CancellationToken.None);
+        first![0].Should().BeApproximately(0.5f, 1e-4f, "precondition: the fresh compute yields the known peak");
+
+        // The SECOND call is served from the CACHE - mutating that array must not reach the cached one.
+        var second = await svc.GetPeaksAsync(input, buckets: 1, CancellationToken.None);
+        second![0] = -42f;
+
+        var third = await svc.GetPeaksAsync(input, buckets: 1, CancellationToken.None);
+        third![0].Should().BeApproximately(0.5f, 1e-4f,
+            "a cache-HIT result is also an independent clone - mutating it must not corrupt the cached array");
+        runner.CallCount.Should().Be(1, "all three calls resolve to the same cache entry - no re-extraction");
+    }
+
     private static void TryDelete(string dir)
     {
         try { if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true); }

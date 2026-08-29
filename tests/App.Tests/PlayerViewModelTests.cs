@@ -473,6 +473,47 @@ public sealed class PlayerViewModelTests
         player.Seeks[^1].Should().Be(TimeSpan.FromSeconds(35), "release issues the final exact seek");
     }
 
+    // SPEC-013#I30 — the release is UNCONDITIONAL: EndUserScrub drops any pending preview and issues
+    // the final exact seek to the released position, BYPASSING both T-051 gates that would otherwise
+    // stash or skip it — the 70ms throttle window and the 5ms dead-band. The test above advances the
+    // clock 1000ms (past the throttle) and releases at 35s (far outside the dead-band of the last
+    // issued 10s), so neither gate is exercised there; this pins both bypasses.
+    [Fact]
+    [Trait("serves-spec", "SPEC-013")]
+    public void EndUserScrub_BypassesThrottleAndDeadBand_FinalPositionAlwaysSticks()
+    {
+        var clock = new FakeClock();
+        var (vm, player) = BuildReadyWithClock(clock);
+
+        vm.BeginUserScrub();
+        vm.ScrubPreview(TimeSpan.FromSeconds(10));     // issued at t=0 → last-issued target = 10s
+        player.RaiseSeeked(TimeSpan.FromSeconds(10));  // settle → nothing left in flight
+        player.Seeks.Should().ContainSingle();
+
+        // (a) THROTTLE bypass — only 5ms into the 70ms window, where a ScrubPreview would be stashed
+        //     as pending rather than issued (see ScrubPreview_Throttles_TooSoonBecomesPendingNotIssued).
+        clock.Advance(5);
+        vm.EndUserScrub(10.4);
+
+        player.Seeks.Should().HaveCount(2, "the release issues even 5ms into the 70ms throttle window");
+        player.Seeks[^1].Should().Be(TimeSpan.FromSeconds(10.4));
+        vm.Position.Should().Be(TimeSpan.FromSeconds(10.4), "the released position sticks");
+
+        // (b) DEAD-BAND bypass — a 2ms nudge off the last-issued target, which ScrubPreview would skip
+        //     as redundant (see ScrubPreview_DeadBand_SkipsRedundantSeek). The clock is moved well past
+        //     the throttle window first so the dead-band is the ONLY gate left that could suppress it.
+        player.RaiseSeeked(TimeSpan.FromSeconds(10.4));
+        clock.Advance(1000);
+        vm.BeginUserScrub();
+        vm.EndUserScrub(10.402);
+
+        player.Seeks.Should().HaveCount(3,
+            "the release also ignores the 5ms dead-band — a nudge-and-let-go still lands");
+        player.Seeks[^1].Should().Be(TimeSpan.FromSeconds(10.402));
+        vm.Position.Should().Be(TimeSpan.FromSeconds(10.402),
+            "the exact released position is what the playhead ends on, not the last throttled preview");
+    }
+
     // ---- Track click to point (T-075) -------------------------------------------------------
 
     // With IsMoveToPointEnabled=True, a click on the slider TRACK jumps the thumb straight to the
@@ -629,6 +670,44 @@ public sealed class PlayerViewModelTests
         player.Calls.Should().Contain("Stop");
         vm.IsPlaying.Should().BeFalse();
         vm.Position.Should().Be(TimeSpan.Zero);
+    }
+
+    // SPEC-013#I4 — Stop ALSO clears the seek-target hold (T-033) and resets the live-scrub
+    // coalesce/throttle state (T-051), the two clauses Stop_CallsStop_ClearsIsPlaying_RewindsPosition
+    // above never reaches. The Stop counterpart of
+    // Open_ResetsLiveScrubState_NextScrubPreviewIssuesImmediately_NotWedged.
+    [Fact]
+    [Trait("serves-spec", "SPEC-013")]
+    public void Stop_ClearsSeekHoldAndLiveScrubState_NotWedged()
+    {
+        var clock = new FakeClock();
+        var (vm, player) = BuildReadyWithClock(clock);
+
+        // Leave a live-scrub seek LATCHED: issued, never settled (no Seeked raised), so the T-033 hold
+        // is armed at 10s AND the T-051 coalesce state still records a seek in flight.
+        vm.ScrubPreview(TimeSpan.FromSeconds(10));
+        player.Seeks.Should().ContainSingle("a live-scrub seek is now latched in flight (no Seeked raised)");
+
+        vm.Stop();
+        vm.Position.Should().Be(TimeSpan.Zero);
+
+        // (a) SEEK HOLD cleared — a live echo moves the display again instead of being swallowed as a
+        //     stale off-target echo measured against the abandoned 10s seek target.
+        player.RaisePositionChanged(TimeSpan.FromSeconds(3));
+        vm.Position.Should().Be(TimeSpan.FromSeconds(3),
+            "Stop released the seek-target hold, so a live echo moves the display again instead of being swallowed");
+
+        // (b) LIVE-SCRUB state reset — the next preview issues immediately rather than being coalesced
+        //     behind the phantom in-flight seek. The clock is past the throttle window, so a wedged
+        //     in-flight seek is the only thing that could still gate it.
+        clock.Advance(1000);
+        var before = player.Seeks.Count;
+
+        vm.ScrubPreview(TimeSpan.FromSeconds(20));
+
+        player.Seeks.Count.Should().Be(before + 1,
+            "Stop reset the coalesce state — the next preview issues immediately, not stashed behind a phantom in-flight seek");
+        player.Seeks[^1].Should().Be(TimeSpan.FromSeconds(20));
     }
 
     // ---- Ended ------------------------------------------------------------------------------

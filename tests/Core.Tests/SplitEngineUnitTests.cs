@@ -434,6 +434,115 @@ public class SplitEngineUnitTests
             try { Directory.Delete(dir, recursive: true); } catch { /* best-effort */ }
         }
     }
+
+    // SPEC-001#I29 — the SCOPING half of the overwrite refusal: with Overwrite=false ONLY the
+    // SELECTED outputs are collision-checked. A pre-existing file belonging to an UNSELECTED part
+    // must neither block the run nor be touched. (The refusal half itself is pinned by
+    // SplitAsync_RefusesToOverwrite_WhenOverwriteFalse two methods above.)
+    [Trait("serves-spec", "SPEC-001")]
+    [Fact]
+    public async Task SplitAsync_UnselectedOutputAlreadyExists_DoesNotBlockTheSelectedPart()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "vsj-clobberscope-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        var input = Path.Combine(dir, "clip.mp4");
+        await File.WriteAllTextAsync(input, "placeholder");
+        var outDir = Path.Combine(dir, "out");
+        Directory.CreateDirectory(outDir);
+
+        // Part 01 is deliberately NOT selected below, so its pre-existing file sits OUTSIDE the
+        // collision check's scope — it must survive the run byte-for-byte.
+        var unselected = Path.Combine(outDir, "clip_part01.mp4");
+        await File.WriteAllTextAsync(unselected, "existing");
+
+        try
+        {
+            // 10s file, 1s GOP. Cuts at 3 & 6 -> 3 planned parts. Select ONLY the middle one.
+            var runner = new RecordingFakeRunner();
+            var probe = new FakeProbe(
+                TimeSpan.FromSeconds(10),
+                Enumerable.Range(0, 11).Select(i => TimeSpan.FromSeconds(i)).ToList());
+            var engine = new SplitEngine(runner, probe);
+
+            var req = new SplitRequest(
+                input,
+                new[] { TimeSpan.FromSeconds(3), TimeSpan.FromSeconds(6) },
+                outDir,
+                Overwrite: false,
+                SelectedSegmentIndices: new[] { 2 });
+
+            // THE INVARIANT: no refusal — the unselected part's file is out of scope for the check.
+            var result = await engine.SplitAsync(req);
+
+            runner.Commands.Should().ContainSingle("the selected part still runs — the check never fired");
+            result.Segments.Should().ContainSingle()
+                .Which.Path.Should().EndWith("clip_part02.mp4");
+
+            File.ReadAllText(unselected).Should().Be(
+                "existing",
+                "an unselected pre-existing output is neither collision-checked nor overwritten");
+        }
+        finally
+        {
+            try { Directory.Delete(dir, recursive: true); } catch { /* best-effort */ }
+        }
+    }
+
+    // SPEC-001#I34 — the MAPPING half of the ffmpeg-failure contract: the mapped CAUSE is the
+    // headline. A real out-of-space write dies with exit -28 (AVERROR(ENOSPC)) while its stderr tail
+    // often carries only a benign mpegts warning, so surfacing that tail would mis-report the
+    // failure. The carrier half (FullStdErr + LogFilePath + full-stderr persistence) is pinned by
+    // SplitAsync_FfmpegFailure_WritesFullLog_AndThreadsPathAndFullText_ToException above.
+    [Trait("serves-spec", "SPEC-001")]
+    [Fact]
+    public async Task SplitAsync_DiskFullExit_HeadlinesTheMappedCause_NotTheBenignStderrTail()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "vsj-splitdiskfull-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        var input = Path.Combine(dir, "clip.mp4");
+        await File.WriteAllTextAsync(input, "placeholder");
+        var outDir = Path.Combine(dir, "out");
+        Directory.CreateDirectory(outDir);
+        var logDir = Path.Combine(dir, "logs");
+
+        try
+        {
+            // The T-035 shape: the ENOSPC exit code is the only real signal — the tail is noise.
+            const string benignTail =
+                "[mpegts @ 000001] start time for stream 2 is not set in estimate_timings_from_pts";
+
+            var runner = new FailingFakeRunner(exitCode: -28, stderr: benignTail);
+            var probe = new FakeProbe(
+                TimeSpan.FromSeconds(10),
+                Enumerable.Range(0, 11).Select(i => TimeSpan.FromSeconds(i)).ToList());
+
+            var engine = new SplitEngine(runner, probe, new ErrorLogWriter(logDir));
+            var req = new SplitRequest(input, new[] { TimeSpan.FromSeconds(5) }, outDir);
+
+            var ex = await Assert.ThrowsAsync<SplitException>(() => engine.SplitAsync(req));
+
+            // THE INVARIANT: the mapped disk-full cause leads; the benign warning is demoted to detail.
+            ex.Message.Should().StartWith(
+                    "Not enough space to write the output",
+                    "the mapped CAUSE is the headline, not whatever ffmpeg happened to print last")
+                .And.Contain("(ffmpeg exit -28)", "the exit code stays on the headline for support")
+                .And.NotStartWith("[mpegts", "the benign tail belongs in the detail, never the headline");
+
+            ex.Message.Should().Contain(benignTail, "the raw tail is still carried as the detail");
+
+            // The per-run log carries the exact command too, not just the stderr + exit code.
+            ex.LogFilePath.Should().NotBeNull();
+            var logContent = await File.ReadAllTextAsync(ex.LogFilePath!);
+            logContent.Should().Contain("Command   : ffmpeg", "the exact ffmpeg command line is persisted");
+            logContent.Should().Contain(input, "the persisted command names the input it ran on");
+            logContent.Should().Contain("-c copy", "the persisted command shows the stream-copy invariant held");
+            logContent.Should().Contain("-28", "the exit code is persisted");
+        }
+        finally
+        {
+            try { Directory.Delete(dir, recursive: true); } catch { /* best-effort */ }
+        }
+    }
 }
 
 /// <summary>Fake probe returning a fixed duration + keyframe list, no binary.</summary>

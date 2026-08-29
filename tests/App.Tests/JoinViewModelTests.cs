@@ -880,4 +880,35 @@ public sealed class JoinViewModelTests
         again.Should().NotThrow("Clear with no items is a no-op, not an error");
         vm.OutputPath.Should().Be(Output, "OutputPath survives every Clear");
     }
+
+    // SPEC-012#I17 (the EstimatedSize clause + the unprobed-clip clause) — the duration SUM and
+    // HasClips are pinned above; EstimatedSize is only ever asserted with an EMPTY list ("0 B"), so
+    // nothing pins that the VM sums every queued clip's on-disk size. Neither does anything pin that
+    // a clip which is unsized / not yet probed contributes ZERO rather than corrupting the totals.
+    [Fact]
+    [Trait("serves-spec", "SPEC-012")]
+    public async Task Estimates_SumClipSizes_AndTreatUnprobedClipsAsZero()
+    {
+        var (vm, _, _) = Build(); // FakeProbe hands both clips a 10s duration
+        await vm.AddFilesAsync(new[] { Clip1, Clip2 });
+
+        // Sizes come from disk on add (0 here — the fake paths do not exist); set them like a probe would.
+        vm.Items[0].SizeBytes = 1_500_000_000L;
+        vm.Items[1].SizeBytes = 1_300_000_000L;
+
+        vm.EstimatedSize.Should().Be("2.6 GB",
+            "EstimatedSize is the summed on-disk size of every queued clip (1.5 GB + 1.3 GB), human-formatted");
+        vm.EstimatedSize.Should().Be(MediaFormat.FormatSize(2_800_000_000L),
+            "the VM formats the SUM through the shared size formatter, not one clip's size");
+
+        // A clip whose size could not be read contributes nothing rather than corrupting the sum.
+        vm.Items[1].SizeBytes = 0;
+        vm.EstimatedSize.Should().Be(MediaFormat.FormatSize(1_500_000_000L),
+            "an unsized clip contributes 0 bytes to the size sum");
+
+        // ...and the same for an unprobed clip on the duration side (20s -> 10s, not "null poisons it").
+        vm.EstimatedDuration.Should().Be("0:20", "precondition: both clips are probed at 10s each");
+        vm.Items[1].Duration = null;
+        vm.EstimatedDuration.Should().Be("0:10", "an unprobed clip contributes 0 to the duration sum");
+    }
 }

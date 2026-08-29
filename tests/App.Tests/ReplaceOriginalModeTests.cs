@@ -188,6 +188,37 @@ public sealed class ReplaceOriginalModeTests
         vm.BatchState.Should().NotBe(BulkBatchState.Completed, "a declined batch never reports success");
     }
 
+    /// <summary>
+    /// The ORDERING half of the confirmation contract: the prompt is reached BEFORE the preview handle is
+    /// released, before the batch enters Preparing, and before a single item is built. Declining therefore
+    /// leaves every visible readout exactly where it was — not merely "not Completed".
+    /// </summary>
+    [Trait("serves-spec", "SPEC-011")]
+    [Fact]
+    public async Task DecliningLeavesTheBatchUntouched_TheConfirmationPrecedesEverything()
+    {
+        var (vm, probe, engine, player) = BuildWithPlayer();
+        await AddValidRowAsync(vm, probe, @"C:\v\a.mp4"); // auto-selected -> opened in the shared player
+        player.OpenCount.Should().Be(1, "precondition: the row's file is open in the shared preview");
+        vm.Items.Single().RowState.Should().Be(RowState.Ready, "precondition: the row is runnable");
+
+        vm.ReplaceOriginal = true;
+        var asked = 0;
+        vm.ConfirmReplaceOriginals = _ => { asked++; return false; };
+
+        await vm.RunBatchAsync();
+
+        asked.Should().Be(1, "precondition: the prompt was reached");
+        vm.BatchState.Should().Be(BulkBatchState.Idle, "the prompt precedes the Preparing state");
+        vm.Items.Single().RowState.Should().Be(
+            RowState.Ready, "no row was marked Queued — the confirmation precedes any item build");
+        vm.Operation.State.Should().Be(OperationState.Idle, "the aggregate operation never started");
+        player.UnloadCount.Should().Be(
+            0, "the preview handle is released only AFTER the user accepts — the prompt comes first");
+        player.StopCount.Should().Be(0, "a declined run does not touch the preview transport at all");
+        engine.CallCount.Should().Be(0);
+    }
+
     [Trait("serves-spec", "SPEC-011")]
     [Fact]
     public async Task TheConfirmationIsCounted_SoTheUserKnowsTheBlastRadius()

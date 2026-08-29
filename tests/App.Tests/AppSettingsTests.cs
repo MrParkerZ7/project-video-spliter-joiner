@@ -310,6 +310,33 @@ public sealed class AppSettingsTests : IDisposable
         reloaded.LastOutputDir.Should().Be(@"D:\out", "the atomic replace committed the new field");
     }
 
+    // SPEC-009#I16 (the FAILURE half) — the test above covers only the two SUCCESS paths (File.Move over
+    // a fresh path, File.Replace over an existing one). The failure half of the same invariant — "a crash
+    // mid-write can never replace a good file with a half-written one; a stray .tmp is cleaned up on
+    // failure" — is induced here by holding an EXCLUSIVE handle on the target so the temp write succeeds
+    // but File.Replace throws: the good file must survive byte-for-byte, TryDeleteTemp must sweep the
+    // temp, and the value must still stick in memory. (UnwritablePath_DoesNotThrow_KeepsValueInMemory
+    // fails EARLIER, inside Directory.CreateDirectory, so it never reaches the rename or TryDeleteTemp.)
+    [Fact]
+    [Trait("serves-spec", "SPEC-009")]
+    public void Save_FailingReplace_LeavesGoodFileIntact_AndCleansStrayTmp()
+    {
+        var settings = new AppSettings(_file);
+        settings.LastInputDir = @"D:\in";              // a known-good file is now on disk
+        var good = File.ReadAllText(_file);
+
+        using (new FileStream(_file, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+        {
+            Action act = () => settings.LastOutputDir = @"D:\out";
+            act.Should().NotThrow("a locked settings file must never crash the caller");
+        }
+
+        File.Exists(_file + ".tmp").Should().BeFalse("a failed write cleans up its stray .tmp (TryDeleteTemp)");
+        Directory.GetFiles(_dir, "*.tmp").Should().BeEmpty("no half-written temp artifact survives a failed save");
+        File.ReadAllText(_file).Should().Be(good, "a failed write never replaces the good file with a half-written one");
+        settings.LastOutputDir.Should().Be(@"D:\out", "the value stays live in memory for the session");
+    }
+
     // ---- G-039 / T-112: the Bulk Cut tab's OWN per-axis split ratios ------------------------
     // Same backward-compat round-trip contract as the Split-tab ratios above, but persisted to
     // SEPARATE keys (bulkHorizontalSplitRatio / bulkVerticalSplitRatio) so dragging the Bulk split

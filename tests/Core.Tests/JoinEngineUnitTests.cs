@@ -620,4 +620,136 @@ public class JoinEngineUnitTests
         }
         finally { try { Directory.Delete(dir, recursive: true); } catch { /* best-effort */ } }
     }
+
+    /// <summary>
+    /// Success runner that records the <c>totalDuration</c> the engine handed it — i.e. the
+    /// denominator ffmpeg's progress is measured against — alongside writing the output. Lets a test
+    /// tell "progress ran against the summed duration" apart from "progress degraded to unknown".
+    /// </summary>
+    private sealed class TotalCapturingJoinRunner : IFfmpegRunner
+    {
+        public int CallCount { get; private set; }
+
+        public TimeSpan? LastTotalDuration { get; private set; }
+
+        public Task<FfmpegResult> RunAsync(
+            FfmpegArgs args,
+            TimeSpan? totalDuration = null,
+            IProgress<double>? progress = null,
+            CancellationToken ct = default)
+        {
+            ct.ThrowIfCancellationRequested();
+            CallCount++;
+            LastTotalDuration = totalDuration;
+
+            var output = args.ToList()[^1];
+            var d = Path.GetDirectoryName(output);
+            if (!string.IsNullOrEmpty(d))
+            {
+                Directory.CreateDirectory(d);
+            }
+
+            File.WriteAllText(output, "joined-bytes");
+            return Task.FromResult(new FfmpegResult(0, new List<string>().AsReadOnly()));
+        }
+    }
+
+    // SPEC-003#I31 — the DEGRADE half of the progress contract: a probe hiccup during the SECOND
+    // (duration-summing) pass hands ffmpeg an UNKNOWN total rather than a wrong one, and the join
+    // still succeeds and still ends at 1.0. The 0..1 + reaches-1.0 half is pinned by
+    // JoinAsync_Success_Progress_ReachesOne_WithinRange; the healthy control below is what makes the
+    // null meaningful (it proves the summed duration IS normally handed down).
+    [Trait("serves-spec", "SPEC-003")]
+    [Fact]
+    public async Task JoinAsync_ProbeFailsWhileSummingDurations_StillJoins_WithUnknownTotal()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "vsj-joindegrade-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var a = Path.Combine(dir, "a.mp4");
+            var b = Path.Combine(dir, "b.mp4");
+            await File.WriteAllTextAsync(a, "x");
+            await File.WriteAllTextAsync(b, "x");
+
+            // CONTROL: every probe succeeds -> the engine sums 5s + 5s and passes the real total down.
+            var healthyRunner = new TotalCapturingJoinRunner();
+            var healthy = new JoinEngine(
+                healthyRunner,
+                new StubProbe(_ => ProbeResult.Success(CompatibleClip())));
+
+            var control = await healthy.JoinAsync(
+                new JoinRequest(new[] { a, b }, Path.Combine(dir, "control.mp4")));
+
+            control.Success.Should().BeTrue();
+            healthyRunner.LastTotalDuration.Should().Be(
+                TimeSpan.FromSeconds(10),
+                "progress normally runs against the SUMMED input duration");
+
+            // DEGRADE: the compat loop's two probes succeed; the summing pass then hiccups.
+            var probeCalls = 0;
+            var flakyProbe = new StubProbe(_ =>
+            {
+                probeCalls++;
+                return probeCalls <= 2
+                    ? ProbeResult.Success(CompatibleClip())
+                    : ProbeResult.Failure("transient");
+            });
+
+            var runner = new TotalCapturingJoinRunner();
+            var progress = new RecordingProgress<double>();
+            var engine = new JoinEngine(runner, flakyProbe);
+
+            var result = await engine.JoinAsync(
+                new JoinRequest(new[] { a, b }, Path.Combine(dir, "joined.mp4")), progress);
+
+            probeCalls.Should().Be(3, "the summing pass re-probes after the compat loop and bails on the first hiccup");
+
+            // THE INVARIANT: correctness is untouched — only the progress denominator degrades.
+            result.Success.Should().BeTrue("a probe hiccup while summing degrades progress, never correctness");
+            File.Exists(Path.Combine(dir, "joined.mp4")).Should().BeTrue("the join still produced its output");
+
+            runner.CallCount.Should().Be(1);
+            runner.LastTotalDuration.Should().BeNull(
+                "an unsummable total degrades progress to UNKNOWN rather than measuring against a wrong denominator");
+
+            progress.Reports.Should().NotBeEmpty();
+            progress.Reports.Should().OnlyContain(v => v >= 0.0 && v <= 1.0);
+            progress.Reports[^1].Should().Be(1.0, "the join still completes, so progress still lands on 1.0");
+        }
+        finally { try { Directory.Delete(dir, recursive: true); } catch { /* best-effort */ } }
+    }
+
+    // SPEC-003#I5 — the "naming the 1-based clip" half of the probe-failure refusal. The existing
+    // JoinAsync_ProbeFailureOnInput_RefusesNoOutput fails EVERY path, so the index the refusal
+    // prints cannot be distinguished there; here only the SECOND input is unprobeable, so the single
+    // "probe" mismatch must point at clip 2 by name — and the engine still never throws.
+    [Trait("serves-spec", "SPEC-003")]
+    [Fact]
+    public async Task JoinAsync_SecondInputFailsProbe_RefusalNamesClip2()
+    {
+        var a = @"C:\clip-a.mp4";
+        var b = @"C:\clip-b.mp4";
+
+        // Recording runner: its CallCount stays 0 unless the engine actually launches ffmpeg.
+        var runner = new WritingFakeRunner();
+        var engine = new JoinEngine(
+            runner,
+            new StubProbe(p => p == a
+                ? ProbeResult.Success(CompatibleClip())
+                : ProbeResult.Failure("not a media file")));
+
+        var result = await engine.JoinAsync(new JoinRequest(new[] { a, b }, @"C:\out\joined.mp4"));
+
+        result.Success.Should().BeFalse();
+        result.OutputPath.Should().BeNull();
+
+        var probeMismatch = result.Refusal!.Mismatches.Should().ContainSingle(m => m.Field == "probe").Which;
+        probeMismatch.Detail.Should()
+            .Contain("clip 2", "the refusal names the 1-BASED index of the offending clip")
+            .And.NotContain("clip 1", "the clip that probed fine is not blamed")
+            .And.Contain("not a media file", "the probe's own reason is carried through verbatim");
+
+        runner.CallCount.Should().Be(0, "a bad input is refused before ffmpeg — the engine never throws for it");
+    }
 }

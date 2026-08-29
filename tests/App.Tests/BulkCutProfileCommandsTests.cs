@@ -171,6 +171,45 @@ public sealed class BulkCutProfileCommandsTests
         vm.ApplyReportSummary.Should().Contain("now invalid");
     }
 
+    // SPEC-011#I56 — the load-bearing half of "applies to every IsCheckedByUser row": targeting reads the
+    // RAW checkbox intent, NOT the computed IsEnabled. ApplyProfileToAll_AppliesToEveryCheckedRow uses
+    // three valid rows, where the two agree, so it cannot tell them apart. Here an invalidating profile
+    // auto-DISABLES the row (IsEnabled false) while the checkbox intent stays true — and a fixed profile
+    // must still be able to rescue it. Targeting on IsEnabled would strand the row permanently: it could
+    // only be re-validated by an apply it is no longer a target of.
+    [Fact]
+    [Trait("serves-spec", "SPEC-011")]
+    public async Task ApplyProfileToAll_UsesRawCheckboxIntent_SoItCanReValidateAnAutoDisabledRow()
+    {
+        // Seed the invalidating profile BEFORE constructing the VM so the ctor's refresh projects it.
+        var probe = new BulkFakeProbe();
+        var settings = new FakeSettings();
+        settings.SaveProfile(new CutProfile("Long", TimeSpan.FromSeconds(80), null)); // intro 80 overshoots a 60s file
+        var vm = new BulkCutViewModel(
+            probe, new ThrowingFakeSplitEngine(), new FakeThumbnailService(), settings, new FakeBulkTrimEngine());
+        vm.SelectedProfile = vm.Profiles.Single();
+
+        var row = await AddRowAsync(vm, probe, @"C:\v\short.mp4", 60, 2, introSeconds: 6);
+
+        vm.ApplyProfileToAll();
+
+        row.IsValidCut.Should().BeFalse("intro 80 clamps to the 60s duration — nothing is left to keep");
+        row.IsEnabled.Should().BeFalse("an invalid row auto-disables, so the rendered checkbox reads false");
+        row.IsCheckedByUser.Should().BeTrue("but the user's RAW checkbox intent is untouched by the auto-disable");
+
+        // The user fixes the profile and re-applies — the auto-disabled row must still be a target.
+        settings.SaveProfile(new CutProfile("Long", TimeSpan.FromSeconds(10), null)); // upsert by name
+        vm.SelectedProfile = settings.CutProfiles.Single(p => p.Name == "Long");
+
+        var report = vm.ApplyProfileToAll();
+
+        report!.AppliedCount.Should().Be(1,
+            "targeting is the raw checkbox intent, so a currently-invalid (auto-disabled) checked row can still be rescued");
+        report.InvalidatedRows.Should().BeEmpty("the fixed profile re-validates it");
+        row.IsValidCut.Should().BeTrue();
+        row.IsEnabled.Should().BeTrue("the rescued row re-enables itself for the batch");
+    }
+
     [Fact]
     public async Task ApplyProfile_Commands_Disabled_WithNoSelectedProfile()
     {
