@@ -64,6 +64,13 @@ public interface IAppSettings
     /// <c>null</c> = use the Bulk default. Independent of <see cref="BulkVerticalSplitRatio"/> (D6).
     /// Setting it persists immediately.
     /// </summary>
+    /// <summary>
+    /// T-133 — whether "Set intro-end / outro-start here" fans the cut out to every checked row instead of
+    /// only the previewed one. <c>null</c> = the default, which is ON: the tab is called Bulk Cut, and the
+    /// single-row behaviour is what made a user set one cut, press Run, and get one file.
+    /// </summary>
+    bool? BulkApplyCutToAllRows { get; set; }
+
     double? BulkHorizontalSplitRatio { get; set; }
 
     /// <summary>

@@ -47,6 +47,7 @@ public sealed class AppSettings : IAppSettings
     private LayoutMode _layoutMode = LayoutMode.Horizontal;
     private double? _horizontalSplitRatio;
     private double? _verticalSplitRatio;
+    private bool? _bulkApplyCutToAllRows;
     private double? _bulkHorizontalSplitRatio;
     private double? _bulkVerticalSplitRatio;
     private List<CutProfile> _cutProfiles = new();
@@ -143,6 +144,20 @@ public sealed class AppSettings : IAppSettings
             if (!Nullable.Equals(_verticalSplitRatio, value))
             {
                 _verticalSplitRatio = value;
+                Save();
+            }
+        }
+    }
+
+    /// <inheritdoc />
+    public bool? BulkApplyCutToAllRows
+    {
+        get => _bulkApplyCutToAllRows;
+        set
+        {
+            if (!Nullable.Equals(_bulkApplyCutToAllRows, value))
+            {
+                _bulkApplyCutToAllRows = value;
                 Save();
             }
         }
@@ -269,6 +284,7 @@ public sealed class AppSettings : IAppSettings
                 _layoutMode = ParseLayoutMode(dto.LayoutMode);
                 _horizontalSplitRatio = ClampRatio(dto.HorizontalSplitRatio);
                 _verticalSplitRatio = ClampRatio(dto.VerticalSplitRatio);
+                _bulkApplyCutToAllRows = dto.BulkApplyCutToAllRows; // absent (older file) → null → default (ON)
                 _bulkHorizontalSplitRatio = ClampRatio(dto.BulkHorizontalSplitRatio); // absent (older file) → null → default
                 _bulkVerticalSplitRatio = ClampRatio(dto.BulkVerticalSplitRatio);
                 _cutProfiles = MapProfiles(dto.CutProfiles); // missing/empty field → empty list (older files safe)
@@ -419,6 +435,7 @@ public sealed class AppSettings : IAppSettings
                 LayoutMode = _layoutMode.ToString(),
                 HorizontalSplitRatio = _horizontalSplitRatio,
                 VerticalSplitRatio = _verticalSplitRatio,
+                BulkApplyCutToAllRows = _bulkApplyCutToAllRows,
                 BulkHorizontalSplitRatio = _bulkHorizontalSplitRatio,
                 BulkVerticalSplitRatio = _bulkVerticalSplitRatio,
                 // Null (not an empty array) when there are none, so the key is omitted entirely
@@ -505,6 +522,13 @@ public sealed class AppSettings : IAppSettings
         /// </summary>
         [JsonPropertyName("bulkHorizontalSplitRatio")]
         public double? BulkHorizontalSplitRatio { get; set; }
+
+        /// <summary>
+        /// T-133 — whether set-at-playhead fans out to every ticked row. Absent in older files →
+        /// <c>null</c> → the default, ON.
+        /// </summary>
+        [JsonPropertyName("bulkApplyCutToAllRows")]
+        public bool? BulkApplyCutToAllRows { get; set; }
 
         [JsonPropertyName("bulkVerticalSplitRatio")]
         public double? BulkVerticalSplitRatio { get; set; }

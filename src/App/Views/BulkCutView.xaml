@@ -506,6 +506,20 @@
                                     ToolTip="{Binding PrecisionNote}"
                                     Command="{Binding SetOutroAtPlayheadCommand}" />
                         </WrapPanel>
+
+                        <!-- T-133: the scope of the two buttons above, stated where they are pressed.
+                             ON by default - the tab is called Bulk Cut, and setting one row then pressing
+                             Run is what produced "why did it cut only one file?". The outro fans out
+                             measured from the END of each file, so one gesture fits uneven lengths. -->
+                        <CheckBox Margin="2,8,0,0"
+                                  Content="Apply to all ticked videos"
+                                  IsChecked="{Binding ApplyCutToAllRows, Mode=TwoWay}"
+                                  ToolTip="Set the cut on every ticked video at once. The outro is measured from the end of each file, so videos of different lengths keep the right tail. Turn this off to set only the video you are previewing." />
+                        <TextBlock Text="{Binding SetAtPlayheadScopeNote}"
+                                   Margin="22,2,2,0"
+                                   FontSize="{StaticResource FontSizeSmall}"
+                                   Foreground="{StaticResource TextMutedBrush}"
+                                   TextWrapping="Wrap" />
                     </StackPanel>
                 </Grid>
 

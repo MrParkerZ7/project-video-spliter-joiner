@@ -524,6 +524,17 @@ SPEC-007); the shared `IThumbnailService`/`FfmpegThumbnailService` frame source 
   is itself collapsed while the list is empty (`CanChangeSelection`, the two command predicates, `RaiseRunState`,
   `BulkCutView.xaml` header `Visibility`).
 
+- **I103** — the two set-at-playhead gestures have a user-visible SCOPE: `ApplyCutToAllRows`, bound to a
+  checkbox beside them and persisted as `BulkApplyCutToAllRows`. It defaults to **ON** — absent in an older
+  settings file reads as ON — because the single-row behaviour is what let a user set one cut, press Run,
+  and cut one file out of a batch (T-133).
+- **I104** — when ON, `SetIntroAtPlayhead` / `SetOutroAtPlayhead` write the selected row and then delegate to
+  `ApplyToAll(_selectedItem)` — NOT a second copy implementation. The fan-out therefore inherits every
+  apply-to-all rule verbatim: it targets `IsCheckedByUser` rows, re-snaps against each target's own
+  keyframes, measures the outro **from the END of each file** so uneven lengths align, mirrors a cleared
+  outro, and reports invalidated rows through `ApplyToAllReport`.
+- **I105** — when OFF, only the selected row changes. An unticked row is never written to in either mode.
+
 ## Links
 - Design: D-004 (Bulk Cut screen)
 - Goals: G-036 (batch trim), G-037 (shared preview + set-at-playhead + reusable cut profiles), G-038 (profile

@@ -308,6 +308,9 @@ internal sealed class FakeSettings : IAppSettings
 
     public double? VerticalSplitRatio { get; set; }
 
+    public bool? BulkApplyCutToAllRows { get; set; }
+
+
     public double? BulkHorizontalSplitRatio { get; set; }
 
     public double? BulkVerticalSplitRatio { get; set; }

@@ -149,6 +149,9 @@ public sealed class BulkCutViewModel : ObservableObject
     private CollisionPolicy _collisionPolicy = CollisionPolicy.AutoSuffix;
     private bool _overwrite;
     private bool _replaceOriginal;
+
+    // T-133: null in settings (older file / never set) reads as the default, ON.
+    private bool _applyCutToAllRows = true;
     private bool _exactCut;
     private ApplyToAllReport? _applyToAllReport;
     private IReadOnlyList<BulkTrimItemResult> _lastFailedItems = Array.Empty<BulkTrimItemResult>();
@@ -206,6 +209,9 @@ public sealed class BulkCutViewModel : ObservableObject
         _thumbnailDelay = thumbnailDelay;
 
         // T-115 preview-open debounce seams (null ⇒ production defaults; tests inject immediate/gated).
+        // T-133: null (older settings file / never set) reads as the default, ON.
+        _applyCutToAllRows = _settings.BulkApplyCutToAllRows ?? true;
+
         _selectionOpenDebounce = selectionOpenDebounce is { } d && d > TimeSpan.Zero ? d : DefaultSelectionOpenDebounce;
         _selectionOpenDelay = selectionOpenDelay ?? ((wait, ct) => Task.Delay(wait, ct));
 
@@ -388,6 +394,33 @@ public sealed class BulkCutViewModel : ObservableObject
             }
         }
     }
+
+    /// <summary>
+    /// T-133 — whether the two "set at playhead" gestures fan the cut out to every CHECKED row instead of
+    /// only the previewed one. Defaults to ON: this tab is called Bulk Cut, and the single-row behaviour is
+    /// exactly what made a user set one cut, press Run, and get one file out of twelve.
+    ///
+    /// <para>The fan-out reuses <see cref="ApplyToAll"/> wholesale rather than re-deriving it — including
+    /// the clause that is easy to get wrong, that the outro is measured from the END of each file so one
+    /// gesture fits episodes of different lengths.</para>
+    /// </summary>
+    public bool ApplyCutToAllRows
+    {
+        get => _applyCutToAllRows;
+        set
+        {
+            if (SetProperty(ref _applyCutToAllRows, value))
+            {
+                _settings.BulkApplyCutToAllRows = value;
+                OnPropertyChanged(nameof(SetAtPlayheadScopeNote));
+            }
+        }
+    }
+
+    /// <summary>One line stating which rows the next set-at-playhead gesture will touch.</summary>
+    public string SetAtPlayheadScopeNote => _applyCutToAllRows
+        ? "applies to every ticked video"
+        : "applies to the previewed video only";
 
     /// <summary>True when the collision controls have no effect (replace-original owns the destination).</summary>
     public bool CollisionIsInert => _replaceOriginal;
@@ -826,6 +859,7 @@ public sealed class BulkCutViewModel : ObservableObject
         }
 
         _selectedItem!.IntroEnd.Requested = Player.Position;
+        FanOutToCheckedRows();
     }
 
     /// <summary>
@@ -850,6 +884,25 @@ public sealed class BulkCutViewModel : ObservableObject
         {
             row.AddOutro(Player.Position);
         }
+
+        FanOutToCheckedRows();
+    }
+
+    /// <summary>
+    /// T-133 — when <see cref="ApplyCutToAllRows"/> is on, copy the row just set onto every other CHECKED
+    /// row. Delegates to <see cref="ApplyToAll"/> so there is exactly one implementation of the copy: it
+    /// re-snaps against each target's own keyframes, measures the outro from the END of each file so
+    /// uneven lengths align, mirrors a cleared outro, and reports rows the copy invalidated instead of
+    /// dropping them silently. No-op when the toggle is off.
+    /// </summary>
+    private void FanOutToCheckedRows()
+    {
+        if (!_applyCutToAllRows)
+        {
+            return;
+        }
+
+        ApplyToAll(_selectedItem);
     }
 
     /// <summary>
