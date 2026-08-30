@@ -25,6 +25,14 @@
     Trimming (PublishTrimmed) is deliberately NOT enabled — trimming is unsupported and unsafe
     for WPF (reflection / XAML resource loading breaks). Do not add it.
   -->
+  <PropertyGroup>
+    <!-- T-132 / ADR-0019: FFME's IMediaInputStream is the ONLY way to open a file whose path cannot be
+         expressed as a Uri (a network share whose server name contains a space). Its Read/Seek take raw
+         pointers, so this project must allow unsafe blocks. The unsafe surface is deliberately confined to
+         Media/FileMediaInputStream.cs. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
   <PropertyGroup Condition="'$(PublishSingleFile)' == 'true'">
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <SelfContained>true</SelfContained>

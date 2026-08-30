@@ -29,3 +29,4 @@ numbering order. The index reflects the **actual** records present.
 | [0017](0017-output-mode-replace-original.md) | Opt-in "replace originals" as a separate OutputMode axis (not a 4th CollisionPolicy) — verify-all, then replace in place via a Recycle-Bin backup | Accepted |
 | [0018](0018-smart-cut-exact-trimming.md) | Frame-exact ("smart") cutting as a separate opt-in engine — re-encode one head GOP, copy the rest; stream copy stays the default | Accepted |
 | [0019](0019-row-intent-vs-computed-eligibility.md) | A Bulk Cut row's selection is two properties — a bindable user intent and a read-only computed eligibility (merging them back reintroduces a dead checkbox) | Accepted |
+| [0020](0020-unsafe-for-ffme-input-stream.md) | Allow unsafe blocks in the app so a file whose path cannot be a URI (a share whose name has a space) can be opened through FFME's IMediaInputStream | Accepted |

@@ -13,7 +13,7 @@ sources:
   - src/Core/Split/SplitSegment.cs
   - src/Core/Split/SplitException.cs
 serves-goal: [G-001, G-005]
-updated: 2026-08-22
+updated: 2026-08-30
 ---
 
 ## What
@@ -44,7 +44,13 @@ validation, ffmpeg-failure mapping, output naming, and the `SplitResult` / `Spli
 `AverageGop` — cited but owned by the probe spec); the ffmpeg runner and error-mapper internals
 (`IFfmpegRunner`, `FfmpegErrorMapper`); per-part / staged progress reporting (T-044 / T-069) except where it
 gates extraction routing; the bulk-trim orchestrator and `KeptSegmentSelector` (D-004, its own spec — it
-merely reuses this engine); the join engine.
+merely reuses this engine); the join engine. Also out: the **replace-the-original swap**
+`MoveTempSegmentsIntoPlace` performs when a planned destination IS the input. That guarantee — replace
+atomically behind a `.vsj-original` backup, rename-aside with restore-on-failure where the volume cannot,
+`IOriginalDisposer` deciding the backup's fate, and the disposer called only once the swap has committed —
+lives in `src/Core/Io/OriginalReplacer.cs`. `SplitEngine.ReplaceOriginalInPlace` is a one-line delegation to
+it (T-130) and is **not** its only caller: `BulkTrimEngine` calls the same method on the frame-exact route.
+It is specified in SPEC-002 I40–I44, with the frame-exact caller at I56–I60 — not here.
 
 ## Current behavior & invariants
 
@@ -173,6 +179,9 @@ unchanged, and nothing below alters them. Frame-exact cutting is a SEPARATE engi
   stated reason) — never a guessed encoder and never a silently corrupt concat. The caller then runs
   the ordinary lossless cut.
 - **I47** — All intermediates live in a `.vsj-smartcut-<guid>` temp dir swept in a `finally`; the final
-  file is moved into place only after it exists (same cancel-safety contract as `SplitEngine`).
+  file is moved into place only after it exists (same cancel-safety contract as `SplitEngine`). That move is
+  `MoveIntoPlace`, a **delete-then-move** onto the destination it was given — so a caller must never hand this
+  engine a destination that is its own source; one that wants to write over the original hands it a sibling
+  temp and performs the swap through `Core/Io/OriginalReplacer` instead (SPEC-002 I53/I56–I57).
 - **I48** — Exactly three ffmpeg invocations for a `HeadReencode` (head encode, tail copy, concat) and
   one for a `FullReencode` — never one per GOP.

@@ -522,50 +522,12 @@ public sealed class SplitEngine : ISplitEngine
     }
 
     /// <summary>
-    /// Atomically put <paramref name="tempFile"/> where the user's ORIGINAL lives, keeping a backup
-    /// throughout so the data is never in a state where it exists nowhere (T-122). Prefers
-    /// <see cref="File.Replace(string,string,string)"/>; falls back to rename-original-aside → move →
-    /// dispose for volumes that do not support it (exFAT / some SMB shares). The backup's fate is the
-    /// injected <see cref="IOriginalDisposer"/>'s decision (the app sends it to the Recycle Bin).
+    /// Put <paramref name="tempFile"/> where the user's ORIGINAL lives, keeping a backup throughout
+    /// (T-122). The implementation now lives in <see cref="OriginalReplacer"/> so the frame-exact cut
+    /// path can reuse the SAME guarantee instead of its own delete-then-move (T-130).
     /// </summary>
     private void ReplaceOriginalInPlace(string tempFile, string originalPath)
-    {
-        var backup = originalPath + ".vsj-original";
-
-        try
-        {
-            if (File.Exists(backup))
-            {
-                File.Delete(backup); // A stale backup from an earlier interrupted run.
-            }
-        }
-        catch
-        {
-            // Non-fatal — File.Replace/the fallback will surface a real problem below.
-        }
-
-        try
-        {
-            File.Replace(tempFile, originalPath, backup, ignoreMetadataErrors: true);
-        }
-        catch (Exception ex) when (ex is PlatformNotSupportedException or IOException or UnauthorizedAccessException)
-        {
-            // Fallback: move the original aside FIRST, so the bytes always exist under one name or the
-            // other, then put the new file in place. If the second step fails, restore the original.
-            File.Move(originalPath, backup, overwrite: true);
-            try
-            {
-                File.Move(tempFile, originalPath);
-            }
-            catch
-            {
-                File.Move(backup, originalPath, overwrite: true); // Put the user's file back.
-                throw;
-            }
-        }
-
-        _originalDisposer.DisposeOriginalBackup(backup);
-    }
+        => new OriginalReplacer(_originalDisposer).Replace(tempFile, originalPath);
 
     /// <summary>
     /// Best-effort disk-space pre-flight. A stream-copy split reproduces roughly the input's byte

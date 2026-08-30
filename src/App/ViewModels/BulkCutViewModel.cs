@@ -16,6 +16,7 @@ using VideoSplitJoiner.Core.Media;
 using VideoSplitJoiner.Core.Profiles;
 using VideoSplitJoiner.Core.Split;
 using VideoSplitJoiner.Core.Thumbnails;
+using VideoSplitJoiner.App.Io;
 
 namespace VideoSplitJoiner.App.ViewModels;
 
@@ -193,8 +194,14 @@ public sealed class BulkCutViewModel : ObservableObject
         // T-125: the default batch runner also gets a smart-cut engine, so CutPrecision.Exact has
         // something to route to. Only built when a real ffmpeg runner is available (tests inject their
         // own engine and never reach this branch).
+        // T-130: the disposer is passed too, so an Exact cut that replaces originals swaps the produced
+        // file in through OriginalReplacer (backup + restore-on-failure + Recycle Bin) instead of the
+        // combination being refused.
         _bulkTrimEngine = bulkTrimEngine ?? new BulkTrimEngine(
-            _splitEngine, new KeptMiddleRequestBuilder(_probe), smartCut);
+            _splitEngine,
+            new KeptMiddleRequestBuilder(_probe),
+            smartCut,
+            new RecycleBinOriginalDisposer());
         _thumbnailDebounce = thumbnailDebounce; // T-108 test seams (null ⇒ per-row production defaults)
         _thumbnailDelay = thumbnailDelay;
 

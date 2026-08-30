@@ -23,10 +23,11 @@ sources:
   - src/Core/Bulk/OutputMode.cs
   - src/Core/Bulk/CutPrecision.cs
   - src/Core/Io/IOriginalDisposer.cs
+  - src/Core/Io/OriginalReplacer.cs
   - src/Core/Split/SplitEngine.cs
   - src/Core/Split/SmartCutEngine.cs
 serves-goal: [G-036, G-041, G-042]
-updated: 2026-08-28
+updated: 2026-08-30
 ---
 
 ## What
@@ -45,7 +46,11 @@ the batch opts into `CutPrecision.Exact` for, which is routed to the separate `I
 falls back to that same lossless path whenever exact cutting is unavailable. Two later axes ride on the
 same orchestrator without disturbing it: `OutputMode` chooses **where** a row writes (a new `_trimmed`
 file beside the source by default, or over the original — verified first, then swapped in behind a
-backup), and `CutPrecision` chooses **how exactly** the requested cut time is honored.
+backup), and `CutPrecision` chooses **how exactly** the requested cut time is honored. The two axes are
+independent in both directions: since T-130 the swap itself lives in `Core/Io/OriginalReplacer` rather than
+inside either engine, so the frame-exact route reaches the same backup + restore-on-failure + disposer
+guarantee the lossless route has — only a host that supplies no `IOriginalDisposer` still has the
+combination refused.
 
 ## Why
 Users trimming intros/outros off a folder of clips need one action, not N. Reusing the single-segment
@@ -63,8 +68,10 @@ request assembly (`BuildKeptMiddleRequest`, `KeptMiddleRequestBuilder`); the bat
 (sequential run, failure isolation, cancel sweep, collision policy + source-safety, batch disk
 pre-flight, no-op skip, ledger completeness, batch-outcome resolution, progress rollup); the
 output-destination axis (`OutputMode`, and the verify-then-replace + backup + `IOriginalDisposer` contract it
-drives in `SplitEngine`); and the cut-precision axis (`CutPrecision` routing to `ISmartCutEngine`, with the
-per-row fallback and its warning).
+drives — the swap itself implemented once in `Core/Io/OriginalReplacer` and reached from both the lossless
+route, via `SplitEngine`, and the frame-exact route, via `BulkTrimEngine`); and the cut-precision axis
+(`CutPrecision` routing to `ISmartCutEngine`, with the per-row fallback, its warning, and the sibling-temp +
+swap it uses when both axes point at the original).
 
 **Out:** the underlying Split engine's own behavior (per-segment `-c copy` command construction, temp-then-move,
 keyframe snapping, the `SplitPlanner` drop/merge/snap rules) — that is the core Split-engine spec; this
@@ -191,7 +198,12 @@ preview player, and cut profiles (G-037) — those are app-layer specs.
   `NamingPattern` = the input's literal file name — so the one kept segment is planned to land **on** the
   original, and the engine recognizes it by path identity rather than by a flag (I41).
 
-### Replacing the original in place (`SplitEngine`, `IOriginalDisposer`)
+### Replacing the original in place (`OriginalReplacer`, `IOriginalDisposer`)
+The swap is **one implementation with two callers**. `OriginalReplacer.Replace(producedFile, originalPath)`
+(`src/Core/Io/OriginalReplacer.cs`) is the only place I42–I44 are coded; `SplitEngine` reaches it from the
+lossless route (`MoveTempSegmentsIntoPlace` → its private `ReplaceOriginalInPlace`, a one-line delegation
+since T-130) and `BulkTrimEngine` reaches it from the frame-exact route (I56–I60). Neither caller can drift
+from the guarantee, because neither owns it.
 - **I40** — Verify-then-replace: `MoveTempSegmentsIntoPlace` checks that **every** produced temp part exists
   before it touches **any** destination; a missing part throws `SplitException`
   (`"… was not produced by ffmpeg …"`) with zero destinations written. Under `ReplaceOriginal` a destination
@@ -201,20 +213,25 @@ preview player, and cut profiles (G-037) — those are app-layer specs.
   path equals the input's goes through `ReplaceOriginalInPlace`; every other destination keeps the ordinary
   delete-if-exists → `File.Move`.
 - **I42** — The replace is atomic-with-a-backup:
-  `File.Replace(temp, original, original + ".vsj-original", ignoreMetadataErrors: true)` — **never** a
-  delete-then-move, so the bytes are never in a state where they exist nowhere. A stale `.vsj-original` from
-  an earlier interrupted run is deleted first, best-effort (a failure there is non-fatal — the replace itself
-  surfaces any real problem).
+  `File.Replace(produced, original, original + OriginalReplacer.BackupSuffix, ignoreMetadataErrors: true)`
+  (`BackupSuffix` = `".vsj-original"`) — **never** a delete-then-move, so the bytes are never in a state where
+  they exist nowhere. A stale `.vsj-original` from an earlier interrupted run is deleted first, best-effort (a
+  failure there is non-fatal — the replace itself surfaces any real problem). The guarantee is the **type's**,
+  not a caller's: the lossless route and the frame-exact route (I57) both get it from this one method.
 - **I43** — Volumes that cannot `File.Replace` (`PlatformNotSupportedException` / `IOException` /
   `UnauthorizedAccessException` — exFAT, some SMB shares) fall back to **rename-aside**: move the *original*
-  to the backup FIRST, then move the temp into place; if that second move fails, the backup is moved **back**
-  over the original and the exception rethrown — so even a failed fallback ends with the user's file present.
-- **I44** — The backup's fate is the injected `IOriginalDisposer`'s decision, and it is called **only** after
-  a verified output has taken the original's place. Core defaults to **keeping** it
-  (`KeepOriginalBackupDisposer`, the `SplitEngine` default); `DeleteOriginalBackupDisposer` removes it; the
-  app injects `RecycleBinOriginalDisposer`, so a replaced original stays recoverable after the batch — and
-  after the app exits. Every implementation is best-effort: failing to dispose the backup never fails an
-  otherwise-successful run (the trimmed output is already safely in place).
+  to the backup FIRST, then move the produced file into place; if that second move fails, the backup is moved
+  **back** over the original and the exception rethrown — so even a failed fallback ends with the user's file
+  present (and in the pathological case where the restore-move itself fails, the bytes survive under the
+  `.vsj-original` sibling rather than nowhere). One method, so one fallback — it protects both routes.
+- **I44** — The backup's fate is the injected `IOriginalDisposer`'s decision, and `Replace` calls it **only**
+  after a verified output has taken the original's place — a throw on either path (I42/I43) returns without
+  disposing anything. Core defaults to **keeping** it (`KeepOriginalBackupDisposer`, the `SplitEngine`
+  default); `DeleteOriginalBackupDisposer` removes it; the app injects `RecycleBinOriginalDisposer` — into
+  `SplitEngine`, and since T-130 into `BulkTrimEngine` too — so a replaced original stays recoverable after
+  the batch and after the app exits, **whichever precision produced it**. Every implementation is
+  best-effort: failing to dispose the backup never fails an otherwise-successful run (the trimmed output is
+  already safely in place).
 - **I45** — **Every** failure path leaves the original byte-identical with **zero** destructive calls (no
   replace, no backup, no disposer call): ffmpeg produced nothing (I40 fires first), the per-run disk
   pre-flight blocked (`EnsureEnoughFreeSpace` throws before any ffmpeg run), and an invalid request
@@ -245,27 +262,75 @@ preview player, and cut profiles (G-037) — those are app-layer specs.
   **and** `Strategy != SmartCutStrategy.PureCopy`. A `PureCopy` fallback (the requested time was already on a
   keyframe, so the lossless cut IS exact there) adds **no** warning. Any `SplitResult` warnings from the
   fallback run are appended to it, so I29's warning surface is unchanged.
-- **I52** — Exact rows sit inside the same batch contract: the smart cut writes to the **same**
-  collision-resolved effective path and reports through the same per-row progress reporter, so collision
-  resolution + source safety (I19–I23, I33–I39), the batch disk pre-flight (I24–I26), cancel (I17), failure
-  isolation (I16), and ledger completeness (I27–I32) all apply identically to `Exact` and `Lossless` rows.
-- **I53** — On the Exact route the produced file is put in place by `SmartCutEngine`'s own delete-then-move
-  (`MoveIntoPlace`), not by `ReplaceOriginalInPlace` — so I42-I44's backup + disposer guarantees describe the
-  **lossless** route into a `ReplaceOriginal` destination.
-- **I54** — Because of I53, `CutPrecision.Exact` is **refused** when `Output == ReplaceOriginal`: the row
-  takes the lossless path and the smart cutter is never handed a destination that is its own source. Under
-  `ReplaceOriginal` the resolved destination IS the input (I40), and `MoveIntoPlace` deletes its destination
-  before moving — which would hard-delete the user's original with no backup, no disposer and no
-  restore-on-failure, and lose the file outright if the move then failed.
-- **I55** — The I54 refusal is **announced, never silent**: the row carries
+- **I52** — Exact rows sit inside the same batch contract: the smart cut writes to the collision-resolved
+  effective path — or, when that path IS the user's original, to the sibling temp of I56 that is then swapped
+  onto it — and reports through the same per-row progress reporter, so collision resolution + source safety
+  (I19–I23, I33–I39), the batch disk pre-flight (I24–I26 — the sibling temp shares the effective path's
+  folder, so the row is still measured against the same drive root), cancel (I17), failure isolation (I16),
+  and ledger completeness (I27–I32) all apply identically to `Exact` and `Lossless` rows.
+- **I53** — `SmartCutEngine` still finishes with its **own** delete-then-move (`MoveIntoPlace`: `File.Delete`
+  the destination if present, then `File.Move` the result in). That is precisely why it is never handed the
+  user's original as a destination — under `ReplaceOriginal` it is given the sibling temp (I56) and the
+  original is reached only through `OriginalReplacer` (I57), so the delete can only ever consume that temp.
+  Writing to an ordinary `_trimmed` destination, `MoveIntoPlace` is the whole story and no backup exists (none
+  is needed — the source is untouched).
+- **I54** — `CutPrecision.Exact` + `Output == ReplaceOriginal` is **refused** exactly when `BulkTrimEngine`
+  holds **no `IOriginalDisposer`** — the ctor overloads that take none, or an explicitly-null one. The guard is
+  `Precision == Exact && Output == ReplaceOriginal && _originalDisposer is null`, evaluated **before** the
+  smart-cut branch: with no disposer there is no safe swap to route through, so the row takes the lossless
+  path and the smart cutter is never invoked for it. *(Scope narrowed by T-130 — this refusal used to be
+  unconditional. Under `ReplaceOriginal` the resolved destination IS the input (I36) and `MoveIntoPlace`
+  deletes its destination before moving (I53), so handing the smart cutter that path would hard-delete the
+  user's original with no backup, no disposer and no restore-on-failure, losing the file outright if the move
+  then failed. With a disposer present the combination is now performed safely instead — I56–I60.)*
+- **I55** — The I54 refusal is **announced, never silent**: the refused row carries
   `"exact cut unavailable (replacing originals) - cut snapped to the nearest keyframe"`, reusing I51's
-  fallback wording, because the user asked for exact cutting and did not get it. The refusal is scoped to
-  `ReplaceOriginal` — an ordinary Exact row writing beside its source is unaffected.
+  fallback wording, because the user asked for exact cutting and did not get it. The warning is scoped to the
+  **disposer-less** `ReplaceOriginal` case only — an ordinary Exact row writing beside its source is
+  unaffected, and a disposer-equipped `ReplaceOriginal` row is not refused at all, so it carries no such
+  warning (it gets the exact cut it asked for).
+
+### Exact cutting INTO the original (`OriginalReplacer` on the frame-exact route, T-130)
+The lifted half of I54: with an `IOriginalDisposer` in hand, `Exact` + `ReplaceOriginal` is performed rather
+than refused — by keeping `SmartCutEngine` away from the master and routing its output through the same swap
+the lossless route uses.
+- **I56** — The smart cut is given a **sibling temp**, never the input. The path is the effective path with
+  `.vsj-exact` and the effective path's own extension appended —
+  `effective[i] + ".vsj-exact" + Path.GetExtension(effective[i])`, so `a.mp4` → `a.mp4.vsj-exact.mp4`. It
+  therefore sits in the original's own folder (same volume, so the later swap is a rename, not a copy) and
+  keeps an extension ffmpeg can select a muxer from. Every other `Output` mode is unchanged: the smart cut
+  still receives the effective path directly.
+- **I57** — The produced file reaches the original through
+  `new OriginalReplacer(disposer).Replace(exactTarget, effective[i])` — the **same** method the lossless route
+  calls — so the exact route inherits I42–I44 verbatim: the atomic `File.Replace` behind a `.vsj-original`
+  backup, the rename-aside fallback with restore-on-failure, and a disposer call only after the swap commits.
+  The row is recorded `Done` only after the swap returns, and the lossless path is not run for it (I48 holds
+  on this route too — zero builder dispatches, one smart cut, one swap).
+- **I58** — A **fell-back** exact row under `ReplaceOriginal` sweeps its sibling temp (`TryDeleteTempFile`,
+  best-effort — a stray temp must never fail an otherwise-successful row) and the ordinary lossless pass then
+  owns the destination, reaching the original through `SplitEngine`'s replace (I40–I44). In practice there is
+  nothing to sweep: both of `SmartCutEngine`'s fallback returns (`PureCopy`, and an unresolvable encoder)
+  happen before it writes anything, so the sweep is a guard against a temp stranded by an earlier interrupted
+  run. **⚠ Known gap (T-130):** this branch is taken *ahead* of I51's warning branch, so a fallback on this
+  one route is currently **silent** — the row runs lossless with no `"exact cut unavailable (<reason>) …"`
+  note, unlike every other `Exact` row. Behavior as shipped; the warning is the follow-up.
+- **I59** — A **failed swap** leaves the original intact. `Replace` throws only after I42/I43 have restored the
+  original under its own name (or, in the pathological restore-failure case, left it under `.vsj-original`);
+  no disposer is called; the exception escapes to the row's own catch and the row is recorded **Failed**, with
+  the produced sibling temp left on disk rather than a half-written master. The failure is isolated to that
+  row (I16) and does **not** silently re-run it on the lossless path.
+- **I60** — Cancellation cannot half-replace the master. Cancel is observed inside `CutAsync`, before its
+  `MoveIntoPlace`, so the sibling temp is never produced, `SmartCutEngine` sweeps its own
+  `.vsj-smartcut-<guid>` dir in a `finally`, no swap is attempted and no disposer call is made — the row is
+  `Cancelled` per I17 with the original untouched. Once the swap itself has begun it is **not** cancellable:
+  `Replace` takes no `CancellationToken`, deliberately — a token must never be able to interrupt the window
+  between the backup and the move-in.
 
 ## Links
 - Design: D-004 (`docs/design/D-004/README.md`, `docs/design/D-004/core-flow.md`)
 - Goals: G-036 (Build the Bulk Cut tab; tasks T-094→T-098); G-041 (make keyframe snapping visible + the
-  opt-in replace-original output mode; tasks T-121→T-123); G-042 (frame-exact "Exact cut"; tasks T-124/T-125)
+  opt-in replace-original output mode; tasks T-121→T-123); G-042 (frame-exact "Exact cut"; tasks T-124/T-125,
+  and T-130 — routing the exact path through the same safe swap so it may write over originals)
 - ADR: 0015 — bulk trim reuses Split single-segment (`docs/adr/0015-bulk-trim-reuses-split-single-segment.md`);
   0018 — frame-exact cutting as a separate opt-in engine (`docs/adr/0018-smart-cut-exact-trimming.md`)
 - Related specs: SPEC-001 (the `-c copy` / temp-then-move / planner contract this feature reuses, plus its
@@ -274,5 +339,6 @@ preview player, and cut profiles (G-037) — those are app-layer specs.
   confirmation dialog)
 - Key code: `src/Core/Split/KeptSegmentSelector.cs`, `src/Core/Bulk/BulkTrimEngine.cs`,
   `src/Core/Bulk/KeptMiddleRequestBuilder.cs`, `src/Core/Bulk/{BulkTrimItem,BulkTrimItemResult,BatchResult,BatchOutcome,ItemOutcome,CollisionPolicy,BulkTrimOptions,BulkTrimProgress,NoOpTrimException,IDiskSpaceProbe,OutputMode,CutPrecision}.cs`,
-  `src/Core/Io/IOriginalDisposer.cs`, `src/Core/Split/SplitEngine.cs` (`MoveTempSegmentsIntoPlace` /
-  `ReplaceOriginalInPlace`), `src/Core/Split/SmartCutEngine.cs`, `src/App/Io/RecycleBinOriginalDisposer.cs`
+  `src/Core/Io/IOriginalDisposer.cs`, `src/Core/Io/OriginalReplacer.cs` (the swap itself — I42–I44),
+  `src/Core/Split/SplitEngine.cs` (`MoveTempSegmentsIntoPlace` / `ReplaceOriginalInPlace`, which delegates to
+  it), `src/Core/Split/SmartCutEngine.cs`, `src/App/Io/RecycleBinOriginalDisposer.cs`

@@ -38,6 +38,9 @@ public sealed class FfmeMediaPlayer : IMediaPlayer, IReopenTarget
     private TimeSpan? _duration;
     private bool _isPlaying;
 
+    // T-132: the stream backing a Uri-less open, held so Unload can release the file handle.
+    private FileMediaInputStream? _inputStream;
+
     // ---- Close→Open lifecycle guard (T-080) -------------------------------------------------
     // FFME's Open/Close are async commands. Calling Open() while a prior Close() (or Open()) is
     // still in flight — the element is IsClosing / IsOpening / IsChanging — is a known NATIVE crash
@@ -226,8 +229,16 @@ public sealed class FfmeMediaPlayer : IMediaPlayer, IReopenTarget
                     // explain the refusal in terms the user can act on.
                     if (!MediaSourceUri.TryCreate(path, out var source) || source is null)
                     {
-                        // Record the offending path. The original failure wrote nothing at all, which is
-                        // why diagnosing it needed a from-scratch reproduction of the path shape.
+                        // T-132: the path cannot be a Uri (a share whose server name holds a space), so
+                        // address the file directly through FFME's stream entry point instead. Only this
+                        // branch is new behaviour -- every path that already opened still takes Open(Uri).
+                        if (TryOpenAsStream(path))
+                        {
+                            return;
+                        }
+
+                        // Still unopenable: record it (the original failure logged nothing, which is why
+                        // diagnosing it needed a from-scratch reproduction) and explain it.
                         TryLogRefusal(path);
                         RaiseFailed(MediaSourceUri.ExplainRefusal(path));
                         return;
@@ -243,6 +254,37 @@ public sealed class FfmeMediaPlayer : IMediaPlayer, IReopenTarget
         {
             RaiseFailed(ex.Message);
         }
+    }
+
+    /// <summary>
+    /// Open <paramref name="path"/> through <see cref="FileMediaInputStream"/> (T-132) for files whose
+    /// path cannot be expressed as a <see cref="Uri"/>. Returns false if the file cannot even be opened,
+    /// leaving the caller to report the ordinary refusal.
+    /// </summary>
+    private bool TryOpenAsStream(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path) || _element is null)
+        {
+            return false;
+        }
+
+        FileMediaInputStream? stream = null;
+        try
+        {
+            stream = new FileMediaInputStream(path!);
+        }
+        catch (Exception)
+        {
+            // Missing, locked, or unreachable — not a URI problem, so fall through to the refusal path.
+            return false;
+        }
+
+        // The element owns the stream once opened; keep the reference so Unload can release the handle
+        // (a held handle on the source would also block a later cut over the same file).
+        _inputStream?.Dispose();
+        _inputStream = stream;
+        Run(() => _element!.Open(stream));
+        return true;
     }
 
     /// <summary>
@@ -362,7 +404,14 @@ public sealed class FfmeMediaPlayer : IMediaPlayer, IReopenTarget
         // Close the media (async, like the other transport calls) so the decode stops and the
         // preview surface goes blank. FFME's Source DP is read-only (driven by Open/Close), so Close
         // is the surface-blanking path; on completion surface a PositionChanged so listeners refresh.
-        Run(() => _element.Close(), () => PositionChanged?.Invoke(this, EventArgs.Empty));
+        Run(() => _element.Close(), () =>
+        {
+            // T-132: release the file handle a Uri-less open took. Holding it would keep the source
+            // locked, which would also block a later cut over the same file.
+            _inputStream?.Dispose();
+            _inputStream = null;
+            PositionChanged?.Invoke(this, EventArgs.Empty);
+        });
     }
 
     public void StepFrame(int direction)

@@ -21,10 +21,27 @@ public sealed class BulkTrimEngine : IBulkTrimEngine
 
     private static readonly IReadOnlyList<string> NoWarnings = Array.Empty<string>();
 
+    /// <summary>Best-effort sweep of the sibling temp an exact cut wrote before falling back (T-130).</summary>
+    private static void TryDeleteTempFile(string path)
+    {
+        try
+        {
+            if (File.Exists(path))
+            {
+                File.Delete(path);
+            }
+        }
+        catch
+        {
+            // A stray temp must never fail an otherwise-successful row.
+        }
+    }
+
     private readonly ISplitEngine _splitEngine;
     private readonly IBulkTrimRequestBuilder _requestBuilder;
     private readonly IDiskSpaceProbe _diskProbe;
     private readonly ISmartCutEngine? _smartCut;
+    private readonly IOriginalDisposer? _originalDisposer;
 
     /// <summary>Create the batch runner over the shared split engine and request builder (default disk probe).</summary>
     public BulkTrimEngine(ISplitEngine splitEngine, IBulkTrimRequestBuilder requestBuilder)
@@ -38,6 +55,21 @@ public sealed class BulkTrimEngine : IBulkTrimEngine
     /// </summary>
     public BulkTrimEngine(ISplitEngine splitEngine, IBulkTrimRequestBuilder requestBuilder, ISmartCutEngine? smartCut)
         : this(splitEngine, requestBuilder, new DriveInfoDiskSpaceProbe(), smartCut)
+    {
+    }
+
+    /// <summary>
+    /// Create the batch runner with a smart-cut engine AND the disposer that decides a replaced
+    /// original's fate (T-130), defaulting the disk probe. The app's composition root uses this — it is
+    /// what makes <see cref="CutPrecision.Exact"/> + <see cref="OutputMode.ReplaceOriginal"/> safe rather
+    /// than refused.
+    /// </summary>
+    public BulkTrimEngine(
+        ISplitEngine splitEngine,
+        IBulkTrimRequestBuilder requestBuilder,
+        ISmartCutEngine? smartCut,
+        IOriginalDisposer? originalDisposer)
+        : this(splitEngine, requestBuilder, new DriveInfoDiskSpaceProbe(), smartCut, originalDisposer)
     {
     }
 
@@ -57,11 +89,29 @@ public sealed class BulkTrimEngine : IBulkTrimEngine
         IBulkTrimRequestBuilder requestBuilder,
         IDiskSpaceProbe diskProbe,
         ISmartCutEngine? smartCut)
+        : this(splitEngine, requestBuilder, diskProbe, smartCut, null)
+    {
+    }
+
+    /// <summary>
+    /// Full ctor, additionally taking the <see cref="IOriginalDisposer"/> that decides a replaced
+    /// original's fate (T-130). It is needed ONLY for <see cref="CutPrecision.Exact"/> combined with
+    /// <see cref="OutputMode.ReplaceOriginal"/>: the smart cutter writes beside the source and the result
+    /// is then swapped in through <see cref="OriginalReplacer"/>, the same machinery the lossless path
+    /// uses. Null = that combination is refused rather than performed unsafely (SPEC-002 I54).
+    /// </summary>
+    public BulkTrimEngine(
+        ISplitEngine splitEngine,
+        IBulkTrimRequestBuilder requestBuilder,
+        IDiskSpaceProbe diskProbe,
+        ISmartCutEngine? smartCut,
+        IOriginalDisposer? originalDisposer)
     {
         _splitEngine = splitEngine ?? throw new ArgumentNullException(nameof(splitEngine));
         _requestBuilder = requestBuilder ?? throw new ArgumentNullException(nameof(requestBuilder));
         _diskProbe = diskProbe ?? throw new ArgumentNullException(nameof(diskProbe));
         _smartCut = smartCut;
+        _originalDisposer = originalDisposer;
     }
 
     /// <inheritdoc />
@@ -181,7 +231,14 @@ public sealed class BulkTrimEngine : IBulkTrimEngine
                 // provides (SplitEngine.ReplaceOriginalInPlace). Until the exact path is routed through
                 // that same machinery, replace-originals falls back to the lossless cut and SAYS SO --
                 // reusing the established FellBack idiom rather than silently doing the dangerous thing.
-                if (opts.Precision == CutPrecision.Exact && opts.Output == OutputMode.ReplaceOriginal)
+                // T-130: exact cutting CAN now write over the user's original, because the produced file
+                // is swapped in by OriginalReplacer -- the same backup + restore-on-failure + disposer
+                // machinery the lossless path uses. SmartCutEngine still finishes with its own
+                // delete-then-move, so it must never be handed the source as its destination: it writes
+                // to a sibling temp and the swap happens here. Without a disposer there is no safe swap,
+                // so the combination stays refused (SPEC-002 I54) rather than performed unsafely.
+                var replacingOriginal = opts.Output == OutputMode.ReplaceOriginal;
+                if (opts.Precision == CutPrecision.Exact && replacingOriginal && _originalDisposer is null)
                 {
                     rowWarnings = new[]
                     {
@@ -190,20 +247,56 @@ public sealed class BulkTrimEngine : IBulkTrimEngine
                 }
                 else if (opts.Precision == CutPrecision.Exact && _smartCut is not null)
                 {
+                    // Under ReplaceOriginal the resolved destination IS the input, so cut to a sibling
+                    // temp first and swap afterwards.
+                    var exactTarget = replacingOriginal
+                        ? effective[i] + ".vsj-exact" + Path.GetExtension(effective[i])
+                        : effective[i];
+
                     var exact = await _smartCut
-                        .CutAsync(item.InputPath, item.IntroEnd, item.OutroStart, effective[i], rowProgress, ct)
+                        .CutAsync(item.InputPath, item.IntroEnd, item.OutroStart, exactTarget, rowProgress, ct)
                         .ConfigureAwait(false);
 
                     if (!exact.FellBack)
                     {
+                        if (replacingOriginal)
+                        {
+                            // Verified-produced, then swapped with a backup kept throughout. A failure
+                            // here throws and the row is reported failed with the original untouched --
+                            // but the sibling temp must not be left beside the user's video, so sweep it
+                            // on the way out.
+                            try
+                            {
+                                new OriginalReplacer(_originalDisposer!).Replace(exactTarget, effective[i]);
+                            }
+                            catch
+                            {
+                                TryDeleteTempFile(exactTarget);
+                                throw;
+                            }
+                        }
+
                         producedExactly = true;
                     }
-                    else if (exact.FallbackReason is { } fbReason
-                             && exact.Strategy != SmartCutStrategy.PureCopy)
+                    else
                     {
-                        // Only worth telling the user when exact was genuinely unavailable - an
-                        // already-on-a-keyframe cut is exact either way and needs no note.
-                        rowWarnings = new[] { $"exact cut unavailable ({fbReason}) - cut snapped to the nearest keyframe" };
+                        if (replacingOriginal)
+                        {
+                            TryDeleteTempFile(exactTarget); // the lossless pass owns the destination
+                        }
+
+                        // The substitution is announced in BOTH modes. An earlier version returned here
+                        // before reaching this, so a fell-back row that REPLACED the user's original
+                        // completed silently -- they asked for a frame-exact cut, got a keyframe-snapped
+                        // one, and it was written over the source. Silence is least acceptable exactly
+                        // where the original is destroyed.
+                        if (exact.FallbackReason is { } fbReason
+                            && exact.Strategy != SmartCutStrategy.PureCopy)
+                        {
+                            // Only worth telling the user when exact was genuinely unavailable - an
+                            // already-on-a-keyframe cut is exact either way and needs no note.
+                            rowWarnings = new[] { $"exact cut unavailable ({fbReason}) - cut snapped to the nearest keyframe" };
+                        }
                     }
                 }
 

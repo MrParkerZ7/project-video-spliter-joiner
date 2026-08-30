@@ -7,7 +7,9 @@
     <AssemblyName>VideoSplitJoiner.App.Tests</AssemblyName>
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
-  </PropertyGroup>
+      <!-- T-132: the FileMediaInputStream tests drive ffmpeg's pointer-based AVIO callbacks. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+</PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.10.0" />
