@@ -24,6 +24,16 @@ namespace VideoSplitJoiner.App.Tests;
 /// re-scan, no thumbnail grab — and the batch-level projections (<c>CanRunBatch</c> / <c>RunLabel</c>) are
 /// refreshed for the whole write instead of being left behind. Performance is asserted STRUCTURALLY
 /// (bounded heavy-op counts + a linear notification bound), never by wall-clock timing.</para>
+///
+/// <para><b>The gate must be ANNOUNCED, not merely computed.</b> SPEC-011 I102 states TWO things: both
+/// commands are gated by <see cref="BulkCutViewModel.CanChangeSelection"/>, AND <c>RaiseRunState</c>
+/// re-raises that property together with both commands' own <see cref="RelayCommand.CanExecuteChanged"/>,
+/// so an add, a remove, a Clear and a run's start/end re-evaluate the buttons deterministically. Reading
+/// the gate can only ever confirm the first half: strip the three notification lines out of
+/// <c>RaiseRunState</c> and every polling assertion below stays green while the real WPF buttons go stale
+/// (they would then re-query only when WPF's heuristic, weak-referenced global requery happened to fire on
+/// unrelated input — the T-111 staleness bug). The tests in §4b therefore SUBSCRIBE to the three
+/// notifications rather than polling the gate.</para>
 /// </summary>
 public sealed class BulkSelectAllTests
 {
@@ -85,6 +95,64 @@ public sealed class BulkSelectAllTests
         }
 
         return rows;
+    }
+
+    /// <summary>
+    /// Subscribes to the three notifications SPEC-011 I102's second clause names — the
+    /// <see cref="BulkCutViewModel.CanChangeSelection"/> property change and BOTH commands' own
+    /// <see cref="RelayCommand.CanExecuteChanged"/> — and counts each one. This is the only way to observe
+    /// the clause at all: <c>vm.CanChangeSelection</c> and <c>Command.CanExecute(null)</c> recompute from
+    /// scratch on every read, so they report the right answer even when nothing was ever published.
+    ///
+    /// <para>All three are raised in one unconditional block at the end of <c>RaiseRunState</c> and are
+    /// raised NOWHERE else, so their counts move in LOCKSTEP by construction. Asserting that equality is
+    /// what makes a single deleted line detectable: drop the property raise and
+    /// <see cref="CanChangeRaises"/> falls to 0; drop either command's re-raise and only that counter
+    /// falls out of step.</para>
+    ///
+    /// <para><see cref="Dispose"/> detaches before the assertions read the counters, so no late
+    /// continuation can move one mid-assert (the same discipline as the try/finally around
+    /// <c>PropertyChanged</c> in the perf tests below).</para>
+    /// </summary>
+    private sealed class GateWatch : IDisposable
+    {
+        private readonly BulkCutViewModel _vm;
+
+        public GateWatch(BulkCutViewModel vm)
+        {
+            _vm = vm;
+            _vm.PropertyChanged += OnVmChanged;
+            _vm.SelectAllItemsCommand.CanExecuteChanged += OnSelectAllCanExecuteChanged;
+            _vm.SelectNoItemsCommand.CanExecuteChanged += OnSelectNoneCanExecuteChanged;
+        }
+
+        /// <summary>How many times <c>PropertyChanged(nameof(CanChangeSelection))</c> was published.</summary>
+        public int CanChangeRaises { get; private set; }
+
+        /// <summary>How many times <c>SelectAllItemsCommand</c> raised its OWN CanExecuteChanged.</summary>
+        public int SelectAllRaises { get; private set; }
+
+        /// <summary>How many times <c>SelectNoItemsCommand</c> raised its OWN CanExecuteChanged.</summary>
+        public int SelectNoneRaises { get; private set; }
+
+        public void Dispose()
+        {
+            _vm.PropertyChanged -= OnVmChanged;
+            _vm.SelectAllItemsCommand.CanExecuteChanged -= OnSelectAllCanExecuteChanged;
+            _vm.SelectNoItemsCommand.CanExecuteChanged -= OnSelectNoneCanExecuteChanged;
+        }
+
+        private void OnVmChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+        {
+            if (e.PropertyName == nameof(BulkCutViewModel.CanChangeSelection))
+            {
+                CanChangeRaises++;
+            }
+        }
+
+        private void OnSelectAllCanExecuteChanged(object? sender, EventArgs e) => SelectAllRaises++;
+
+        private void OnSelectNoneCanExecuteChanged(object? sender, EventArgs e) => SelectNoneRaises++;
     }
 
     // ---- 1. The gesture itself ----------------------------------------------------------------
@@ -245,6 +313,216 @@ public sealed class BulkSelectAllTests
         vm.SelectNoItemsCommand.CanExecute(null).Should().BeTrue();
     }
 
+    // ---- 4b. The gate must be ANNOUNCED, not merely computed (I102, second clause) --------------
+
+    [Trait("serves-spec", "SPEC-011")]
+    [Fact]
+    public async Task AddingTheFirstRow_RaisesTheGate_AndBothCommandsCanExecuteChanged()
+    {
+        var (vm, probe, split, engine) = Build();
+
+        vm.CanChangeSelection.Should().BeFalse("precondition: an empty list gates both gestures off");
+
+        // No cut on the row: the gate is Items.Count > 0, so the add ALONE is what flips it — nothing else
+        // in the measured window can account for the raises.
+        var watch = new GateWatch(vm);
+        try
+        {
+            await AddRowAsync(vm, probe, @"C:\v\a.mp4");
+        }
+        finally
+        {
+            watch.Dispose();
+        }
+
+        // NOT STALE: the gate flipped false→true and SAID SO. A bound WPF button re-queries only when it is
+        // told to, so the raise — not the getter's value — is what makes "Select all" light up on first import.
+        watch.CanChangeRaises.Should().BeGreaterThan(
+            0,
+            "adding the first row enables both gestures, and only a PropertyChanged tells a bound button so — " +
+            "polling CanChangeSelection afterwards cannot distinguish 'announced' from 'silently true'");
+        watch.SelectAllRaises.Should().Be(
+            watch.CanChangeRaises,
+            "Select all's OWN CanExecuteChanged is re-raised in the same pass — the three notifications are " +
+            "published together, so any count that falls out of step means one of them was dropped");
+        watch.SelectNoneRaises.Should().Be(watch.CanChangeRaises, "…and Select none's, in that same pass");
+
+        // CORRECTNESS: what was announced is true — and true even though the row has no cut yet, because
+        // the gesture writes INTENT (§2) and intent is legal on a not-yet-eligible row.
+        vm.CanChangeSelection.Should().BeTrue();
+        vm.SelectAllItemsCommand.CanExecute(null).Should().BeTrue();
+        vm.SelectNoItemsCommand.CanExecute(null).Should().BeTrue();
+
+        // PERF (structural — bounded heavy ops, no I/O beyond the import's own scan): announcing a gate is
+        // pure notification work. One row in, exactly one keyframe scan, and neither engine touched.
+        probe.GetKeyframesCallCount.Should().Be(
+            1, "the row scanned its keyframes once at import — raising the gate adds none");
+        engine.CallCount.Should().Be(0);
+        split.WasCalled.Should().BeFalse();
+    }
+
+    [Trait("serves-spec", "SPEC-011")]
+    [Fact]
+    public async Task ARunStartingAndEnding_ReRaisesTheGate_AndBothCommandsCanExecuteChanged()
+    {
+        const int RowCount = 3;
+        var (vm, probe, split, engine) = Build();
+        await AddRowsAsync(vm, probe, RowCount, introSeconds: 6);
+        vm.CanRunBatch.Should().BeTrue("precondition: the batch is runnable");
+
+        var scansBefore = probe.GetKeyframesCallCount;
+        var watch = new GateWatch(vm);
+        int canChangeAtRunStart = -1, selectAllAtRunStart = -1, selectNoneAtRunStart = -1;
+        var canChangeAtRunEnd = -1;
+
+        // Snapshot MID-RUN through the same BeforeReturn seam BothCommands_AreDisabled_WhileTheBatchIsRunning
+        // uses: it fires inside the engine call, after the aggregate op has already flipped IsRunning true, so
+        // whatever these counters hold was published by the run STARTING.
+        engine.BeforeReturn = () =>
+        {
+            canChangeAtRunStart = watch.CanChangeRaises;
+            selectAllAtRunStart = watch.SelectAllRaises;
+            selectNoneAtRunStart = watch.SelectNoneRaises;
+        };
+
+        // …and again the instant the op leaves Running. The VM subscribed to Operation.PropertyChanged in its
+        // constructor, so its own handler has ALREADY run for this very event by the time ours does — the
+        // reading therefore includes the run-END re-raise and nothing that happens later in the tear-down.
+        void OnOperationChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+        {
+            if (e.PropertyName == nameof(OperationViewModel.IsRunning)
+                && !vm.Operation.IsRunning
+                && canChangeAtRunStart >= 0
+                && canChangeAtRunEnd < 0)
+            {
+                canChangeAtRunEnd = watch.CanChangeRaises;
+            }
+        }
+
+        vm.Operation.PropertyChanged += OnOperationChanged;
+        try
+        {
+            await vm.RunBatchAsync();
+        }
+        finally
+        {
+            vm.Operation.PropertyChanged -= OnOperationChanged;
+            watch.Dispose();
+        }
+
+        // START — the buttons were TOLD they had just been gated off. The polling test can see that
+        // CanChangeSelection reads false mid-run; it cannot see whether anything ever published that.
+        canChangeAtRunStart.Should().BeGreaterThan(
+            0,
+            "a run starting disables both gestures, and a bound button greys out only when it is told to " +
+            "re-query — without the raise it stays clickable until the global requery happens to fire");
+        selectAllAtRunStart.Should().Be(canChangeAtRunStart, "Select all's own CanExecuteChanged rides the same pass");
+        selectNoneAtRunStart.Should().Be(canChangeAtRunStart, "…and so does Select none's");
+
+        // END — and told again the moment the run handed the gestures back.
+        canChangeAtRunEnd.Should().BeGreaterThan(
+            canChangeAtRunStart,
+            "leaving Running re-enables both gestures, so the run's END must publish a fresh raise of its own — " +
+            "a button greyed out at start would otherwise never learn it may light up again");
+        watch.SelectAllRaises.Should().Be(
+            watch.CanChangeRaises, "the three notifications stay in lockstep across the whole run");
+        watch.SelectNoneRaises.Should().Be(watch.CanChangeRaises);
+
+        // CORRECTNESS: the state those notifications advertised at each end.
+        vm.Operation.IsRunning.Should().BeFalse();
+        vm.CanChangeSelection.Should().BeTrue("the gesture is back once the run is over");
+        vm.SelectAllItemsCommand.CanExecute(null).Should().BeTrue();
+        vm.SelectNoItemsCommand.CanExecute(null).Should().BeTrue();
+
+        // PERF (structural — bounded heavy ops): the whole batch is ONE engine call, and re-raising the gates
+        // around it costs no ffprobe work at all.
+        engine.CallCount.Should().Be(1, "the run delegates to the batch engine exactly once");
+        probe.GetKeyframesCallCount.Should().Be(scansBefore, "running a batch must never re-scan keyframes");
+        split.WasCalled.Should().BeFalse();
+    }
+
+    [Trait("serves-spec", "SPEC-011")]
+    [Fact]
+    public async Task RemovingTheLastRow_ReRaisesTheGate_AndBothCommandsCanExecuteChanged()
+    {
+        var (vm, probe, split, engine) = Build();
+        var only = await AddRowAsync(vm, probe, @"C:\v\a.mp4", introSeconds: 6);
+
+        vm.CanChangeSelection.Should().BeTrue("precondition: one row is enough to enable both gestures");
+        var scansBefore = probe.GetKeyframesCallCount;
+
+        var watch = new GateWatch(vm);
+        try
+        {
+            vm.RemoveCommand.Execute(only);
+        }
+        finally
+        {
+            watch.Dispose();
+        }
+
+        vm.Items.Should().BeEmpty("precondition: that was the LAST row");
+
+        // I102 names removes as a trigger. BulkSelection_TouchesOnlyLiveRows removes 1 of 3 and asserts
+        // nothing about the gates at all, so this is the first test that can fail on a dropped raise.
+        watch.CanChangeRaises.Should().BeGreaterThan(
+            0,
+            "emptying the list gates both gestures off, and a bound button greys out only when told to re-query");
+        watch.SelectAllRaises.Should().Be(
+            watch.CanChangeRaises, "Select all's own CanExecuteChanged rides the same pass");
+        watch.SelectNoneRaises.Should().Be(watch.CanChangeRaises, "…and so does Select none's");
+
+        // CORRECTNESS: what was announced is true.
+        vm.CanChangeSelection.Should().BeFalse("there is nothing left to select");
+        vm.SelectAllItemsCommand.CanExecute(null).Should().BeFalse();
+        vm.SelectNoItemsCommand.CanExecute(null).Should().BeFalse();
+
+        // PERF (structural — no I/O on the path): dropping a row is list + notification work only.
+        probe.GetKeyframesCallCount.Should().Be(scansBefore, "removing a row must never re-scan keyframes");
+        engine.CallCount.Should().Be(0);
+        split.WasCalled.Should().BeFalse();
+    }
+
+    [Trait("serves-spec", "SPEC-011")]
+    [Fact]
+    public async Task ClearingEveryRow_ReRaisesTheGate_AndBothCommandsCanExecuteChanged()
+    {
+        const int RowCount = 3;
+        var (vm, probe, split, engine) = Build();
+        await AddRowsAsync(vm, probe, RowCount, introSeconds: 6);
+
+        vm.CanChangeSelection.Should().BeTrue("precondition: three rows, no run ⇒ both gestures enabled");
+        var scansBefore = probe.GetKeyframesCallCount;
+
+        var watch = new GateWatch(vm);
+        try
+        {
+            vm.ClearCommand.Execute(null);
+        }
+        finally
+        {
+            watch.Dispose();
+        }
+
+        vm.Items.Should().BeEmpty();
+        watch.CanChangeRaises.Should().BeGreaterThan(
+            0,
+            "Clear is the third trigger I102 names — it empties the list, so both gestures must be published off");
+        watch.SelectAllRaises.Should().Be(
+            watch.CanChangeRaises, "Select all's own CanExecuteChanged rides the same pass");
+        watch.SelectNoneRaises.Should().Be(watch.CanChangeRaises, "…and so does Select none's");
+
+        // CORRECTNESS: what was announced is true.
+        vm.CanChangeSelection.Should().BeFalse();
+        vm.SelectAllItemsCommand.CanExecute(null).Should().BeFalse();
+        vm.SelectNoItemsCommand.CanExecute(null).Should().BeFalse();
+
+        // PERF (structural — no I/O on the path): Clear cancels scans and drops rows; it starts none.
+        probe.GetKeyframesCallCount.Should().Be(scansBefore, "clearing must never re-scan keyframes");
+        engine.CallCount.Should().Be(0);
+        split.WasCalled.Should().BeFalse();
+    }
+
     // ---- 5. Composition with apply-to-all (which targets INTENT) ------------------------------
 
     [Trait("serves-spec", "SPEC-011")]
@@ -366,22 +644,87 @@ public sealed class BulkSelectAllTests
 
         // NOT STALE: the batch-level projections really were re-raised for this write, so a bound button
         // re-queries instead of showing the pre-gesture count.
-        canRunNotifications.Should().BeGreaterThan(0, "CanRunBatch must be re-raised, not left stale");
-        runLabelNotifications.Should().BeGreaterThan(0, "RunLabel must be re-raised, not left stale");
-
-        // PERF (O(N), not O(N²) — structural, notification-count based): each row raises its own change and
-        // the write refreshes the batch projections once more at the end, so the cost is a small constant
-        // per row (~2N + 1). A refresh that re-projected the whole list per row would be 12² = 144 raises
-        // and would blow this linear cap.
-        var linearCap = 4 * RowCount;
-        canRunNotifications.Should().BeLessThanOrEqualTo(
-            linearCap, "a bulk selection must cost O(N) batch refreshes, never O(N²)");
-        runLabelNotifications.Should().BeLessThanOrEqualTo(linearCap, "same linear bound for the count-aware label");
+        //
+        // PERF — EXACTLY ONE refresh, not "at most O(N)". The earlier version of this test capped the raise
+        // count at 4N and could not fail on the regression it existed to catch: without the
+        // _suspendRunStateRefresh guard in SetAllItemsChecked, each row's setter raises IsCheckedByUser AND
+        // IsEnabled, both of which pass OnItemChanged's filter, giving 2N+1 = 25 raises for N=12 — comfortably
+        // under a cap of 48, so the test stayed green while every raise re-ran CanRunBatch's two O(N) LINQ
+        // passes and RunLabel's O(N) Count. Raise COUNT is linear by construction; the cost the invariant
+        // guards is the per-raise GETTER work. Pinning the exact constant is what actually detects it.
+        canRunNotifications.Should().Be(
+            1,
+            "the whole bulk write must publish the batch projection ONCE — one raise per row would re-run " +
+            "CanRunBatch's O(N) scan N times over, which is the O(N²) stall the suspend guard exists to prevent");
+        runLabelNotifications.Should().Be(1, "same single publish for the count-aware label");
 
         // CORRECTNESS: the projection those notifications advertised is the right one.
         rows.Should().OnlyContain(r => r.IsEnabled);
         vm.CanRunBatch.Should().BeTrue();
         vm.RunLabel.Should().Be($"Run bulk cut ({RowCount})");
+    }
+
+    [Trait("serves-spec", "SPEC-011")]
+    [Fact]
+    public async Task SelectAll_OnAnAlreadyFullyTickedList_StillPublishesTheProjection_ExactlyOnce()
+    {
+        const int RowCount = 12;
+        var (vm, probe, split, engine) = Build();
+        var rows = await AddRowsAsync(vm, probe, RowCount, introSeconds: 6);
+
+        // Deliberately NO select-none first. Every other select-all in this file is preceded by one, so the
+        // measured write always had something to change; this is the case I101's second clause is about —
+        // the refresh publishes "even when no row's value actually changed".
+        rows.Should().OnlyContain(
+            r => r.IsCheckedByUser, "precondition: every row is ALREADY ticked, so the write below changes nothing");
+        var scansBefore = probe.GetKeyframesCallCount;
+
+        var canRunNotifications = 0;
+        var runLabelNotifications = 0;
+        void OnChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+        {
+            if (e.PropertyName == nameof(BulkCutViewModel.CanRunBatch))
+            {
+                canRunNotifications++;
+            }
+            else if (e.PropertyName == nameof(BulkCutViewModel.RunLabel))
+            {
+                runLabelNotifications++;
+            }
+        }
+
+        vm.PropertyChanged += OnChanged;
+        try
+        {
+            vm.SelectAllItemsCommand.Execute(null);
+        }
+        finally
+        {
+            vm.PropertyChanged -= OnChanged;
+        }
+
+        // EXACTLY ONE, same idiom as BulkSelection_RefreshesTheBatchProjection_AtLinearCost — but this case
+        // pins a different half of the invariant. Each row's IsCheckedByUser setter is equality-guarded, so
+        // an all-ticked list makes every per-row raise vanish: the trailing RaiseRunState() is the ONLY thing
+        // that can produce a notification here. 0 would mean the refresh was skipped as a "no-op write" and a
+        // bound button kept whatever count it was last told; more than 1 would mean a per-row fan-out leaked
+        // past the suspend guard, re-running CanRunBatch's O(N) scan once per row.
+        canRunNotifications.Should().Be(
+            1,
+            "the trailing refresh is unconditional — a select-all over an already-all-ticked list must still " +
+            "publish the batch projection exactly once, not zero times because nothing changed");
+        runLabelNotifications.Should().Be(1, "same single publish for the count-aware label");
+
+        // CORRECTNESS: an idempotent gesture leaves the list — and the projection it advertised — unchanged.
+        rows.Should().OnlyContain(r => r.IsCheckedByUser && r.IsEnabled, "re-ticking a ticked list is a no-op");
+        vm.CanRunBatch.Should().BeTrue();
+        vm.RunLabel.Should().Be($"Run bulk cut ({RowCount})");
+
+        // PERF (structural — no I/O on the path): a write that changes nothing must also COST nothing beyond
+        // the one refresh — no re-scan, no frame grab path, no engine call.
+        probe.GetKeyframesCallCount.Should().Be(scansBefore, "an idempotent select-all must never re-scan keyframes");
+        engine.CallCount.Should().Be(0);
+        split.WasCalled.Should().BeFalse();
     }
 
     [Trait("serves-spec", "SPEC-011")]

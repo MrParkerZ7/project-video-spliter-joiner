@@ -125,20 +125,104 @@ public sealed class ProfileThumbnailStore
         // no longer existed and the profile silently reverted to the placeholder. A failed Save must leave
         // the existing thumbnail exactly as it was.
         var staging = Path.Combine(_root, safeName + ".incoming" + NormalizeExtension(sourceImageOrFramePath));
+        List<(string Original, string Aside)> asides;
+
         try
         {
             File.Copy(sourceImageOrFramePath, staging, overwrite: true);
-
-            // The new bytes are safely on disk; only now is it safe to drop the old thumbnail (which may
-            // carry a different extension, so the destination alone is not enough to displace it).
-            DeleteExistingFor(safeName);
-            File.Move(staging, destination, overwrite: true);
-            return destination;
         }
         catch
         {
-            TryDeleteFile(staging); // never leave a stray .incoming behind
+            TryDeleteFile(staging); // a partial copy must not linger
             throw;
+        }
+
+        // The new bytes are on disk. The prior thumbnail (which may carry a DIFFERENT extension, so the
+        // destination path alone is not enough to displace it) is renamed ASIDE rather than deleted, so a
+        // failure in the swap below can put it back. Deleting first left a window where the move could
+        // fail with the old file already gone AND the staging file swept by the catch — losing both.
+        asides = RenameExistingAside(safeName);
+
+        try
+        {
+            File.Move(staging, destination, overwrite: true);
+        }
+        catch
+        {
+            RestoreAsides(asides);  // the profile keeps the picture it already had
+            TryDeleteFile(staging);
+            throw;
+        }
+
+        // Committed. The asides are now genuinely superseded.
+        foreach (var (_, aside) in asides)
+        {
+            TryDeleteFile(aside);
+        }
+
+        return destination;
+    }
+
+    /// <summary>
+    /// Rename every stored thumbnail for <paramref name="safeName"/> to a <c>.vsj-aside</c> sibling and
+    /// return the pairs, so a failed swap can restore them. Best-effort per file: one that cannot be moved
+    /// is simply not collected (it stays where it is, which is the safe outcome).
+    /// </summary>
+    private List<(string Original, string Aside)> RenameExistingAside(string safeName)
+    {
+        var moved = new List<(string, string)>();
+
+        try
+        {
+            if (!Directory.Exists(_root))
+            {
+                return moved;
+            }
+
+            foreach (var file in Directory.EnumerateFiles(_root))
+            {
+                if (!string.Equals(Path.GetFileNameWithoutExtension(file), safeName, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                var aside = file + ".vsj-aside";
+                try
+                {
+                    TryDeleteFile(aside); // a stale aside from an earlier interrupted save
+                    File.Move(file, aside);
+                    moved.Add((file, aside));
+                }
+                catch
+                {
+                    // Could not move this one — leave it in place rather than risk losing it.
+                }
+            }
+        }
+        catch
+        {
+            // Best-effort — a missing/locked root must never surface to the caller.
+        }
+
+        return moved;
+    }
+
+    /// <summary>Put back what <see cref="RenameExistingAside"/> moved, after a failed swap.</summary>
+    private static void RestoreAsides(List<(string Original, string Aside)> asides)
+    {
+        foreach (var (original, aside) in asides)
+        {
+            try
+            {
+                if (File.Exists(aside))
+                {
+                    File.Move(aside, original, overwrite: true);
+                }
+            }
+            catch
+            {
+                // Best-effort — the aside file still holds the bytes even if the rename back fails.
+            }
         }
     }
 

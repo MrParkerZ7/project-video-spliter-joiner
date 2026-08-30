@@ -13,7 +13,7 @@ sources:
   - src/App/ViewModels/RelayCommand.cs
   - src/App/ViewModels/MainViewModel.cs
 serves-goal: [G-036, G-037, G-038, G-039, G-040, G-041, G-042, G-043]
-updated: 2026-08-29
+updated: 2026-08-30
 ---
 
 ## What
@@ -485,10 +485,18 @@ SPEC-007); the shared `IThumbnailService`/`FfmpegThumbnailService` frame source 
   null for an unticked row (`!IsCheckedByUser`) and null for an eligible one (`!IsAutoDisabled`) — which includes
   a still-scanning row, since loading is not auto-disabled (I13). When it does apply it is `can't read this file`
   for a load-failed row; otherwise (keyframes are ready by then) `nothing to trim yet — set an intro or outro`
-  for a no-op trim and `cut is out of range` for an invalid cut. Phrased as a **state, not an error** — "nothing
-  to trim yet" is the normal condition of a row you just imported. The row renders it as a muted italic line,
-  collapsed while null, so a ticked-but-excluded row is never silent about why `Run bulk cut (N)` does not count
-  it (`ExclusionReason`, `BulkCutView.xaml` `Visibility="{Binding ExclusionReason, …NullToCollapsed}"`).
+  for a no-op trim, and an **invalid** cut splits into **two** sentences, because `IsValidCut` fails for two
+  materially different reasons (I8) that need different fixes. When both handles sit plainly inside the file and
+  only the gap between them is too small, it reads `intro and outro are too close — keep at least <N>s` — the
+  row's own `MinKeptSpan` (I9) to one decimal, invariant-culture (e.g. `keep at least 2.0s`), naming the number
+  the user has to beat. When a handle is genuinely outside the file — the **range** half of I8 failing (effective
+  intro-end `< 0`, or effective outro-start `>` `Duration`), plus the defensive unknown-`Duration` fall-through —
+  it reads `cut is outside the video`. The phrase **"out of range" appears in neither sentence**: telling a
+  degenerate-but-in-range cut to fix its range sent the user after something that was not wrong (the T-127 review
+  finding this split cures). Phrased as a **state, not an error** — "nothing to trim yet" is the normal condition
+  of a row you just imported. The row renders it as a muted italic line, collapsed while null, so a
+  ticked-but-excluded row is never silent about why `Run bulk cut (N)` does not count it (`ExclusionReason`,
+  `BulkCutView.xaml` `Visibility="{Binding ExclusionReason, …NullToCollapsed}"`).
 - **I99** — an **eligibility-side** change republishes the same trio: `RecomputeAll` — run on every handle
   `Requested`/`Snapped` move, on scan completion, and on `MarkLoadFailed` — raises `IsEnabled`, `ExclusionReason`
   and `IsExcludedDespiteBeingChecked` alongside the other computed row properties, so setting a real cut clears

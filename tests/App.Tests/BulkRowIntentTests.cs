@@ -120,6 +120,25 @@ public sealed class BulkRowIntentTests
             row.ExclusionReason is not null,
             "the flag the row renders on and the sentence it renders must describe the same state");
 
+    /// <summary>
+    /// The three eligibility projections I99 names are republished as ONE unit by <c>RecomputeAll</c>, so
+    /// their raise counts must match exactly. Reading the values back cannot see this: every one of them is
+    /// a pure getter, so it answers correctly whether or not the change was ever announced.
+    /// </summary>
+    private static void TrioMovesTogether(Recorder recorder)
+    {
+        var enabled = recorder.Count(nameof(BulkItemViewModel.IsEnabled));
+
+        enabled.Should().BeGreaterThan(
+            0, "an eligibility-side change must announce itself, or the bound row renders a verdict it no longer holds");
+        recorder.Count(nameof(BulkItemViewModel.ExclusionReason)).Should().Be(
+            enabled, "the reason line is republished with the eligibility it explains");
+        recorder.Count(nameof(BulkItemViewModel.IsExcludedDespiteBeingChecked)).Should().Be(
+            enabled,
+            "the dimming flag rides in the same republish — dropping just its OnPropertyChanged leaves every "
+            + "VALUE correct and only this count wrong, which is exactly the regression polling cannot see");
+    }
+
     // ---- The split itself is structural, not a convention -------------------------------------
 
     [Fact]
@@ -383,6 +402,59 @@ public sealed class BulkRowIntentTests
         ReasonAndFlagAgree(broken);
     }
 
+    // I98 splits an invalid cut into TWO sentences, and only one of them was pinned. "intro and outro are
+    // too close" is covered above; the RANGE half — a handle genuinely outside the file — is the
+    // fall-through at the very end of ExclusionReason, the branch anything unaccounted-for lands in. It had
+    // no test at all, so the sentence a user meets when their outro runs off the end of the file was free
+    // to say whatever it liked.
+    [Fact]
+    [Trait("serves-spec", "SPEC-011")]
+    public async Task ExclusionReason_NamesAHandleThatSitsOutsideTheVideo()
+    {
+        var (vm, probe, thumbs) = Build();
+        var row = await AddRowAsync(vm, probe, PathA); // 60s source, 2s GOP
+        row.IntroEnd.Requested = TimeSpan.FromSeconds(10);
+        row.AddOutro(TimeSpan.FromSeconds(90)); // an outro 30s past the end of the file
+
+        // On the LOSSLESS path a handle can never actually be out of range: the snap drags it back to the
+        // last keyframe inside the file, so this reads as an ordinary 10s..60s keep. The branch is only
+        // reachable under Exact cut, where the engine honours the REQUESTED time — which is precisely why it
+        // needs its own test rather than an assumption that it cannot happen.
+        row.OutroStart!.Snapped.Should().Be(
+            TimeSpan.FromSeconds(60), "precondition: 90s snaps back to the last keyframe of the file");
+        row.IsValidCut.Should().BeTrue();
+        row.ExclusionReason.Should().BeNull("nothing is out of range once the handle has been snapped back inside");
+
+        var scansBefore = probe.GetKeyframesCallCount;
+        var grabsBefore = thumbs.GetThumbnailCallCount;
+
+        vm.ExactCut = true; // the engine now cuts at the requested 90s of a 60s file
+
+        row.IsValidCut.Should().BeFalse("the kept span would end 30s past the end of the source");
+        row.IsNoOpTrim.Should().BeFalse("the intro is a real 10s trim, so this is not the no-op case");
+        row.RowState.Should().Be(RowState.Invalid);
+        row.ExclusionReason.Should().Be(
+            "cut is outside the video",
+            "a handle past the end of the file is a RANGE problem — telling the user their handles are too "
+            + "close together would send them after something that is not wrong");
+        row.ExclusionReason.Should().NotContain(
+            "out of range", "neither invalid-cut sentence uses that phrase (T-127 review finding #2)");
+        row.IsExcludedDespiteBeingChecked.Should().BeTrue();
+        ReasonAndFlagAgree(row);
+
+        // PERFORMANCE: the range verdict is arithmetic over values already in hand.
+        probe.GetKeyframesCallCount.Should().Be(
+            scansBefore, "judging a handle out of range must never re-scan keyframes");
+        thumbs.GetThumbnailCallCount.Should().Be(grabsBefore, "and must never re-grab a frame");
+
+        // Pulling the handle back inside the file clears the sentence with no checkbox gesture.
+        row.OutroStart!.Requested = TimeSpan.FromSeconds(50);
+
+        row.ExclusionReason.Should().BeNull("the handle is back inside the file, so there is nothing left to explain");
+        row.IsEnabled.Should().BeTrue();
+        ReasonAndFlagAgree(row);
+    }
+
     // ---- 5. The batch projections count eligibility, not raw intent ----------------------------
 
     [Fact]
@@ -417,6 +489,67 @@ public sealed class BulkRowIntentTests
 
         vm.RunLabel.Should().Be("Run bulk cut (1)", "re-ticking a valid row puts it straight back in the batch");
         vm.CanRunBatch.Should().BeTrue();
+    }
+
+    // I38's conjunction is load-bearing for exactly ONE row shape. For a SETTLED row `IsEnabled &&
+    // IsValidCut` is redundant — IsAutoDisabled already folds in !IsValidCut, so `Items.Count(i =>
+    // i.IsEnabled)` would answer identically and the whole suite above would stay green. The one row where
+    // the two terms disagree is a STILL-LOADING one: loading is deliberately NOT auto-disabled (I13 — the
+    // run gate WAITS on it instead of judging it), so IsEnabled is true, while IsValidCut is false because
+    // the keyframes have not landed. Nothing read the run projections mid-scan, so the button was free to
+    // advertise a row the app has not finished reading.
+    [Fact]
+    [Trait("serves-spec", "SPEC-011")]
+    public async Task RunLabel_DoesNotCountAStillScanningRow_AndCanRunBatchWaitsForIt()
+    {
+        var (vm, probe, _) = Build();
+        var settled = await AddRowAsync(vm, probe, PathA);
+        SetRealCut(settled);
+
+        vm.RunLabel.Should().Be("Run bulk cut (1)", "precondition: one settled, eligible, genuinely runnable row");
+        vm.CanRunBatch.Should().BeTrue();
+
+        // A second row lands and its keyframe scan is held open — the only shape in which the two terms of
+        // I38's filter give different answers.
+        probe.SetUniform(PathB, TimeSpan.FromSeconds(60), 2);
+        probe.GatedPaths.Add(PathB);
+        await vm.AddFilesAsync(new[] { PathB });
+        var loading = vm.Items.Single(i => i.Path == PathB);
+
+        loading.KeyframesReady.Should().BeFalse("the scan is held open");
+        loading.IsEnabled.Should().BeTrue(
+            "a loading row is NOT auto-disabled — the batch waits for it rather than excluding it (I13)");
+        loading.IsValidCut.Should().BeFalse("a row whose keyframes have not landed has no verdict to be valid yet");
+        loading.ExclusionReason.Should().BeNull("still scanning is not an exclusion, it is just not an answer yet");
+
+        vm.RunLabel.Should().Be(
+            "Run bulk cut (1)",
+            "the label counts ELIGIBLE AND VALID rows — counting the still-scanning row would advertise a "
+            + "batch size the run cannot honour, on a row the app has not finished reading");
+        vm.CanRunBatch.Should().BeFalse(
+            "the run gate waits on every enabled row's keyframes — starting now would cut the second row "
+            + "against an empty keyframe list");
+
+        // PERFORMANCE: projecting the run state is a pass over rows already in memory. Reading it must do no
+        // I/O at all — and above all must not restart the very scan it is waiting on.
+        for (var i = 0; i < 50; i++)
+        {
+            _ = vm.RunLabel;
+            _ = vm.CanRunBatch;
+        }
+
+        probe.GetKeyframesCallCount.Should().BeLessThanOrEqualTo(
+            2, "one keyframe scan per row and no more — 50 run-state projections must not fire a single one");
+        probe.PeakScans.Should().BeLessThanOrEqualTo(3, "the bounded scan gate is never re-entered by a projection");
+
+        probe.ReleaseScans();
+        await loading.CurrentScanTask;
+
+        loading.KeyframesReady.Should().BeTrue();
+        loading.IsEnabled.Should().BeFalse("the landed verdict is a no-op trim, so the row is auto-disabled now");
+        vm.RunLabel.Should().Be(
+            "Run bulk cut (1)", "the row that finished scanning has nothing to trim, so it still does not count");
+        vm.CanRunBatch.Should().BeTrue("no enabled row is waiting on keyframes any more");
     }
 
     // ---- 6. PERFORMANCE: toggling intent is pure VM state ---------------------------------------
@@ -600,5 +733,125 @@ public sealed class BulkRowIntentTests
         probe.ReleaseScans();
         await restart;
         row.ExclusionReason.Should().Be(NothingToTrim, "and the verdict comes back when the scan lands");
+    }
+
+    // ---- 7. I99: the eligibility trio is REPUBLISHED, not merely recomputed --------------------
+
+    // I99 names three properties that RecomputeAll republishes on every handle move, on scan completion and
+    // on MarkLoadFailed: IsEnabled, ExclusionReason and IsExcludedDespiteBeingChecked. Everything above
+    // POLLS them, and polling cannot tell a raise from silence — all three are pure getters, so they answer
+    // correctly whether or not the change was ever announced. The third one is the one that pays for that
+    // blindness: it is bound in BulkCutView.xaml through
+    // `<DataTrigger Binding="{Binding IsExcludedDespiteBeingChecked}" Value="True">` on the row border's
+    // Opacity, and a WPF DataTrigger re-evaluates on PropertyChanged and on nothing else. Drop its single
+    // OnPropertyChanged line from RecomputeAll and every value assertion in this file still passes while the
+    // dimming stops tracking the row — a ticked-but-excluded row goes back to being invisible, which is the
+    // whole reason T-127 added the property. These three cases assert the RAISE, one per path I99 lists.
+
+    [Fact]
+    [Trait("serves-spec", "SPEC-011")]
+    public async Task MovingAHandle_RepublishesTheEligibilityTrio_IncludingTheDimmingFlag()
+    {
+        var (vm, probe, thumbs) = Build();
+        var row = await AddRowAsync(vm, probe, PathA);
+
+        row.IsExcludedDespiteBeingChecked.Should().BeTrue("precondition: ticked, settled, and nothing to trim yet");
+
+        var recorder = new Recorder(row);
+        var scansBefore = probe.GetKeyframesCallCount;
+        var grabsBefore = thumbs.GetThumbnailCallCount;
+
+        row.IntroEnd.Requested = TimeSpan.FromSeconds(10); // an eligibility-side change — no checkbox gesture
+
+        row.IsExcludedDespiteBeingChecked.Should().BeFalse("the row is eligible now, so the dimming must lift");
+        TrioMovesTogether(recorder);
+
+        // PERFORMANCE: re-deriving eligibility uses values already in hand.
+        probe.GetKeyframesCallCount.Should().Be(scansBefore, "moving a handle must never re-scan keyframes");
+        probe.PeakScans.Should().BeLessThanOrEqualTo(3, "the bounded scan gate is never re-entered by a handle move");
+
+        // ... and the republish is O(1) PER MOVE: a fixed cost that does not grow with the 31 keyframes this
+        // row holds, so N moves cost O(N) notifications rather than O(N x keyframes).
+        var perMove = recorder.Count(nameof(BulkItemViewModel.IsEnabled));
+        recorder.Reset();
+
+        const int Moves = 20;
+        for (var i = 1; i <= Moves; i++)
+        {
+            row.IntroEnd.Requested = TimeSpan.FromSeconds(2 * i); // keyframe-aligned: every write really moves the cut
+        }
+
+        row.IntroEnd.Snapped.Should().Be(TimeSpan.FromSeconds(40), "the moves landed — the state is real, not ignored");
+        TrioMovesTogether(recorder);
+        recorder.Count(nameof(BulkItemViewModel.IsExcludedDespiteBeingChecked)).Should().Be(
+            perMove * Moves, "every move costs the same fixed republish — the shape is O(moves)");
+        probe.GetKeyframesCallCount.Should().Be(scansBefore, "20 more moves, still not one re-scan");
+        thumbs.GetThumbnailCallCount.Should().Be(
+            grabsBefore, "the parked debounce seam absorbs every cut-point grab — no move reaches the frame service");
+    }
+
+    [Fact]
+    [Trait("serves-spec", "SPEC-011")]
+    public async Task CompletingTheKeyframeScan_RepublishesTheEligibilityTrio_IncludingTheDimmingFlag()
+    {
+        var (vm, probe, _) = Build();
+        probe.SetUniform(PathA, TimeSpan.FromSeconds(60), 2);
+        probe.GateEverything = true; // hold the scan open so COMPLETION is the observed event
+
+        await vm.AddFilesAsync(new[] { PathA });
+        var row = vm.Items.Single();
+
+        row.KeyframesReady.Should().BeFalse("precondition: the verdict has not landed yet");
+        row.IsExcludedDespiteBeingChecked.Should().BeFalse("a still-scanning row is not excluded — it has no answer yet");
+
+        // Recording starts HERE. The scan test above records the scan START only, so the completion — the
+        // moment the verdict, the reason line and the dimming all flip — had no observer on any path.
+        var recorder = new Recorder(row);
+
+        probe.ReleaseScans();
+        await row.CurrentScanTask;
+
+        row.IsExcludedDespiteBeingChecked.Should().BeTrue(
+            "the settled verdict is ticked-but-excluded — the state the row dims itself for");
+        TrioMovesTogether(recorder);
+
+        // PERFORMANCE: the republish is per-COMPLETION, not per-keyframe — committing a 31-entry keyframe
+        // list costs a small constant number of notifications, not one per entry.
+        row.Keyframes.Should().HaveCount(31, "precondition for the bound below: a real keyframe list was committed");
+        recorder.Count(nameof(BulkItemViewModel.IsExcludedDespiteBeingChecked)).Should().BeLessThanOrEqualTo(
+            4, "eligibility is republished a bounded number of times per scan, independent of the keyframe count");
+        probe.GetKeyframesCallCount.Should().Be(1, "landing the scan must not kick a second one");
+    }
+
+    [Fact]
+    [Trait("serves-spec", "SPEC-011")]
+    public async Task MarkingARowLoadFailed_RepublishesTheEligibilityTrio_IncludingTheDimmingFlag()
+    {
+        var (vm, probe, _) = Build();
+        await AddRowAsync(vm, probe, PathA); // a healthy row first, so the failing one is not the auto-selected row
+
+        // MarkLoadFailed fires INSIDE AddFilesAsync, before the row is reachable through vm.Items — which is
+        // why the failing-probe row has never had a recorder on it anywhere. Attach one as it is added.
+        Recorder? recorder = null;
+        vm.Items.CollectionChanged += (_, _) => recorder ??= new Recorder(vm.Items[^1]);
+
+        probe.FailProbePaths.Add(PathC);
+        await vm.AddFilesAsync(new[] { PathC });
+
+        var broken = vm.Items.Single(i => i.Path == PathC);
+
+        broken.RowState.Should().Be(RowState.LoadFailed);
+        broken.IsExcludedDespiteBeingChecked.Should().BeTrue(
+            "ticked and unreadable is the ticked-but-excluded state — the row must dim and explain itself");
+
+        recorder.Should().NotBeNull("the recorder is attached when the row is added, before the probe fails");
+        TrioMovesTogether(recorder!);
+        recorder!.Count(nameof(BulkItemViewModel.IsExcludedDespiteBeingChecked)).Should().Be(
+            1, "one MarkLoadFailed, one republish — announced exactly once, and never left unannounced");
+
+        // PERFORMANCE: an unreadable source costs nothing beyond the failed probe.
+        probe.GetKeyframesCallCount.Should().Be(
+            1, "a load-failed row never starts a keyframe scan — the only scan is the healthy row's");
+        broken.IsIndexingKeyframes.Should().BeFalse("and it never spins on a scan that will never run");
     }
 }

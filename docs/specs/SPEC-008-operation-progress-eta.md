@@ -114,9 +114,27 @@ the Bulk Cut profile-thumbnail upload); the XAML bindings and converters that re
 - **I43** — `ReportFailure(null)` **retracts** a previously reported failure: `Error` goes back to null, and a `State` of `Failed` returns to `Idle` so no red taskbar lingers with nothing left to explain it (I13 / I14). Every other state (`Idle` / `Completed` / `Cancelled`, or a run in flight) is left exactly as it is, and a `ResultSummary` an earlier report cleared is **not** restored. *(`ReportFailure` null branch)*
 - **I44** — `ReportFailure` starts no run and ends none — it is purely additive: `Progress`, `StatusText`, `EtaText`, the stopwatch, the estimator and the run's `CancellationTokenSource` are all left as they were (neither `BeginRun` nor `EndRun` runs). Reporting from a fresh/idle VM therefore leaves `Progress == 0`, `EtaText == null` and `CanCancel == false`; reporting after a completed run leaves that run's `Progress == 1` in place. *(`ReportFailure`)*
 
+> **Known open question — a completed run can carry a standing error (I42 vs I18/I41).** `Complete()` sets
+> `State = Completed` and `EndRun()` clears only the ETA; **neither touches `Error`**. So a run that had a side
+> failure reported mid-flight ends with `IsCompleted == true` **and** `Error != null` — the green "Completed"
+> surface rendering right beside the red error block. Concretely: a batch run is in flight → the user's
+> profile-thumbnail upload fails → `ReportFailure(error)` takes the `IsRunning` early-return and sets `Error`
+> only (I42) → the run's own work body finishes normally → `Complete()` moves it to `Completed`, and the error
+> is still standing until the next `BeginRun`/`Reset` (I2/I9). That co-existence is **exactly** what I41 exists
+> to prevent on the no-run-in-flight path (where a report clears `ResultSummary` and forces `Failed` precisely
+> so "a stale green 'done' line never sits beside a fresh red error"), and it strains I18's "mutually exclusive
+> surfaces" framing — strictly, I18 is about the three `State` values and `Error` is an orthogonal fourth
+> channel, so the two are not contradictory *as written*; what is unresolved is the **rendered** surface, where
+> success and failure appear at once. Recorded as an open question, **not a new guarantee**: today's behaviour is
+> I42 exactly as specified and asserted (`ReportFailure_WhileRunning_*` in `OperationViewModelTests.cs`), and
+> nothing here changes it. The candidate resolutions — have the run's `Complete()` demote to `Failed` when an
+> error stands, scope/retract the side error at `EndRun`, or have the view suppress the success line while
+> `Error != null` — each shift a different invariant, so the choice belongs to a task, not to this spec.
+> (`Complete`, `EndRun`, `ReportFailure`)
+
 ## Links
 - Design: —
 - Goals: G-013 (staged status Preparing→…→Done) · G-044 (a failed thumbnail upload reaches the screen — `ReportFailure`)
 - Related specs: SPEC-007 (cut-profiles — the profile-thumbnail upload that calls `ReportFailure` and composes its messages) (adjacent: split-engine, join-engine, per-part progress, error/diagnostics specs)
 - Key code: `src/App/ViewModels/OperationViewModel.cs`, `src/App/ViewModels/EtaEstimator.cs`, `src/App/ViewModels/OperationState.cs`, `src/Core/Ffmpeg/OperationStatus.cs`
-- Tests: `tests/App.Tests/OperationViewModelTests.cs`, `tests/App.Tests/EtaEstimatorTests.cs`, `tests/App.Tests/TaskbarProgressStateTests.cs`, `tests/App.Tests/OperationLifecycleSurfaceTests.cs`, `tests/App.Tests/OperationProgressVisibilityTests.cs`, `tests/App.Tests/StagedStatusWiringTests.cs`, `tests/App.Tests/BulkCutProfileThumbnailTests.cs` (`ReportFailure`, reached only through SPEC-007's upload path — no direct test)
+- Tests: `tests/App.Tests/EtaEstimatorTests.cs`, `tests/App.Tests/TaskbarProgressStateTests.cs`, `tests/App.Tests/OperationLifecycleSurfaceTests.cs`, `tests/App.Tests/OperationProgressVisibilityTests.cs`, `tests/App.Tests/StagedStatusWiringTests.cs`, `tests/App.Tests/OperationViewModelTests.cs` (incl. the direct `ReportFailure` coverage of I41–I44 — the `SPEC-008 I41-I44` region), `tests/App.Tests/BulkCutProfileThumbnailTests.cs` (`ReportFailure` reached end-to-end through SPEC-007's upload path)
