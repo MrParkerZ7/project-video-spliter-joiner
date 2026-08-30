@@ -123,6 +123,19 @@ Users cutting a season of episodes want to define "trim the 12s intro and the 20
 #### A failed `Save` never destroys the thumbnail it was replacing (G-044)
 - **I73** — the store is **copy-then-swap**, so a `Save` that fails leaves the profile's prior thumbnail **byte-identical** and leaves no stray working file behind. This is the fix for what SPEC-007 used to record as a live "known store-side gap" under I70: under the old delete-before-copy order, a copy that failed *after* the delete (a source locked by another program, a full or read-only volume) destroyed the picture the profile already had — the caller correctly reported `StoreFailed` and correctly left `CutProfile.ThumbnailPath` untouched, but the path then pointed at a file that no longer existed and the picker silently reverted to the placeholder. Both failure points are now covered: a **copy** that fails happens before any prior file has been touched and sweeps its own partial staging file; a **move** that fails restores the asides over their originals and then sweeps the staging file — so the half-swapped state is never observable to the caller. Both cleanups are best-effort (`TryDeleteFile` / `RestoreAsides` swallow), which is a strictly safer failure mode, not a hole: in the pathological case where the rename-back itself fails the prior bytes still exist under the `.vsj-aside` sibling rather than being lost, and the next `Save` deletes that stale aside before renaming again. **On the exception type:** a failed `Save` rethrows the underlying exception rather than a normalized one, and because the failing step is now the *move*, a locked **destination** surfaces on .NET 8 / Windows as `UnauthorizedAccessException` — which does **not** derive from `IOException` — where a locked **source** still gives `IOException`. A caller must therefore not filter on `IOException` alone; I69's classifier does not, since everything outside `FileNotFoundException`/`DirectoryNotFoundException`/`ArgumentException` falls through to `StoreFailed`, so both types report identically. (`Save`, `RenameExistingAside`, `RestoreAsides`, `TryDeleteFile`)
 
+- **I74** — a profile's thumbnail has THREE sources, all converging on the same store-and-attach step
+  (`TryAttachThumbnail`): the **auto** capture at `IntroEnd.Snapped` when a profile is saved, the
+  **upload** of a chosen image file, and the **snapshot** of the frame currently on screen
+  (`SnapshotProfileThumbnailAsync`, T-135). All three store at `ProfileThumbnailWidth`, so the stored
+  picture is the same size whichever produced it.
+- **I75** — the snapshot grabs at `Player.Position` from the SELECTED row's file — the frame the user is
+  looking at, never the intro-end the auto path uses — and is gated by `CanSnapshotProfileThumbnail`
+  (a selected profile AND a selected row AND `Player.IsReady`), with `SnapshotUnavailableReason` naming
+  the missing precondition rather than leaving the button inert.
+- **I76** — the snapshot REPORTS its failures, like the upload and unlike the silent auto capture (I66):
+  a null/throwing grab and a refused store both reach `Operation.Error`, a success retracts an earlier
+  report, and a failure leaves the profile's existing thumbnail exactly as it was.
+
 ## Links
 - Design: — (feature tasks T-096 apply-to-all convention · T-102 model/persistence/apply · T-103 VM command glue · T-106 thumbnail model/store · T-107 thumbnail UI glue · T-129 upload-failure reporting)
 - Goals: G-037, G-038 (profile thumbnails), G-044 (thumbnail change works — and says so when it does not)

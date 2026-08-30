@@ -245,6 +245,8 @@ public sealed class BulkCutViewModel : ObservableObject
         ApplyProfileToSelectedCommand = new RelayCommand(_ => ApplyProfileToSelected(), _ => CanApplyProfileToSelected);
         ApplyProfileToAllCommand = new RelayCommand(_ => ApplyProfileToAll(), _ => CanApplyProfileToAll);
         DeleteProfileCommand = new RelayCommand(_ => DeleteSelectedProfile(), _ => HasSelectedProfile);
+        SnapshotProfileThumbnailCommand = new RelayCommand(
+            _ => _ = SnapshotProfileThumbnailAsync(), _ => CanSnapshotProfileThumbnail);
         RefreshProfiles(); // project the persisted CutProfiles into the observable list on construct
 
         // T-101: the two "set at playhead" gestures enable only with a selected row AND a ready
@@ -342,6 +344,17 @@ public sealed class BulkCutViewModel : ObservableObject
 
     /// <summary>True when a profile is selected in the bar (gates Apply/Delete).</summary>
     public bool HasSelectedProfile => _selectedProfile is not null;
+
+    /// <summary>
+    /// T-135 — the snapshot gesture needs a profile to attach to AND a frame on screen to capture.
+    /// </summary>
+    public bool CanSnapshotProfileThumbnail => _selectedProfile is not null && _selectedItem is not null && Player.IsReady;
+
+    /// <summary>Why the snapshot button is unavailable, or null when it is available.</summary>
+    public string? SnapshotUnavailableReason =>
+        _selectedProfile is null ? "Pick a cut profile first"
+        : _selectedItem is null || !Player.IsReady ? "Play a video in the preview first"
+        : null;
 
     /// <summary>Save-current-as is enabled only with a selected source row to capture the cut from.</summary>
     public bool CanSaveProfile => _selectedItem is not null;
@@ -594,6 +607,9 @@ public sealed class BulkCutViewModel : ObservableObject
 
     /// <summary>Delete the selected profile from settings + the bar. T-103.</summary>
     public RelayCommand DeleteProfileCommand { get; }
+
+    /// <summary>T-135 — capture the frame on screen as the selected profile's thumbnail.</summary>
+    public RelayCommand SnapshotProfileThumbnailCommand { get; }
 
     // ---- Add / remove / clear ---------------------------------------------------------------
 
@@ -923,6 +939,11 @@ public sealed class BulkCutViewModel : ObservableObject
         OnPropertyChanged(nameof(CanSetCutAtPlayhead));
         SetIntroAtPlayheadCommand.RaiseCanExecuteChanged();
         SetOutroAtPlayheadCommand.RaiseCanExecuteChanged();
+
+        // T-135 depends on the same selection + player-readiness signals.
+        OnPropertyChanged(nameof(CanSnapshotProfileThumbnail));
+        OnPropertyChanged(nameof(SnapshotUnavailableReason));
+        SnapshotProfileThumbnailCommand.RaiseCanExecuteChanged();
     }
 
     // ---- Apply-to-all (§2.3) ----------------------------------------------------------------
@@ -1111,6 +1132,62 @@ public sealed class BulkCutViewModel : ObservableObject
     /// survives). The AUTO capture on save (<see cref="SaveProfileWithAutoThumbnailAsync"/>) is deliberately
     /// NOT changed: it stays best-effort and silent.</para>
     /// </summary>
+    /// <summary>
+    /// T-135 — make the frame currently on screen the selected profile's thumbnail.
+    ///
+    /// <para>A THIRD entry point onto the same store-and-attach path, not new machinery: it grabs at
+    /// <see cref="PlayerViewModel.Position"/> through the same <see cref="IThumbnailService"/> and at the
+    /// same <see cref="ProfileThumbnailWidth"/> the auto path uses, then hands the frame to
+    /// <see cref="TryAttachThumbnail"/>. Like the upload gesture and unlike the silent auto-capture, this
+    /// is something the user deliberately pressed, so a failure is REPORTED (SPEC-007 I66/I69).</para>
+    /// </summary>
+    /// <returns>True when the frame became the profile's thumbnail.</returns>
+    public async Task<bool> SnapshotProfileThumbnailAsync(CancellationToken ct = default)
+    {
+        if (_selectedProfile is not { } profile)
+        {
+            ReportThumbnailUploadFailure(ThumbnailAttachOutcome.NoProfile, null, null, string.Empty);
+            return false;
+        }
+
+        if (_selectedItem is not { } row || !Player.IsReady)
+        {
+            // No video on screen means there is no frame to capture — say that rather than grabbing
+            // whatever the last row happened to be.
+            ReportThumbnailUploadFailure(ThumbnailAttachOutcome.NoImageChosen, profile.Name, null, string.Empty);
+            return false;
+        }
+
+        string? framePath;
+        try
+        {
+            framePath = await _thumbnails
+                .GetThumbnailAsync(row.Path, Player.Position, ProfileThumbnailWidth, ct)
+                .ConfigureAwait(true);
+        }
+        catch (Exception ex)
+        {
+            ReportThumbnailUploadFailure(ThumbnailAttachOutcome.ImageUnreadable, profile.Name, row.Path, ex.Message);
+            return false;
+        }
+
+        if (string.IsNullOrEmpty(framePath))
+        {
+            ReportThumbnailUploadFailure(ThumbnailAttachOutcome.ImageUnreadable, profile.Name, row.Path, string.Empty);
+            return false;
+        }
+
+        var outcome = TryAttachThumbnail(profile.Name, framePath, out var detail);
+        if (outcome == ThumbnailAttachOutcome.Attached)
+        {
+            ClearThumbnailUploadError();
+            return true;
+        }
+
+        ReportThumbnailUploadFailure(outcome, profile.Name, framePath, detail);
+        return false;
+    }
+
     public bool UploadThumbnail(CutProfile? profile, string? imagePath)
     {
         ThumbnailAttachOutcome outcome;
@@ -1376,6 +1453,11 @@ public sealed class BulkCutViewModel : ObservableObject
         ApplyProfileToSelectedCommand.RaiseCanExecuteChanged();
         ApplyProfileToAllCommand.RaiseCanExecuteChanged();
         DeleteProfileCommand.RaiseCanExecuteChanged();
+
+        // T-135: the snapshot gate also depends on WHICH profile is selected.
+        OnPropertyChanged(nameof(CanSnapshotProfileThumbnail));
+        OnPropertyChanged(nameof(SnapshotUnavailableReason));
+        SnapshotProfileThumbnailCommand.RaiseCanExecuteChanged();
     }
 
     // ---- Run batch (§4 — DELEGATES to T-095) ------------------------------------------------

@@ -286,6 +286,17 @@
                              CanSaveProfile), so for a user who just wants to re-picture an existing profile
                              the gesture was effectively unreachable — the likeliest reason it read as
                              missing. Reuses the same handler as the popup's button. -->
+                        <!-- T-135: capture the frame on screen as this profile's picture. Sits beside the
+                             file-picker upload because they do the same job from different sources; the
+                             disabled reason is surfaced in the tooltip rather than leaving it inert. -->
+                        <Button Style="{StaticResource ProfileSegmentButton}"
+                                Content="📷 Use current frame"
+                                Margin="8,0,0,0"
+                                VerticalAlignment="Center"
+                                Command="{Binding SnapshotProfileThumbnailCommand}"
+                                ToolTip="{Binding SnapshotUnavailableReason, TargetNullValue='Make the frame showing in the preview this profile''s thumbnail'}"
+                                Visibility="{Binding HasProfiles, Converter={StaticResource BoolToVisibility}}" />
+
                         <Button Style="{StaticResource ProfileSegmentButton}"
                                 Content="🖼 Thumbnail…"
                                 Margin="8,0,0,0"
