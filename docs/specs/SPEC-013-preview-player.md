@@ -204,11 +204,31 @@ capture, and the Split/BulkCut screens that host the player; media probing/durat
   single-frame `StepForward()`/`StepBackward()`, so the frame lands stable rather than fighting the play
   loop (`StepFrame` `if (_isPlaying) { ... Pause() }`). *(WPF/MediaElement-bound — not headlessly
   unit-testable; verified live via app-run.)*
+- **I49** — a path is turned into a media address by `MediaSourceUri.TryCreate`, which **decides rather
+  than throws** (T-131). It answers true for every shape the player could already open — a local path, a
+  mapped drive letter, and a UNC path whose server name is a legal URI host (plain, dotted, dashed,
+  underscored, or an IP) — and false, with no exception, for a UNC path whose server name cannot be a URI
+  authority. The realistic case is a **space in the server name** (`\\Seagate NAS\...`), common on
+  consumer NAS boxes; `\\host:port\...` and `\\host[1]\...` fail the same way. A blank path answers false.
+- **I50** — a refused path yields `MediaSourceUri.ExplainRefusal`, never .NET's wording. The message
+  **names the share**, states that **cutting still works** (type the times into IN/OUT — the engine passes
+  raw paths to ffmpeg as process arguments and never builds a `Uri`), and names the **mapped-drive-letter**
+  workaround, which genuinely restores the preview. It never contains "Invalid URI" or "hostname could not
+  be parsed" — replacing exactly that string is the point.
+- **I51** — the refusal is recorded: `FfmeMediaPlayer` best-effort writes the offending path through
+  `ErrorLogWriter` (`preview-open-refused`) before raising the failure, and a logging failure never turns
+  a handled refusal into a crash. The original defect logged nothing, which is why diagnosing it required
+  reproducing the path shape from scratch.
+- **I52** — the refusal does NOT widen `CanSetCutAtPlayhead`. With no video loaded there is no playhead,
+  so the set-at-playhead gestures stay correctly disabled; the fix is to explain the failure, not to
+  pretend the player is ready. *(Consequence: on such a share, cuts are placed by typing times.)*
 
 ## Links
 - Design: — (no D-NNN; grounded directly in the cited src, tasks T-012/T-024/T-028/T-029/T-033/T-047/T-051/T-075/T-078/T-080)
-- Goals: G-009, G-016 (scrub pop-back), G-028 (click-to-point seek), G-030 (hover thumbnail), G-031 (crash-safe reopen)
+- Goals: G-009, G-016 (scrub pop-back), G-028 (click-to-point seek), G-030 (hover thumbnail), G-031 (crash-safe reopen),
+  G-045 (network shares whose name has a space; tasks T-131/T-132)
 - Related specs: SPEC (thumbnail preview — `ThumbnailPreviewViewModel`), SPEC (preview downscale/hw-decode — `PreviewScale`/T-024)
 - Key code: `src/App/ViewModels/PlayerViewModel.cs`, `src/App/Media/FfmeMediaPlayer.cs`,
   `src/App/Media/MediaReopenGuard.cs`, `src/App/Media/IMediaPlayer.cs`
-- Tests: `tests/App.Tests/PlayerViewModelTests.cs`, `tests/App.Tests/MediaReopenGuardTests.cs`
+- Tests: `tests/App.Tests/PlayerViewModelTests.cs`, `tests/App.Tests/MediaReopenGuardTests.cs`,
+  `tests/App.Tests/MediaSourceUriTests.cs` (I49-I52)

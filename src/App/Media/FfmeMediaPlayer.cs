@@ -5,6 +5,7 @@ using System.Runtime.CompilerServices;
 using System.Threading.Tasks;
 using Unosquare.FFME;
 using Unosquare.FFME.Common;
+using VideoSplitJoiner.Core.Errors;
 
 namespace VideoSplitJoiner.App.Media;
 
@@ -219,15 +220,49 @@ public sealed class FfmeMediaPlayer : IMediaPlayer, IReopenTarget
                         return;
                     }
 
+                    // T-131: a UNC path whose SERVER NAME is not a legal URI hostname (a space, as on
+                    // many consumer NAS boxes) makes new Uri throw, and the catch below used to surface
+                    // .NET's "Invalid URI: The hostname could not be parsed." verbatim. Decide first, and
+                    // explain the refusal in terms the user can act on.
+                    if (!MediaSourceUri.TryCreate(path, out var source) || source is null)
+                    {
+                        // Record the offending path. The original failure wrote nothing at all, which is
+                        // why diagnosing it needed a from-scratch reproduction of the path shape.
+                        TryLogRefusal(path);
+                        RaiseFailed(MediaSourceUri.ExplainRefusal(path));
+                        return;
+                    }
+
                     // LoadedBehavior=Manual means Open loads + shows the first frame without playing;
                     // the MediaOpened event then supplies the duration.
-                    Run(() => _element!.Open(new Uri(path, UriKind.RelativeOrAbsolute)));
+                    Run(() => _element!.Open(source));
                     return;
             }
         }
         catch (Exception ex)
         {
             RaiseFailed(ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// Best-effort note that a path could not be expressed as a media address (T-131), so the next
+    /// report of this is diagnosable from the log instead of by reproducing the path shape by hand.
+    /// Never throws and never blocks the refusal it is recording.
+    /// </summary>
+    private static void TryLogRefusal(string? path)
+    {
+        try
+        {
+            new ErrorLogWriter().TryWrite(
+                operation: "preview-open-refused",
+                command: path ?? string.Empty,
+                exitCode: 0,
+                fullStdErr: MediaSourceUri.ExplainRefusal(path));
+        }
+        catch
+        {
+            // Logging must never turn a handled refusal into a crash.
         }
     }
 
