@@ -554,6 +554,21 @@ SPEC-007); the shared `IThumbnailService`/`FfmpegThumbnailService` frame source 
   to pick is genuinely meaningless. Hiding a control is how the upload became unreachable in G-044 and how
   the snapshot button became unfindable in T-136.
 
+- **I111** — **Delete originals** (T-144) offers a row's SOURCE for the Recycle Bin only when every one of
+  these holds, re-evaluated on each read rather than remembered from the run: the row is
+  `RowState.Done`; its output exists and is **non-empty now**; the output is **not the original itself**
+  (under `ReplaceOriginal` the original already became the output, so binning it destroys the only copy);
+  the original is still present; no run is in flight; and an `IOriginalDisposer` is available — a null
+  disposer means the feature is UNAVAILABLE, never "delete permanently".
+- **I112** — deletion goes through `IOriginalDisposer` (the Recycle Bin in production), never
+  `File.Delete`, behind a confirmation that is told the file COUNT and the BYTES reclaimed and defaults to
+  No. Declining touches nothing.
+- **I113** — the sweep is per-row isolated: a file the disposer declines (locked, permission) does not stop
+  the others, and the result summary states binned vs refused rather than implying total success. The
+  disposer is best-effort by contract, so success is VERIFIED (the file is gone) rather than assumed.
+- **I114** — a row whose original has been binned is marked `OriginalDeleted`, is auto-excluded from any
+  future batch, and is not offered for deletion again. Its source no longer exists.
+
 ## Links
 - Design: D-004 (Bulk Cut screen)
 - Goals: G-036 (batch trim), G-037 (shared preview + set-at-playhead + reusable cut profiles), G-038 (profile

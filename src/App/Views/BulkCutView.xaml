@@ -1003,6 +1003,16 @@
                             Content="{Binding RunLabel}"
                             Padding="16,6"
                             Command="{Binding RunBatchCommand}" />
+                    <!-- T-144: a POST-RUN action, so it sits with Run rather than in the profiles bar.
+                         Hidden until it can do something - a destructive button that is permanently
+                         greyed out just trains people to ignore it. -->
+                    <Button Content="{Binding DeleteOriginalsLabel}"
+                            Margin="0,0,6,0"
+                            Padding="10,5"
+                            Command="{Binding DeleteOriginalsCommand}"
+                            ToolTip="Send the originals of successfully trimmed videos to the Recycle Bin. Skips anything that failed, and anything whose trimmed file is missing."
+                            Visibility="{Binding CanDeleteOriginals, Converter={StaticResource BoolToVisibility}}" />
+
                     <Button Content="Cancel"
                             Margin="6,0,0,0"
                             Padding="10,5"

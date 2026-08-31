@@ -540,7 +540,7 @@ public sealed class BulkItemViewModel : ObservableObject
     public bool IsEnabled => _isEnabledByUser && !IsAutoDisabled;
 
     // Auto-disabled once the row is known-ineligible (Loading is NOT auto-disabled — CanRunBatch waits on it).
-    private bool IsAutoDisabled => _loadFailed || (KeyframesReady && (IsNoOpTrim || !IsValidCut));
+    private bool IsAutoDisabled => _originalDeleted || _loadFailed || (KeyframesReady && (IsNoOpTrim || !IsValidCut));
 
     /// <summary>
     /// True when the user has ticked this row but the app is still excluding it — the state that used to be
@@ -780,6 +780,27 @@ public sealed class BulkItemViewModel : ObservableObject
         _batchState is RowState.Done or RowState.Failed or RowState.Skipped or RowState.Cancelled;
 
     /// <summary>Fold a T-095 ledger entry back onto the row: terminal state, warnings, output path, size, error.</summary>
+    /// <summary>
+    /// T-144 - the source file has been sent to the Recycle Bin. The row stays visible (the trim it
+    /// produced is real and worth seeing) but it can never be cut again: its source is gone.
+    /// </summary>
+    internal void MarkOriginalDeleted()
+    {
+        _originalDeleted = true;
+        _isEnabledByUser = false;   // it can no longer take part in a batch
+        OnPropertyChanged(nameof(OriginalDeleted));
+        OnPropertyChanged(nameof(IsCheckedByUser));
+        OnPropertyChanged(nameof(IsEnabled));
+        OnPropertyChanged(nameof(ExclusionReason));
+        OnPropertyChanged(nameof(IsExcludedDespiteBeingChecked));
+        OnPropertyChanged(nameof(Warning));
+    }
+
+    private bool _originalDeleted;
+
+    /// <summary>True once this row's source has been binned (T-144) - it cannot be re-cut.</summary>
+    public bool OriginalDeleted => _originalDeleted;
+
     internal void ApplyResult(BulkTrimItemResult result)
     {
         _ledgerWarnings = result.Warnings ?? Array.Empty<string>();

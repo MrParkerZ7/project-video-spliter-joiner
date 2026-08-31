@@ -36,6 +36,7 @@ public partial class BulkCutView : UserControl
             if (e.NewValue is BulkCutViewModel vm)
             {
                 vm.ConfirmReplaceOriginals = ConfirmReplaceOriginals;
+                vm.ConfirmDeleteOriginals = ConfirmDeleteOriginals;
             }
         };
     }
@@ -44,6 +45,29 @@ public partial class BulkCutView : UserControl
     /// Block for an explicit, COUNTED confirmation before a batch replaces originals (T-123). Defaults
     /// to No, so an accidental Enter/Escape does not destroy anything.
     /// </summary>
+    /// <summary>
+    /// T-144 - the delete-originals gate. Names the count AND the space reclaimed (that is the point of
+    /// the feature), says plainly that the files go to the Recycle Bin, and defaults to No.
+    /// </summary>
+    private static bool ConfirmDeleteOriginals(int count, long bytes)
+    {
+        var noun = count == 1 ? "original" : "originals";
+        var size = bytes >= 1024L * 1024 * 1024
+            ? string.Format(CultureInfo.InvariantCulture, "{0:0.#} GB", bytes / 1024d / 1024d / 1024d)
+            : string.Format(CultureInfo.InvariantCulture, "{0} MB", Math.Max(1, bytes / 1024 / 1024));
+
+        var result = MessageBox.Show(
+            $"Send {count} {noun} to the Recycle Bin, freeing about {size}?" + Environment.NewLine + Environment.NewLine +
+            "Only videos that were trimmed successfully and whose trimmed file is still on disk are " +
+            "included. Nothing is deleted permanently - you can restore them from the Recycle Bin.",
+            "Delete originals?",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Warning,
+            MessageBoxResult.No);
+
+        return result == MessageBoxResult.Yes;
+    }
+
     private static bool ConfirmReplaceOriginals(int count)
     {
         var noun = count == 1 ? "file" : "files";

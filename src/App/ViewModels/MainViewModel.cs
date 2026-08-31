@@ -110,7 +110,11 @@ public sealed class MainViewModel : ObservableObject
         BulkCut = new BulkCutViewModel(
             probe, splitEngine, thumbnailService, settings,
             player: new FfmeMediaPlayer(),
-            smartCut: new SmartCutEngine(ffmpegRunner, probe));
+            smartCut: new SmartCutEngine(ffmpegRunner, probe),
+            // T-144: the disposer for "Delete originals". Passed HERE rather than defaulted inside the
+            // view model on purpose - null means the feature is unavailable, so a test that forgets to
+            // inject one can never bin real files (the T-140 lesson).
+            originalDisposer: new RecycleBinOriginalDisposer());
 
         ToggleLayoutCommand = new RelayCommand(ToggleLayout);
 

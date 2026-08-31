@@ -17,6 +17,7 @@ using VideoSplitJoiner.Core.Profiles;
 using VideoSplitJoiner.Core.Split;
 using VideoSplitJoiner.Core.Thumbnails;
 using VideoSplitJoiner.App.Io;
+using VideoSplitJoiner.Core.Io;
 
 namespace VideoSplitJoiner.App.ViewModels;
 
@@ -140,6 +141,11 @@ public sealed class BulkCutViewModel : ObservableObject
 
     // T-128 / review finding #3: set while a bulk selection write is in flight so the per-row
     // PropertyChanged fan-out does not trigger one O(N) batch refresh per row.
+    // T-144: how a deleted original is disposed of. NULL means deletion is UNAVAILABLE rather than
+    // "delete permanently" - a test that forgets to inject one must not be able to bin real files, and
+    // the same defensive default is why Exact+ReplaceOriginal refuses without a disposer (T-130).
+    private readonly IOriginalDisposer? _originalDisposer;
+
     private bool _suspendRunStateRefresh;
 
     private readonly object _progressLock = new();
@@ -188,7 +194,8 @@ public sealed class BulkCutViewModel : ObservableObject
         Func<TimeSpan, CancellationToken, Task>? thumbnailDelay = null,
         TimeSpan? selectionOpenDebounce = null,
         Func<TimeSpan, CancellationToken, Task>? selectionOpenDelay = null,
-        ISmartCutEngine? smartCut = null)
+        ISmartCutEngine? smartCut = null,
+        IOriginalDisposer? originalDisposer = null)
     {
         _probe = probe ?? throw new ArgumentNullException(nameof(probe));
         _splitEngine = splitEngine ?? throw new ArgumentNullException(nameof(splitEngine));
@@ -210,6 +217,7 @@ public sealed class BulkCutViewModel : ObservableObject
 
         // T-115 preview-open debounce seams (null ⇒ production defaults; tests inject immediate/gated).
         // T-133: null (older settings file / never set) reads as the default, ON.
+        _originalDisposer = originalDisposer;
         _applyCutToAllRows = _settings.BulkApplyCutToAllRows ?? true;
 
         _selectionOpenDebounce = selectionOpenDebounce is { } d && d > TimeSpan.Zero ? d : DefaultSelectionOpenDebounce;
@@ -231,6 +239,7 @@ public sealed class BulkCutViewModel : ObservableObject
         AddFilesCommand = new RelayCommand(p => _ = AddFilesAsync(AsPaths(p)));
         RemoveCommand = new RelayCommand(p => Remove(p as BulkItemViewModel), _ => true);
         ClearCommand = new RelayCommand(_ => Clear(), _ => CanClear);
+        DeleteOriginalsCommand = new RelayCommand(_ => DeleteOriginals(), _ => CanDeleteOriginals);
         ApplyToAllCommand = new RelayCommand(p => ApplyToAll(p as BulkItemViewModel), _ => Items.Count > 1);
         SelectAllItemsCommand = new RelayCommand(_ => SetAllItemsChecked(true), _ => CanChangeSelection);
         SelectNoItemsCommand = new RelayCommand(_ => SetAllItemsChecked(false), _ => CanChangeSelection);
@@ -616,6 +625,170 @@ public sealed class BulkCutViewModel : ObservableObject
     public string RunLabel =>
         string.Create(CultureInfo.InvariantCulture, $"Run bulk cut ({Items.Count(i => i.IsEnabled && i.IsValidCut)})");
 
+    /// <summary>
+    /// T-144 - the rows whose ORIGINAL can be binned right now. Every clause is a way this feature could
+    /// destroy someone's footage, so it is evaluated FRESH on each read rather than remembered from the
+    /// run: only a row the batch finished (RowState.Done); whose output exists and is non-empty NOW (the
+    /// run may be minutes old and the output may have been moved since); whose output is not the original
+    /// itself (under ReplaceOriginal the original already BECAME the output, so binning it destroys the
+    /// only copy); and whose original is still there to bin.
+    /// </summary>
+    private IEnumerable<BulkItemViewModel> DeletableOriginals()
+    {
+        if (_originalDisposer is null || Operation.IsRunning)
+        {
+            yield break;
+        }
+
+        foreach (var row in Items)
+        {
+            if (row.RowState != RowState.Done)
+            {
+                continue;
+            }
+
+            var output = row.OutputPath;
+            if (string.IsNullOrWhiteSpace(output))
+            {
+                continue;
+            }
+
+            if (SamePath(output, row.Path))
+            {
+                continue; // replace-originals: the output IS the original
+            }
+
+            if (!IsNonEmptyFile(output) || !FileThere(row.Path))
+            {
+                continue;
+            }
+
+            yield return row;
+        }
+    }
+
+    private static bool SamePath(string a, string b)
+    {
+        try
+        {
+            return string.Equals(System.IO.Path.GetFullPath(a), System.IO.Path.GetFullPath(b), StringComparison.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static bool IsNonEmptyFile(string path)
+    {
+        try
+        {
+            var fi = new System.IO.FileInfo(path);
+            return fi.Exists && fi.Length > 0;
+        }
+        catch
+        {
+            return false; // unreadable => never treat its source as safe to delete
+        }
+    }
+
+    private static bool FileThere(string path)
+    {
+        try
+        {
+            return System.IO.File.Exists(path);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>T-144 - how many originals could be reclaimed.</summary>
+    public int DeletableOriginalCount => DeletableOriginals().Count();
+
+    private long DeletableOriginalBytes => DeletableOriginals().Sum(r => r.SizeBefore);
+
+    /// <summary>T-144 - the delete-originals gate.</summary>
+    public bool CanDeleteOriginals => DeletableOriginalCount > 0;
+
+    /// <summary>Count-and-prize label, so the user sees what they get before pressing it.</summary>
+    public string DeleteOriginalsLabel
+    {
+        get
+        {
+            var n = DeletableOriginalCount;
+            return n == 0
+                ? "Delete originals"
+                : string.Create(CultureInfo.InvariantCulture, $"Delete originals ({n} - {FormatBytes(DeletableOriginalBytes)})");
+        }
+    }
+
+    private static string FormatBytes(long bytes)
+    {
+        if (bytes >= 1024L * 1024 * 1024)
+        {
+            return string.Create(CultureInfo.InvariantCulture, $"{bytes / 1024d / 1024d / 1024d:0.#} GB");
+        }
+
+        return string.Create(CultureInfo.InvariantCulture, $"{Math.Max(1, bytes / 1024 / 1024)} MB");
+    }
+
+    /// <summary>
+    /// Confirmation gate for <see cref="DeleteOriginals"/> - (count, bytes) =&gt; proceed. Defaults to
+    /// false so a host that never wires it can never delete anything, mirroring ConfirmReplaceOriginals.
+    /// </summary>
+    public Func<int, long, bool> ConfirmDeleteOriginals { get; set; } = (_, _) => false;
+
+    /// <summary>
+    /// T-144 - send the eligible originals to the Recycle Bin. Per-row isolated: one file that cannot be
+    /// binned never stops the rest, and the summary states binned vs refused.
+    /// </summary>
+    public void DeleteOriginals()
+    {
+        var rows = DeletableOriginals().ToList();
+        if (rows.Count == 0 || _originalDisposer is null)
+        {
+            return;
+        }
+
+        if (!ConfirmDeleteOriginals(rows.Count, rows.Sum(r => r.SizeBefore)))
+        {
+            return;
+        }
+
+        var binned = 0;
+        var refused = 0;
+
+        foreach (var row in rows)
+        {
+            try
+            {
+                _originalDisposer.DisposeOriginalBackup(row.Path);
+
+                // The disposer is best-effort BY CONTRACT, so verify rather than assume it worked.
+                if (FileThere(row.Path))
+                {
+                    refused++;
+                    continue;
+                }
+
+                row.MarkOriginalDeleted();
+                binned++;
+            }
+            catch
+            {
+                refused++;
+            }
+        }
+
+        Operation.ResultSummary = refused == 0
+            ? string.Create(CultureInfo.InvariantCulture, $"Sent {binned} original(s) to the Recycle Bin")
+            : string.Create(CultureInfo.InvariantCulture, $"Sent {binned} to the Recycle Bin, {refused} could not be removed");
+
+        RaiseRunState();
+    }
+
     /// <summary>Clear all is enabled with ≥1 row and no run in flight.</summary>
     public bool CanClear => Items.Count > 0 && !Operation.IsRunning;
 
@@ -639,6 +812,9 @@ public sealed class BulkCutViewModel : ObservableObject
 
     /// <summary>Clear all rows (cancels every scan, resets the aggregate op) — guarded by <see cref="CanClear"/>.</summary>
     public RelayCommand ClearCommand { get; }
+
+    /// <summary>T-144 - bin the originals of successfully trimmed rows.</summary>
+    public RelayCommand DeleteOriginalsCommand { get; }
 
     /// <summary>Copy one row's cut points to every other enabled row (parameter = the source row).</summary>
     public RelayCommand ApplyToAllCommand { get; }
@@ -1756,6 +1932,10 @@ public sealed class BulkCutViewModel : ObservableObject
         OnPropertyChanged(nameof(RunScopeIsWarning));
         OnPropertyChanged(nameof(CanClear));
         OnPropertyChanged(nameof(CanChangeSelection));
+        OnPropertyChanged(nameof(CanDeleteOriginals));
+        OnPropertyChanged(nameof(DeleteOriginalsLabel));
+        OnPropertyChanged(nameof(DeletableOriginalCount));
+        DeleteOriginalsCommand.RaiseCanExecuteChanged();
         RunBatchCommand.RaiseCanExecuteChanged();
         ClearCommand.RaiseCanExecuteChanged();
         ApplyToAllCommand.RaiseCanExecuteChanged();
