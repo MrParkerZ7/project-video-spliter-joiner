@@ -136,6 +136,14 @@ Users cutting a season of episodes want to define "trim the 12s intro and the 20
   a null/throwing grab and a refused store both reach `Operation.Error`, a success retracts an earlier
   report, and a failure leaves the profile's existing thumbnail exactly as it was.
 
+- **I77** — the **save dialog names a profile and nothing else**. It carries no thumbnail-mutating control,
+  because those bind to `SelectedProfile`, which during a NEW profile's save is still the PREVIOUSLY
+  selected profile — so a Clear there destroyed another profile's picture silently (T-139). All thumbnail
+  editing lives in the profile bar, where `SelectedProfile` is the profile being acted on by definition.
+- **I78** — the picture is **optional**: `SaveProfile` persists first and the auto-grab is best-effort
+  afterwards (I66), so a profile with no thumbnail is a normal outcome, not a failed save. It can be set
+  from a frame (I75), uploaded, or **removed** — all three from the bar, all after the fact.
+
 ## Links
 - Design: — (feature tasks T-096 apply-to-all convention · T-102 model/persistence/apply · T-103 VM command glue · T-106 thumbnail model/store · T-107 thumbnail UI glue · T-129 upload-failure reporting)
 - Goals: G-037, G-038 (profile thumbnails), G-044 (thumbnail change works — and says so when it does not)

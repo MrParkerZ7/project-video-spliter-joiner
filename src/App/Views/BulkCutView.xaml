@@ -308,6 +308,16 @@
                                 IsEnabled="{Binding HasSelectedProfile}"
                                 Click="OnUploadThumbnailClicked" />
 
+                        <!-- T-139: removal moved here with the rest of the thumbnail editing. It used to
+                             live in the save popup, where it acted on the PREVIOUSLY selected profile. -->
+                        <Button Style="{StaticResource ProfileSegmentButton}"
+                                Content="✕ Picture"
+                                Margin="8,0,0,0"
+                                VerticalAlignment="Center"
+                                ToolTip="Remove the selected profile's picture (falls back to the placeholder)"
+                                IsEnabled="{Binding HasSelectedProfile}"
+                                Click="OnClearThumbnailClicked" />
+
                         <!-- MUTED: Delete — muted ✕, danger-on-hover. -->
                         <Button Style="{StaticResource ProfileDangerButton}"
                                 Content="✕"
@@ -378,40 +388,14 @@
                                          KeyDown="OnProfileNameKeyDown" />
 
                                 <!-- ===== Thumbnail preview + manage (T-107) ===== -->
-                                <TextBlock Text="Thumbnail"
+                                <!-- T-139: the thumbnail controls used to live HERE, and they were bound to
+                                     SelectedProfile - which, while a NEW profile is being named, is still the
+                                     PREVIOUSLY selected profile. "Clear" therefore wiped a different
+                                     profile's picture, silently and unrecoverably. The picture is optional
+                                     and set automatically; editing it belongs in the profile bar, where it
+                                     acts on the profile actually selected. -->
+                                <TextBlock Text="The picture is taken from the intro-end frame automatically. You can change or remove it any time from the profile bar."
                                            Margin="0,10,0,0"
-                                           Foreground="{StaticResource TextSecondaryBrush}"
-                                           FontSize="{StaticResource FontSizeSmall}" />
-                                <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
-                                    <!-- Muted chip = placeholder; the Image covers it when a thumb resolves. -->
-                                    <Border Width="52" Height="52"
-                                            VerticalAlignment="Top"
-                                            Background="{StaticResource Surface2Brush}"
-                                            BorderBrush="{StaticResource BorderBrush}"
-                                            BorderThickness="1"
-                                            CornerRadius="{StaticResource RadiusSm}"
-                                            ClipToBounds="True">
-                                        <Image Source="{Binding SelectedProfile.ThumbnailPath, Converter={StaticResource PathToBitmap}}"
-                                               Stretch="UniformToFill" />
-                                    </Border>
-                                    <StackPanel Margin="8,0,0,0" VerticalAlignment="Center">
-                                        <Button Content="Upload image…"
-                                                Padding="8,3"
-                                                HorizontalAlignment="Left"
-                                                ToolTip="Choose a picture to use as the selected profile's thumbnail"
-                                                IsEnabled="{Binding HasSelectedProfile}"
-                                                Click="OnUploadThumbnailClicked" />
-                                        <Button Content="Clear"
-                                                Margin="0,4,0,0"
-                                                Padding="8,3"
-                                                HorizontalAlignment="Left"
-                                                ToolTip="Remove the selected profile's thumbnail (revert to the placeholder)"
-                                                IsEnabled="{Binding HasSelectedProfile}"
-                                                Click="OnClearThumbnailClicked" />
-                                    </StackPanel>
-                                </StackPanel>
-                                <TextBlock Text="Auto-set from the intro-end frame on save; pick a profile to upload your own or clear it."
-                                           Margin="0,6,0,0"
                                            TextWrapping="Wrap"
                                            FontSize="{StaticResource FontSizeSmall}"
                                            Foreground="{StaticResource TextMutedBrush}" />
