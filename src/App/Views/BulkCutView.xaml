@@ -366,12 +366,25 @@
                     </WrapPanel>
 
                     <!-- Themed inline name input (Popup anchored under the Save button) -->
+                    <!-- T-138 (second attempt). The first fix released mouse capture on close and did NOT
+                         solve it, so the mechanism is removed rather than cleaned up after:
+
+                         StaysOpen="False"      made WPF TAKE mouse capture so it could detect a click
+                                                outside. StaysOpen="True" never takes capture at all, so
+                                                there is nothing left to dangle. Dismissal is fully ours:
+                                                Save, Cancel and Escape all call CloseSaveProfilePopup().
+                         AllowsTransparency +   together these make the popup a LAYERED window with a
+                         PopupAnimation="Fade"  fade-out. A layered window whose animation does not finish
+                                                can sit invisibly over the app swallowing clicks - the same
+                                                symptom, by a different route. Neither is load-bearing for
+                                                a small name box, so both are gone.
+
+                         Trade-off accepted: clicking outside no longer dismisses. For a box you are typing
+                         a name into, not dismissing on a stray click is arguably the better behaviour. -->
                     <Popup x:Name="SaveProfilePopup"
                            PlacementTarget="{Binding ElementName=SaveProfileButton}"
                            Placement="Bottom"
-                           StaysOpen="False"
-                           AllowsTransparency="True"
-                           PopupAnimation="Fade">
+                           StaysOpen="True">
                         <Border Margin="0,4,0,0"
                                 Padding="10"
                                 Background="{StaticResource SurfaceBrush}"
