@@ -241,7 +241,11 @@
                                FontWeight="SemiBold"
                                Foreground="{StaticResource TextSecondaryBrush}" />
 
-                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <!-- T-136: a WrapPanel, not a horizontal StackPanel. A StackPanel neither wraps nor
+                         scrolls - it silently CLIPS whatever does not fit off the right edge, and this bar
+                         has grown to eight controls while the tab's split is user-resizable (G-039). The
+                         set-at-playhead row already uses this idiom. -->
+                    <WrapPanel VerticalAlignment="Center">
                         <!-- HERO: thumbnail picker ([thumb chip] Name). Natural height
                              (fits the 28px chip) makes it the tallest element; a wider
                              MinWidth gives the selected profile's thumbnail room. -->
@@ -294,17 +298,15 @@
                                 Margin="8,0,0,0"
                                 VerticalAlignment="Center"
                                 Command="{Binding SnapshotProfileThumbnailCommand}"
-                                ToolTip="{Binding SnapshotUnavailableReason, TargetNullValue='Make the frame showing in the preview this profile''s thumbnail'}"
-                                Visibility="{Binding HasProfiles, Converter={StaticResource BoolToVisibility}}" />
+                                ToolTip="{Binding SnapshotUnavailableReason, TargetNullValue='Make the frame showing in the preview this profile''s thumbnail'}" />
 
                         <Button Style="{StaticResource ProfileSegmentButton}"
                                 Content="🖼 Thumbnail…"
                                 Margin="8,0,0,0"
                                 VerticalAlignment="Center"
-                                ToolTip="Choose a picture for the selected profile's thumbnail"
+                                ToolTip="Choose a picture for the selected profile's thumbnail. Save a profile first if none is selected."
                                 IsEnabled="{Binding HasSelectedProfile}"
-                                Click="OnUploadThumbnailClicked"
-                                Visibility="{Binding HasProfiles, Converter={StaticResource BoolToVisibility}}" />
+                                Click="OnUploadThumbnailClicked" />
 
                         <!-- MUTED: Delete — muted ✕, danger-on-hover. -->
                         <Button Style="{StaticResource ProfileDangerButton}"
@@ -351,6 +353,7 @@
                                            Foreground="{StaticResource AccentTextBrush}" />
                             </StackPanel>
                         </Button>
+                    </WrapPanel>
 
                     <!-- Themed inline name input (Popup anchored under the Save button) -->
                     <Popup x:Name="SaveProfilePopup"
@@ -428,7 +431,6 @@
                             </StackPanel>
                         </Border>
                     </Popup>
-                    </StackPanel>
                 </StackPanel>
             </Border>
 

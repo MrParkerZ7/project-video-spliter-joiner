@@ -545,6 +545,15 @@ SPEC-007); the shared `IThumbnailService`/`FfmpegThumbnailService` frame source 
 - **I108** — both republish on exactly the signals `RunLabel` does, so the stated count can never lag the
   list it describes.
 
+- **I109** — the profile bar is a **`WrapPanel`**, never a horizontal `StackPanel`. A `StackPanel` neither
+  wraps nor scrolls: it silently CLIPS whatever does not fit off the right edge, and the bar carries eight
+  controls while the tab's split is user-resizable (T-136).
+- **I110** — the bar's ACTION buttons (📷 Use current frame, 🖼 Thumbnail…) are **shown and disabled with a
+  reason**, never hidden, when there is no profile to act on — `SnapshotUnavailableReason` names the
+  missing precondition. Only the picker and Delete are `HasProfiles`-gated, because a picker with nothing
+  to pick is genuinely meaningless. Hiding a control is how the upload became unreachable in G-044 and how
+  the snapshot button became unfindable in T-136.
+
 ## Links
 - Design: D-004 (Bulk Cut screen)
 - Goals: G-036 (batch trim), G-037 (shared preview + set-at-playhead + reusable cut profiles), G-038 (profile
