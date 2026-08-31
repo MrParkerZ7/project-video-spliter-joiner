@@ -547,6 +547,71 @@ public sealed class BulkCutViewModel : ObservableObject
         && !Operation.IsRunning
         && Items.Where(i => i.IsEnabled).All(i => i.KeyframesReady);
 
+    /// <summary>
+    /// T-134 — what Run will actually do, said BEFORE it is pressed. Null when every row will be cut (there
+    /// is nothing to explain) or the list is empty.
+    ///
+    /// <para><b>Why this exists.</b> The information was already available — the button reads
+    /// <c>Run bulk cut (N)</c> and every excluded row has carried an <see cref="BulkItemViewModel.ExclusionReason"/>
+    /// since T-127 — and it was still not enough: a user imported a batch, set one cut, pressed Run, got one
+    /// file, and had to ask why. A count that silently equals 1 beside a list of 12 is the state that
+    /// produced that question.</para>
+    ///
+    /// <para>The reasons are taken VERBATIM from each row's <see cref="BulkItemViewModel.ExclusionReason"/>
+    /// rather than restated here, so there is exactly one place the wording lives. Rows the user unticked
+    /// deliberately carry no reason (T-127: unticking silences the explanation), so they are counted
+    /// separately and phrased calmly — a deliberate choice is not a problem to warn about.</para>
+    /// </summary>
+    public string? RunScopeSummary
+    {
+        get
+        {
+            var total = Items.Count;
+            if (total == 0)
+            {
+                return null;
+            }
+
+            var willCut = Items.Count(i => i.IsEnabled && i.IsValidCut);
+            if (willCut == total)
+            {
+                return null; // everything runs — saying so would be noise
+            }
+
+            var parts = new List<string>();
+
+            foreach (var group in Items
+                .Where(i => i.ExclusionReason is not null)
+                .GroupBy(i => i.ExclusionReason!, StringComparer.Ordinal)
+                .OrderByDescending(g => g.Count()))
+            {
+                parts.Add(string.Create(CultureInfo.InvariantCulture, $"{group.Count()} × {group.Key}"));
+            }
+
+            var unticked = Items.Count(i => !i.IsCheckedByUser);
+            if (unticked > 0)
+            {
+                parts.Add(string.Create(CultureInfo.InvariantCulture, $"{unticked} not ticked"));
+            }
+
+            var scanning = Items.Count(i => i.IsCheckedByUser && !i.KeyframesReady);
+            if (scanning > 0)
+            {
+                parts.Add(string.Create(CultureInfo.InvariantCulture, $"{scanning} still scanning"));
+            }
+
+            var head = string.Create(CultureInfo.InvariantCulture, $"Will cut {willCut} of {total}");
+            return parts.Count == 0 ? head : head + " — " + string.Join(" · ", parts);
+        }
+    }
+
+    /// <summary>
+    /// T-134 — whether the shortfall deserves visual weight. A row the user TICKED but the app is excluding
+    /// is the surprising case; rows they unticked themselves are not, and alarming them about their own
+    /// choice would teach them to ignore the line.
+    /// </summary>
+    public bool RunScopeIsWarning => Items.Any(i => i.IsExcludedDespiteBeingChecked);
+
     /// <summary>Count-aware primary-button label: <c>"Run bulk cut (N)"</c> over the enabled+valid rows.</summary>
     public string RunLabel =>
         string.Create(CultureInfo.InvariantCulture, $"Run bulk cut ({Items.Count(i => i.IsEnabled && i.IsValidCut)})");
@@ -1687,6 +1752,8 @@ public sealed class BulkCutViewModel : ObservableObject
 
         OnPropertyChanged(nameof(CanRunBatch));
         OnPropertyChanged(nameof(RunLabel));
+        OnPropertyChanged(nameof(RunScopeSummary));   // T-134: same inputs as RunLabel
+        OnPropertyChanged(nameof(RunScopeIsWarning));
         OnPropertyChanged(nameof(CanClear));
         OnPropertyChanged(nameof(CanChangeSelection));
         RunBatchCommand.RaiseCanExecuteChanged();

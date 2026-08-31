@@ -535,6 +535,16 @@ SPEC-007); the shared `IThumbnailService`/`FfmpegThumbnailService` frame source 
   outro, and reports invalidated rows through `ApplyToAllReport`.
 - **I105** — when OFF, only the selected row changes. An unticked row is never written to in either mode.
 
+- **I106** — `RunScopeSummary` states what Run will do BEFORE it is pressed: `Will cut N of M`, followed by
+  each distinct `ExclusionReason` with a count, plus `not ticked` and `still scanning` tallies. It is
+  **null when every row will run** (and when the list is empty), so the line never becomes furniture.
+  The reasons are read VERBATIM off the rows — the wording lives only in `ExclusionReason` (T-134).
+- **I107** — `RunScopeIsWarning` is true only when a row the user TICKED is being excluded
+  (`IsExcludedDespiteBeingChecked`). Rows the user unticked are counted calmly: alarming someone about
+  their own deliberate choice teaches them to ignore the line.
+- **I108** — both republish on exactly the signals `RunLabel` does, so the stated count can never lag the
+  list it describes.
+
 ## Links
 - Design: D-004 (Bulk Cut screen)
 - Goals: G-036 (batch trim), G-037 (shared preview + set-at-playhead + reusable cut profiles), G-038 (profile

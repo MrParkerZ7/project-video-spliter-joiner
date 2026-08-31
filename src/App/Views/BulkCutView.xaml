@@ -969,6 +969,32 @@
                 </StackPanel>
 
                 <StackPanel Grid.Column="1" Orientation="Horizontal">
+                    <!-- T-134: what Run will actually do, said BEFORE it is pressed. The count was already
+                         on the button and it was still not enough - a user imported a batch, set one cut,
+                         pressed Run, got one file, and had to ask why. Hidden entirely when every row will
+                         run, so it is never noise. Warning-coloured only when rows the user TICKED are
+                         being excluded; rows they unticked themselves stay calm. -->
+                    <TextBlock Text="{Binding RunScopeSummary}"
+                               MaxWidth="340"
+                               Margin="0,0,12,0"
+                               VerticalAlignment="Center"
+                               TextWrapping="Wrap"
+                               TextAlignment="Right"
+                               FontSize="{StaticResource FontSizeSmall}"
+                               Visibility="{Binding RunScopeSummary, Converter={StaticResource NullToCollapsed}}">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Foreground" Value="{StaticResource TextMutedBrush}" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding RunScopeIsWarning}" Value="True">
+                                        <Setter Property="Foreground" Value="{StaticResource AccentBrush}" />
+                                        <Setter Property="FontWeight" Value="SemiBold" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+
                     <Button Style="{StaticResource AccentButton}"
                             Content="{Binding RunLabel}"
                             Padding="16,6"
