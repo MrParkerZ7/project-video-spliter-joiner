@@ -236,6 +236,33 @@ public partial class BulkCutView : UserControl
     /// Open the themed inline name input under the Save button (not a raw WPF dialog). Pre-fills with the
     /// currently-selected profile's name (handy for a "save over" upsert) and focuses/selects the field.
     /// </summary>
+    /// <summary>
+    /// Close the save popup, releasing anything it is holding on to (T-138).
+    ///
+    /// <para><b>Why this is not just <c>IsOpen = false</c>.</b> A <c>Popup</c> with
+    /// <c>StaysOpen="False"</c> takes MOUSE CAPTURE so it can notice a click outside itself and dismiss.
+    /// When such a popup is closed PROGRAMMATICALLY — which is what pressing Save does — while keyboard
+    /// focus sits in a control inside it (<c>ProfileNameBox</c>), that capture can be left dangling: the
+    /// popup is gone, but the window keeps routing mouse input to a target that no longer exists, so the
+    /// app appears frozen until some other interaction forces the capture loose. That is the reported
+    /// "UI gone broke until I click X".</para>
+    ///
+    /// <para>Releasing capture and moving focus back to the button that opened it is correct on every
+    /// close path regardless — a closed popup should hold neither.</para>
+    /// </summary>
+    private void CloseSaveProfilePopup()
+    {
+        SaveProfilePopup.IsOpen = false;
+
+        // Order matters: drop capture first, then give focus somewhere real in the main window.
+        if (Mouse.Captured is not null)
+        {
+            Mouse.Capture(null);
+        }
+
+        SaveProfileButton.Focus();
+    }
+
     private void OnSaveProfileClicked(object sender, RoutedEventArgs e)
     {
         if (DataContext is not BulkCutViewModel vm || vm.SelectedItem is null)
@@ -258,14 +285,14 @@ public partial class BulkCutView : UserControl
         }
         else if (e.Key == Key.Escape)
         {
-            SaveProfilePopup.IsOpen = false;
+            CloseSaveProfilePopup();
             e.Handled = true;
         }
     }
 
     private void OnConfirmSaveProfileClicked(object sender, RoutedEventArgs e) => CommitSaveProfile();
 
-    private void OnCancelSaveProfileClicked(object sender, RoutedEventArgs e) => SaveProfilePopup.IsOpen = false;
+    private void OnCancelSaveProfileClicked(object sender, RoutedEventArgs e) => CloseSaveProfilePopup();
 
     // ---- Profile thumbnail: upload / clear (T-107) ------------------------------------------
 
@@ -326,7 +353,7 @@ public partial class BulkCutView : UserControl
         }
 
         vm.SaveProfileCommand.Execute(name);
-        SaveProfilePopup.IsOpen = false;
+        CloseSaveProfilePopup();
     }
 
     // ---- Completed surface: reveal the output folder ----------------------------------------
