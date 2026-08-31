@@ -183,30 +183,21 @@
 
         <!-- ================= Header: subtitle + gold/blue legend + cut-profiles bar ================= -->
         <Grid Grid.Row="0" Margin="4,0,4,8">
-            <!-- T-141. These were "*" for the subtitle and "Auto" for the profiles bar, and that
-                 combination collapses the whole tab once a profile exists:
-
-                   an Auto column is MEASURED WITH INFINITE WIDTH, so the profiles bar demanded its full
-                   ~1130px; the "*" column got whatever was left (~115px); the subtitle wraps, so it
-                   became a one-word-wide column many lines tall; and root row 0 is Auto, so the header
-                   grew until it pushed the preview, the list and the footer out of the window.
-
-                 Reversed: the subtitle is Auto and bounded by MaxWidth so it can never demand more than
-                 it deserves, and the bar takes the REMAINDER as "*" - a finite width, which is also what
-                 finally lets its WrapPanel actually wrap instead of overflowing. -->
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="Auto" />
-                <ColumnDefinition Width="*" MinWidth="240" />
-            </Grid.ColumnDefinitions>
+            <!-- T-142: the subtitle/legend gets its OWN ROW rather than sharing one with the
+                 profiles bar. Side by side, the two competed for width and the loser was crushed: an
+                 Auto column measures with INFINITE width, so the bar demanded ~1130px, the subtitle's
+                 column collapsed, its wrapping text became a one-word-wide sliver many lines tall, and
+                 row 0 (Auto) grew until it pushed the whole tab off-screen (T-141). Capping the subtitle
+                 at 420px stopped the collapse but left them fighting over a single row and looking
+                 cramped. Stacked, neither can starve the other and the MaxWidth crutch is gone. -->
             <Grid.RowDefinitions>
-                <RowDefinition Height="Auto" />  <!-- subtitle/legend + profiles bar -->
-                <RowDefinition Height="Auto" />  <!-- apply-report note (spans both cols) -->
+                <RowDefinition Height="Auto" />  <!-- subtitle + colour legend, full width -->
+                <RowDefinition Height="Auto" />  <!-- profiles bar, full width -->
+                <RowDefinition Height="Auto" />  <!-- apply-report note -->
             </Grid.RowDefinitions>
 
             <!-- Subtitle + gold/blue legend -->
-            <StackPanel Grid.Row="0" Grid.Column="0"
-                        VerticalAlignment="Center"
-                        MaxWidth="420">
+            <StackPanel Grid.Row="0" VerticalAlignment="Center">
                 <TextBlock Text="Keep the middle · drop intro (gold) &amp; optional outro (blue) · stream-copy, keyframe-snapped · originals kept"
                            TextWrapping="Wrap"
                            Foreground="{StaticResource TextSecondaryBrush}" />
@@ -238,8 +229,9 @@
                  and kept compact (one control row under a caption) so it doesn't
                  crowd the split below in either layout mode. HasProfiles gating is
                  unchanged; the empty state stays an unobtrusive Save affordance. -->
-            <Border Grid.Row="0" Grid.Column="1"
-                    Margin="12,0,0,0"
+            <Border Grid.Row="1"
+                    Margin="0,8,0,0"
+                    HorizontalAlignment="Left"
                     VerticalAlignment="Center"
                     Padding="10,7"
                     Background="{StaticResource SurfaceBrush}"
@@ -445,7 +437,7 @@
             </Border>
 
             <!-- ===== Apply report note — shared surface for apply-to-all (T-097) + profile apply (T-103) ===== -->
-            <Border Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2"
+            <Border Grid.Row="2"
                     Margin="0,8,0,0"
                     Padding="8,4"
                     Background="{StaticResource Surface2Brush}"
