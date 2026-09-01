@@ -69,7 +69,7 @@ public sealed class ThumbnailPreviewViewModelTests
     /// <c>Progress&lt;T&gt;</c> posts) are drained on demand by <see cref="Drain"/>, so result-marshaling
     /// is deterministic in the test.
     /// </summary>
-    private sealed class PumpContext : SynchronizationContext
+    private sealed class PumpContext : SynchronizationContext, IDisposable
     {
         private readonly ConcurrentQueue<(SendOrPostCallback D, object? State)> _queue = new();
 
@@ -106,6 +106,20 @@ public sealed class ThumbnailPreviewViewModelTests
             Drain();
             Drain();
         }
+
+        /// <summary>
+        /// Uninstall this pump from the current thread (T-148).
+        ///
+        /// <para>The clear lives in the scope that INSTALLED the context - a <c>using</c> in the test body -
+        /// rather than in a teardown on the test class. xUnit wraps each test method in its own
+        /// <c>AsyncTestSyncContext</c> and restores the pre-test ambient context in a <c>finally</c> that runs
+        /// BEFORE the class is disposed, so a class-level teardown would only ever observe the
+        /// already-restored context and could never clear this pump.</para>
+        ///
+        /// <para>Clears to <c>null</c> - a pooled thread's natural state - rather than restoring the prior
+        /// value, because every suite that needs a context installs its own.</para>
+        /// </summary>
+        public void Dispose() => SynchronizationContext.SetSynchronizationContext(null);
     }
 
     /// <summary>
@@ -197,7 +211,8 @@ public sealed class ThumbnailPreviewViewModelTests
     [Fact]
     public void MouseEnter_WithLoadedFile_ShowsPopup()
     {
-        var (vm, _, _, _) = Build();
+        var (vm, _, pump, _) = Build();
+        using var pumpScope = pump;
         Load(vm);
 
         vm.MouseEnter();
@@ -208,7 +223,8 @@ public sealed class ThumbnailPreviewViewModelTests
     [Fact]
     public void MouseEnter_WithNoFile_DoesNotShowPopup()
     {
-        var (vm, _, _, _) = Build();
+        var (vm, _, pump, _) = Build();
+        using var pumpScope = pump;
 
         vm.MouseEnter();
 
@@ -219,6 +235,7 @@ public sealed class ThumbnailPreviewViewModelTests
     public void MouseLeave_HidesPopupAndDropsFrame()
     {
         var (vm, _, pump, delay) = Build();
+        using var pumpScope = pump;
         Load(vm);
         vm.MouseEnter();
 
@@ -235,7 +252,8 @@ public sealed class ThumbnailPreviewViewModelTests
     [Fact]
     public void UpdateHover_AlwaysUpdatesTimeLabelAndOffset()
     {
-        var (vm, _, _, _) = Build();
+        var (vm, _, pump, _) = Build();
+        using var pumpScope = pump;
         Load(vm);
 
         vm.UpdateHover(TimeSpan.FromSeconds(65), offsetX: 123);
@@ -251,6 +269,7 @@ public sealed class ThumbnailPreviewViewModelTests
     public void UpdateHover_ResolvesFrameForHoveredTime()
     {
         var (vm, service, pump, delay) = Build();
+        using var pumpScope = pump;
         Load(vm);
         vm.MouseEnter();
 
@@ -266,6 +285,7 @@ public sealed class ThumbnailPreviewViewModelTests
     public void UpdateHover_LatestWins_CancelsPriorRequest()
     {
         var (vm, service, pump, delay) = Build();
+        using var pumpScope = pump;
         Load(vm);
         vm.MouseEnter();
 
@@ -288,6 +308,7 @@ public sealed class ThumbnailPreviewViewModelTests
     {
         // Three fast hovers — only the last survives the debounce; the earlier two are cancelled.
         var (vm, service, pump, delay) = Build();
+        using var pumpScope = pump;
         Load(vm);
         vm.MouseEnter();
 
@@ -306,6 +327,7 @@ public sealed class ThumbnailPreviewViewModelTests
     public void NullPath_ShowsNothing()
     {
         var (vm, service, pump, delay) = Build();
+        using var pumpScope = pump;
         service.ReturnNull = true;
         Load(vm);
         vm.MouseEnter();
@@ -321,6 +343,7 @@ public sealed class ThumbnailPreviewViewModelTests
     public void ResultAfterLeave_IsDropped()
     {
         var (vm, _, pump, delay) = Build();
+        using var pumpScope = pump;
         Load(vm);
         vm.MouseEnter();
 
@@ -336,7 +359,8 @@ public sealed class ThumbnailPreviewViewModelTests
     [Fact]
     public void UpdateHover_WithNoFile_DoesNotGrab()
     {
-        var (vm, service, _, _) = Build();
+        var (vm, service, pump, _) = Build();
+        using var pumpScope = pump;
         // No Load — no input path set.
 
         vm.UpdateHover(TimeSpan.FromSeconds(10), offsetX: 20);
@@ -351,7 +375,8 @@ public sealed class ThumbnailPreviewViewModelTests
     [Fact]
     public void SetInput_SweepsPreviousFilesCache()
     {
-        var (vm, service, _, _) = Build();
+        var (vm, service, pump, _) = Build();
+        using var pumpScope = pump;
         vm.SetInput("C:\\first.mp4", TimeSpan.FromSeconds(30));
 
         // Loading a NEW file sweeps the previous file's temp thumbnails.
@@ -364,6 +389,7 @@ public sealed class ThumbnailPreviewViewModelTests
     public void Clear_SweepsCacheHidesAndDropsFrame()
     {
         var (vm, service, pump, delay) = Build();
+        using var pumpScope = pump;
         Load(vm);
         vm.MouseEnter();
         vm.UpdateHover(TimeSpan.FromSeconds(10), offsetX: 20);
@@ -379,7 +405,8 @@ public sealed class ThumbnailPreviewViewModelTests
     [Fact]
     public void IsThumbnailVisible_FalseUntilDurationKnown()
     {
-        var (vm, _, _, _) = Build();
+        var (vm, _, pump, _) = Build();
+        using var pumpScope = pump;
         // Input set but duration unknown (null) — the popup stays hidden until duration arrives.
         vm.SetInput("C:\\clip.mp4", duration: null);
         vm.MouseEnter();

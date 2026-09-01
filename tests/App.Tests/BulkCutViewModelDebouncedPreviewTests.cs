@@ -108,7 +108,7 @@ public sealed class BulkCutViewModelDebouncedPreviewTests
 
     // ---- Pumpable single-threaded sync context (drains the marshalled-back open continuation) -
 
-    private sealed class PumpContext : SynchronizationContext
+    private sealed class PumpContext : SynchronizationContext, IDisposable
     {
         private readonly ConcurrentQueue<(SendOrPostCallback D, object? State)> _queue = new();
 
@@ -135,6 +135,20 @@ public sealed class BulkCutViewModelDebouncedPreviewTests
             {
             }
         }
+
+        /// <summary>
+        /// Uninstall this pump from the current thread (T-148).
+        ///
+        /// <para>The clear lives in the scope that INSTALLED the context - a <c>using</c> in the test body -
+        /// rather than in a teardown on the test class. xUnit wraps each test method in its own
+        /// <c>AsyncTestSyncContext</c> and restores the pre-test ambient context in a <c>finally</c> that runs
+        /// BEFORE the class is disposed, so a class-level teardown would only ever observe the
+        /// already-restored context and could never clear this pump.</para>
+        ///
+        /// <para>Clears to <c>null</c> - a pooled thread's natural state - rather than restoring the prior
+        /// value, because every suite that needs a context installs its own.</para>
+        /// </summary>
+        public void Dispose() => SynchronizationContext.SetSynchronizationContext(null);
     }
 
     // ---- Controllable debounce seam (parks each open in the debounce window until released) ---
@@ -204,7 +218,8 @@ public sealed class BulkCutViewModelDebouncedPreviewTests
     [Trait("serves-spec", "SPEC-013")]
     public async Task SelectingRow_SetsHighlightAndCommandStates_IMMEDIATELY_BeforeAnyOpen()
     {
-        var (vm, probe, player, delay, _) = BuildGated();
+        var (vm, probe, player, delay, pump) = BuildGated();
+        using var pumpScope = pump;
 
         // AddFilesAsync auto-selects the first row → its preview open is scheduled but PARKED in the
         // debounce window (the gate is never released here), so it has NOT opened yet.
@@ -227,6 +242,7 @@ public sealed class BulkCutViewModelDebouncedPreviewTests
     public async Task RapidSelections_AreDebounced_ToASingleOpen_OfTheSettledRow()
     {
         var (vm, probe, player, delay, pump) = BuildGated();
+        using var pumpScope = pump;
         var a = await AddRowAsync(vm, probe, @"C:\v\a.mp4"); // auto-selected → parks open(a)
         var b = await AddRowAsync(vm, probe, @"C:\v\b.mp4"); // selection stays a (already non-null)
         var c = await AddRowAsync(vm, probe, @"C:\v\c.mp4");
@@ -255,6 +271,7 @@ public sealed class BulkCutViewModelDebouncedPreviewTests
     public async Task SelectThenClear_CancelsThePendingOpen_NoStrayOpen_ThenUnload()
     {
         var (vm, probe, player, delay, pump) = BuildGated();
+        using var pumpScope = pump;
         await AddRowAsync(vm, probe, @"C:\v\a.mp4"); // auto-selected → parks open(a)
 
         player.OpenCount.Should().Be(0, "the open is still parked in the debounce window");
@@ -281,6 +298,7 @@ public sealed class BulkCutViewModelDebouncedPreviewTests
     public async Task SelectThenRunBatch_CancelsThePendingOpen_StopOnRunWins()
     {
         var (vm, probe, player, delay, pump) = BuildGated();
+        using var pumpScope = pump;
         await AddRowAsync(vm, probe, @"C:\v\a.mp4", introSeconds: 10); // valid cut, auto-selected → parks open(a)
 
         vm.CanRunBatch.Should().BeTrue();

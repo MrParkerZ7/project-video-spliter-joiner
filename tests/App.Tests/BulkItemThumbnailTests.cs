@@ -26,7 +26,7 @@ public sealed class BulkItemThumbnailTests
 
     // ---- Pumpable single-threaded sync context (drains the grabber's Progress<T> posts) -----
 
-    private sealed class PumpContext : SynchronizationContext
+    private sealed class PumpContext : SynchronizationContext, IDisposable
     {
         private readonly ConcurrentQueue<(SendOrPostCallback D, object? State)> _queue = new();
 
@@ -61,6 +61,20 @@ public sealed class BulkItemThumbnailTests
             Drain();
             Drain();
         }
+
+        /// <summary>
+        /// Uninstall this pump from the current thread (T-148).
+        ///
+        /// <para>The clear lives in the scope that INSTALLED the context - a <c>using</c> in the test body -
+        /// rather than in a teardown on the test class. xUnit wraps each test method in its own
+        /// <c>AsyncTestSyncContext</c> and restores the pre-test ambient context in a <c>finally</c> that runs
+        /// BEFORE the class is disposed, so a class-level teardown would only ever observe the
+        /// already-restored context and could never clear this pump.</para>
+        ///
+        /// <para>Clears to <c>null</c> - a pooled thread's natural state - rather than restoring the prior
+        /// value, because every suite that needs a context installs its own.</para>
+        /// </summary>
+        public void Dispose() => SynchronizationContext.SetSynchronizationContext(null);
     }
 
     /// <summary>
@@ -160,6 +174,7 @@ public sealed class BulkItemThumbnailTests
     {
         // intro 11s → snaps to keyframe 10s (step 2). The initial grab fires when the scan resolves.
         var (row, thumbs, pump) = await BuildReadyRowAsync(Immediate, introSeconds: 11);
+        using var pumpScope = pump;
         Settle(row, pump);
 
         row.IntroEnd.Snapped.Should().Be(TimeSpan.FromSeconds(10));
@@ -173,6 +188,7 @@ public sealed class BulkItemThumbnailTests
     public async Task MovingIntroHandle_RegrabsAtNewSnappedTime()
     {
         var (row, thumbs, pump) = await BuildReadyRowAsync(Immediate, introSeconds: 10);
+        using var pumpScope = pump;
         Settle(row, pump);
         row.IntroThumbnailPath.Should().Be("frame-10.jpg");
 
@@ -193,6 +209,7 @@ public sealed class BulkItemThumbnailTests
         var delay = new GatedDelay();
         // Build with the initial grab parked in the debounce window (not released yet).
         var (row, thumbs, pump) = await BuildReadyRowAsync(delay.Func, introSeconds: 10);
+        using var pumpScope = pump;
 
         // Two more rapid moves while everything is still parked — each supersedes the prior (latest-wins).
         row.IntroEnd.Requested = TimeSpan.FromSeconds(30); // snaps to 30
@@ -214,6 +231,7 @@ public sealed class BulkItemThumbnailTests
     public async Task AddOutro_GrabsOutroFrame_ThenClearOutro_DropsIt()
     {
         var (row, thumbs, pump) = await BuildReadyRowAsync(Immediate, introSeconds: 10);
+        using var pumpScope = pump;
         Settle(row, pump);
 
         row.AddOutro(TimeSpan.FromSeconds(50));
@@ -237,6 +255,7 @@ public sealed class BulkItemThumbnailTests
     {
         var thumbs = new FakeThumbnailService { ThumbnailFactory = null }; // every grab returns null
         var (row, _, pump) = await BuildReadyRowAsync(Immediate, introSeconds: 10, thumbs: thumbs);
+        using var pumpScope = pump;
         Settle(row, pump);
 
         thumbs.GetThumbnailCallCount.Should().BeGreaterThan(0, "the grab was attempted");
@@ -252,6 +271,7 @@ public sealed class BulkItemThumbnailTests
         var delay = new GatedDelay();
         // The initial grab is parked in the debounce window.
         var (row, thumbs, pump) = await BuildReadyRowAsync(delay.Func, introSeconds: 10);
+        using var pumpScope = pump;
 
         // Remove/Clear routes through CancelScan → cancels the grabber CTS → the parked debounce faults.
         row.CancelScan();
@@ -271,6 +291,7 @@ public sealed class BulkItemThumbnailTests
         var delay = new GatedDelay();
         // Keyframes-ready row; the initial intro grab is parked in the debounce window.
         var (row, thumbs, pump) = await BuildReadyRowAsync(delay.Func, introSeconds: 10);
+        using var pumpScope = pump;
 
         // Add an outro at a keyframe (50s snaps to 50) → its grab PARKS in the debounce window too.
         row.AddOutro(TimeSpan.FromSeconds(50));
@@ -303,7 +324,7 @@ public sealed class BulkItemThumbnailTests
         // One shared thumbnail gate + one service whose grabs PARK (so in-flight grabs pile up) — exactly
         // how BulkCutViewModel wires a batch. Eight rows each fire an initial intro grab; the gate must cap
         // concurrent ffmpeg grabs at 3 no matter how many rows resolve at once.
-        var pump = new PumpContext();
+        using var pump = new PumpContext();
         SynchronizationContext.SetSynchronizationContext(pump);
 
         var gate = new SemaphoreSlim(3, 3);
