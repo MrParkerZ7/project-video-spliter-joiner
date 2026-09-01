@@ -74,7 +74,24 @@ public sealed class BulkItemThumbnailTests
         /// <para>Clears to <c>null</c> - a pooled thread's natural state - rather than restoring the prior
         /// value, because every suite that needs a context installs its own.</para>
         /// </summary>
-        public void Dispose() => SynchronizationContext.SetSynchronizationContext(null);
+        /// <summary>
+        /// Uninstall THIS pump, and only this pump.
+        ///
+        /// <para>The guard matters. At the sites where the pump is installed inside an <c>async</c>
+        /// helper, <c>AsyncTaskMethodBuilder.Start</c> has already restored the caller's context by the
+        /// time this runs — so the current context is xUnit's own per-test one, not the pump. An
+        /// unguarded <c>SetSynchronizationContext(null)</c> there would tear out xUnit's context rather
+        /// than ours: harmless in every observed run, but it is the exact action this suite declines to
+        /// take against the other suites' contexts, and code that contradicts its own rationale is a
+        /// trap for whoever reads it next.</para>
+        /// </summary>
+        public void Dispose()
+        {
+            if (ReferenceEquals(SynchronizationContext.Current, this))
+            {
+                SynchronizationContext.SetSynchronizationContext(null);
+            }
+        }
     }
 
     /// <summary>

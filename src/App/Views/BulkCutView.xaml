@@ -951,11 +951,39 @@
         <StackPanel Grid.Row="2" Margin="4,10,4,0">
             <Grid>
                 <Grid.ColumnDefinitions>
+                    <!-- 0: the destructive post-run action, alone, at the far left (T-146).
+                         It gets its OWN column rather than a slot in a StackPanel because
+                         HorizontalAlignment is inert along a StackPanel's stacking axis - the
+                         first attempt set HorizontalAlignment="Left" on a button that was still
+                         laid out immediately after Run, and it did nothing. -->
+                    <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
 
-                <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+                <!-- T-144/T-146: "Delete originals" - the only irreversible control in the footer.
+                     Hidden until it can do something (a permanently greyed destructive button just
+                     trains people to ignore it), styled in the tab's existing danger vocabulary
+                     (muted at rest, danger on hover), and placed at the OPPOSITE END from Run.
+
+                     The placement is the point, and the first attempt got it wrong in a way worth
+                     recording: the button was appended AFTER Run inside Run's horizontal StackPanel
+                     with HorizontalAlignment="Left", which a StackPanel ignores on its stacking axis.
+                     The result was the exact hazard the ticket set out to avoid - when a batch
+                     finished, Run shifted left and this button appeared on the pixels Run had just
+                     occupied, under the cursor of someone pressing Run repeatedly. Its own column
+                     makes the separation structural instead of advisory. -->
+                <Button Grid.Column="0"
+                        x:Name="DeleteOriginalsButton"
+                        Style="{StaticResource ProfileDangerButton}"
+                        Content="{Binding DeleteOriginalsLabel}"
+                        Margin="0,0,28,0"
+                        VerticalAlignment="Center"
+                        Command="{Binding DeleteOriginalsCommand}"
+                        ToolTip="Send the originals of successfully trimmed videos to the Recycle Bin. Skips anything that failed, and anything whose trimmed file is missing. Nothing is deleted permanently."
+                        Visibility="{Binding CanDeleteOriginals, Converter={StaticResource BoolToVisibility}}" />
+
+                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
                     <!-- T-123: the note is bound, never hard-coded, so it can never contradict the mode. -->
                     <TextBlock Text="{Binding OutputNote}"
                                VerticalAlignment="Center"
@@ -994,7 +1022,7 @@
                     </CheckBox>
                 </StackPanel>
 
-                <StackPanel Grid.Column="1" Orientation="Horizontal">
+                <StackPanel Grid.Column="2" Orientation="Horizontal">
                     <!-- T-134: what Run will actually do, said BEFORE it is pressed. The count was already
                          on the button and it was still not enough - a user imported a batch, set one cut,
                          pressed Run, got one file, and had to ask why. Hidden entirely when every row will
@@ -1021,28 +1049,11 @@
                         </TextBlock.Style>
                     </TextBlock>
 
-                    <Button Style="{StaticResource AccentButton}"
+                    <Button x:Name="RunBatchButton"
+                            Style="{StaticResource AccentButton}"
                             Content="{Binding RunLabel}"
                             Padding="16,6"
                             Command="{Binding RunBatchCommand}" />
-                    <!-- T-144/T-146: a POST-RUN action, so it sits with Run rather than in the profiles
-                         bar. Hidden until it can do something - a destructive button that is permanently
-                         greyed out just trains people to ignore it.
-
-                         T-146: it shipped as a PLAIN button immediately left of the accent-styled Run,
-                         which made the most destructive control on the screen the least distinct one and
-                         put it next to the button pressed after every batch. It now uses the tab's
-                         existing danger vocabulary (ProfileDangerButton: muted at rest, danger-coloured
-                         on hover) and is pushed to the far LEFT of the footer row, away from Run. -->
-                    <Button Style="{StaticResource ProfileDangerButton}"
-                            Content="{Binding DeleteOriginalsLabel}"
-                            Margin="0,0,28,0"
-                            HorizontalAlignment="Left"
-                            VerticalAlignment="Center"
-                            Command="{Binding DeleteOriginalsCommand}"
-                            ToolTip="Send the originals of successfully trimmed videos to the Recycle Bin. Skips anything that failed, and anything whose trimmed file is missing. Nothing is deleted permanently."
-                            Visibility="{Binding CanDeleteOriginals, Converter={StaticResource BoolToVisibility}}" />
-
                     <Button Content="Cancel"
                             Margin="6,0,0,0"
                             Padding="10,5"

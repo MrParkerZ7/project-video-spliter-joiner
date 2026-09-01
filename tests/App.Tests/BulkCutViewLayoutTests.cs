@@ -144,6 +144,81 @@ public sealed class BulkCutViewLayoutTests
             "the floor is what stops a tall header from collapsing the content to nothing");
     }
 
+    /// <summary>
+    /// T-146 — the destructive button must not land on Run's pixels.
+    ///
+    /// <para>"Delete originals" is the only irreversible control on this screen, and it appears exactly
+    /// when a batch finishes — under the cursor of someone who has just been pressing Run. The first
+    /// attempt appended it AFTER Run inside Run's horizontal <c>StackPanel</c> with
+    /// <c>HorizontalAlignment="Left"</c>, which a StackPanel ignores along its stacking axis. The XAML
+    /// comment said "pushed to the far LEFT of the footer"; the layout put it immediately right of Run,
+    /// and revealing it shoved Run sideways. The ticket's criterion was ticked from the comment rather
+    /// than from the markup — which is precisely why this is now a test and not a comment.</para>
+    /// </summary>
+    [Trait("serves-spec", "SPEC-011")]
+    [Fact]
+    public void TheDestructiveButtonSitsAtTheOppositeEndFromRun_AndRevealingItDoesNotMoveRun()
+    {
+        var failures = new List<string>();
+
+        OnSta(() =>
+        {
+            foreach (var (w, h) in Sizes)
+            {
+                var view = new BulkCutView();
+                LayOut(view, w, h);   // the visual tree does not exist until the first layout pass
+
+                var del = Find<Button>(view, "DeleteOriginalsButton");
+                var run = Find<Button>(view, "RunBatchButton");
+
+                if (del is null || run is null)
+                {
+                    failures.Add($"{w}x{h}: footer buttons not found — the view's shape changed");
+                    continue;
+                }
+
+                // Before the batch finishes the destructive button does not exist on screen.
+                del.Visibility = Visibility.Collapsed;
+                LayOut(view, w, h);
+                var runBefore = run.TranslatePoint(new Point(0, 0), view).X;
+
+                // The batch finishes: the button appears.
+                del.Visibility = Visibility.Visible;
+                LayOut(view, w, h);
+                var runAfter = run.TranslatePoint(new Point(0, 0), view).X;
+                var delLeft = del.TranslatePoint(new Point(0, 0), view).X;
+                var delRight = delLeft + del.ActualWidth;
+
+                if (Math.Abs(runAfter - runBefore) > 1)
+                {
+                    failures.Add(
+                        $"{w}x{h}: revealing Delete moved Run by {runAfter - runBefore:0.#}px " +
+                        $"({runBefore:0} → {runAfter:0}) — the button people press repeatedly must not " +
+                        "shift when a destructive one appears");
+                }
+
+                if (delRight > runBefore)
+                {
+                    failures.Add(
+                        $"{w}x{h}: Delete (ends at x={delRight:0}) overlaps the pixels Run occupied " +
+                        $"before the batch finished (x={runBefore:0}) — that is the misclick this " +
+                        "placement exists to prevent");
+                }
+
+                // Opposite ends, not merely "not touching".
+                if (delLeft > w / 2)
+                {
+                    failures.Add($"{w}x{h}: Delete starts at x={delLeft:0}, past the midpoint — it is " +
+                                 "supposed to be at the FAR left, away from Run");
+                }
+            }
+        });
+
+        failures.Should().BeEmpty(
+            "the destructive footer button must sit at the opposite end from Run:" +
+            Environment.NewLine + string.Join(Environment.NewLine, failures));
+    }
+
     // ---- plumbing ---------------------------------------------------------------------------------
 
     /// <summary>
