@@ -584,6 +584,20 @@ SPEC-007); the shared `IThumbnailService`/`FfmpegThumbnailService` frame source 
 - **I118** — eligibility is re-evaluated **after** the unload rather than captured before it, so the set
   that is binned is the set that was actually eligible at deletion time.
 
+- **I121** — the per-row cut-point grab is **fire-and-forget but observable** (T-137). A handle move must
+  never block the UI, so the grab is started and not awaited — and that left tests with nothing to wait on
+  but a wall-clock timeout, which loses whenever the thread pool is busy (a ~40%-per-run flake at
+  solution level). `BulkItemViewModel.InFlightGrabs` exposes the in-flight work `internal`ly so a test can
+  await the work itself. Production behaviour is unchanged; only its observability is.
+
+- **I120** — the screen's **content area keeps its space however tall the header grows** (T-138). The
+  window is a three-row grid — header `Auto`, content `*` with `MinHeight="220"`, footer `Auto` — and the
+  middle row's star-sizing plus its floor are what stop a growing header from collapsing the screen. This
+  matters because saving the FIRST profile flips `HasProfiles` false→true and reveals the picker, Delete
+  and apply controls at once: the header genuinely does get taller at that moment. Asserted by laying the
+  real view out at five window sizes and forcing the header taller
+  (`BulkCutViewLayoutTests`); making the row `Auto`, dropping the floor, or shrinking it all fail there.
+
 - **I119** — the Delete-originals control is styled in the screen's existing **danger vocabulary** and sits
   at the far LEFT of the footer, away from *Run bulk cut* (T-146). It is destructive and irreversible in a
   way nothing else in the footer is, so it must read as such at a glance without shouting at rest — and it

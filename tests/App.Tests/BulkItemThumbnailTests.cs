@@ -46,21 +46,19 @@ public sealed class BulkItemThumbnailTests
             return ran;
         }
 
-        /// <summary>Spin-drain until at least one post runs (the grab resumes on a pool thread THEN posts here) or a short timeout.</summary>
-        public void PumpUntilResult()
+        /// <summary>
+        /// Drain the posts the completed grab produced.
+        ///
+        /// <para>T-137: this used to spin-drain against a 500ms wall-clock deadline, because the grab
+        /// continuation resumes on a thread-pool thread and only THEN posts its result here. Under a
+        /// solution-level run the pool is saturated by the other assembly, the continuation was not
+        /// reliably scheduled inside the deadline, and the test failed with an empty request list.
+        /// Callers now await the grab itself (<c>Settle</c>), so there is nothing left to wait for.</para>
+        /// </summary>
+        public void PumpSettled()
         {
-            var deadline = DateTime.UtcNow.AddMilliseconds(500);
-            while (DateTime.UtcNow < deadline)
-            {
-                if (Drain() > 0)
-                {
-                    Drain(); // trailing posts
-                    return;
-                }
-
-                Thread.Sleep(1);
-            }
-
+            // Two passes: the first runs the result post, which may itself queue a trailing post.
+            Drain();
             Drain();
         }
     }
@@ -138,6 +136,22 @@ public sealed class BulkItemThumbnailTests
         return (row, thumbs, pump);
     }
 
+    /// <summary>
+    /// Wait for the row's in-flight cut-point grab to finish, then drain the posts it produced.
+    ///
+    /// <para>T-137: the grab is fire-and-forget in production (a handle move must never block the UI),
+    /// so a test has nothing to wait on unless the row exposes it. Waiting on the work rather than on a
+    /// timeout is what makes these assertions deterministic under load; the timeout below is a deadlock
+    /// guard a healthy run never approaches, not the synchronisation mechanism.</para>
+    /// </summary>
+    private static void Settle(BulkItemViewModel row, PumpContext pump)
+    {
+        // The grab swallows its own failures, so this only ever completes normally.
+        row.InFlightGrabs.Wait(TimeSpan.FromSeconds(30)).Should().BeTrue(
+            "the grab should finish promptly - 30s means it is genuinely stuck, not merely busy");
+        pump.PumpSettled();
+    }
+
     // ---- Grab-on-snapped-change (initial + move) --------------------------------------------
 
     [Fact]
@@ -146,7 +160,7 @@ public sealed class BulkItemThumbnailTests
     {
         // intro 11s → snaps to keyframe 10s (step 2). The initial grab fires when the scan resolves.
         var (row, thumbs, pump) = await BuildReadyRowAsync(Immediate, introSeconds: 11);
-        pump.PumpUntilResult();
+        Settle(row, pump);
 
         row.IntroEnd.Snapped.Should().Be(TimeSpan.FromSeconds(10));
         thumbs.Requests.Should().Contain(r => r.Time == TimeSpan.FromSeconds(10),
@@ -159,12 +173,12 @@ public sealed class BulkItemThumbnailTests
     public async Task MovingIntroHandle_RegrabsAtNewSnappedTime()
     {
         var (row, thumbs, pump) = await BuildReadyRowAsync(Immediate, introSeconds: 10);
-        pump.PumpUntilResult();
+        Settle(row, pump);
         row.IntroThumbnailPath.Should().Be("frame-10.jpg");
 
         // Move the intro handle: 21s → snaps to 20s → a fresh grab at the new snapped time.
         row.IntroEnd.Requested = TimeSpan.FromSeconds(21);
-        pump.PumpUntilResult();
+        Settle(row, pump);
 
         row.IntroEnd.Snapped.Should().Be(TimeSpan.FromSeconds(20));
         row.IntroThumbnailPath.Should().Be("frame-20.jpg", "moving the handle re-grabs at the new snapped cut");
@@ -185,7 +199,7 @@ public sealed class BulkItemThumbnailTests
         row.IntroEnd.Requested = TimeSpan.FromSeconds(50); // snaps to 50
 
         delay.ReleaseAll();
-        pump.PumpUntilResult();
+        Settle(row, pump);
 
         // Only the LATEST request survived the debounce and reached ffmpeg — the earlier ones were cancelled.
         thumbs.Requests.Should().ContainSingle().Which.Time.Should().Be(TimeSpan.FromSeconds(50),
@@ -200,10 +214,10 @@ public sealed class BulkItemThumbnailTests
     public async Task AddOutro_GrabsOutroFrame_ThenClearOutro_DropsIt()
     {
         var (row, thumbs, pump) = await BuildReadyRowAsync(Immediate, introSeconds: 10);
-        pump.PumpUntilResult();
+        Settle(row, pump);
 
         row.AddOutro(TimeSpan.FromSeconds(50));
-        pump.PumpUntilResult();
+        Settle(row, pump);
 
         row.HasOutro.Should().BeTrue();
         row.OutroStart!.Snapped.Should().Be(TimeSpan.FromSeconds(50));
@@ -223,7 +237,7 @@ public sealed class BulkItemThumbnailTests
     {
         var thumbs = new FakeThumbnailService { ThumbnailFactory = null }; // every grab returns null
         var (row, _, pump) = await BuildReadyRowAsync(Immediate, introSeconds: 10, thumbs: thumbs);
-        pump.PumpUntilResult();
+        Settle(row, pump);
 
         thumbs.GetThumbnailCallCount.Should().BeGreaterThan(0, "the grab was attempted");
         row.IntroThumbnailPath.Should().BeNull("a null grab shows the placeholder chip, not an image");
@@ -242,7 +256,7 @@ public sealed class BulkItemThumbnailTests
         // Remove/Clear routes through CancelScan → cancels the grabber CTS → the parked debounce faults.
         row.CancelScan();
         delay.ReleaseAll();
-        pump.PumpUntilResult();
+        Settle(row, pump);
 
         thumbs.Requests.Should().BeEmpty("a cancelled (removed) row's grab never reaches ffmpeg");
         row.IntroThumbnailPath.Should().BeNull("no frame is committed after cancel");
@@ -268,7 +282,7 @@ public sealed class BulkItemThumbnailTests
 
         // Release every parked gate + pump to completion: the intro grab resumes, the cancelled outro grab does not.
         delay.ReleaseAll();
-        pump.PumpUntilResult();
+        Settle(row, pump);
 
         // PERF (cancellation-honored + no-I/O-on-hot-path): the superseded outro grab NEVER reaches the
         // service — no request was ever recorded for the outro's snapped time (50s).

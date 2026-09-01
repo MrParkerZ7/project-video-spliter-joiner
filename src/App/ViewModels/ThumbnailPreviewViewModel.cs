@@ -59,6 +59,19 @@ public sealed class ThumbnailPreviewViewModel : ObservableObject
     // update, so only the newest request survives to set the path (latest-wins coalesce).
     private CancellationTokenSource? _requestCts;
 
+    /// <summary>
+    /// The most recently issued grab, kept ONLY so a test can await it (T-137). The pipeline is
+    /// fire-and-forget by design - a hover must never block the UI thread - which left tests with
+    /// nothing to wait on but the clock, and a wall-clock wait loses under load.
+    /// </summary>
+    private Task _inFlight = Task.CompletedTask;
+
+    /// <summary>
+    /// Awaitable completion of the most recent grab (T-137). The production path never reads this;
+    /// it exists so tests can wait for the work itself instead of for a timeout to elapse.
+    /// </summary>
+    internal Task InFlightGrab => _inFlight;
+
     // A monotonically increasing id stamped on each request; a resolved grab only commits its path when
     // its id is still the newest, so a superseded (but not-yet-cancelled) grab can never clobber a newer
     // result even if both complete.
@@ -242,7 +255,7 @@ public sealed class ThumbnailPreviewViewModel : ObservableObject
         _requestCts = cts;
         var id = ++_requestId;
 
-        _ = GrabAsync(_inputPath, time, id, cts);
+        _inFlight = GrabAsync(_inputPath, time, id, cts);
     }
 
     // ---- Async grab -------------------------------------------------------------------------

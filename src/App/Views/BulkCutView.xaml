@@ -483,6 +483,7 @@
              Window's DataContext (MainViewModel); this UserControl's DataContext stays the BulkCutViewModel.
              The profiles header stays ABOVE (Row 0) and the footer BELOW (Row 2) — outside the split. -->
         <views:OrientedSplitPanel Grid.Row="1"
+                                  x:Name="BulkContentArea"
                 IsVertical="{Binding DataContext.IsVertical, RelativeSource={RelativeSource AncestorType=Window}}"
                 HorizontalRatio="{Binding DataContext.BulkHorizontalSplitRatio, RelativeSource={RelativeSource AncestorType=Window}, Mode=TwoWay}"
                 VerticalRatio="{Binding DataContext.BulkVerticalSplitRatio, RelativeSource={RelativeSource AncestorType=Window}, Mode=TwoWay}">

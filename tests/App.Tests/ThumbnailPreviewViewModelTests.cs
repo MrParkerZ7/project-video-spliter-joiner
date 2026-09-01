@@ -91,27 +91,19 @@ public sealed class ThumbnailPreviewViewModelTests
         }
 
         /// <summary>
-        /// Pump until at least one callback has run, or a short timeout elapses. The VM's grab
-        /// continuations resume on a thread-pool thread (ConfigureAwait(false)) and THEN post the result
-        /// back here, so a released request's result may not be queued the instant Release returns — this
-        /// spin-drains briefly so the test observes it deterministically without a fixed sleep.
+        /// Drain the posts that the completed grab produced.
+        ///
+        /// <para>T-137: this used to spin-drain against a 300ms wall-clock deadline, because the grab
+        /// continuation resumes on a thread-pool thread and the result post therefore arrives some
+        /// time after the debounce gate is released. Under a solution-level run the pool is saturated
+        /// by the other assembly, the continuation was not always scheduled inside 300ms, and the test
+        /// failed with an empty request list roughly once every five runs. The caller now awaits the
+        /// grab itself before draining, so by the time this runs there is nothing left to wait for.</para>
         /// </summary>
-        public void PumpUntilResult()
+        public void PumpSettled()
         {
-            var deadline = DateTime.UtcNow.AddMilliseconds(300);
-            while (DateTime.UtcNow < deadline)
-            {
-                if (Drain() > 0)
-                {
-                    // Drain any trailing posts, then stop.
-                    Drain();
-                    return;
-                }
-
-                Thread.Sleep(1);
-            }
-
-            // Timed out — one final drain so a just-arrived post is still applied.
+            // Two passes: the first runs the result post, which may itself queue a trailing post.
+            Drain();
             Drain();
         }
     }
@@ -174,14 +166,30 @@ public sealed class ThumbnailPreviewViewModelTests
         => vm.SetInput("C:\\clip.mp4", TimeSpan.FromSeconds(durationSeconds));
 
     /// <summary>
-    /// Release every parked debounce wait so each surviving request proceeds to its grab, then drain the
-    /// pumpable context so the VM's <c>Progress&lt;T&gt;</c> result posts run. A superseded (cancelled)
-    /// wait faults instead of proceeding, so only the latest request commits a path.
+    /// Release every parked debounce wait so each surviving request proceeds to its grab, WAIT for that
+    /// grab to actually finish, then drain the pumpable context so the VM's <c>Progress&lt;T&gt;</c>
+    /// result posts run. A superseded (cancelled) wait faults instead of proceeding, so only the latest
+    /// request commits a path.
+    ///
+    /// <para>T-137: waiting on <see cref="ThumbnailPreviewViewModel.InFlightGrab"/> is what makes this
+    /// deterministic. The grab is fire-and-forget in production (a hover must not block the UI), so the
+    /// test previously had nothing to wait on but a timeout - which is a race, not a synchronisation,
+    /// and it lost about once in five solution-level runs. The timeout here is a deadlock guard that a
+    /// healthy run never approaches, NOT the mechanism.</para>
     /// </summary>
-    private static void Settle(GatedDelay delay, PumpContext pump)
+    private static void Settle(GatedDelay delay, PumpContext pump, ThumbnailPreviewViewModel vm)
     {
         delay.ReleaseAll();
-        pump.PumpUntilResult();
+        WaitForGrab(vm);
+        pump.PumpSettled();
+    }
+
+    /// <summary>Block until the VM's most recent grab has run to completion (or been cancelled).</summary>
+    private static void WaitForGrab(ThumbnailPreviewViewModel vm)
+    {
+        // GrabAsync swallows its own failures, so this only ever completes normally.
+        vm.InFlightGrab.Wait(TimeSpan.FromSeconds(30)).Should().BeTrue(
+            "the grab should finish promptly - 30s means it is genuinely stuck, not merely busy");
     }
 
     // ---- Visibility -------------------------------------------------------------------------
@@ -215,7 +223,7 @@ public sealed class ThumbnailPreviewViewModelTests
         vm.MouseEnter();
 
         vm.UpdateHover(TimeSpan.FromSeconds(10), offsetX: 40);
-        Settle(delay, pump);
+        Settle(delay, pump, vm);
         vm.HoverThumbnailPath.Should().NotBeNull();
 
         vm.MouseLeave();
@@ -247,7 +255,7 @@ public sealed class ThumbnailPreviewViewModelTests
         vm.MouseEnter();
 
         vm.UpdateHover(TimeSpan.FromSeconds(30), offsetX: 60);
-        Settle(delay, pump);
+        Settle(delay, pump, vm);
 
         service.Requests.Should().ContainSingle().Which.Should().Be(TimeSpan.FromSeconds(30));
         vm.HoverThumbnailPath.Should().Be("frame-30.jpg");
@@ -265,7 +273,7 @@ public sealed class ThumbnailPreviewViewModelTests
         // first's request (latest-wins) so the superseded wait faults and never reaches the service.
         vm.UpdateHover(TimeSpan.FromSeconds(10), offsetX: 20);
         vm.UpdateHover(TimeSpan.FromSeconds(50), offsetX: 100);
-        Settle(delay, pump);
+        Settle(delay, pump, vm);
 
         // Only the SECOND request ever reached the service — the first was cancelled mid-debounce.
         service.Requests.Should().ContainSingle().Which.Should().Be(TimeSpan.FromSeconds(50),
@@ -286,7 +294,7 @@ public sealed class ThumbnailPreviewViewModelTests
         vm.UpdateHover(TimeSpan.FromSeconds(10), offsetX: 20);
         vm.UpdateHover(TimeSpan.FromSeconds(40), offsetX: 80);
         vm.UpdateHover(TimeSpan.FromSeconds(80), offsetX: 160);
-        Settle(delay, pump);
+        Settle(delay, pump, vm);
 
         service.Requests.Should().ContainSingle().Which.Should().Be(TimeSpan.FromSeconds(80));
         vm.HoverThumbnailPath.Should().Be("frame-80.jpg", "only the latest hover's frame survives");
@@ -303,7 +311,7 @@ public sealed class ThumbnailPreviewViewModelTests
         vm.MouseEnter();
 
         vm.UpdateHover(TimeSpan.FromSeconds(15), offsetX: 30);
-        Settle(delay, pump);
+        Settle(delay, pump, vm);
 
         vm.HoverThumbnailPath.Should().BeNull("a failed grab shows no image");
         vm.HasThumbnail.Should().BeFalse();
@@ -319,7 +327,7 @@ public sealed class ThumbnailPreviewViewModelTests
         vm.UpdateHover(TimeSpan.FromSeconds(25), offsetX: 50);
         // Leave BEFORE releasing/draining — the resolved frame must not re-show after leave.
         vm.MouseLeave();
-        Settle(delay, pump);
+        Settle(delay, pump, vm);
 
         vm.HoverThumbnailPath.Should().BeNull();
         vm.IsThumbnailVisible.Should().BeFalse();
@@ -359,7 +367,7 @@ public sealed class ThumbnailPreviewViewModelTests
         Load(vm);
         vm.MouseEnter();
         vm.UpdateHover(TimeSpan.FromSeconds(10), offsetX: 20);
-        Settle(delay, pump);
+        Settle(delay, pump, vm);
 
         vm.Clear();
 

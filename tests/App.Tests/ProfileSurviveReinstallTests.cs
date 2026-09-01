@@ -105,7 +105,7 @@ public sealed class ProfileSurviveReinstallTests : IDisposable
         File.ReadAllText(profile.ThumbnailPath!).Should().Be("PICTURE", "byte for byte");
 
         // The reinstalled app can still manage them.
-        restoredStore.DeleteByPath(profile.ThumbnailPath);
+        restoredStore.DeleteByPath(profile.ThumbnailPath!);
         File.Exists(profile.ThumbnailPath!).Should().BeFalse();
     }
 

@@ -101,6 +101,17 @@ public sealed class BulkItemViewModel : ObservableObject
     // service was injected (existing BulkItemViewModel tests construct rows without one → grabbers inert).
     private readonly HandleThumbnailGrabber? _introGrabber;
     private readonly HandleThumbnailGrabber? _outroGrabber;
+
+    /// <summary>
+    /// Awaitable completion of this row's most recent cut-point frame grabs (T-137). Exposed
+    /// <c>internal</c> for tests via <c>InternalsVisibleTo</c>: the grab pipeline is deliberately
+    /// fire-and-forget so a handle move never blocks the UI, which left tests with nothing to wait on
+    /// but a wall-clock timeout - and a wall-clock wait loses when the machine is busy. Nothing in the
+    /// production path reads this.
+    /// </summary>
+    internal Task InFlightGrabs => Task.WhenAll(
+        _introGrabber?.InFlightGrab ?? Task.CompletedTask,
+        _outroGrabber?.InFlightGrab ?? Task.CompletedTask);
     private string? _introThumbnailPath;
     private string? _outroThumbnailPath;
 
@@ -948,6 +959,15 @@ public sealed class BulkItemViewModel : ObservableObject
         // The current (latest) request; swapped — and the prior cancelled — on every Request (latest-wins).
         private CancellationTokenSource? _requestCts;
 
+        /// <summary>
+        /// The most recently issued grab, kept ONLY so a test can await it (T-137). The pipeline is
+        /// fire-and-forget by design; that left tests waiting on the clock, which loses under load.
+        /// </summary>
+        private Task _inFlight = Task.CompletedTask;
+
+        /// <summary>Awaitable completion of the most recent grab (T-137) - tests only.</summary>
+        internal Task InFlightGrab => _inFlight;
+
         // Monotonic request id; a resolved grab commits its path only when its id is still the newest, so a
         // superseded-but-not-yet-cancelled grab can never clobber a newer result.
         private long _requestId;
@@ -976,7 +996,7 @@ public sealed class BulkItemViewModel : ObservableObject
             var cts = new CancellationTokenSource();
             _requestCts = cts;
             var id = ++_requestId;
-            _ = GrabAsync(inputPath, time, id, cts);
+            _inFlight = GrabAsync(inputPath, time, id, cts);
         }
 
         /// <summary>Cancel + dispose the in-flight request's CTS (if any) so a superseded/removed grab is dropped.</summary>
