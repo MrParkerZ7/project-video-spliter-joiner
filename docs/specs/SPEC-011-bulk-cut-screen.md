@@ -13,7 +13,7 @@ sources:
   - src/App/ViewModels/RelayCommand.cs
   - src/App/ViewModels/MainViewModel.cs
 serves-goal: [G-036, G-037, G-038, G-039, G-040, G-041, G-042, G-043]
-updated: 2026-08-30
+updated: 2026-09-01
 ---
 
 ## What
@@ -568,6 +568,27 @@ SPEC-007); the shared `IThumbnailService`/`FfmpegThumbnailService` frame source 
   disposer is best-effort by contract, so success is VERIFIED (the file is gone) rather than assumed.
 - **I114** — a row whose original has been binned is marked `OriginalDeleted`, is auto-excluded from any
   future batch, and is not offered for deletion again. Its source no longer exists.
+
+- **I115** — the app **releases its own hold before binning** (T-145). The shared preview keeps an open
+  handle on the selected row's file, so a delete-originals sweep run while a row is previewed refused
+  exactly that file and quietly returned N-1. Before the sweep the selection is dropped and the player is
+  `Unload()`ed — **`Unload`, not `Stop`**: `Stop` halts playback but leaves the media element holding the
+  handle, which is precisely why the first attempt looked correct and was not. The replace-originals path
+  already did this for the same reason (I88); the delete path did not, and now does.
+- **I116** — dropping the selection is part of the release, not incidental tidying: leaving a row selected
+  lets the next interaction **re-open a file that is about to be binned**, re-acquiring the handle after it
+  was released.
+- **I117** — releasing our own handle does not weaken the external case: a file locked by **another**
+  process still lands in `refused` and is named in the summary (I113), so "we let go of it" never gets
+  reported as "it was deleted".
+- **I118** — eligibility is re-evaluated **after** the unload rather than captured before it, so the set
+  that is binned is the set that was actually eligible at deletion time.
+
+- **I119** — the Delete-originals control is styled in the screen's existing **danger vocabulary** and sits
+  at the far LEFT of the footer, away from *Run bulk cut* (T-146). It is destructive and irreversible in a
+  way nothing else in the footer is, so it must read as such at a glance without shouting at rest — and it
+  must not sit next to the button people press repeatedly. It still names the file COUNT and the BYTES
+  reclaimed, which is the entire reason to press it.
 
 ## Links
 - Design: D-004 (Bulk Cut screen)
