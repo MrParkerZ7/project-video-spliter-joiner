@@ -254,6 +254,8 @@ public sealed class BulkCutViewModel : ObservableObject
         ApplyProfileToSelectedCommand = new RelayCommand(_ => ApplyProfileToSelected(), _ => CanApplyProfileToSelected);
         ApplyProfileToAllCommand = new RelayCommand(_ => ApplyProfileToAll(), _ => CanApplyProfileToAll);
         DeleteProfileCommand = new RelayCommand(_ => DeleteSelectedProfile(), _ => HasSelectedProfile);
+        ExportProfilesCommand = new RelayCommand(_ => ExportProfiles(), _ => HasProfiles);
+        ImportProfilesCommand = new RelayCommand(_ => ImportProfiles());
         SnapshotProfileThumbnailCommand = new RelayCommand(
             _ => _ = SnapshotProfileThumbnailAsync(), _ => CanSnapshotProfileThumbnail);
         RefreshProfiles(); // project the persisted CutProfiles into the observable list on construct
@@ -867,6 +869,12 @@ public sealed class BulkCutViewModel : ObservableObject
     /// <summary>Delete the selected profile from settings + the bar. T-103.</summary>
     public RelayCommand DeleteProfileCommand { get; }
 
+    /// <summary>T-147 - write all profiles + pictures to one portable file.</summary>
+    public RelayCommand ExportProfilesCommand { get; }
+
+    /// <summary>T-147 - restore profiles from such a file.</summary>
+    public RelayCommand ImportProfilesCommand { get; }
+
     /// <summary>T-135 — capture the frame on screen as the selected profile's thumbnail.</summary>
     public RelayCommand SnapshotProfileThumbnailCommand { get; }
 
@@ -1203,6 +1211,7 @@ public sealed class BulkCutViewModel : ObservableObject
         OnPropertyChanged(nameof(CanSnapshotProfileThumbnail));
         OnPropertyChanged(nameof(SnapshotUnavailableReason));
         SnapshotProfileThumbnailCommand.RaiseCanExecuteChanged();
+        ExportProfilesCommand.RaiseCanExecuteChanged();
     }
 
     // ---- Apply-to-all (§2.3) ----------------------------------------------------------------
@@ -1445,6 +1454,94 @@ public sealed class BulkCutViewModel : ObservableObject
 
         ReportThumbnailUploadFailure(outcome, profile.Name, framePath, detail);
         return false;
+    }
+
+    /// <summary>
+    /// T-147 - export every profile, pictures included, to one file the user chooses. The view supplies
+    /// the destination (a save dialog); null/blank cancels. Reports through the same surface the other
+    /// deliberate profile gestures use.
+    /// </summary>
+    public Func<string?>? ChooseProfileExportPath { get; set; }
+
+    /// <summary>T-147 - the view supplies a backup file to import; null/blank cancels.</summary>
+    public Func<string?>? ChooseProfileImportPath { get; set; }
+
+    /// <summary>
+    /// T-147 - asked when an import would overwrite profiles that already exist. Returning false keeps
+    /// the existing ones and imports only the new. Defaults to KEEPING them: an unwired host must never
+    /// silently overwrite.
+    /// </summary>
+    public Func<int, bool> ConfirmProfileOverwrite { get; set; } = _ => false;
+
+    /// <summary>T-147 - write all profiles + their pictures to one portable file.</summary>
+    public void ExportProfiles()
+    {
+        if (ChooseProfileExportPath?.Invoke() is not { Length: > 0 } destination)
+        {
+            return;
+        }
+
+        try
+        {
+            var (count, images) = ProfileBackup.Export(_settings.CutProfiles, destination);
+            Operation.ResultSummary = string.Create(
+                CultureInfo.InvariantCulture,
+                $"Exported {count} profile(s), {images} with pictures");
+            ClearThumbnailUploadError();
+        }
+        catch (Exception ex)
+        {
+            ReportProfileBackupFailure("Those profiles could not be exported.", ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// T-147 - restore profiles from a backup. Plans first, so a corrupt file changes NOTHING and a name
+    /// collision is the user's decision rather than a silent overwrite.
+    /// </summary>
+    public void ImportProfiles()
+    {
+        if (ChooseProfileImportPath?.Invoke() is not { Length: > 0 } source)
+        {
+            return;
+        }
+
+        var plan = ProfileBackup.Plan(source, _settings.CutProfiles);
+        if (plan.Failed)
+        {
+            ReportProfileBackupFailure("That backup could not be imported.", plan.Error ?? string.Empty);
+            return;
+        }
+
+        if (plan.Total == 0)
+        {
+            Operation.ResultSummary = "That backup contained no profiles";
+            return;
+        }
+
+        var overwrite = plan.Colliding.Count > 0 && ConfirmProfileOverwrite(plan.Colliding.Count);
+
+        var (written, restored) = ProfileBackup.Apply(plan, _settings, _thumbnailStore, overwrite);
+        RefreshProfiles();
+
+        var kept = plan.Colliding.Count > 0 && !overwrite
+            ? string.Create(CultureInfo.InvariantCulture, $", kept {plan.Colliding.Count} existing")
+            : string.Empty;
+
+        Operation.ResultSummary = string.Create(
+            CultureInfo.InvariantCulture,
+            $"Imported {written} profile(s), {restored} with pictures{kept}");
+        ClearThumbnailUploadError();
+    }
+
+    private void ReportProfileBackupFailure(string message, string detail)
+    {
+        // (category, message, rawTail, hint) - the detail is the COPYABLE body, the hint is the advice.
+        Operation.ReportFailure(new UserFacingError(
+            ErrorCategory.InvalidArgument,
+            message,
+            detail,
+            "Check the file is a profile backup written by this app, and that you can read and write it."));
     }
 
     public bool UploadThumbnail(CutProfile? profile, string? imagePath)

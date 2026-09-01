@@ -9,9 +9,11 @@ sources:
   - src/App/Settings/AppSettings.cs
   - src/App/ViewModels/CutProfileApplier.cs
   - src/App/Settings/ProfileThumbnailStore.cs
+  - src/App/Settings/ProfileBackup.cs
+  - packaging/VideoSplitJoiner.iss
   - src/App/ViewModels/BulkCutViewModel.cs
-serves-goal: [G-037, G-038, G-044]
-updated: 2026-08-30
+serves-goal: [G-037, G-038, G-044, G-051]
+updated: 2026-09-01
 ---
 
 ## What
@@ -21,12 +23,24 @@ A profile also carries an **optional thumbnail** (G-038 / T-106): `CutProfile.Th
 
 The two thumbnail paths deliberately have **different contracts** (T-129 / G-044). The **auto** capture on save is a side effect of "Save" and stays silent: it must never interrupt the save, so a failed grab or a store refusal simply leaves the profile without a thumbnail. The **explicit upload** is a deliberate user gesture ("I picked this file") and **reports**: a failure leaves the current thumbnail untouched, as before, but now surfaces a headline + actionable hint + copyable detail on the screen's existing error block (`OperationViewModel.Error`, via the additive `OperationViewModel.ReportFailure`) instead of being swallowed — a silent upload is indistinguishable from a broken button.
 
+Profiles are **durable and portable** (T-147 / G-051). Durable: the installer removes nothing under the
+user profile, so uninstalling and reinstalling leaves every profile and picture in place - asserted
+directly against the real `.iss` file rather than left as an accident of the current script. Portable:
+`ProfileBackup` writes every profile to ONE self-contained file with its picture inline as base64, and
+reads one back as a plan-then-apply upsert. Inline images exist because a profile lives across **two
+roots** - the profile in Roaming `%APPDATA%`, its picture in Local `%LOCALAPPDATA%` - so anything that
+carries only the settings file keeps the profiles and silently loses every picture (ADR-0021). Import is
+deliberately incapable of quietly costing someone what they already had: a corrupt or future-version file
+fails at the planning stage and changes nothing, and a name collision is resolved by the caller, whose
+default answer is to keep the existing profile.
+
 ## Why
 Users cutting a season of episodes want to define "trim the 12s intro and the 20s of end credits" ONCE and apply it across files of differing durations. An absolute-from-start intro plus a from-END outro (rather than two absolute times) makes the same profile land correctly on a 22-minute and a 24-minute episode alike (the T-096 apply-to-all convention). The model is deliberately Core-resident and WPF-free so it can be validated, persisted as stable JSON, and unit-tested without an App/UI dependency, and the persistence layer must tolerate corrupt or legacy files without ever crashing the app.
 
 ## Scope
 **In:** the `CutProfile` record and its validation (including the optional `ThumbnailPath` member); `AppSettings` profile persistence (`CutProfiles` list, `SaveProfile` upsert, `DeleteProfile` + its thumbnail-file cascade, JSON round-trip via `CutProfileDto` incl. `thumbnailPath`, tolerant/backward-compatible load); `CutProfileApplier.ApplyProfile` (intro/outro application, per-row re-snap + re-validate, `ApplyToAllReport`) and `CutProfileApplier.BuildProfileFromRow`; the `ProfileThumbnailStore` file store (`Save`/`Delete`/`DeleteByPath`/`DefaultRoot`/`SafeFileName`); and the **T-107 thumbnail glue** on `BulkCutViewModel` (`SaveProfileWithAutoThumbnailAsync` auto-default capture, `UploadThumbnail`, `ClearThumbnail`, `AttachThumbnail`/`TryAttachThumbnail`) **plus the T-129 upload-failure reporting** on that glue (`ThumbnailAttachOutcome`, `ReportThumbnailUploadFailure`, `ClearThumbnailUploadError`, and the messages they place on `Operation.Error`).
-**Out:** the `OperationViewModel` lifecycle itself — state machine, progress, ETA, taskbar mapping, and the `ReportFailure` entry point's own state rules (SPEC-008); the WPF error block that renders `Operation.Error` (SPEC-011/SPEC-015); the **non-thumbnail** T-103 `BulkCutViewModel` command glue (`SaveProfile`/`ApplyProfileToSelected`/`ApplyProfileToAll`/`DeleteSelectedProfile`, the profile bar, command enable/disable) — covered by SPEC-011; the keyframe-snap and cut-validity engine behind `BulkItemViewModel.IntroEnd`/`OutroStart`/`IsValidCut` (its own spec); the per-row cut-point frame thumbnails (T-108 — SPEC-011); the non-profile `AppSettings` fields (folders, layout mode, split ratios); the WPF profile-picker view/`PathToBitmapConverter` rendering.
+Also in (T-147): `ProfileBackup` (`Export`, `Plan`, `Apply`, `ImportPlan`, the versioned file shape) and the `BulkCutViewModel` glue over it (`ExportProfiles`/`ImportProfiles`, `ExportProfilesCommand`/`ImportProfilesCommand`, the `ChooseProfileExportPath`/`ChooseProfileImportPath`/`ConfirmProfileOverwrite` host hooks), plus the **installer's hands-off guarantee** over user-data folders.
+**Out:** the `OperationViewModel` lifecycle itself — state machine, progress, ETA, taskbar mapping, and the `ReportFailure` entry point's own state rules (SPEC-008); the WPF error block that renders `Operation.Error` (SPEC-011/SPEC-015); the **non-thumbnail** T-103 `BulkCutViewModel` command glue (`SaveProfile`/`ApplyProfileToSelected`/`ApplyProfileToAll`/`DeleteSelectedProfile`, the profile bar, command enable/disable) — covered by SPEC-011; the keyframe-snap and cut-validity engine behind `BulkItemViewModel.IntroEnd`/`OutroStart`/`IsValidCut` (its own spec); the per-row cut-point frame thumbnails (T-108 — SPEC-011); the non-profile `AppSettings` fields (folders, layout mode, split ratios); the WPF profile-picker view/`PathToBitmapConverter` rendering; the file dialogs and MessageBox behind the backup hooks (view glue); automatic/scheduled/cloud backup (not built - backup is a manual gesture); and any migration of existing installs between the two storage roots (explicitly rejected - ADR-0021).
 
 ## Current behavior & invariants
 
@@ -144,9 +158,56 @@ Users cutting a season of episodes want to define "trim the 12s intro and the 20
   afterwards (I66), so a profile with no thumbnail is a normal outcome, not a failed save. It can be set
   from a frame (I75), uploaded, or **removed** — all three from the bar, all after the fact.
 
+### Durability & portability (`src/App/Settings/ProfileBackup.cs`, `packaging/VideoSplitJoiner.iss` - T-147)
+- **I79** - **uninstall removes no user data.** The installer script contains no `[UninstallDelete]`
+  section and names no `{userappdata}` / `{localappdata}` / `{userdocs}` path, so profiles and their
+  pictures survive an uninstall/reinstall on the same machine. Asserted against the real `.iss` file, not
+  assumed; if a delete is ever genuinely needed the assertion is changed deliberately.
+- **I80** - a profile is stored across **two roots** (profile in Roaming, picture in Local), and this is
+  deliberate and unmigrated. It is the reason the backup embeds images rather than referencing them
+  (ADR-0021).
+- **I81** - `Export` writes ONE self-contained file: every profile, each with its picture inline as
+  base64 plus the original extension, and a `version` field. It returns the profile count and the count
+  that carried an image.
+- **I82** - a profile whose image is missing or unreadable is still exported, **without** the image.
+  Losing a profile because its picture went missing would be a poor trade.
+- **I83** - `Plan` reads a backup and reports what an import WOULD do, changing nothing on disk and
+  nothing in settings. Planning the same file repeatedly does not touch it.
+- **I84** - a corrupt, truncated, empty, or non-JSON file yields a failed plan carrying a user-facing
+  reason - and a failed plan proposes **nothing** (`New`, `Colliding`, `Images` all empty), which is what
+  makes a bad file a no-op rather than a half-applied restore. `Apply` also refuses a failed plan outright,
+  as defence in depth.
+- **I85** - a backup whose `version` is newer than `CurrentVersion` is **refused with a message naming
+  that**, never guessed at.
+- **I86** - a row with a blank name, or values the `CutProfile` constructor rejects, is skipped; one bad
+  row does not condemn the file.
+- **I87** - a corrupt inline image costs the **picture**, never the profile: the profile is planned and
+  imported, just without a thumbnail. Likewise at apply time, a picture that cannot be written to the store
+  leaves the profile in place with none.
+- **I88** - import is an **upsert, never a wipe**. `Plan` separates `New` from `Colliding` (by
+  case-insensitive name, matching the persistence dedup key), and `Apply` writes the colliding ones only
+  when the caller says so.
+- **I89** - the collision decision belongs to the caller and its default is **keep what is already
+  there**: `BulkCutViewModel.ConfirmProfileOverwrite` defaults to refusing, so an unwired or half-wired
+  host cannot silently overwrite a user's profiles.
+- **I90** - the overwrite question is asked **only when something would actually be overwritten**;
+  a collision-free import never prompts.
+- **I91** - a restored picture is byte-identical to the exported one and lands in the receiving machine's
+  own thumbnail store, with the profile's `ThumbnailPath` rewritten to it - a restored path never points
+  at the source machine's folders.
+- **I92** - the two gestures are **cancellable no-ops**: a dialog that returns nothing performs no work,
+  reports no result, and raises no error.
+- **I93** - export is offered only when there is at least one profile; **import is always offered**,
+  because having no profiles is precisely when a restore is needed.
+- **I94** - both gestures report on the screen's existing surfaces: a success sets
+  `Operation.ResultSummary` with the counts (including how many existing profiles were kept), and a
+  failure reaches `Operation.Error` with a headline, an actionable hint, and copyable detail - the same
+  contract as the explicit thumbnail upload (I76), and for the same reason: a silent backup is
+  indistinguishable from a broken button.
+
 ## Links
-- Design: — (feature tasks T-096 apply-to-all convention · T-102 model/persistence/apply · T-103 VM command glue · T-106 thumbnail model/store · T-107 thumbnail UI glue · T-129 upload-failure reporting)
-- Goals: G-037, G-038 (profile thumbnails), G-044 (thumbnail change works — and says so when it does not)
+- Design: — ADR-0021 (profiles survive reinstall by not being touched; portability via a backup file rather than a two-root migration) - (feature tasks T-096 apply-to-all convention · T-102 model/persistence/apply · T-103 VM command glue · T-106 thumbnail model/store · T-107 thumbnail UI glue · T-129 upload-failure reporting - T-147 backup/restore + installer guarantee)
+- Goals: G-037, G-038 (profile thumbnails), G-051 (profiles you can keep), G-044 (thumbnail change works — and says so when it does not)
 - Related specs: SPEC-008 (operation-progress-eta — owns `OperationViewModel`, incl. the additive `ReportFailure` this spec's upload path calls); SPEC-011 (bulk-cut-screen — the T-103 non-thumbnail profile commands + the T-108 per-row cut-point thumbnails); the keyframe-snap / cut-validity spec — both adjacent, out of scope here
-- Key code: `src/Core/Profiles/CutProfile.cs` (`ThumbnailPath`) · `src/App/Settings/AppSettings.cs` (`CutProfiles`/`SaveProfile`/`DeleteProfile` cascade + `SettingsDto`/`CutProfileDto`) · `src/App/Settings/ProfileThumbnailStore.cs` (`Save`/`RenameExistingAside`/`RestoreAsides`/`Delete`/`DeleteByPath`/`DefaultRoot`/`SafeFileName`) · `src/App/ViewModels/CutProfileApplier.cs` · `src/App/ViewModels/BulkCutViewModel.cs` (`SaveProfileWithAutoThumbnailAsync`/`UploadThumbnail`/`ClearThumbnail`/`AttachThumbnail`/`TryAttachThumbnail`/`ReportThumbnailUploadFailure`/`ClearThumbnailUploadError`/`ThumbnailAttachOutcome`) · `src/App/ViewModels/OperationViewModel.cs` (`ReportFailure` — the reporting seam) · `src/App/Views/BulkCutView.xaml.cs` (`OnUploadThumbnailClicked`)
-- Tests: `tests/Core.Tests/CutProfileTests.cs` · `tests/App.Tests/CutProfilePersistenceTests.cs` · `tests/App.Tests/CutProfileApplierTests.cs` · `tests/App.Tests/ProfileThumbnailStoreTests.cs` (store + `DeleteProfile` cascade, T-106; the copy-then-swap durability guarantee — I73) · `tests/App.Tests/BulkCutProfileThumbnailTests.cs` (auto-default/upload/clear, T-107; upload-failure reporting, T-129) (and app-layer `tests/App.Tests/BulkCutProfileCommandsTests.cs`)
+- Key code: `src/Core/Profiles/CutProfile.cs` (`ThumbnailPath`) · `src/App/Settings/AppSettings.cs` (`CutProfiles`/`SaveProfile`/`DeleteProfile` cascade + `SettingsDto`/`CutProfileDto`) · `src/App/Settings/ProfileThumbnailStore.cs` (`Save`/`RenameExistingAside`/`RestoreAsides`/`Delete`/`DeleteByPath`/`DefaultRoot`/`SafeFileName`) · `src/App/ViewModels/CutProfileApplier.cs` · `src/App/ViewModels/BulkCutViewModel.cs` (`SaveProfileWithAutoThumbnailAsync`/`UploadThumbnail`/`ClearThumbnail`/`AttachThumbnail`/`TryAttachThumbnail`/`ReportThumbnailUploadFailure`/`ClearThumbnailUploadError`/`ThumbnailAttachOutcome`) · `src/App/ViewModels/OperationViewModel.cs` (`ReportFailure` — the reporting seam) · `src/App/Views/BulkCutView.xaml.cs` (`OnUploadThumbnailClicked`, `ChooseProfileExportPath`/`ChooseProfileImportPath`/`ConfirmProfileOverwrite`) - `src/App/Settings/ProfileBackup.cs` (`Export`/`Plan`/`Apply`/`ImportPlan`) - `packaging/VideoSplitJoiner.iss` (the absence asserted by I79)
+- Tests: `tests/Core.Tests/CutProfileTests.cs` · `tests/App.Tests/CutProfilePersistenceTests.cs` · `tests/App.Tests/CutProfileApplierTests.cs` · `tests/App.Tests/ProfileThumbnailStoreTests.cs` (store + `DeleteProfile` cascade, T-106; the copy-then-swap durability guarantee — I73) · `tests/App.Tests/BulkCutProfileThumbnailTests.cs` (auto-default/upload/clear, T-107; upload-failure reporting, T-129) (and app-layer `tests/App.Tests/BulkCutProfileCommandsTests.cs`) - `tests/App.Tests/ProfileBackupTests.cs` (the file format + the destructive cases, T-147) - `tests/App.Tests/BulkCutProfileBackupCommandsTests.cs` (the VM gestures + the default-keep collision contract) - `tests/App.Tests/InstallerLeavesUserDataTests.cs` (I79)

@@ -37,6 +37,13 @@ public partial class BulkCutView : UserControl
             {
                 vm.ConfirmReplaceOriginals = ConfirmReplaceOriginals;
                 vm.ConfirmDeleteOriginals = ConfirmDeleteOriginals;
+
+                // T-147: the profile backup/restore file pickers and the overwrite gate. The VM defaults
+                // to KEEPING existing profiles on a collision, so a missing wiring can never silently
+                // overwrite someone's profiles.
+                vm.ChooseProfileExportPath = ChooseProfileExportPath;
+                vm.ChooseProfileImportPath = ChooseProfileImportPath;
+                vm.ConfirmProfileOverwrite = ConfirmProfileOverwrite;
             }
         };
     }
@@ -61,6 +68,54 @@ public partial class BulkCutView : UserControl
             "Only videos that were trimmed successfully and whose trimmed file is still on disk are " +
             "included. Nothing is deleted permanently - you can restore them from the Recycle Bin.",
             "Delete originals?",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Warning,
+            MessageBoxResult.No);
+
+        return result == MessageBoxResult.Yes;
+    }
+
+    /// <summary>T-147 - where to write the profile backup. Null cancels.</summary>
+    private static string? ChooseProfileExportPath()
+    {
+        var dialog = new SaveFileDialog
+        {
+            Title = "Back up cut profiles",
+            Filter = "Profile backup|*.json|All files|*.*",
+            DefaultExt = ".json",
+            FileName = "cut-profiles-" + DateTime.Now.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) + ".json",
+            OverwritePrompt = true,
+        };
+
+        return dialog.ShowDialog() == true ? dialog.FileName : null;
+    }
+
+    /// <summary>T-147 - which backup to restore. Null cancels.</summary>
+    private static string? ChooseProfileImportPath()
+    {
+        var dialog = new OpenFileDialog
+        {
+            Title = "Restore cut profiles",
+            Filter = "Profile backup|*.json|All files|*.*",
+            CheckFileExists = true,
+        };
+
+        return dialog.ShowDialog() == true ? dialog.FileName : null;
+    }
+
+    /// <summary>
+    /// T-147 - a restore must never quietly cost someone the profiles they already had. Names the count,
+    /// spells out both outcomes, and defaults to KEEPING what is already there.
+    /// </summary>
+    private static bool ConfirmProfileOverwrite(int count)
+    {
+        var noun = count == 1 ? "profile" : "profiles";
+        var result = MessageBox.Show(
+            $"This backup contains {count} {noun} with the same name as one you already have." +
+            Environment.NewLine + Environment.NewLine +
+            "Yes - overwrite them with the backup's version." + Environment.NewLine +
+            "No - keep yours, and import only the profiles that are new.",
+            "Overwrite existing profiles?",
             MessageBoxButton.YesNo,
             MessageBoxImage.Warning,
             MessageBoxResult.No);

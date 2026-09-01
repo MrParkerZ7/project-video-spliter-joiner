@@ -368,6 +368,27 @@
                                            Foreground="{StaticResource AccentTextBrush}" />
                             </StackPanel>
                         </Button>
+
+                        <!-- T-147: backup / restore. Profiles already survive an uninstall (the installer
+                             deletes nothing under the user profile, asserted by InstallerLeavesUserDataTests),
+                             but "survives IF you reinstall on the same machine" is not the same promise as
+                             "you can get them back" - a new PC, a wiped disk, or a profile you want to share
+                             all need a file. Last in the bar because they are the rarest actions; plain
+                             segment styling because neither is destructive on its own (the restore's
+                             overwrite decision is gated separately). -->
+                        <Button Style="{StaticResource ProfileSegmentButton}"
+                                Content="⭳ Back up…"
+                                Margin="16,0,0,0"
+                                VerticalAlignment="Center"
+                                ToolTip="Save every profile, pictures included, to one file you can keep or move to another PC"
+                                Command="{Binding ExportProfilesCommand}" />
+
+                        <Button Style="{StaticResource ProfileSegmentButton}"
+                                Content="⭱ Restore…"
+                                Margin="8,0,0,0"
+                                VerticalAlignment="Center"
+                                ToolTip="Add profiles from a backup file. Profiles you already have are kept unless you say otherwise."
+                                Command="{Binding ImportProfilesCommand}" />
                     </WrapPanel>
 
                     <!-- Themed inline name input (Popup anchored under the Save button) -->
