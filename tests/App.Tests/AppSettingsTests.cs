@@ -124,10 +124,23 @@ public sealed class AppSettingsTests : IDisposable
     [Fact]
     public void DefaultFilePath_LandsUnderAppData_VideoSplitJoiner()
     {
-        var path = AppSettings.DefaultFilePath();
+        // T-140: the whole assembly redirects DefaultFilePath away from the user's real profile, so this
+        // test — which is about the REAL resolution — has to lift the redirect for its duration. It is
+        // restored in the finally so the guard is never left off for whatever runs next.
+        var saved = AppSettings.DefaultFilePathOverride;
+        try
+        {
+            AppSettings.DefaultFilePathOverride = null;
 
-        Path.GetFileName(path).Should().Be("settings.json");
-        path.Should().Contain("VideoSplitJoiner");
+            var path = AppSettings.DefaultFilePath();
+
+            Path.GetFileName(path).Should().Be("settings.json");
+            path.Should().Contain("VideoSplitJoiner");
+        }
+        finally
+        {
+            AppSettings.DefaultFilePathOverride = saved;
+        }
     }
 
     // ---- T-081 / D-001: LayoutMode + per-axis split ratios ----------------------------------

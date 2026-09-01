@@ -91,6 +91,12 @@ public sealed class MainViewModel : ObservableObject
         var settings = new AppSettings();
         _settings = settings;
         _isVertical = settings.LayoutMode == LayoutMode.Vertical;   // restore last-used axis on startup
+        // T-143: restore the last-used screen beside the axis. Assigned to the FIELD, not the property,
+        // so restoring does not immediately write the same value back to disk - and, more importantly,
+        // so restoring a tab does not run the tab's WORK: the property setter stops the other screens'
+        // players and re-points the operation surface, which is switching behaviour, not startup state.
+        _selectedTabIndex = (int)(settings.LastTab ?? AppTab.Split);
+
         _horizontalSplitRatio = settings.HorizontalSplitRatio ?? DefaultHorizontalRatio;
         _verticalSplitRatio = settings.VerticalSplitRatio ?? DefaultVerticalRatio;
         _bulkHorizontalSplitRatio = settings.BulkHorizontalSplitRatio ?? DefaultBulkHorizontalRatio;
@@ -137,6 +143,7 @@ public sealed class MainViewModel : ObservableObject
         if (settings is not null)
         {
             _isVertical = settings.LayoutMode == LayoutMode.Vertical;
+            _selectedTabIndex = (int)(settings.LastTab ?? AppTab.Split);   // T-143
             _horizontalSplitRatio = settings.HorizontalSplitRatio ?? DefaultHorizontalRatio;
             _verticalSplitRatio = settings.VerticalSplitRatio ?? DefaultVerticalRatio;
             _bulkHorizontalSplitRatio = settings.BulkHorizontalSplitRatio ?? DefaultBulkHorizontalRatio;
@@ -169,6 +176,13 @@ public sealed class MainViewModel : ObservableObject
         {
             if (SetProperty(ref _selectedTabIndex, value))
             {
+                // T-143: remember the screen, beside the layout axis. Stored as a NAMED value, so
+                // reordering the tabs later cannot silently point it at the wrong screen.
+                if (_settings is not null && Enum.IsDefined(typeof(AppTab), value))
+                {
+                    _settings.LastTab = (AppTab)value;
+                }
+
                 // T-100 — two FFME elements (Split + Bulk) live in one process; only the active tab
                 // should decode, so stop the players of the now-inactive screens on every switch.
                 StopInactiveScreenPlayers();

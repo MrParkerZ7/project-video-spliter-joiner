@@ -52,6 +52,8 @@ public sealed class ViewModelSettingsTests : IDisposable
         public LayoutMode LayoutMode { get; set; } = LayoutMode.Horizontal;
         public double? HorizontalSplitRatio { get; set; }
         public double? VerticalSplitRatio { get; set; }
+        public AppTab? LastTab { get; set; }
+
         public bool? BulkApplyCutToAllRows { get; set; }
 
         public double? BulkHorizontalSplitRatio { get; set; }

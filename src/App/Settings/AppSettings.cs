@@ -48,6 +48,7 @@ public sealed class AppSettings : IAppSettings
     private double? _horizontalSplitRatio;
     private double? _verticalSplitRatio;
     private bool? _bulkApplyCutToAllRows;
+    private AppTab? _lastTab;
     private double? _bulkHorizontalSplitRatio;
     private double? _bulkVerticalSplitRatio;
     private List<CutProfile> _cutProfiles = new();
@@ -150,6 +151,20 @@ public sealed class AppSettings : IAppSettings
     }
 
     /// <inheritdoc />
+    public AppTab? LastTab
+    {
+        get => _lastTab;
+        set
+        {
+            if (!Nullable.Equals(_lastTab, value))
+            {
+                _lastTab = value;
+                Save();
+            }
+        }
+    }
+
+    /// <inheritdoc />
     public bool? BulkApplyCutToAllRows
     {
         get => _bulkApplyCutToAllRows;
@@ -246,8 +261,28 @@ public sealed class AppSettings : IAppSettings
     /// The default per-user settings file: <c>%APPDATA%/VideoSplitJoiner/settings.json</c>. Falls back
     /// to the OS temp folder when the app-data path cannot be resolved (rare — headless / restricted).
     /// </summary>
+    /// <summary>
+    /// Redirects <see cref="DefaultFilePath"/> away from the user's real profile (T-140).
+    ///
+    /// <para><b>Why this exists.</b> <c>SplitViewModel</c> and <c>JoinViewModel</c> default their settings
+    /// dependency to <c>new AppSettings()</c>, which resolves here. Around fifteen tests construct those
+    /// view models without injecting a settings store and then load a fixture path, whose setter calls
+    /// <c>Save()</c> - so running the suite OVERWROTE the real
+    /// <c>%APPDATA%/VideoSplitJoiner/settings.json</c>, wiping the user's last-used folders and layout.
+    /// It was found by reading a real machine's settings file and seeing test fixture paths in it.</para>
+    ///
+    /// <para>Fixing only the call sites would leave the trap armed for the next test that forgets. The
+    /// test assembly sets this once, so a missed injection is inert rather than destructive.</para>
+    /// </summary>
+    public static string? DefaultFilePathOverride { get; set; }
+
     public static string DefaultFilePath()
     {
+        if (DefaultFilePathOverride is { Length: > 0 } redirected)
+        {
+            return redirected;
+        }
+
         var root = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
         if (string.IsNullOrEmpty(root))
         {
@@ -284,6 +319,9 @@ public sealed class AppSettings : IAppSettings
                 _layoutMode = ParseLayoutMode(dto.LayoutMode);
                 _horizontalSplitRatio = ClampRatio(dto.HorizontalSplitRatio);
                 _verticalSplitRatio = ClampRatio(dto.VerticalSplitRatio);
+                // T-143: an unrecognised stored value (a hand-edited file, a build with fewer tabs)
+                // falls back to Split rather than throwing or opening on nothing.
+                _lastTab = Enum.IsDefined(typeof(AppTab), dto.LastTab ?? -1) ? (AppTab)dto.LastTab!.Value : null;
                 _bulkApplyCutToAllRows = dto.BulkApplyCutToAllRows; // absent (older file) → null → default (ON)
                 _bulkHorizontalSplitRatio = ClampRatio(dto.BulkHorizontalSplitRatio); // absent (older file) → null → default
                 _bulkVerticalSplitRatio = ClampRatio(dto.BulkVerticalSplitRatio);
@@ -435,6 +473,7 @@ public sealed class AppSettings : IAppSettings
                 LayoutMode = _layoutMode.ToString(),
                 HorizontalSplitRatio = _horizontalSplitRatio,
                 VerticalSplitRatio = _verticalSplitRatio,
+                LastTab = (int?)_lastTab,
                 BulkApplyCutToAllRows = _bulkApplyCutToAllRows,
                 BulkHorizontalSplitRatio = _bulkHorizontalSplitRatio,
                 BulkVerticalSplitRatio = _bulkVerticalSplitRatio,
@@ -527,6 +566,10 @@ public sealed class AppSettings : IAppSettings
         /// T-133 — whether set-at-playhead fans out to every ticked row. Absent in older files →
         /// <c>null</c> → the default, ON.
         /// </summary>
+        /// <summary>T-143 - the last-used screen. Absent in older files => null => Split.</summary>
+        [JsonPropertyName("lastTab")]
+        public int? LastTab { get; set; }
+
         [JsonPropertyName("bulkApplyCutToAllRows")]
         public bool? BulkApplyCutToAllRows { get; set; }
 

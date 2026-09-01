@@ -8,6 +8,23 @@ namespace VideoSplitJoiner.App.Settings;
 /// two-column layout (video/timeline left, tools right); <see cref="Vertical"/> is the portrait
 /// stacked layout (video/timeline top, tools below). Persisted in settings and restored on startup.
 /// </summary>
+/// <summary>
+/// Which screen the app reopens on (T-143). A NAMED value rather than the raw tab index: an int silently
+/// points at the wrong screen the moment tabs are reordered, and a stored int from a future build with
+/// fewer tabs has no safe meaning.
+/// </summary>
+public enum AppTab
+{
+    /// <summary>The Split screen - the default, and the fallback for anything unrecognised.</summary>
+    Split = 0,
+
+    /// <summary>The Join screen.</summary>
+    Join = 1,
+
+    /// <summary>The Bulk Cut screen.</summary>
+    BulkCut = 2,
+}
+
 public enum LayoutMode
 {
     /// <summary>Landscape two-column layout — the default (today's behavior / missing setting).</summary>
@@ -70,6 +87,12 @@ public interface IAppSettings
     /// single-row behaviour is what made a user set one cut, press Run, and get one file.
     /// </summary>
     bool? BulkApplyCutToAllRows { get; set; }
+
+    /// <summary>
+    /// The screen the app was last on (T-143), restored on startup beside <see cref="LayoutMode"/>.
+    /// <c>null</c> = never recorded / an older settings file, which reads as <see cref="AppTab.Split"/>.
+    /// </summary>
+    AppTab? LastTab { get; set; }
 
     double? BulkHorizontalSplitRatio { get; set; }
 
