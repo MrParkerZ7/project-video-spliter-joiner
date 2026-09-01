@@ -1003,14 +1003,22 @@
                             Content="{Binding RunLabel}"
                             Padding="16,6"
                             Command="{Binding RunBatchCommand}" />
-                    <!-- T-144: a POST-RUN action, so it sits with Run rather than in the profiles bar.
-                         Hidden until it can do something - a destructive button that is permanently
-                         greyed out just trains people to ignore it. -->
-                    <Button Content="{Binding DeleteOriginalsLabel}"
-                            Margin="0,0,6,0"
-                            Padding="10,5"
+                    <!-- T-144/T-146: a POST-RUN action, so it sits with Run rather than in the profiles
+                         bar. Hidden until it can do something - a destructive button that is permanently
+                         greyed out just trains people to ignore it.
+
+                         T-146: it shipped as a PLAIN button immediately left of the accent-styled Run,
+                         which made the most destructive control on the screen the least distinct one and
+                         put it next to the button pressed after every batch. It now uses the tab's
+                         existing danger vocabulary (ProfileDangerButton: muted at rest, danger-coloured
+                         on hover) and is pushed to the far LEFT of the footer row, away from Run. -->
+                    <Button Style="{StaticResource ProfileDangerButton}"
+                            Content="{Binding DeleteOriginalsLabel}"
+                            Margin="0,0,28,0"
+                            HorizontalAlignment="Left"
+                            VerticalAlignment="Center"
                             Command="{Binding DeleteOriginalsCommand}"
-                            ToolTip="Send the originals of successfully trimmed videos to the Recycle Bin. Skips anything that failed, and anything whose trimmed file is missing."
+                            ToolTip="Send the originals of successfully trimmed videos to the Recycle Bin. Skips anything that failed, and anything whose trimmed file is missing. Nothing is deleted permanently."
                             Visibility="{Binding CanDeleteOriginals, Converter={StaticResource BoolToVisibility}}" />
 
                     <Button Content="Cancel"

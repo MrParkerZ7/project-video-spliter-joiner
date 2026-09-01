@@ -719,8 +719,8 @@ public sealed class BulkCutViewModel : ObservableObject
         {
             var n = DeletableOriginalCount;
             return n == 0
-                ? "Delete originals"
-                : string.Create(CultureInfo.InvariantCulture, $"Delete originals ({n} - {FormatBytes(DeletableOriginalBytes)})");
+                ? "✕ Delete originals"
+                : string.Create(CultureInfo.InvariantCulture, $"✕ Delete originals ({n} · {FormatBytes(DeletableOriginalBytes)})");
         }
     }
 
@@ -757,11 +757,26 @@ public sealed class BulkCutViewModel : ObservableObject
             return;
         }
 
+        // T-145: RELEASE OUR OWN HANDLE FIRST. The preview player holds the selected row's file open, so
+        // without this the previewed original is refused by the disposer and the user asks to delete N
+        // files and gets N-1. Stop() is NOT enough - it only halts playback; Unload closes the media
+        // element and releases the handle. The replace-originals path already did exactly this for the
+        // same reason (see RunBatchAsync); T-144 needed the same reasoning and did not get it.
+        SelectedItem = null;   // or the next interaction re-opens a file we are about to bin
+        Player.Unload();
+
         var binned = 0;
-        var refused = 0;
+        var refusedPaths = new List<string>();
 
         foreach (var row in rows)
         {
+            // Re-check at deletion time: the eligibility list was built BEFORE the unload, and the world
+            // may have moved since the confirmation dialog was answered.
+            if (!FileThere(row.Path) || !IsNonEmptyFile(row.OutputPath))
+            {
+                continue;
+            }
+
             try
             {
                 _originalDisposer.DisposeOriginalBackup(row.Path);
@@ -769,7 +784,7 @@ public sealed class BulkCutViewModel : ObservableObject
                 // The disposer is best-effort BY CONTRACT, so verify rather than assume it worked.
                 if (FileThere(row.Path))
                 {
-                    refused++;
+                    refusedPaths.Add(row.Path);
                     continue;
                 }
 
@@ -778,13 +793,16 @@ public sealed class BulkCutViewModel : ObservableObject
             }
             catch
             {
-                refused++;
+                refusedPaths.Add(row.Path);
             }
         }
 
-        Operation.ResultSummary = refused == 0
+        // Name what was refused. "1 could not be removed" leaves the user hunting for which one.
+        Operation.ResultSummary = refusedPaths.Count == 0
             ? string.Create(CultureInfo.InvariantCulture, $"Sent {binned} original(s) to the Recycle Bin")
-            : string.Create(CultureInfo.InvariantCulture, $"Sent {binned} to the Recycle Bin, {refused} could not be removed");
+            : string.Create(
+                CultureInfo.InvariantCulture,
+                $"Sent {binned} to the Recycle Bin. Still in use: {string.Join(", ", refusedPaths.Select(System.IO.Path.GetFileName))}");
 
         RaiseRunState();
     }
