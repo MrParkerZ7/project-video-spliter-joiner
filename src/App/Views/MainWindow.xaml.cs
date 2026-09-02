@@ -12,6 +12,7 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        VersionText.Text = AppVersion.Display;   // T-154
         DataContext = new MainViewModel();
 
         // T-056 — keep the maximized window clamped to the monitor work area

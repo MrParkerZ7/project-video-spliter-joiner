@@ -226,6 +226,19 @@
                            FontSize="{DynamicResource FontSizeSmall}"
                            Foreground="{DynamicResource TextMutedBrush}"
                            VerticalAlignment="Center" />
+
+                <!-- T-154: which build is this? A drag-drop bug was fixed, published and re-tested, and
+                     came back "still doesn't work" - because the app under test was the PREVIOUS DAY'S
+                     published build sitting in dist/publish while the fix was in a Debug build. Two
+                     copies of the same program ran side by side and nothing on screen told them apart.
+                     Now it does, including in a screenshot. -->
+                <TextBlock x:Name="VersionText"
+                           Margin="10,0,0,0"
+                           FontFamily="{DynamicResource MonoFontFamily}"
+                           FontSize="{DynamicResource FontSizeSmall}"
+                           Foreground="{DynamicResource TextMutedBrush}"
+                           VerticalAlignment="Center"
+                           ToolTip="The exact build you are running - quote this in a bug report" />
             </StackPanel>
 
             <!-- T-088 — the Split/Join tab strip with a right-aligned Load / Clear button group

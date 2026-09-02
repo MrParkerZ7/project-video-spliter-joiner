@@ -205,6 +205,23 @@ public sealed class DroppedFileFeedbackTests : IDisposable
         act.Should().NotThrow("a diagnostic must never be the reason a drop fails");
     }
 
+    /// <summary>
+    /// T-154 — the header must name the running build. Two copies of this app ran side by side during
+    /// this investigation and nothing on screen distinguished them, which cost a full round-trip: a fix
+    /// was published and re-tested against the PREVIOUS DAY'S build.
+    /// </summary>
+    [Fact]
+    public void TheAppReportsItsOwnVersion()
+    {
+        var shown = AppVersion.Display;
+
+        shown.Should().StartWith("v", "it goes in the header beside the tagline");
+        shown.Should().NotBe("v?", "an unresolvable version defeats the purpose");
+        shown.Should().MatchRegex(@"^v\d+\.\d+\.\d+", "a real version, not a placeholder");
+        shown.Length.Should().BeLessThan(
+            30, "it sits in the header — the sha is trimmed so it stays a label, not a hash");
+    }
+
     // ---- Routing, which had no coverage at all -------------------------------------------------------
 
     [Trait("serves-spec", "SPEC-011")]
