@@ -249,6 +249,102 @@ public sealed class DeleteOriginalsTests : IDisposable
             "the gate is re-evaluated at press time, not remembered from the run");
     }
 
+    /// <summary>
+    /// T-150 (SPEC-011 I118) — the window between confirming and sweeping.
+    ///
+    /// <para><see cref="IfTheOutputHasVanishedSinceTheRun_TheOriginalIsNotOffered"/> covers the gate
+    /// BEFORE the dialog. This covers the gap AFTER it: the user says yes, and the trimmed file is gone
+    /// by the time the sweep reaches that row — an antivirus quarantine, a sync client, a second app, a
+    /// full disk finishing a flush. Without the in-loop re-check the app bins the original anyway, which
+    /// is the only remaining copy, and reports it as a success.</para>
+    ///
+    /// <para>The confirmation hook IS the window: whatever it does happens after the decision and before
+    /// the sweep, which is exactly the interleaving being tested.</para>
+    /// </summary>
+    [Trait("serves-spec", "SPEC-011")]
+    [Fact]
+    public async Task IfTheOutputVanishesBetweenConfirmingAndSweeping_TheOriginalSurvives()
+    {
+        var (vm, probe, disposer, _) = Build();
+        var doomed = MarkTrimmed(await AddAsync(vm, probe, MakeVideo("doomed.mp4")));
+        var fine = MarkTrimmed(await AddAsync(vm, probe, MakeVideo("fine.mp4")));
+
+        vm.CanDeleteOriginals.Should().BeTrue("precondition: both rows are offered");
+
+        // Yes — and in the same breath, one trimmed result disappears.
+        vm.ConfirmDeleteOriginals = (_, _) =>
+        {
+            File.Delete(doomed.OutputPath);
+            return true;
+        };
+
+        vm.DeleteOriginals();
+
+        File.Exists(doomed.Path).Should().BeTrue(
+            "its trimmed output was gone by sweep time, so the original was the ONLY copy left");
+        disposer.Disposed.Should().NotContain(
+            doomed.Path, "and it must never have reached the disposer at all");
+
+        File.Exists(fine.Path).Should().BeFalse(
+            "one row losing its output does not spare the rest — the sweep is per-row");
+        disposer.Disposed.Should().Contain(fine.Path);
+    }
+
+    /// <summary>
+    /// T-150 — the other half of the same re-check: the ORIGINAL vanishing in that window.
+    ///
+    /// <para>No data is at risk here (the file is already gone), but without this half the row is handed
+    /// to the disposer and counted as binned — so the user is told N originals were removed when one of
+    /// them was never there. A delete summary that overstates itself is exactly the report you cannot
+    /// audit later.</para>
+    /// </summary>
+    [Trait("serves-spec", "SPEC-011")]
+    [Fact]
+    public async Task IfTheORIGINALVanishesBetweenConfirmingAndSweeping_ItIsNotCountedAsBinned()
+    {
+        var (vm, probe, disposer, _) = Build();
+        var gone = MarkTrimmed(await AddAsync(vm, probe, MakeVideo("gone.mp4")));
+        var real = MarkTrimmed(await AddAsync(vm, probe, MakeVideo("real.mp4")));
+
+        vm.ConfirmDeleteOriginals = (_, _) =>
+        {
+            File.Delete(gone.Path);   // something else got there first
+            return true;
+        };
+
+        vm.DeleteOriginals();
+
+        disposer.Disposed.Should().NotContain(
+            gone.Path, "there was nothing left to send to the Recycle Bin");
+        disposer.Disposed.Should().Contain(real.Path);
+        vm.Operation.ResultSummary.Should().Contain(
+            "Sent 1", "the count must describe what was actually binned, not what was offered");
+    }
+
+    /// <summary>
+    /// T-150 — the same window, but the output is truncated rather than deleted. A zero-byte file still
+    /// EXISTS, so an existence-only re-check would sail past it and bin the original.
+    /// </summary>
+    [Trait("serves-spec", "SPEC-011")]
+    [Fact]
+    public async Task IfTheOutputIsTruncatedBetweenConfirmingAndSweeping_TheOriginalSurvives()
+    {
+        var (vm, probe, disposer, _) = Build();
+        var row = MarkTrimmed(await AddAsync(vm, probe, MakeVideo("a.mp4")));
+
+        vm.ConfirmDeleteOriginals = (_, _) =>
+        {
+            File.WriteAllBytes(row.OutputPath, Array.Empty<byte>());
+            return true;
+        };
+
+        vm.DeleteOriginals();
+
+        File.Exists(row.Path).Should().BeTrue(
+            "a zero-byte trim is not a trim — the original is still the only real copy");
+        disposer.Disposed.Should().NotContain(row.Path);
+    }
+
     [Trait("serves-spec", "SPEC-011")]
     [Fact]
     public async Task AnEmptyOutputFile_IsNotTreatedAsASuccessfulTrim()
