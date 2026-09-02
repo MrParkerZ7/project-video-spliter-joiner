@@ -227,13 +227,19 @@ re-encode branch.
   run leaves no partial output. Progress is coarse by nature: 0.5 after the head, 0.8 after the tail,
   1.0 at the end.
 
-**Verified against fakes only — never against real media.** The planner, the args builder, and the engine's
+**Verified against fakes AND against real media.** The planner, the args builder, and the engine's
 three-pass orchestration are covered by unit tests (`SmartCutTests`, `CutPrecisionRoutingTests`,
-`ExactCutModeTests`) driven by a fake `IFfmpegRunner` and probe results supplied by the test. There is
-**no real-media integration test** for this path — unlike split and join, which have
-`SplitEngineIntegrationTests` / `MpegtsSplitIntegrationTests` / `JoinEngineIntegrationTests` running real
-ffmpeg. What is proven is the decision logic and the emitted argument tokens; that a genuinely re-encoded
-head concatenates cleanly onto a genuinely copied tail is **not** demonstrated by the suite.
+`ExactCutModeTests`) driven by a fake `IFfmpegRunner` and probe results supplied by the test — those prove
+the decision logic and the emitted argument tokens. `SmartCutEngineIntegrationTests` then runs the path
+against real ffmpeg on a fixture with a deliberately coarse keyframe grid, proving what fakes cannot: that
+an exact cut at 5s really starts at 5s rather than at the keyframe, that the lossless path really does
+snap (so the difference is demonstrated rather than asserted), and that **a genuinely re-encoded head
+concatenates cleanly onto a genuinely copied tail**.
+
+> This paragraph used to say the opposite — *"never against real media … no real-media integration test"* —
+> and stayed that way after the tests landed (T-153). A caveat that outlives the gap it describes invites
+> redundant work or an unnecessary release hold, so it is worth correcting rather than leaving as
+> harmless pessimism.
 
 ### Injectable I/O seams — `IDiskSpaceProbe` / `IOriginalDisposer` (`Core/Io/`)
 
