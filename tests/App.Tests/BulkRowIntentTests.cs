@@ -552,6 +552,87 @@ public sealed class BulkRowIntentTests
         vm.CanRunBatch.Should().BeTrue("no enabled row is waiting on keyframes any more");
     }
 
+    // ---- T-152: the guarantee that replaced "no ticked-but-excluded state exists" -------------------
+
+    /// <summary>
+    /// T-152 / T-127 — <b>a ticked row that Run will not cut is never silent.</b>
+    ///
+    /// <para>T-127's original acceptance criterion read <i>"no state exists where the checkbox renders
+    /// ticked but the row is excluded from the batch"</i>. That describes the world BEFORE the fix. The
+    /// fix deliberately separated the two — the checkbox binds
+    /// <see cref="BulkItemViewModel.IsCheckedByUser"/> (the user's intent) while Run counts
+    /// <c>IsEnabled &amp;&amp; IsValidCut</c> (computed eligibility) — precisely so a row can stay ticked
+    /// while the app declines to cut it yet. Conflating them WAS the bug: one click did nothing, and a
+    /// second silently dropped the video.</para>
+    ///
+    /// <para>So the guarantee that actually matters is this one: whenever a row is ticked but not
+    /// eligible, the user can see why — either it carries an
+    /// <see cref="BulkItemViewModel.ExclusionReason"/>, or it is still scanning and the batch says so. A
+    /// ticked row quietly skipped, with nothing on screen explaining it, is the original complaint.</para>
+    /// </summary>
+    [Fact]
+    [Trait("serves-spec", "SPEC-011")]
+    public async Task ATickedRowThatRunWillNotCut_AlwaysSaysWhy_OrIsVisiblyStillScanning()
+    {
+        var (vm, probe, _) = Build(Immediate);
+
+        var noOp = await AddRowAsync(vm, probe, PathA);      // ticked, no cut set yet
+        var real = await AddRowAsync(vm, probe, PathB);      // ticked, gets a real cut
+        SetRealCut(real);
+        var unticked = await AddRowAsync(vm, probe, PathC);
+        unticked.IsCheckedByUser = false;                    // excluded by the USER — needs no reason
+
+        var offenders = new List<string>();
+        foreach (var row in vm.Items)
+        {
+            var runWillCut = row.IsEnabled && row.IsValidCut;
+            if (!row.IsCheckedByUser || runWillCut)
+            {
+                continue;   // not ticked, or genuinely included — nothing to explain
+            }
+
+            if (string.IsNullOrWhiteSpace(row.ExclusionReason) && row.KeyframesReady)
+            {
+                offenders.Add(row.Path);
+            }
+        }
+
+        offenders.Should().BeEmpty(
+            "a ticked row Run will not cut must carry a reason or be visibly still scanning — being " +
+            "dropped in silence is the bug T-127 was opened for:" +
+            Environment.NewLine + string.Join(Environment.NewLine, offenders));
+
+        // The batch really did contain the case, so this cannot pass by having nothing to check.
+        noOp.IsCheckedByUser.Should().BeTrue();
+        (noOp.IsEnabled && noOp.IsValidCut).Should().BeFalse("precondition: ticked but not cuttable");
+        noOp.ExclusionReason.Should().NotBeNullOrWhiteSpace("and that is the case the guarantee covers");
+    }
+
+    /// <summary>
+    /// T-152 / T-127 — the gesture the user actually reported: import, tick, and the Run count follows.
+    /// </summary>
+    [Fact]
+    [Trait("serves-spec", "SPEC-011")]
+    public async Task AfterImporting_TickingARowLeavesItTicked_AndRunCountsIt()
+    {
+        var (vm, probe, _) = Build(Immediate);
+
+        var a = await AddRowAsync(vm, probe, PathA);
+        var b = await AddRowAsync(vm, probe, PathB);
+        SetRealCut(a);
+        SetRealCut(b);
+
+        b.IsCheckedByUser = false;
+        vm.RunLabel.Should().Contain("1", "one row is ticked and cuttable");
+
+        b.IsCheckedByUser = true;
+
+        b.IsCheckedByUser.Should().BeTrue(
+            "the click sticks — the original bug was a setter that no-op'd against computed eligibility");
+        vm.RunLabel.Should().Contain("2", "and Run counts it again with no further gesture");
+        vm.CanRunBatch.Should().BeTrue();
+    }
+
     // ---- 6. PERFORMANCE: toggling intent is pure VM state ---------------------------------------
 
     [Fact]
