@@ -178,6 +178,7 @@ public partial class JoinView : UserControl
             DropHighlight.Visibility = Visibility.Collapsed;
         }
 
+        DropDiagnostics.Record("over", "Join", TryPaths(e), e.Effects != DragDropEffects.None);
         e.Handled = true;
     }
 
@@ -205,6 +206,7 @@ public partial class JoinView : UserControl
         }
 
         e.Handled = true;
+        DropDiagnostics.Record("drop", "Join", paths, accepted: true);
         HandleDroppedFiles(paths, vm);
     }
 
@@ -224,5 +226,20 @@ public partial class JoinView : UserControl
         }
 
         return videos;
+    }
+
+    /// <summary>T-154 — the dropped paths, or null. Never throws; a diagnostic must not break the drop.</summary>
+    private static string[]? TryPaths(DragEventArgs e)
+    {
+        try
+        {
+            return e.Data.GetDataPresent(DataFormats.FileDrop)
+                ? e.Data.GetData(DataFormats.FileDrop) as string[]
+                : null;
+        }
+        catch
+        {
+            return null;
+        }
     }
 }

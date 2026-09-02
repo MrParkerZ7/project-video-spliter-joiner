@@ -81,6 +81,7 @@ public partial class SplitView : UserControl
             DropHighlight.Visibility = Visibility.Collapsed;
         }
 
+        DropDiagnostics.Record("over", "Split", TryPaths(e), e.Effects != DragDropEffects.None);
         e.Handled = true;
     }
 
@@ -107,6 +108,7 @@ public partial class SplitView : UserControl
             return;
         }
 
+        DropDiagnostics.Record("drop", "Split", paths, accepted: true);
         HandleDroppedFiles(paths, vm);
     }
 
@@ -126,5 +128,20 @@ public partial class SplitView : UserControl
         }
 
         return videos;
+    }
+
+    /// <summary>T-154 — the dropped paths, or null. Never throws; a diagnostic must not break the drop.</summary>
+    private static string[]? TryPaths(DragEventArgs e)
+    {
+        try
+        {
+            return e.Data.GetDataPresent(DataFormats.FileDrop)
+                ? e.Data.GetData(DataFormats.FileDrop) as string[]
+                : null;
+        }
+        catch
+        {
+            return null;
+        }
     }
 }

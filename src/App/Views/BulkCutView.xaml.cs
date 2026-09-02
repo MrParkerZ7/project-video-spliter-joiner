@@ -188,6 +188,7 @@ public partial class BulkCutView : UserControl
             DropHighlight.Visibility = Visibility.Collapsed;
         }
 
+        DropDiagnostics.Record("over", "BulkCut", TryPaths(e), e.Effects != DragDropEffects.None);
         e.Handled = true;
     }
 
@@ -195,6 +196,21 @@ public partial class BulkCutView : UserControl
     {
         DropHighlight.Visibility = Visibility.Collapsed;
         e.Handled = true;
+    }
+
+    /// <summary>T-154 — the dropped paths, or null. Never throws; a diagnostic must not break the drop.</summary>
+    private static string[]? TryPaths(DragEventArgs e)
+    {
+        try
+        {
+            return e.Data.GetDataPresent(DataFormats.FileDrop)
+                ? e.Data.GetData(DataFormats.FileDrop) as string[]
+                : null;
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private void OnDrop(object sender, DragEventArgs e)
@@ -213,6 +229,7 @@ public partial class BulkCutView : UserControl
         }
 
         e.Handled = true;
+        DropDiagnostics.Record("drop", "BulkCut", paths, accepted: true);
         HandleDroppedFiles(paths, vm);
     }
 

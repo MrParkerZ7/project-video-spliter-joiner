@@ -159,6 +159,52 @@ public sealed class DroppedFileFeedbackTests : IDisposable
             "and noise is what teaches people to ignore the one that matters");
     }
 
+    // ---- The diagnostic that makes the NEXT report answerable ---------------------------------------
+
+    /// <summary>
+    /// T-154 — a probe that does not write is worse than no probe, because it reads as evidence of
+    /// absence. The point of this trace is to tell two cases apart on the next report: nothing logged
+    /// means Windows never delivered the drag to us (not our bug); a line means we saw it and the line
+    /// says what we decided.
+    /// </summary>
+    [Fact]
+    public void TheDragDropTraceActuallyWrites_AndRecordsTheDecision()
+    {
+        var before = File.Exists(DropDiagnostics.LogPath)
+            ? File.ReadAllText(DropDiagnostics.LogPath).Length
+            : 0;
+
+        var secret = Path.Combine(_dir, "private-folder-name", "holiday.m2ts");
+        DropDiagnostics.Record(
+            "drop", "TestOnly", new[] { secret, Path.Combine(_dir, "notes.txt") },
+            accepted: false, note: "unit-test");
+
+        File.Exists(DropDiagnostics.LogPath).Should().BeTrue("the trace must reach disk to be worth anything");
+        var text = File.ReadAllText(DropDiagnostics.LogPath);
+        text.Length.Should().BeGreaterThan(before);
+
+        var line = text.TrimEnd().Split('\n').Last();
+        line.Should().Contain("TestOnly").And.Contain("files=2").And.Contain("accepted=False");
+        line.Should().Contain(".m2ts", "the extension is what diagnoses an allowlist refusal");
+        line.Should().NotContain(
+            "private-folder-name",
+            "extensions are enough to diagnose a refusal - this file gets pasted into bug reports, so it "
+            + "must not carry someone's folder structure with it");
+    }
+
+    [Fact]
+    public void TheTraceSurvivesGarbageInput()
+    {
+        var act = () =>
+        {
+            DropDiagnostics.Record("over", "TestOnly", null, accepted: false);
+            DropDiagnostics.Record("over", "TestOnly", new string?[] { null, "", "   " }!, accepted: false);
+            DropDiagnostics.Record("over", "TestOnly", new[] { "|<>:invalid" }, accepted: false);
+        };
+
+        act.Should().NotThrow("a diagnostic must never be the reason a drop fails");
+    }
+
     // ---- Routing, which had no coverage at all -------------------------------------------------------
 
     [Trait("serves-spec", "SPEC-011")]
