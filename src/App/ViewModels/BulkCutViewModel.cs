@@ -886,6 +886,74 @@ public sealed class BulkCutViewModel : ObservableObject
     /// (probe-fail → LoadFailed, excluded), then fire the THROTTLED background keyframe scan. Never throws
     /// for a bad path.
     /// </summary>
+    private string? _dropSummary;
+
+    /// <summary>
+    /// Why a drop did not add everything you dropped — or null when it did (T-154).
+    ///
+    /// <para>Three paths discard a dropped file, and all three used to do it in silence: an extension the
+    /// app does not recognise, a file already in the list, and the non-video half of a mixed drop. From
+    /// the outside every one of them looks like a dead drop target, which is exactly how the bug was
+    /// reported — <i>"why it's work sometime doesn't work some time?"</i>. It was never intermittent; it
+    /// depended on the file, and the app never said which case you were in.</para>
+    ///
+    /// <para>Deliberately null when nothing was refused. A message on every drop is noise, and noise is
+    /// what teaches people to ignore the one that matters.</para>
+    /// </summary>
+    public string? DropSummary
+    {
+        get => _dropSummary;
+        private set => SetProperty(ref _dropSummary, value);
+    }
+
+    /// <summary>
+    /// Account for a drop: add what can be added, and explain what could not. Returns the paths actually
+    /// added. The counting happens HERE rather than in the view so it is testable without WPF.
+    /// </summary>
+    public async Task<IReadOnlyList<string>> AddDroppedFilesAsync(IReadOnlyList<string>? dropped)
+    {
+        if (dropped is null || dropped.Count == 0)
+        {
+            DropSummary = null;
+            return Array.Empty<string>();
+        }
+
+        var videos = VideoFileFilter.AcceptVideoFiles(dropped);
+        var notVideo = dropped.Count(p => !string.IsNullOrWhiteSpace(p)) - videos.Count;
+
+        var before = new HashSet<string>(Items.Select(i => NormalizePath(i.Path)), StringComparer.OrdinalIgnoreCase);
+        var alreadyHere = videos.Count(v => before.Contains(NormalizePath(v)));
+
+        await AddFilesAsync(videos).ConfigureAwait(true);
+
+        DropSummary = DescribeRefusals(notVideo, alreadyHere);
+        return videos;
+    }
+
+    /// <summary>Plain-language account of what a drop left behind. Null when it left nothing behind.</summary>
+    private static string? DescribeRefusals(int notVideo, int alreadyHere)
+    {
+        if (notVideo <= 0 && alreadyHere <= 0)
+        {
+            return null;
+        }
+
+        var parts = new List<string>(2);
+        if (notVideo > 0)
+        {
+            parts.Add(notVideo == 1 ? "1 is not a video file" : $"{notVideo} are not video files");
+        }
+
+        if (alreadyHere > 0)
+        {
+            parts.Add(alreadyHere == 1 ? "1 is already in the list" : $"{alreadyHere} are already in the list");
+        }
+
+        var total = notVideo + alreadyHere;
+        var noun = total == 1 ? "file was" : "files were";
+        return $"{total} {noun} not added: {string.Join(", ", parts)}";
+    }
+
     public async Task AddFilesAsync(IEnumerable<string>? paths)
     {
         if (paths is null)

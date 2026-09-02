@@ -223,12 +223,11 @@ public partial class BulkCutView : UserControl
     /// </summary>
     internal static IReadOnlyList<string> HandleDroppedFiles(string[] paths, BulkCutViewModel vm)
     {
+        // T-154: routes through the VM so a file that is NOT added is accounted for. The old version
+        // filtered silently here and told the VM only about the survivors, so the VM had no idea anything
+        // had been refused and nothing could report it.
         var videos = VideoFileFilter.AcceptVideoFiles(paths);
-        if (videos.Count > 0)
-        {
-            vm.AddFilesCommand.Execute(videos.ToArray());
-        }
-
+        _ = vm.AddDroppedFilesAsync(paths);
         return videos;
     }
 

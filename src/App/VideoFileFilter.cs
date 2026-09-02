@@ -13,9 +13,24 @@ namespace VideoSplitJoiner.App;
 public static class VideoFileFilter
 {
     /// <summary>Known video extensions (leading dot, lower-case). Match is case-insensitive.</summary>
+    /// <remarks>
+    /// T-154 — this list is the most common reason a drop is refused, so it errs toward accepting.
+    /// It shipped with 11 entries and no <c>.m2ts</c>/<c>.mts</c> (AVCHD — every consumer camcorder and
+    /// most Blu-ray rips) or <c>.3gp</c> (phone video); dragging one of those did nothing and said
+    /// nothing, which is indistinguishable from a broken drop target and is how this was reported.
+    /// It is still an allowlist rather than "accept anything" so a document handed to ffmpeg fails at the
+    /// door rather than three steps later — see T-154 § Design 4 for the probe-based alternative.
+    /// </remarks>
     private static readonly HashSet<string> VideoExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
-        ".mp4", ".mkv", ".mov", ".avi", ".m4v", ".webm", ".ts", ".mpg", ".mpeg", ".wmv", ".flv",
+        // Mainstream containers
+        ".mp4", ".m4v", ".mkv", ".mov", ".avi", ".webm", ".wmv", ".flv",
+        // MPEG transport / program streams — broadcast, camcorders, DVD, Blu-ray
+        ".ts", ".m2ts", ".mts", ".mpg", ".mpeg", ".mpe", ".m2v", ".m1v", ".vob",
+        // Mobile
+        ".3gp", ".3g2",
+        // Others ffmpeg handles routinely
+        ".ogv", ".asf", ".divx", ".f4v", ".mxf", ".rm", ".rmvb",
     };
 
     /// <summary>
