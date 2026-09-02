@@ -23,7 +23,7 @@ public class FfmpegRunnerIntegrationTests
     private static FfmpegRunner MakeRunner() =>
         new(new FfmpegBinaryLocator(ffmpegOverride: FfmpegTestBinaries.Ffmpeg));
 
-    [Fact]
+    [SkippableFact]
     public async Task Version_Succeeds()
     {
         if (FfmpegTestBinaries.SkipIfMissing(_output, FfmpegTestBinaries.FfmpegExists, "ffmpeg"))
@@ -40,7 +40,7 @@ public class FfmpegRunnerIntegrationTests
         result.ExitCode.Should().Be(0);
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task BadArg_ReturnsFailureResult_NoException()
     {
         if (FfmpegTestBinaries.SkipIfMissing(_output, FfmpegTestBinaries.FfmpegExists, "ffmpeg"))
@@ -58,7 +58,7 @@ public class FfmpegRunnerIntegrationTests
         result.StdErrTail.Should().NotBeEmpty();
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task Cancellation_KillsProcessTree_WithinTimeout()
     {
         if (FfmpegTestBinaries.SkipIfMissing(_output, FfmpegTestBinaries.FfmpegExists, "ffmpeg"))

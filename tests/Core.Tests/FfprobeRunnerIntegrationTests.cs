@@ -21,7 +21,7 @@ public class FfprobeRunnerIntegrationTests
     private static FfprobeRunner MakeRunner() =>
         new(new FfmpegBinaryLocator(ffprobeOverride: FfmpegTestBinaries.Ffprobe));
 
-    [Fact]
+    [SkippableFact]
     public async Task RunJsonAsync_ShowVersions_ReturnsParseableJson()
     {
         if (FfmpegTestBinaries.SkipIfMissing(_output, FfmpegTestBinaries.FfprobeExists, "ffprobe"))
@@ -39,7 +39,7 @@ public class FfprobeRunnerIntegrationTests
         json.Should().Contain("{", "ffprobe should emit JSON");
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task RunJsonAsync_BadArg_ThrowsFfprobeException()
     {
         if (FfmpegTestBinaries.SkipIfMissing(_output, FfmpegTestBinaries.FfprobeExists, "ffprobe"))

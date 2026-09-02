@@ -57,7 +57,7 @@ public class MediaProbeKeyframePacketTests
 
     // ---- Correctness on a known-GOP fixture (packet path) ------------------------------------
 
-    [Fact]
+    [SkippableFact]
     public async Task GetKeyframesAsync_PacketPath_KnownGopFixture_ReturnsWholeSecondKeyframes()
     {
         if (ShouldSkip())
@@ -86,7 +86,7 @@ public class MediaProbeKeyframePacketTests
 
     // ---- Parity: packet path == frame path on the same fixture -------------------------------
 
-    [Fact]
+    [SkippableFact]
     public async Task PacketScan_MatchesFrameScan_OnFixture()
     {
         if (ShouldSkip())
@@ -111,7 +111,7 @@ public class MediaProbeKeyframePacketTests
 
     // ---- Measurement: old frame scan vs new packet scan on a 4K clip -------------------------
 
-    [Fact]
+    [SkippableFact]
     public async Task PacketScan_FasterThanFrameScan_On4K_WithMatchingCounts()
     {
         if (ShouldSkip())

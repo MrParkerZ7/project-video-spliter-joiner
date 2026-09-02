@@ -118,7 +118,7 @@ public class UnicodePathIntegrationTests
         File.Exists(outPath).Should().BeTrue($"ffmpeg should have written the clip at '{outPath}'");
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task Probe_AtUnicodePath_Succeeds()
     {
         if (ShouldSkip())
@@ -149,7 +149,7 @@ public class UnicodePathIntegrationTests
         }
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task Split_AtUnicodeInputAndOutput_ProducesPlayableSegments()
     {
         if (ShouldSkip())
@@ -191,7 +191,7 @@ public class UnicodePathIntegrationTests
         }
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task FailingRun_AtUnicodePath_CapturesPathUnGarbled()
     {
         if (ShouldSkip())

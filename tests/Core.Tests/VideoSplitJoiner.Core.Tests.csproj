@@ -16,6 +16,8 @@
       <PrivateAssets>all</PrivateAssets>
     </PackageReference>
     <PackageReference Include="FluentAssertions" Version="6.12.0" />
+    <!-- T-149: lets a missing ffmpeg report as SKIPPED instead of a silent pass. -->
+    <PackageReference Include="Xunit.SkippableFact" Version="1.5.61" />
     <PackageReference Include="coverlet.collector" Version="6.0.2">
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
       <PrivateAssets>all</PrivateAssets>

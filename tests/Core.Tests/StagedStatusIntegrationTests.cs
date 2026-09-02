@@ -47,7 +47,7 @@ public class SplitStagedStatusIntegrationTests
         return FfmpegTestBinaries.SkipIfMissing(_output, FfmpegTestBinaries.FfprobeExists, "ffprobe");
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task Split_ReportsOrderedStages_PreparingSplittingFinalizingDone()
     {
         if (ShouldSkip())
@@ -122,7 +122,7 @@ public class JoinStagedStatusIntegrationTests
         return FfmpegTestBinaries.SkipIfMissing(_output, FfmpegTestBinaries.FfprobeExists, "ffprobe");
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task Join_ReportsOrderedStages_CheckingJoiningFinalizingDone()
     {
         if (ShouldSkip())

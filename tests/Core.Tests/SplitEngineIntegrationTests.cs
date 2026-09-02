@@ -54,7 +54,7 @@ public class SplitEngineIntegrationTests
         return d;
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task Split_At3And6_ProducesThreeCleanSegments_DurationsSumToWhole()
     {
         if (ShouldSkip())
@@ -116,7 +116,7 @@ public class SplitEngineIntegrationTests
         }
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task Split_SingleCutAt5_ProducesTwoParts()
     {
         if (ShouldSkip())
@@ -140,7 +140,7 @@ public class SplitEngineIntegrationTests
         }
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task Split_NonKeyframeAlignedCut_SnapsToThree_ReportsNegativeDelta()
     {
         if (ShouldSkip())
@@ -170,7 +170,7 @@ public class SplitEngineIntegrationTests
         }
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task Split_FixtureWithAudio_OutputsPreserveAudioStream()
     {
         if (ShouldSkip())
@@ -205,7 +205,7 @@ public class SplitEngineIntegrationTests
 
     // ---- Selectable segments (T-049) --------------------------------------------------------
 
-    [Fact]
+    [SkippableFact]
     public async Task Split_SelectOnlyMiddlePart_WritesOnlyThatFile_OthersNotCreated_ReprobesPlayable()
     {
         if (ShouldSkip())
@@ -260,7 +260,7 @@ public class SplitEngineIntegrationTests
         }
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task Split_SelectAll_SameAsMuxerPath_AllPartsProduced()
     {
         if (ShouldSkip())
@@ -293,7 +293,7 @@ public class SplitEngineIntegrationTests
         }
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task Split_SelectFirstAndLast_WritesOnlyThoseTwo_MiddleSkipped()
     {
         if (ShouldSkip())

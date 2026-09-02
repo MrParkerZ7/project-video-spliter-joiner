@@ -37,7 +37,7 @@ public class MediaProbeIntegrationTests
         return FfmpegTestBinaries.SkipIfMissing(_output, MediaFixtures.FfmpegAvailable, "ffmpeg");
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task ProbeAsync_AvFixture_ReportsDurationStreamsAndContainer()
     {
         if (ShouldSkip())
@@ -69,7 +69,7 @@ public class MediaProbeIntegrationTests
         a.Channels.Should().BePositive();
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task ProbeAsync_NonMediaFile_ReturnsProbeFailed_NoException()
     {
         if (ShouldSkip())
@@ -94,7 +94,7 @@ public class MediaProbeIntegrationTests
         }
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task GetKeyframesAsync_Fixture_SortedAscending_SpacingAboutOneSecond()
     {
         if (ShouldSkip())
@@ -115,7 +115,7 @@ public class MediaProbeIntegrationTests
         gop.Should().BeCloseTo(TimeSpan.FromSeconds(1.0), TimeSpan.FromMilliseconds(100));
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task SnapToNearestKeyframe_AgainstRealFixture_SnapsToWholeSeconds()
     {
         if (ShouldSkip())
@@ -133,7 +133,7 @@ public class MediaProbeIntegrationTests
         snap2.Snapped.Should().BeCloseTo(TimeSpan.FromSeconds(4.0), TimeSpan.FromMilliseconds(50));
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task GetKeyframesAsync_SecondCall_ReturnsSameList_FromCache()
     {
         if (ShouldSkip())

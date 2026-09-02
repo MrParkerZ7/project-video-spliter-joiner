@@ -110,7 +110,7 @@ public class MpegtsSplitIntegrationTests
         return d;
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task Split_MpegtsInput_ProducesPlayableSegments_WithVideoAndAudio()
     {
         if (ShouldSkip())
@@ -172,7 +172,7 @@ public class MpegtsSplitIntegrationTests
         }
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task Split_MpegtsAtUnicodePath_ProducesPlayableSegments()
     {
         if (ShouldSkip())

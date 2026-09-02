@@ -55,7 +55,7 @@ public class JoinEngineIntegrationTests
         return Path.Combine(d, "joined" + ext);
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task Join_ThreeCompatibleClips_ProducesOnePlayableFile_DurationSumsPreserved()
     {
         if (ShouldSkip())
@@ -93,7 +93,7 @@ public class JoinEngineIntegrationTests
         }
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task CheckCompatibility_OnCompatibleSet_ReturnsCompatibleNoMismatches()
     {
         if (ShouldSkip())
@@ -109,7 +109,7 @@ public class JoinEngineIntegrationTests
         report.Mismatches.Should().BeEmpty();
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task Join_WithIncompatibleResolution_Refuses_NamesClip_NoFileWritten()
     {
         if (ShouldSkip())
@@ -147,7 +147,7 @@ public class JoinEngineIntegrationTests
         }
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task Join_TwoCompatibleClipsWithAudio_OutputKeepsAudio()
     {
         if (ShouldSkip())
@@ -178,7 +178,7 @@ public class JoinEngineIntegrationTests
         }
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task Join_SingleInput_PassthroughCopy_ProducesPlayableFile()
     {
         if (ShouldSkip())

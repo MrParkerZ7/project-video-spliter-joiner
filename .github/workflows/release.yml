@@ -48,12 +48,20 @@ jobs:
         with:
           dotnet-version: '8.0.x'
 
-      - name: Test (release gate)
-        run: dotnet test VideoSplitJoiner.sln -c Debug --nologo
-
+      # T-149: this MUST come before the test step. It used to run after, so the release gate ran on a
+      # machine with no ffmpeg - and because the integration guard early-returned, 43 split / join /
+      # smart-cut / probe tests reported PASSED without executing. The gate could not fail.
       - name: Fetch bundled ffmpeg shared build
         shell: pwsh
         run: ./packaging/fetch-ffmpeg-shared.ps1
+
+      - name: Test (release gate)
+        env:
+          # Point the integration tests at what we just fetched, and make a missing binary a hard
+          # FAILURE rather than a skip: on the release gate, "did not run" is not an acceptable pass.
+          VSJ_FFMPEG_DIR: ${{ github.workspace }}/ffmpeg-shared
+          VSJ_REQUIRE_FFMPEG: '1'
+        run: dotnet test VideoSplitJoiner.sln -c Debug --nologo
 
       - name: Package (self-contained exe + ffmpeg + portable zip)
         shell: pwsh

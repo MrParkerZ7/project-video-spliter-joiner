@@ -57,7 +57,7 @@ public class FourKPerformanceTests
         return d;
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task KeyframeScan_On4K_ReturnsKeyframes_AndDoesNotStall()
     {
         if (ShouldSkip())
@@ -86,7 +86,7 @@ public class FourKPerformanceTests
         _output.WriteLine($"[T-024] 4K keyframe scan (cached): {sw2.ElapsedMilliseconds} ms");
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task CopySplit_4K_ProducesValidSegments_AndIsComparableTo1080p()
     {
         if (ShouldSkip())

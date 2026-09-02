@@ -113,7 +113,7 @@ public sealed class SmartCutEngineIntegrationTests : IDisposable
     // ---- The fixture is what we think it is -------------------------------------------------------
 
     [Trait("serves-spec", "SPEC-002")]
-    [Fact]
+    [SkippableFact]
     public async Task TheFixtureReallyHasACoarseKeyframeGrid()
     {
         if (ShouldSkip())
@@ -139,7 +139,7 @@ public sealed class SmartCutEngineIntegrationTests : IDisposable
     // ---- The claim the whole feature rests on -----------------------------------------------------
 
     [Trait("serves-spec", "SPEC-002")]
-    [Fact]
+    [SkippableFact]
     public async Task ExactCut_At5s_ProducesAFileThatReallyStartsAt5s_NotAtTheKeyframe()
     {
         if (ShouldSkip())
@@ -168,7 +168,7 @@ public sealed class SmartCutEngineIntegrationTests : IDisposable
     }
 
     [Trait("serves-spec", "SPEC-002")]
-    [Fact]
+    [SkippableFact]
     public async Task TheLosslessPathReallyDoesSnap_SoTheDifferenceIsDemonstrated_NotAssumed()
     {
         if (ShouldSkip())
@@ -195,7 +195,7 @@ public sealed class SmartCutEngineIntegrationTests : IDisposable
     // ---- The tail is still copied, not re-encoded --------------------------------------------------
 
     [Trait("serves-spec", "SPEC-002")]
-    [Fact]
+    [SkippableFact]
     public async Task ExactCut_ReEncodesOnlyTheHead_TheRestStaysCopied()
     {
         if (ShouldSkip())
@@ -226,7 +226,7 @@ public sealed class SmartCutEngineIntegrationTests : IDisposable
     // ---- An end cut, since the tail path differs -----------------------------------------------------
 
     [Trait("serves-spec", "SPEC-002")]
-    [Fact]
+    [SkippableFact]
     public async Task ExactCut_WithBothEnds_KeepsExactlyTheRequestedMiddle()
     {
         if (ShouldSkip())
