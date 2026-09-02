@@ -221,7 +221,7 @@ powershell -File packaging/package.ps1        # produces dist/VideoSplitJoiner-v
   (see `FfmpegTestBinaries.SkipIfMissing`), so a machine without FFmpeg still runs green. FFmpeg
   binaries are **not committed** — the test path references them as an override; packaging copies
   them in from `-FfmpegSource`.
-- `Directory.Build.props` holds `<Version>` (currently `0.1.0`; `1.0.0` is the target).
+- `Directory.Build.props` holds `<Version>` (currently `1.2.0`; `1.0.0` shipped 2026-08-26).
 
 ## Git
 

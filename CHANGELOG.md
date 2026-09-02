@@ -7,6 +7,59 @@ goal; `0.1.0` is the first end-to-end, shippable cut.
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-09-02
+
+A **minor**, not a patch: this run added features (profile backup/restore, delete-originals, snapshot
+thumbnails, batch-wide apply) alongside the fixes.
+
+### Added
+- **Cut profiles — back up and restore** (G-051): a **Back up…** / **Restore…** pair in the profile bar
+  writes every profile, pictures included, to one file you can keep, move to another PC, or share.
+  Uninstalling never removed your profiles, but that only ever covered *this* machine; a file covers a new
+  PC and a wiped disk too. Restoring is additive — profiles you already have are kept unless you say
+  otherwise, and a damaged backup changes nothing at all.
+- **Bulk Cut — Delete originals** (G-050): once a batch finishes, reclaim the space it left behind. The
+  button names how many files and roughly how much space, sends them to the Recycle Bin (never a
+  permanent delete), and skips anything that failed or whose trimmed file is missing.
+- **Cut profiles — use the frame you are looking at** (G-047): a **Use current frame** button makes the
+  frame showing in the preview the profile's picture, instead of hunting for an image file.
+- **Bulk Cut — one gesture sets the whole batch** (G-046): "Set intro/outro here" now applies across every
+  ticked row rather than the selected one, so a season of episodes takes one action.
+- **Bulk Cut — Run says what it will do first** (G-046): the count beside Run explains which rows are
+  included and which are being skipped, before you press it. A user set one cut, pressed Run, got one
+  file, and had to ask why.
+- **The app reopens the way you left it** (G-049): the last-used tab is remembered across restarts, as the
+  layout orientation already was.
+- **Exact cut can replace originals safely**: the exact-cut path is now cleared for the replace-originals
+  output mode, and is verified against real media rather than fakes.
+
+### Fixed
+- **Videos on a network share** (G-045): a share whose name contains a space (`\Seagate NAS\…`) failed
+  to open with *"Invalid URI: The hostname could not be parsed"*. Such paths now play, and any path the
+  preview genuinely cannot open explains itself instead of leaking a .NET error.
+- **Saving a cut profile no longer breaks the screen**: saving the first profile made the header taller,
+  and the layout let it swallow the rest of the tab until something forced a redraw. The content area now
+  keeps its space however tall the header gets.
+- **The save dialog no longer edits the wrong profile**: its thumbnail controls acted on the
+  *previously selected* profile, so Clear there silently destroyed a different profile's picture. All
+  picture editing lives in the profile bar now, where the selected profile is the one being acted on.
+- **A profile's picture is optional and changeable**: it can be set from a frame, uploaded, or removed at
+  any time after the profile is saved.
+- **The profile bar no longer hides its own buttons**: the bar wraps instead of clipping when it runs out
+  of width.
+- **Delete originals no longer skips the video you were watching**: the preview held that file open, so
+  the sweep refused exactly it and quietly removed one fewer file than it said. The app now releases its
+  own handle first.
+- **Delete originals is styled and placed as the destructive action it is**: it uses the screen's danger
+  styling and sits at the opposite end of the footer from Run — it had been appearing on the pixels Run
+  occupied a moment earlier, under the cursor of someone who had just been pressing it.
+
+### Internal
+- The release gate can now fail: 43 integration tests had been reporting *passed* on CI without executing,
+  because the ffmpeg they need was looked for at one hardcoded path and fetched only after the tests ran.
+- Running the test suite no longer overwrites your real application settings.
+- A ~40%-per-run flake in the test suite was diagnosed and fixed (a wall-clock wait, not a race).
+
 ## [1.1.0] - 2026-08-29
 
 ### Added
