@@ -345,6 +345,113 @@ public sealed class DeleteOriginalsTests : IDisposable
         disposer.Disposed.Should().NotContain(row.Path);
     }
 
+    /// <summary>
+    /// SPEC-011 I131 — a refusal names <b>who is holding the file</b>, in the summary the user reads.
+    ///
+    /// <para>`FileLockOwner` is separately tested against a real lock, but that only proves the lookup
+    /// works. What the user actually sees is this string, and "Still in use: ep12.mp4" without a culprit
+    /// is a dead end — the reporter's question was precisely <i>what is holding it, and can you let
+    /// go?</i>. The lookup is injected so the message is testable without holding an OS lock.</para>
+    /// </summary>
+    [Trait("serves-spec", "SPEC-011")]
+    [Fact]
+    public async Task ARefusedFile_IsNamedInTheSummary_WithWhoeverIsHoldingIt()
+    {
+        var (vm, probe, disposer, _) = Build();
+        var row = MarkTrimmed(await AddAsync(vm, probe, MakeVideo("held.mp4")));
+
+        disposer.Refuse.Add(row.Path);
+        vm.LookupFileHolders = _ => new[] { "ffmpeg.exe (pid 1234)" };
+
+        vm.DeleteOriginals();
+
+        vm.Operation.ResultSummary.Should().Contain("held.mp4", "name the file, not just a count");
+        vm.Operation.ResultSummary.Should().Contain(
+            "ffmpeg.exe", "and name what has it — otherwise the user can do nothing about it");
+    }
+
+    /// <summary>
+    /// SPEC-011 I131 — the holder lookup is a diagnostic, so it must never break the message it decorates.
+    /// </summary>
+    [Trait("serves-spec", "SPEC-011")]
+    [Fact]
+    public async Task AFailingHolderLookup_StillNamesTheFile()
+    {
+        var (vm, probe, disposer, _) = Build();
+        var row = MarkTrimmed(await AddAsync(vm, probe, MakeVideo("held2.mp4")));
+
+        disposer.Refuse.Add(row.Path);
+        vm.LookupFileHolders = _ => throw new InvalidOperationException("Restart Manager unavailable");
+
+        var act = () => vm.DeleteOriginals();
+
+        act.Should().NotThrow("a diagnostic that throws is worse than one that says nothing");
+        vm.Operation.ResultSummary.Should().Contain("held2.mp4");
+    }
+
+    [Trait("serves-spec", "SPEC-011")]
+    [Fact]
+    public async Task NothingIsHolding_ReportsJustTheFilename()
+    {
+        var (vm, probe, disposer, _) = Build();
+        var row = MarkTrimmed(await AddAsync(vm, probe, MakeVideo("held3.mp4")));
+
+        disposer.Refuse.Add(row.Path);
+        vm.LookupFileHolders = _ => Array.Empty<string>();
+
+        vm.DeleteOriginals();
+
+        vm.Operation.ResultSummary.Should().Contain("held3.mp4");
+        vm.Operation.ResultSummary.Should().NotContain(
+            "held by", "inventing a culprit would be worse than naming none");
+    }
+
+    /// <summary>
+    /// SPEC-011 I127 — no dialog-capable API is called on the delete path.
+    ///
+    /// <para>A test cannot see a Windows dialog, so what is pinned instead is the property that makes one
+    /// impossible: the disposer must not reach for <c>Microsoft.VisualBasic.FileIO</c>, whose
+    /// <c>UIOption</c> has no silent value and therefore raises shell UI on every locked file. Asserted
+    /// against the source, because the visible symptom is identical either way until a file is locked.</para>
+    /// </summary>
+    [Trait("serves-spec", "SPEC-011")]
+    [Fact]
+    public void TheDisposerCallsNoApiThatCanShowADialog()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        string? source = null;
+        while (dir is not null && source is null)
+        {
+            var candidate = Path.Combine(dir.FullName, "src", "App", "Io", "RecycleBinOriginalDisposer.cs");
+            if (File.Exists(candidate))
+            {
+                source = candidate;
+            }
+
+            dir = dir.Parent;
+        }
+
+        source.Should().NotBeNull();
+
+        // Comments STRIPPED first. The file deliberately names the old API to explain why it is gone, and
+        // a naive text search flags that documentation as the violation it warns about — twice, while
+        // writing this. A test about code should read code.
+        var code = string.Join(
+            Environment.NewLine,
+            File.ReadAllLines(source!)
+                .Select(l => l.TrimStart())
+                .Where(l => !l.StartsWith("//", StringComparison.Ordinal)));
+
+        code.Should().NotContain(
+            "Microsoft.VisualBasic",
+            "UIOption has only AllDialogs and OnlyErrorDialogs — neither is silent, so every locked file " +
+            "raised a Windows dialog on every run (ADR-0022)");
+        code.Should().NotContain("UIOption", "that enum IS the dialog");
+        code.Should().NotContain("FileSystem.DeleteFile", "the helper that cannot be made quiet");
+        code.Should().Contain(
+            "ShellRecycleBin", "it goes through the silent shell operation, which returns a result code");
+    }
+
     [Trait("serves-spec", "SPEC-011")]
     [Fact]
     public async Task AnEmptyOutputFile_IsNotTreatedAsASuccessfulTrim()

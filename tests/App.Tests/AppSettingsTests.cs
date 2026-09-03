@@ -28,6 +28,77 @@ public sealed class AppSettingsTests : IDisposable
         try { Directory.Delete(_dir, recursive: true); } catch { /* best-effort */ }
     }
 
+    /// <summary>
+    /// SPEC-009 I27 — the two destructive Bulk Cut preferences round-trip, and **absent means OFF**.
+    ///
+    /// <para>They are <c>bool?</c> precisely so a settings file written by an older build cannot silently
+    /// arm a destructive option: the tolerant-load default has to be the safe answer rather than the
+    /// convenient one. That is a property of the DEFAULT, so it is asserted against a file that predates
+    /// the feature, not against a fresh object.</para>
+    /// </summary>
+    [Trait("serves-spec", "SPEC-009")]
+    [Fact]
+    public void TheDestructiveBulkFlagsRoundTrip()
+    {
+        var settings = new AppSettings(_file);
+        settings.BulkAutoDeleteOriginals = true;
+        settings.BulkAutoEmptyRecycleBin = true;
+
+        var reloaded = new AppSettings(_file);
+        reloaded.BulkAutoDeleteOriginals.Should().BeTrue();
+        reloaded.BulkAutoEmptyRecycleBin.Should().BeTrue();
+    }
+
+    [Trait("serves-spec", "SPEC-009")]
+    [Fact]
+    public void ASettingsFileFromBeforeTheFeature_LeavesBothOff()
+    {
+        // Exactly what an older build wrote: valid settings, no knowledge of these keys.
+        Directory.CreateDirectory(_dir);
+        File.WriteAllText(_file, "{ \"lastInputDir\": \"D:\\\\videos\" }");
+
+        var settings = new AppSettings(_file);
+
+        settings.BulkAutoDeleteOriginals.Should().NotBe(
+            true, "an upgrade must never silently arm automatic deletion");
+        settings.BulkAutoEmptyRecycleBin.Should().NotBe(
+            true, "still less permanent deletion, which is what these two together mean");
+    }
+
+    [Trait("serves-spec", "SPEC-009")]
+    [Fact]
+    public void ACorruptSettingsFileDoesNotArmThem()
+    {
+        Directory.CreateDirectory(_dir);
+        File.WriteAllText(_file, "{ not json at all");
+
+        var settings = new AppSettings(_file);
+
+        settings.BulkAutoDeleteOriginals.Should().NotBe(
+            true, "a tolerant load must fail SAFE — an unreadable file is not consent");
+        settings.BulkAutoEmptyRecycleBin.Should().NotBe(true);
+    }
+
+    /// <summary>
+    /// SPEC-009 I28 — a preference persists only when it actually changes.
+    /// </summary>
+    [Trait("serves-spec", "SPEC-009")]
+    [Fact]
+    public void WritingTheSameValueDoesNotRewriteTheFile()
+    {
+        var settings = new AppSettings(_file);
+        settings.BulkAutoDeleteOriginals = true;
+
+        var afterFirst = File.ReadAllText(_file);
+        var stamp = File.GetLastWriteTimeUtc(_file);
+
+        settings.BulkAutoDeleteOriginals = true;   // same value — nothing changed
+
+        File.GetLastWriteTimeUtc(_file).Should().Be(
+            stamp, "restoring a value the user already had must not rewrite their settings file");
+        File.ReadAllText(_file).Should().Be(afterFirst);
+    }
+
     [Fact]
     public void RoundTrips_BothDirs_ToDiskAndReloads()
     {
