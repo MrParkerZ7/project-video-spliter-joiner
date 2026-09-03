@@ -48,6 +48,8 @@ public sealed class AppSettings : IAppSettings
     private double? _horizontalSplitRatio;
     private double? _verticalSplitRatio;
     private bool? _bulkApplyCutToAllRows;
+    private bool? _bulkAutoDeleteOriginals;
+    private bool? _bulkAutoEmptyRecycleBin;
     private AppTab? _lastTab;
     private double? _bulkHorizontalSplitRatio;
     private double? _bulkVerticalSplitRatio;
@@ -173,6 +175,34 @@ public sealed class AppSettings : IAppSettings
             if (!Nullable.Equals(_bulkApplyCutToAllRows, value))
             {
                 _bulkApplyCutToAllRows = value;
+                Save();
+            }
+        }
+    }
+
+    /// <inheritdoc />
+    public bool? BulkAutoDeleteOriginals
+    {
+        get => _bulkAutoDeleteOriginals;
+        set
+        {
+            if (!Nullable.Equals(_bulkAutoDeleteOriginals, value))
+            {
+                _bulkAutoDeleteOriginals = value;
+                Save();
+            }
+        }
+    }
+
+    /// <inheritdoc />
+    public bool? BulkAutoEmptyRecycleBin
+    {
+        get => _bulkAutoEmptyRecycleBin;
+        set
+        {
+            if (!Nullable.Equals(_bulkAutoEmptyRecycleBin, value))
+            {
+                _bulkAutoEmptyRecycleBin = value;
                 Save();
             }
         }
@@ -322,7 +352,9 @@ public sealed class AppSettings : IAppSettings
                 // T-143: an unrecognised stored value (a hand-edited file, a build with fewer tabs)
                 // falls back to Split rather than throwing or opening on nothing.
                 _lastTab = Enum.IsDefined(typeof(AppTab), dto.LastTab ?? -1) ? (AppTab)dto.LastTab!.Value : null;
-                _bulkApplyCutToAllRows = dto.BulkApplyCutToAllRows; // absent (older file) → null → default (ON)
+                _bulkApplyCutToAllRows = dto.BulkApplyCutToAllRows;
+                _bulkAutoDeleteOriginals = dto.BulkAutoDeleteOriginals;   // absent -> null -> OFF
+                _bulkAutoEmptyRecycleBin = dto.BulkAutoEmptyRecycleBin;   // absent -> null -> OFF // absent (older file) → null → default (ON)
                 _bulkHorizontalSplitRatio = ClampRatio(dto.BulkHorizontalSplitRatio); // absent (older file) → null → default
                 _bulkVerticalSplitRatio = ClampRatio(dto.BulkVerticalSplitRatio);
                 _cutProfiles = MapProfiles(dto.CutProfiles); // missing/empty field → empty list (older files safe)
@@ -475,6 +507,8 @@ public sealed class AppSettings : IAppSettings
                 VerticalSplitRatio = _verticalSplitRatio,
                 LastTab = (int?)_lastTab,
                 BulkApplyCutToAllRows = _bulkApplyCutToAllRows,
+                BulkAutoDeleteOriginals = _bulkAutoDeleteOriginals,
+                BulkAutoEmptyRecycleBin = _bulkAutoEmptyRecycleBin,
                 BulkHorizontalSplitRatio = _bulkHorizontalSplitRatio,
                 BulkVerticalSplitRatio = _bulkVerticalSplitRatio,
                 // Null (not an empty array) when there are none, so the key is omitted entirely
@@ -572,6 +606,10 @@ public sealed class AppSettings : IAppSettings
 
         [JsonPropertyName("bulkApplyCutToAllRows")]
         public bool? BulkApplyCutToAllRows { get; set; }
+
+        public bool? BulkAutoDeleteOriginals { get; set; }
+
+        public bool? BulkAutoEmptyRecycleBin { get; set; }
 
         [JsonPropertyName("bulkVerticalSplitRatio")]
         public double? BulkVerticalSplitRatio { get; set; }

@@ -219,6 +219,61 @@ public sealed class BulkCutViewLayoutTests
             Environment.NewLine + string.Join(Environment.NewLine, failures));
     }
 
+    /// <summary>
+    /// T-156 — the footer's option row must WRAP, not clip.
+    ///
+    /// <para>Adding two checkboxes pushed this row past the window width, and a horizontal
+    /// <c>StackPanel</c> silently clips: "Replace originals" and both new options simply vanished off
+    /// the right edge at 1280px, with nothing on screen to suggest anything was missing.</para>
+    ///
+    /// <para>This is the <b>third</b> time the same mistake has shipped here — T-136 in the profile bar,
+    /// T-141 in the header, now the footer. A pattern that recurs three times is not a slip, so it gets a
+    /// test rather than another careful comment.</para>
+    /// </summary>
+    [Trait("serves-spec", "SPEC-011")]
+    [Fact]
+    public void TheFooterOptionsWrapInsteadOfClipping()
+    {
+        var failures = new List<string>();
+
+        OnSta(() =>
+        {
+            foreach (var (w, h) in Sizes)
+            {
+                var view = new BulkCutView();
+                LayOut(view, w, h);
+
+                var options = Find<FrameworkElement>(view, "FooterOptions");
+                if (options is null)
+                {
+                    failures.Add($"{w}x{h}: FooterOptions not found — the view's shape changed");
+                    continue;
+                }
+
+                // Measure against the WINDOW, not the panel. A horizontal StackPanel that overflows
+                // reports its own oversized width as ActualWidth, so its children never look out of
+                // bounds relative to IT — the clip happens at the Grid column boundary. Comparing child
+                // to panel therefore passes even when everything is off-screen, which is exactly how the
+                // first version of this test passed against the clipping layout it was written to catch.
+                foreach (var child in Descendants<CheckBox>(options))
+                {
+                    var right = child.TranslatePoint(new Point(0, 0), view).X + child.ActualWidth;
+
+                    if (right > w + 1)
+                    {
+                        failures.Add(
+                            $"{w}x{h}: an option ends at x={right:0}, past the {w:0}px window — it is " +
+                            "off-screen, which is how three destructive checkboxes became invisible");
+                    }
+                }
+            }
+        });
+
+        failures.Should().BeEmpty(
+            "the footer options must wrap onto another line rather than disappear:" +
+            Environment.NewLine + string.Join(Environment.NewLine, failures));
+    }
+
     // ---- plumbing ---------------------------------------------------------------------------------
 
     /// <summary>

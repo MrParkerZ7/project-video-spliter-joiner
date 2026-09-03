@@ -1003,7 +1003,12 @@
                         ToolTip="Send the originals of successfully trimmed videos to the Recycle Bin. Skips anything that failed, and anything whose trimmed file is missing. Nothing is deleted permanently."
                         Visibility="{Binding CanDeleteOriginals, Converter={StaticResource BoolToVisibility}}" />
 
-                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                <!-- T-156: a WrapPanel, not a horizontal StackPanel. Two more options pushed this row
+                     past the window width and a StackPanel CLIPS rather than wraps — the destructive
+                     "Replace originals" and both new checkboxes simply vanished off the right edge at
+                     1280px. Exactly the failure T-136 fixed in the profile bar and T-141 in the header;
+                     third time, so it is now pinned by a layout test. -->
+                <WrapPanel x:Name="FooterOptions" Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
                     <!-- T-123: the note is bound, never hard-coded, so it can never contradict the mode. -->
                     <TextBlock Text="{Binding OutputNote}"
                                VerticalAlignment="Center"
@@ -1027,8 +1032,41 @@
                                Foreground="{StaticResource TextMutedBrush}"
                                FontSize="{StaticResource FontSizeSmall}" />
 
+                    <!-- T-156: the armed state must be visible BEFORE Run is pressed, not discovered
+                         after a batch has already deleted something. -->
+                    <TextBlock Text="{Binding DestructiveOutputNote}"
+                               Margin="14,0,0,0"
+                               VerticalAlignment="Center"
+                               FontWeight="SemiBold"
+                               Foreground="{StaticResource DangerBrush}"
+                               FontSize="{StaticResource FontSizeSmall}"
+                               Visibility="{Binding DestructiveOutputNote, Converter={StaticResource NullToCollapsed}}" />
+
                     <!-- The destructive choice: deliberately NOT a look-alike peer of the checkbox above -
                          danger colour-role + warning glyph + bold weight (three differentiators). -->
+                    <!-- T-156: reclaim space without two manual steps after every batch. Both default
+                         OFF; the second is disabled until the first is on (emptying the bin frees
+                         nothing this app put there otherwise), and arming it asks once because the pair
+                         is permanent deletion with no undo. -->
+                    <CheckBox Margin="18,0,0,0"
+                              VerticalAlignment="Center"
+                              Content="Auto-delete originals"
+                              IsChecked="{Binding AutoDeleteOriginals, Mode=TwoWay}"
+                              ToolTip="After a batch finishes with no failures, send each original to the Recycle Bin automatically. A partly-failed batch never deletes anything." />
+
+                    <CheckBox Margin="12,0,0,0"
+                              VerticalAlignment="Center"
+                              IsEnabled="{Binding CanAutoEmptyRecycleBin}"
+                              IsChecked="{Binding AutoEmptyRecycleBin, Mode=TwoWay}"
+                              ToolTip="Also empty the Recycle Bin, so the space is actually freed. This makes the deletion PERMANENT and unrecoverable, and empties the whole bin — including files this app never touched.">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="⚠" Margin="0,0,5,0" Foreground="{StaticResource DangerBrush}" />
+                            <TextBlock Text="and empty bin"
+                                       FontWeight="SemiBold"
+                                       Foreground="{StaticResource DangerBrush}" />
+                        </StackPanel>
+                    </CheckBox>
+
                     <CheckBox Margin="18,0,0,0"
                               VerticalAlignment="Center"
                               IsChecked="{Binding ReplaceOriginal, Mode=TwoWay}"
@@ -1040,7 +1078,7 @@
                                        Foreground="{StaticResource DangerBrush}" />
                         </StackPanel>
                     </CheckBox>
-                </StackPanel>
+                </WrapPanel>
 
                 <StackPanel Grid.Column="2" Orientation="Horizontal">
                     <!-- T-134: what Run will actually do, said BEFORE it is pressed. The count was already

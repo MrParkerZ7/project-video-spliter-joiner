@@ -845,6 +845,147 @@ public sealed class BulkCutViewModel : ObservableObject
                 }
             }));
 
+    /// <summary>
+    /// T-156 — delete each original automatically once a batch finishes with no failed rows.
+    ///
+    /// <para>Reclaiming space is otherwise two manual steps after every batch, which is the difference
+    /// between a batch completing and one failing on a full disk. Defaults OFF and persists: a
+    /// destructive default is not a default.</para>
+    /// </summary>
+    public bool AutoDeleteOriginals
+    {
+        get => _settings.BulkAutoDeleteOriginals ?? false;
+        set
+        {
+            if (AutoDeleteOriginals == value)
+            {
+                return;
+            }
+
+            _settings.BulkAutoDeleteOriginals = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(CanAutoEmptyRecycleBin));
+            OnPropertyChanged(nameof(DestructiveOutputNote));
+
+            if (!value)
+            {
+                // Emptying the bin is meaningless without the delete, and leaving it armed would let a
+                // later re-tick of THIS box silently re-enable permanent deletion without asking again.
+                AutoEmptyRecycleBin = false;
+            }
+        }
+    }
+
+    /// <summary>
+    /// T-156 — empty the Recycle Bin after an automatic delete, since binning alone frees no space.
+    ///
+    /// <para><b>Together with <see cref="AutoDeleteOriginals"/> this is permanent deletion with no
+    /// undo.</b> Everything that makes deleting originals safe to offer — it goes to the bin, you can
+    /// restore it, the sweep re-checks eligibility at deletion time — rests on the file still existing
+    /// afterwards. So the setter refuses to arm without a caller-supplied confirmation, and an unwired
+    /// host can never turn it on.</para>
+    /// </summary>
+    public bool AutoEmptyRecycleBin
+    {
+        get => _settings.BulkAutoEmptyRecycleBin ?? false;
+        set
+        {
+            if (AutoEmptyRecycleBin == value)
+            {
+                return;
+            }
+
+            if (value)
+            {
+                // Meaningless on its own, and arming it silently would be the worst possible default.
+                if (!AutoDeleteOriginals || !ConfirmPermanentDeletion())
+                {
+                    OnPropertyChanged();   // snap the checkbox back
+                    return;
+                }
+            }
+
+            _settings.BulkAutoEmptyRecycleBin = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(DestructiveOutputNote));
+        }
+    }
+
+    /// <summary>The bin checkbox is only meaningful once auto-delete is on.</summary>
+    public bool CanAutoEmptyRecycleBin => AutoDeleteOriginals;
+
+    /// <summary>
+    /// T-156 — asked ONCE, before permanent deletion is armed. Defaults to refusing, so an unwired or
+    /// half-wired host cannot arm it; the view supplies the real dialog.
+    /// </summary>
+    public Func<bool> ConfirmPermanentDeletion { get; set; } = () => false;
+
+    /// <summary>
+    /// T-156 — says "permanent" in the footer while it IS permanent, so the state is visible BEFORE Run
+    /// is pressed rather than discovered afterwards. Null when nothing destructive is armed.
+    /// </summary>
+    public string? DestructiveOutputNote =>
+        AutoDeleteOriginals && AutoEmptyRecycleBin
+            ? "Originals will be deleted PERMANENTLY after each successful batch — not recoverable"
+            : AutoDeleteOriginals
+                ? "Originals will be sent to the Recycle Bin after each successful batch"
+                : null;
+
+    /// <summary>
+    /// T-156 — run the delete sweep automatically once a batch finishes, if the user armed it.
+    ///
+    /// <para>Only after a batch with <b>no failed rows</b>: a partly-failed run is exactly when the
+    /// originals are still the good copy. Reuses <see cref="DeleteOriginals"/> unchanged — same
+    /// eligibility re-checks, same per-row isolation, same reporting — because a second deletion path
+    /// would be a second place for this to go wrong.</para>
+    ///
+    /// <para>The confirmation is skipped: the checkbox IS the consent, given in advance. The result
+    /// summary still says exactly what was binned and what was refused.</para>
+    /// </summary>
+    private void RunAutoDeleteIfArmed()
+    {
+        if (!AutoDeleteOriginals || BatchState != BulkBatchState.Completed)
+        {
+            return;
+        }
+
+        var previousConfirm = ConfirmDeleteOriginals;
+        try
+        {
+            ConfirmDeleteOriginals = (_, _) => true;   // consent was given by ticking the box
+            DeleteOriginals();
+        }
+        finally
+        {
+            ConfirmDeleteOriginals = previousConfirm;
+        }
+
+        if (AutoEmptyRecycleBin)
+        {
+            EmptyRecycleBin();
+        }
+    }
+
+    /// <summary>
+    /// T-156 — empty the Recycle Bin so the space is actually freed. Injectable so the destructive step
+    /// is testable without emptying the developer's own bin, and defaults to doing NOTHING for exactly
+    /// that reason.
+    /// </summary>
+    public Action EmptyRecycleBinAction { get; set; } = () => { };
+
+    private void EmptyRecycleBin()
+    {
+        try
+        {
+            EmptyRecycleBinAction();
+        }
+        catch
+        {
+            // Best-effort: the originals are already binned and the batch already succeeded. Failing to
+            // free the space must not turn a successful run into a failed one.
+        }
+    }
+
     /// <summary>Clear all is enabled with ≥1 row and no run in flight.</summary>
     public bool CanClear => Items.Count > 0 && !Operation.IsRunning;
 
@@ -2021,6 +2162,8 @@ public sealed class BulkCutViewModel : ObservableObject
 
         BatchState = MapOutcome(batch);
         RaiseRunState();
+
+        RunAutoDeleteIfArmed();   // T-156 — no-op unless the user armed it, and only on a clean batch
     }
 
     /// <summary>

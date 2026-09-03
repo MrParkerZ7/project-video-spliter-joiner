@@ -37,6 +37,8 @@ public sealed class MainViewModelTabStripButtonsTests
         public AppTab? LastTab { get; set; }
 
         public bool? BulkApplyCutToAllRows { get; set; }
+        public bool? BulkAutoDeleteOriginals { get; set; }
+        public bool? BulkAutoEmptyRecycleBin { get; set; }
 
         public double? BulkHorizontalSplitRatio { get; set; }
         public double? BulkVerticalSplitRatio { get; set; }

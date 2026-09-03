@@ -90,6 +90,38 @@ internal static class ShellRecycleBin
         return !File.Exists(path);
     }
 
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
+    private static extern int SHEmptyRecycleBinW(IntPtr hwnd, string? pszRootPath, uint dwFlags);
+
+    private const uint SHERB_NOCONFIRMATION = 0x0001;
+    private const uint SHERB_NOPROGRESSUI = 0x0002;
+    private const uint SHERB_NOSOUND = 0x0004;
+
+    /// <summary>
+    /// Empty the Recycle Bin, silently (T-156).
+    ///
+    /// <para><b>This is not scoped to our files.</b> <c>SHEmptyRecycleBin</c> empties the bin for every
+    /// drive, including things this app never touched — a document the user binned yesterday goes with
+    /// it. That is stated in the confirmation the caller shows, because someone reaching for "free up
+    /// space" is not necessarily expecting to lose unrelated files. It runs only when the user has ticked
+    /// a box that says so and answered a dialog that says so again.</para>
+    ///
+    /// <para>Best-effort: the originals are already binned and the batch already succeeded, so failing to
+    /// free the space must never turn a successful run into a failed one.</para>
+    /// </summary>
+    public static bool EmptyBin()
+    {
+        try
+        {
+            var flags = SHERB_NOCONFIRMATION | SHERB_NOPROGRESSUI | SHERB_NOSOUND;
+            return SHEmptyRecycleBinW(IntPtr.Zero, null, flags) == 0;
+        }
+        catch (Exception)
+        {
+            return false;
+        }
+    }
+
     private static bool RecycleOnce(string path)
     {
         try

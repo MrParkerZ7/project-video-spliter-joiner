@@ -89,6 +89,24 @@ public interface IAppSettings
     bool? BulkApplyCutToAllRows { get; set; }
 
     /// <summary>
+    /// T-156 — delete each original automatically once a batch finishes with no failed rows.
+    ///
+    /// <para>Reclaiming space is otherwise two manual steps after every batch, which matters when the
+    /// disk fills mid-session. Null/absent = OFF: a destructive default is not a default.</para>
+    /// </summary>
+    bool? BulkAutoDeleteOriginals { get; set; }
+
+    /// <summary>
+    /// T-156 — empty the Recycle Bin after an automatic delete, because binning alone frees no space.
+    ///
+    /// <para><b>Combined with <see cref="BulkAutoDeleteOriginals"/> this is permanent deletion with no
+    /// undo</b>, so it is meaningless (and refused) on its own, defaults OFF, and is gated behind an
+    /// explicit confirmation. Everything that makes deleting originals safe rests on the file still
+    /// being in the bin afterwards.</para>
+    /// </summary>
+    bool? BulkAutoEmptyRecycleBin { get; set; }
+
+    /// <summary>
     /// The screen the app was last on (T-143), restored on startup beside <see cref="LayoutMode"/>.
     /// <c>null</c> = never recorded / an older settings file, which reads as <see cref="AppTab.Split"/>.
     /// </summary>

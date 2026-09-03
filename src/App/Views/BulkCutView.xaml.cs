@@ -41,6 +41,8 @@ public partial class BulkCutView : UserControl
                 // T-147: the profile backup/restore file pickers and the overwrite gate. The VM defaults
                 // to KEEPING existing profiles on a collision, so a missing wiring can never silently
                 // overwrite someone's profiles.
+                vm.ConfirmPermanentDeletion = ConfirmPermanentDeletion;
+                vm.EmptyRecycleBinAction = () => VideoSplitJoiner.App.Io.ShellRecycleBin.EmptyBin();
                 vm.ChooseProfileExportPath = ChooseProfileExportPath;
                 vm.ChooseProfileImportPath = ChooseProfileImportPath;
                 vm.ConfirmProfileOverwrite = ConfirmProfileOverwrite;
@@ -116,6 +118,26 @@ public partial class BulkCutView : UserControl
             "Yes - overwrite them with the backup's version." + Environment.NewLine +
             "No - keep yours, and import only the profiles that are new.",
             "Overwrite existing profiles?",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Warning,
+            MessageBoxResult.No);
+
+        return result == MessageBoxResult.Yes;
+    }
+
+    /// <summary>
+    /// T-156 — asked ONCE, before permanent deletion is armed. The VM defaults to refusing, so a missing
+    /// wiring can never turn this on by itself.
+    /// </summary>
+    private static bool ConfirmPermanentDeletion()
+    {
+        var result = MessageBox.Show(
+            "Originals will be deleted PERMANENTLY after each successful batch." + Environment.NewLine +
+            "They cannot be restored." + Environment.NewLine + Environment.NewLine +
+            "This also empties the whole Recycle Bin, including files deleted by other programs." +
+            Environment.NewLine + Environment.NewLine +
+            "Turn this on?",
+            "Delete originals permanently?",
             MessageBoxButton.YesNo,
             MessageBoxImage.Warning,
             MessageBoxResult.No);
