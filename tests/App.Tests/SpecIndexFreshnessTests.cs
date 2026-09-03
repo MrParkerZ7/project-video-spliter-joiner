@@ -81,6 +81,44 @@ public sealed class SpecIndexFreshnessTests
         missing.Should().BeEmpty("the index must not point at specs that are gone");
     }
 
+    /// <summary>
+    /// Every ADR on disk must appear in <c>docs/adr/README.md</c>.
+    ///
+    /// <para>Found the hard way: ADR-0021 was written, committed, and never indexed — and nobody noticed
+    /// until ADR-0022 tried to slot in beneath it. An unindexed decision record is one nobody finds when
+    /// they go looking for why something is the way it is, which is the entire reason ADRs exist.</para>
+    /// </summary>
+    [Fact]
+    public void EveryAdrIsIndexed()
+    {
+        var dir = SpecsDir();
+        if (dir is null)
+        {
+            return;
+        }
+
+        var adrDir = Path.Combine(Path.GetDirectoryName(dir)!, "adr");
+        if (!Directory.Exists(adrDir))
+        {
+            return;
+        }
+
+        var readme = Path.Combine(adrDir, "README.md");
+        File.Exists(readme).Should().BeTrue("the ADR index is what makes the records findable");
+
+        var index = File.ReadAllText(readme);
+
+        var unindexed = Directory.GetFiles(adrDir, "0*.md")
+            .Select(Path.GetFileName)
+            .Where(f => f is not null)
+            .Where(f => !index.Contains($"({f})", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        unindexed.Should().BeEmpty(
+            "an ADR nobody indexes is a decision nobody finds:" + Environment.NewLine +
+            string.Join(Environment.NewLine, unindexed));
+    }
+
     [Fact]
     public void TheIndexInvariantCountsMatchTheSpecs()
     {
