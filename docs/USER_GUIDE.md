@@ -50,9 +50,23 @@ onto either screen:
   has the **same effect as the Up / Down buttons** (order is significant for the join). Dragging a row
   onto empty space below the list moves it to the end.
 
-A drop zone highlights while you drag a valid file over a screen. **Non-video files are ignored** —
-only recognised video extensions (`.mp4`, `.mkv`, `.mov`, `.avi`, `.m4v`, `.webm`, `.ts`, `.mpg`,
-`.mpeg`, `.wmv`, `.flv`) are accepted; anything else in the drop is silently dropped.
+A drop zone highlights while you drag a valid file over a screen.
+
+**Recognised video files** — `.mp4` `.m4v` `.mkv` `.mov` `.avi` `.webm` `.wmv` `.flv` · `.ts` `.m2ts`
+`.mts` `.mpg` `.mpeg` `.mpe` `.m2v` `.m1v` `.vob` · `.3gp` `.3g2` · `.ogv` `.asf` `.divx` `.f4v` `.mxf`
+`.rm` `.rmvb`. That covers camcorder and Blu-ray footage (`.m2ts`/`.mts`) and phone video (`.3gp`), which
+earlier versions refused.
+
+**Anything that is not added now says so.** On Bulk Cut a short line appears above the list — for example
+*"3 files were not added: 2 are not video files, 1 is already in the list"*. Nothing is discarded in
+silence any more; if a drop seems to do nothing, that line tells you why.
+
+> **If a drag does nothing at all** — no highlight, no message — the app never received it. That is
+> usually Windows rather than this app: a stuck drag from an earlier operation (press <kbd>Esc</kbd> in
+> Explorer), or dragging from a file manager running **as administrator** into this app, which Windows
+> blocks silently. The app keeps a trace at
+> `%LOCALAPPDATA%\VideoSplitJoiner\logs\dragdrop.log` — if that file has no new line after you try,
+> the drag never reached us.
 
 ## Split a video
 
@@ -371,6 +385,35 @@ the nearest keyframe"*. Replacing an original is only safe because the new file 
 before anything is overwritten, and the old file is kept until the swap succeeds; the exact-cut path does
 not yet go through that machinery, so it is not allowed to write over your source. Turn Replace originals
 off if you need the cut to land exactly where you set it.
+
+### Reclaiming space after a batch
+
+A finished batch leaves both copies on disk — your originals and the new `_trimmed` files. Two ways to
+get the space back.
+
+**By hand.** When a batch finishes, a **Delete originals** button appears at the far left of the footer.
+It tells you how many files and roughly how much space (*"Delete 12 originals (8.4 GB)"*), asks once, and
+sends them to the **Recycle Bin** — never a permanent delete, so you can put them back. It only offers
+videos that were trimmed successfully and whose trimmed file is still on disk, and it re-checks that at
+the moment you press it, not when the button appeared.
+
+If a file cannot be removed, the summary says which one **and what is holding it** — for example
+*"Sent 11 to the Recycle Bin. Still in use: ep12.mp4 (held by ffmpeg.exe)"*. Nothing pops up a Windows
+dialog; the app tells you itself.
+
+**Automatically.** Two footer checkboxes, both off until you turn them on:
+
+- **Auto-delete originals** — after a batch finishes **with no failures**, the originals go to the
+  Recycle Bin without you pressing anything. A batch where any row failed never deletes: that is exactly
+  when your originals are still the only good copy.
+- **⚠ and empty bin** — also empties the Recycle Bin, so the space is genuinely freed. Only available
+  once auto-delete is on, and it asks you once before arming, because **together these two delete your
+  originals permanently — they cannot be restored**. It also empties the *whole* Recycle Bin, including
+  files other programs put there.
+
+While either is armed the footer says so in red, before you press Run, so you always know what the next
+batch will do. Turning auto-delete back off also switches the bin option off — it will ask again if you
+turn them both on later.
 
 ## Progress, cancel, and errors
 

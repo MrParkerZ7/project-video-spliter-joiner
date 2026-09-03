@@ -20,7 +20,13 @@ thumbnails, batch-wide apply) alongside the fixes.
   otherwise, and a damaged backup changes nothing at all.
 - **Bulk Cut — Delete originals** (G-050): once a batch finishes, reclaim the space it left behind. The
   button names how many files and roughly how much space, sends them to the Recycle Bin (never a
-  permanent delete), and skips anything that failed or whose trimmed file is missing.
+  permanent delete), and skips anything that failed or whose trimmed file is missing. If a file cannot be
+  removed it now says **what is holding it** — "Still in use: ep12.mp4 (held by ffmpeg.exe)" — instead of
+  leaving you to guess.
+- **Bulk Cut — auto-delete after a successful batch**, with an optional **empty the Recycle Bin**: for
+  when the disk fills mid-session and reclaiming space by hand after every batch is a chore. Both are off
+  by default. A batch where any row failed never deletes anything, and the two together are permanent
+  deletion, so arming that combination asks you once and the footer says so in red before you press Run.
 - **Cut profiles — use the frame you are looking at** (G-047): a **Use current frame** button makes the
   frame showing in the preview the profile's picture, instead of hunting for an image file.
 - **Bulk Cut — one gesture sets the whole batch** (G-046): "Set intro/outro here" now applies across every
@@ -34,6 +40,14 @@ thumbnails, batch-wide apply) alongside the fixes.
   output mode, and is verified against real media rather than fakes.
 
 ### Fixed
+- **Dropped files no longer vanish without explanation**: dragging a video the app did not recognise, or
+  one already in the list, simply did nothing — indistinguishable from a broken drop target. The
+  recognised-format list grew from 11 to 25 (adding **`.m2ts`/`.mts`** for camcorder and Blu-ray footage
+  and **`.3gp`** for phone video, among others), and anything still not added is now reported: *"3 files
+  were not added: 2 are not video files, 1 is already in the list"*.
+- **Deleting originals no longer interrupts you**: Windows raised a "file in use" dialog on every run,
+  even though the deletion then succeeded. It now reports refusals itself, in the app, and names the
+  program holding the file.
 - **Videos on a network share** (G-045): a share whose name contains a space (`\Seagate NAS\…`) failed
   to open with *"Invalid URI: The hostname could not be parsed"*. Such paths now play, and any path the
   preview genuinely cannot open explains itself instead of leaking a .NET error.
@@ -55,6 +69,7 @@ thumbnails, batch-wide apply) alongside the fixes.
   occupied a moment earlier, under the cursor of someone who had just been pressing it.
 
 ### Internal
+- The window header now shows the running version, so it is obvious which build you are looking at.
 - The release gate can now fail: 43 integration tests had been reporting *passed* on CI without executing,
   because the ffmpeg they need was looked for at one hardcoded path and fetched only after the tests ran.
 - Running the test suite no longer overwrites your real application settings.

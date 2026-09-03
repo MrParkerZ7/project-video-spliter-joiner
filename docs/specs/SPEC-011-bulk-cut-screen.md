@@ -13,7 +13,7 @@ sources:
   - src/App/ViewModels/RelayCommand.cs
   - src/App/ViewModels/MainViewModel.cs
 serves-goal: [G-036, G-037, G-038, G-039, G-040, G-041, G-042, G-043]
-updated: 2026-09-01
+updated: 2026-09-02
 ---
 
 ## What
@@ -604,6 +604,70 @@ SPEC-007); the shared `IThumbnailService`/`FfmpegThumbnailService` frame source 
   must not sit next to the button people press repeatedly. It still names the file COUNT and the BYTES
   reclaimed, which is the entire reason to press it.
 
+### Dropped files are accounted for (`VideoFileFilter`, `BulkCutViewModel.AddDroppedFilesAsync` - T-154)
+- **I122** - a dropped file that is **not added is explained**, never silently discarded. Three paths
+  discard one - an unrecognised extension, a file already in the list, and the non-video half of a mixed
+  drop - and from outside the app all three are indistinguishable from a dead drop target, which is how
+  this reached us as *"drag and drop doesn't work"*. `DropSummary` accounts for them in one line
+  ("3 files were not added: 2 are not video files, 1 is already in the list").
+- **I123** - `DropSummary` is **null when nothing was refused**. A message on every drop is noise, and
+  noise is what teaches people to ignore the one that matters.
+- **I124** - the accepted-container list errs toward **accepting**: 25 extensions including `.m2ts`/`.mts`
+  (AVCHD - camcorders, Blu-ray rips) and `.3gp` (phone video), which were absent and silently refused. It
+  remains an allowlist rather than accept-anything, so a document handed to ffmpeg fails at the door
+  rather than three steps later.
+- **I125** - a mixed drop **still adds the videos**. One unsupported file must not poison the whole drop.
+- **I126** - every drag-over and drop is traced to
+  `%LOCALAPPDATA%/VideoSplitJoiner/logs/dragdrop.log` (`DropDiagnostics`), recording extensions and the
+  decision but **never full paths** - the file exists to be pasted into a bug report. It distinguishes the
+  two cases that are otherwise identical from outside: no line at all means Windows never delivered the
+  drag (not this app's bug); a line means we saw it and says what we decided.
+
+### Removing originals never shows a Windows dialog (`ShellRecycleBin`, `FileLockOwner` - T-155, ADR-0022)
+- **I127** - binning goes through `SHFileOperation` with
+  `FOF_ALLOWUNDO | FOF_SILENT | FOF_NOCONFIRMATION | FOF_NOERRORUI`, which returns a result code and
+  **cannot show UI**. The previous helper (`FileSystem.DeleteFile`) took a `UIOption` whose only values are
+  `AllDialogs` and `OnlyErrorDialogs` - there is no silent option, so every locked file raised a shell
+  dialog on every run.
+- **I128** - `FOF_ALLOWUNDO` is what makes this the **Recycle Bin** rather than permanent deletion.
+  Dropping it leaves the file just as gone, so every "did it vanish" assertion still passes - it is
+  therefore asserted directly, and a mutation removing it fails.
+- **I129** - success is **verified, not assumed**: `SHFileOperation` can report success where the file
+  survives, and the screen reports a count to the user, so `TryRecycle` re-checks the file is gone.
+- **I130** - a locked file is retried **briefly and boundedly** (3 attempts, ~120ms apart) for the common
+  handle-about-to-close case, then reported. Trading a dialog for a frozen app is not an improvement.
+- **I131** - a refusal **names who is holding the file** via the Windows Restart Manager
+  ("Still in use: ep1.mp4 (held by ffmpeg.exe)"). Best-effort and diagnostic only: a failed lookup degrades
+  to the filename alone and never affects whether the delete is attempted.
+
+### Auto-delete after a clean batch (T-156)
+- **I132** - `AutoDeleteOriginals` runs the **existing** `DeleteOriginals()` sweep automatically once a
+  batch finishes - same eligibility re-checks (I111, I118), same per-row isolation, same reporting. There
+  is one deletion path, so there is one place for it to go wrong.
+- **I133** - it fires **only on `BatchState == Completed`**. A partly-failed batch is precisely when the
+  originals are still the only good copy, and the user is not watching - they armed this in advance.
+- **I134** - the counted confirmation is **skipped** when auto-delete is armed (the checkbox is the
+  consent, given in advance), while the result summary still reports what was binned and what was refused.
+- **I135** - `AutoEmptyRecycleBin` is **meaningless and refused without** `AutoDeleteOriginals`, and
+  arming it requires an explicit confirmation whose default is **No** - so an unwired or half-wired host
+  can never enable permanent deletion.
+- **I136** - turning `AutoDeleteOriginals` **off disarms** `AutoEmptyRecycleBin`. Otherwise re-ticking it
+  later would silently re-arm permanent deletion on consent given for a configuration that no longer
+  existed.
+- **I137** - `DestructiveOutputNote` states the armed state **before Run is pressed**: "PERMANENTLY … not
+  recoverable" for the pair, and "Recycle Bin" for auto-delete alone - because binning IS recoverable and
+  overstating it teaches people to ignore the note.
+- **I138** - emptying the bin is **not scoped to this app's files** (`SHEmptyRecycleBin` empties the whole
+  bin), so the confirmation says so explicitly. Both flags default OFF and persist.
+
+### The footer options row (T-156)
+- **I139** - the footer's option row **wraps rather than clips**. It is a `WrapPanel`: a horizontal
+  `StackPanel` overflowing its Grid column silently pushes children off-screen, which is how three
+  checkboxes - including the destructive "Replace originals" - became invisible at 1280px. This is the
+  same failure as I120's header (T-141) and the profile bar (T-136); the third occurrence is why it is
+  asserted by a layout test measuring against the WINDOW, not the panel (an overflowing panel reports its
+  own oversized width, so child-vs-panel checks pass against the very bug they target).
+
 ## Links
 - Design: D-004 (Bulk Cut screen)
 - Goals: G-036 (batch trim), G-037 (shared preview + set-at-playhead + reusable cut profiles), G-038 (profile
@@ -624,7 +688,7 @@ SPEC-007); the shared `IThumbnailService`/`FfmpegThumbnailService` frame source 
   SPEC-009 (app settings — the Bulk-specific per-axis split ratios I68 persists, I23–I25); SPEC-015 (app shell —
   the `OrientedSplitPanel` axis-flip container I68 reuses, I16/I17); SPEC-001 (stream-copy split — the
   `SmartCutEngine` that services `CutPrecision.Exact`).
-- Key code: `src/App/ViewModels/BulkCutViewModel.cs` (`_thumbnailGate`, `RaiseProfileCommandStates`,
+- Key code: `src/App/Io/ShellRecycleBin.cs` (silent recycle + `EmptyBin`) - `src/App/Io/FileLockOwner.cs` (Restart Manager) - `src/App/DropDiagnostics.cs` - `src/App/VideoFileFilter.cs` - `src/App/ViewModels/BulkCutViewModel.cs` (`_thumbnailGate`, `RaiseProfileCommandStates`,
   `RaiseRunState`; `ReplaceOriginal`/`CollisionIsInert`/`OutputNote`/`ConfirmReplaceOriginals` — T-123;
   `ExactCut`/`PrecisionNote` — T-125; `SelectAllItemsCommand`/`SelectNoItemsCommand`/`SetAllItemsChecked`/
   `CanChangeSelection` — T-128), `src/App/ViewModels/BulkItemViewModel.cs`

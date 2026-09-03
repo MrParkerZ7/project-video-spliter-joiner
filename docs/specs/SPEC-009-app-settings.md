@@ -8,7 +8,7 @@ sources:
   - src/App/Settings/AppSettings.cs
   - src/App/Settings/IAppSettings.cs
 serves-goal: [G-010, G-037, G-039]
-updated: 2026-08-23
+updated: 2026-09-02
 ---
 
 ## What
@@ -126,6 +126,16 @@ out of scope.
   never wedge a Bulk pane to zero), and a `NaN`/`Infinity`/null maps to `null` (use the default) — the
   **same** `ClampRatio` sanitization applied to the Split-tab ratios (I12/I13). (`ClampRatio` applied to
   `dto.BulkHorizontalSplitRatio` / `dto.BulkVerticalSplitRatio` in `Load`)
+
+### Bulk Cut preferences (T-143, T-156)
+- **I26** - `LastTab` remembers the tab the user was last on, so the app reopens where they left it, as
+  the layout orientation already did. Absent/unknown falls back to the first tab rather than throwing.
+- **I27** - `BulkAutoDeleteOriginals` and `BulkAutoEmptyRecycleBin` persist the two destructive Bulk Cut
+  preferences. **Both are `bool?` and absent means OFF**: a settings file written by an older build must
+  not silently arm a destructive option, so the tolerant-load default is the safe one rather than the
+  convenient one.
+- **I28** - every preference writes through the same `Save()` path and only **on change** (the setters
+  compare first), so restoring a value the user already had does not rewrite the file.
 
 ## Links
 - Design: D-001 (vertical-monitor layout — persisted layout state); D-004 (Bulk Cut screen); ADR-0016 (cut profiles)
