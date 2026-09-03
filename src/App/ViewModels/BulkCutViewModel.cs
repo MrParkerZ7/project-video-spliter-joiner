@@ -799,15 +799,51 @@ public sealed class BulkCutViewModel : ObservableObject
             }
         }
 
-        // Name what was refused. "1 could not be removed" leaves the user hunting for which one.
+        // Name what was refused, and WHO is holding it. "1 could not be removed" leaves the user hunting
+        // for which one; "still in use" without a culprit leaves them unable to do anything about it
+        // (T-155). The holder is looked up only for files that actually failed, so the common path pays
+        // nothing.
         Operation.ResultSummary = refusedPaths.Count == 0
             ? string.Create(CultureInfo.InvariantCulture, $"Sent {binned} original(s) to the Recycle Bin")
             : string.Create(
                 CultureInfo.InvariantCulture,
-                $"Sent {binned} to the Recycle Bin. Still in use: {string.Join(", ", refusedPaths.Select(System.IO.Path.GetFileName))}");
+                $"Sent {binned} to the Recycle Bin. Still in use: {DescribeRefusals(refusedPaths)}");
 
         RaiseRunState();
     }
+
+    /// <summary>
+    /// "episode1.mp4 (held by ffmpeg.exe)" — the filename plus whoever has it open, when that can be
+    /// determined (T-155).
+    ///
+    /// <para>Naming the holder is the difference between a dead end and an action. If it is this app,
+    /// that is our bug to fix; if it is an antivirus scanner or the shell's thumbnail cache, no amount of
+    /// releasing our own handles would have helped and the user can decide what to do. The lookup is
+    /// injectable so the message is testable without holding a real OS lock.</para>
+    /// </summary>
+    internal Func<string, IReadOnlyList<string>> LookupFileHolders { get; set; } =
+        VideoSplitJoiner.App.Io.FileLockOwner.WhoIsHolding;
+
+    private string DescribeRefusals(IEnumerable<string> refusedPaths)
+        => string.Join(
+            ", ",
+            refusedPaths.Select(p =>
+            {
+                var name = System.IO.Path.GetFileName(p);
+                try
+                {
+                    var holders = LookupFileHolders(p);
+                    return holders.Count == 0
+                        ? name
+                        : string.Create(
+                            CultureInfo.InvariantCulture,
+                            $"{name} (held by {string.Join(", ", holders.Take(2))})");
+                }
+                catch
+                {
+                    return name;   // a diagnostic must never break the message it decorates
+                }
+            }));
 
     /// <summary>Clear all is enabled with ≥1 row and no run in flight.</summary>
     public bool CanClear => Items.Count > 0 && !Operation.IsRunning;
