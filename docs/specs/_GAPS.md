@@ -24,7 +24,7 @@ extractions, views/handlers delegating to the new helpers). Coverage is now **55
 
 ---
 
-## Remaining deferred (9)
+## Remaining deferred (13)
 
 ### Intentionally-unreachable defensive assertions (2)
 - **SPEC-001 I22** — `SplitEngine.AssertCopyInvariant` throw: the real `SplitArgsBuilder` can't produce an
@@ -39,10 +39,21 @@ extractions, views/handlers delegating to the new helpers). Coverage is now **55
 ### View-only WPF render / layout (1)
 - **SPEC-014 I34** — Waveform band visibility + dual-canvas overlay (WPF layout — visual QA).
 
-### Needs a windowed/STA harness (4)
+### Needs a windowed/STA harness (6)
 - **SPEC-015 I18** — Splitter `DragCompleted` ratio write-back (needs a real Measure/Arrange + simulated drag).
 - **SPEC-015 I26/I27/I28** — implicit ToolTip / ScrollBar / HeroButton resource styles (need the full merged
   theme-dictionary load — no cheap in-isolation path; the `ErrorLogWriter`/crash-format side I25 IS tested).
 
 > The OrientedSplitPanel axis-flip + clamped sizing (SPEC-015 I16/I17) WERE closed via a minimal STA-thread harness
 > (`OrientedSplitPanelTests`); the remaining resource-style gaps need the full theme graph, which that harness can't load cheaply.
+
+- **SPEC-010 I47 / SPEC-012 I36** (added 2026-09-04, T-154) — the `dragdrop.log` `accepted` flag reporting
+  the real accept/refuse decision. The value is computed in each view's `OnDrop` code-behind from a live
+  `DragEventArgs`, so asserting it needs a windowed harness that can raise a real drop. The view-model
+  half — what the refusal SAYS — is fully covered by `SplitAndJoinDropFeedbackTests`.
+
+### Uncovered by design — nothing to assert (2)
+- **SPEC-010 I48 / SPEC-012 I37 / SPEC-011 I143** (added 2026-09-04, T-154) — a drag holding no recognised
+  video is refused by `OnDragOver` before any drop event exists, so no application code runs and there is
+  no observable behaviour to test. Recorded as an invariant so the boundary is known rather than
+  rediscovered; the decision to keep it that way is **ADR-0023**.

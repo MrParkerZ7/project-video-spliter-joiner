@@ -709,15 +709,32 @@ Drag-and-drop adds **no new load / add / reorder logic** — it is thin WPF **co
 routes drop and drag events to the view-model commands that already existed.
 
 - **The accept filter is a pure helper.** `VideoFileFilter` (in `App`, WPF-free so it is directly
-  unit-testable) exposes `AcceptVideoFiles(paths)` — keep only known video extensions
-  (`.mp4 .mkv .mov .avi .m4v .webm .ts .mpg .mpeg .wmv .flv`, case-insensitive), dedupe on the full
-  path, preserve first-seen order — and `HasAnyVideo(paths)`, used by the `DragOver` accept check to
-  decide whether to show the copy effect + drop highlight. Non-video paths are dropped.
-- **External file drop → existing VM commands.** `SplitView` code-behind filters the dropped paths
-  and loads the **first** video via `SplitViewModel.LoadCommand` (Split is single-file). `JoinView`
-  code-behind adds **all** dropped videos (order preserved) via `JoinViewModel.AddFilesCommand`, whose
-  compatibility re-check then runs. The drop-routing methods (`HandleDroppedFiles`) are extracted as
-  `internal static` so they are testable without a live drag.
+  unit-testable) exposes `AcceptVideoFiles(paths)` — keep only known video extensions (26 of them,
+  case-insensitive; see `VideoFileFilter.VideoExtensions` for the list, and the User Guide for the
+  user-facing version), dedupe on the full path, preserve first-seen order — and `HasAnyVideo(paths)`,
+  used by the `DragOver` accept check to decide whether to show the copy effect + drop highlight.
+- **The refusal vocabulary is a second pure helper.** `DropRefusal` (T-154) partitions a raw drop into
+  videos / folders / non-videos / within-drop duplicates (`Classify`) and renders one plain-language line
+  from per-screen clauses (`Describe`). All three screens share it so the same event reads the same way,
+  while each still states its own rule — Bulk Cut refuses a file already in its list, Join permits
+  duplicates and so must never say that, Split opens one file at a time. The shared piece is the
+  vocabulary and the pluralisation, not one fixed sentence.
+- **External file drop → the VM, unfiltered.** Each screen's `HandleDroppedFiles` hands the **raw**
+  dropped paths to its view-model (`AddDroppedFilesAsync`), which counts refusals and then performs the
+  add or load. It deliberately does **not** filter first: filtering in the view and passing only the
+  survivors is precisely why a screen could not report a refusal even in principle. `SplitViewModel`
+  loads the **first** video (Split is single-file) and names the rest; `JoinViewModel` adds **all** of
+  them in order, and its compatibility re-check then runs. The routing methods stay `internal static`
+  and keep returning the filtered video list, so they are testable without a live drag.
+- **The drop trace records the real decision.** `DropDiagnostics.Record` is called on drag-over and on
+  drop with the actual accept/refuse outcome and the refusal sentence; it writes extensions and the
+  decision to `%LOCALAPPDATA%/VideoSplitJoiner/logs/dragdrop.log`, never full paths, because the file
+  exists to be pasted into a bug report. Its purpose is to separate *"Windows never delivered the drag"*
+  (no line) from *"we saw it and refused it"* (a line saying what we decided).
+- **A drag with no recognised video never produces a drop event at all.** `DragOver` answers
+  `HasAnyVideo` with `DragDropEffects.None`, so Windows shows a no-entry cursor and no handler runs —
+  no view-model code can report on that case, and the cursor is its feedback. Recorded as SPEC-010 I48 /
+  SPEC-012 I37 / SPEC-011 I143 so it is a known boundary rather than a rediscovered surprise.
 - **Internal reorder vs external file-drop are distinguished by clipboard data format.** On the Join
   clip list, dragging a row starts a `DragDrop.DoDragDrop` carrying a `JoinItemViewModel` payload
   (the `typeof(JoinItemViewModel)` format — deliberately **not** `DataFormats.FileDrop`). The list's

@@ -1068,11 +1068,17 @@ public sealed class BulkCutViewModel : ObservableObject
     /// <summary>
     /// Why a drop did not add everything you dropped — or null when it did (T-154).
     ///
-    /// <para>Three paths discard a dropped file, and all three used to do it in silence: an extension the
-    /// app does not recognise, a file already in the list, and the non-video half of a mixed drop. From
-    /// the outside every one of them looks like a dead drop target, which is exactly how the bug was
-    /// reported — <i>"why it's work sometime doesn't work some time?"</i>. It was never intermittent; it
-    /// depended on the file, and the app never said which case you were in.</para>
+    /// <para>Several paths discard a dropped file, and all of them used to do it in silence: the
+    /// non-video half of a mixed drop, a file already in the list, a folder, and the same path twice in
+    /// one payload. From the outside every one of them looks like a dead drop target, which is exactly
+    /// how the bug was reported — <i>"why it's work sometime doesn't work some time?"</i>. It was never
+    /// intermittent; it depended on the file, and the app never said which case you were in.</para>
+    ///
+    /// <para><b>One case this cannot speak for.</b> A drag holding <i>no</i> recognised video is refused
+    /// by <c>OnDragOver</c> (<see cref="VideoFileFilter.HasAnyVideo"/> → <c>DragDropEffects.None</c>), so
+    /// Windows never delivers a drop and no view-model code runs — the no-entry cursor is that case's
+    /// feedback. This doc previously listed "an extension the app does not recognise" as something the
+    /// note explains; it is only reportable as part of a mixed drop. See ADR-0023 and SPEC-011 I122/I143.</para>
     ///
     /// <para>Deliberately null when nothing was refused. A message on every drop is noise, and noise is
     /// what teaches people to ignore the one that matters.</para>
@@ -1095,40 +1101,29 @@ public sealed class BulkCutViewModel : ObservableObject
             return Array.Empty<string>();
         }
 
-        var videos = VideoFileFilter.AcceptVideoFiles(dropped);
-        var notVideo = dropped.Count(p => !string.IsNullOrWhiteSpace(p)) - videos.Count;
+        // T-154 (Split/Join mirror): classification moved to the shared DropRefusal vocabulary so all
+        // three screens say the same thing about the same event. It also separates two cases the old
+        // arithmetic here lumped into "not video files" — a dropped FOLDER (calling it "not a video
+        // file" is untrue) and the same path twice inside one payload (collapsed by the filter).
+        var tally = DropRefusal.Classify(dropped);
 
         var before = new HashSet<string>(Items.Select(i => NormalizePath(i.Path)), StringComparer.OrdinalIgnoreCase);
-        var alreadyHere = videos.Count(v => before.Contains(NormalizePath(v)));
+        var alreadyHere = tally.Videos.Count(v => before.Contains(NormalizePath(v)));
 
-        await AddFilesAsync(videos).ConfigureAwait(true);
+        // Set BEFORE the add so the note is on screen immediately rather than after every row has been
+        // probed, and so the drop handler can carry it into the dragdrop.log line for the same drop.
+        // Every input to it is already known — `before` was snapshotted above.
+        DropSummary = DropRefusal.Describe(
+            "added",
+            tail: null,
+            DropRefusal.NotVideo(tally.NotVideo),
+            DropRefusal.Folders(tally.Folders),
+            DropRefusal.DroppedTwice(tally.DuplicatesInDrop),
+            DropRefusal.AlreadyInList(alreadyHere));
 
-        DropSummary = DescribeRefusals(notVideo, alreadyHere);
-        return videos;
-    }
+        await AddFilesAsync(tally.Videos).ConfigureAwait(true);
 
-    /// <summary>Plain-language account of what a drop left behind. Null when it left nothing behind.</summary>
-    private static string? DescribeRefusals(int notVideo, int alreadyHere)
-    {
-        if (notVideo <= 0 && alreadyHere <= 0)
-        {
-            return null;
-        }
-
-        var parts = new List<string>(2);
-        if (notVideo > 0)
-        {
-            parts.Add(notVideo == 1 ? "1 is not a video file" : $"{notVideo} are not video files");
-        }
-
-        if (alreadyHere > 0)
-        {
-            parts.Add(alreadyHere == 1 ? "1 is already in the list" : $"{alreadyHere} are already in the list");
-        }
-
-        var total = notVideo + alreadyHere;
-        var noun = total == 1 ? "file was" : "files were";
-        return $"{total} {noun} not added: {string.Join(", ", parts)}";
+        return tally.Videos;
     }
 
     public async Task AddFilesAsync(IEnumerable<string>? paths)
@@ -1271,6 +1266,13 @@ public sealed class BulkCutViewModel : ObservableObject
         Operation.Reset();
         BatchState = BulkBatchState.Idle;
         ApplyToAllReport = null;
+
+        // T-154 (Split/Join mirror) — the note was written on drop and cleared by NOTHING but a later
+        // drop, so "3 files were not added" survived Clear all and sat over an empty list contradicting
+        // it. Found while mirroring this screen's fix onto Split and Join: copying it as-shipped would
+        // have reproduced the stale note three times over.
+        DropSummary = null;
+
         LastFailedItems = Array.Empty<BulkTrimItemResult>();
         RaiseRunState();
     }

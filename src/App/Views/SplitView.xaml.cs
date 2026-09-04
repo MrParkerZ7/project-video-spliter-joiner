@@ -108,25 +108,29 @@ public partial class SplitView : UserControl
             return;
         }
 
-        DropDiagnostics.Record("drop", "Split", paths, accepted: true);
-        HandleDroppedFiles(paths, vm);
+        var videos = HandleDroppedFiles(paths, vm);
+
+        // T-154 — `accepted` used to be hard-coded `true` on every drop, including one where the filter
+        // refused everything. That is a lie in the one artifact the reporter is asked to paste into a
+        // bug report, and it defeats the log's whole purpose (telling "we never saw the drag" apart from
+        // "we saw it and refused it"). The note carries the same sentence the screen is showing.
+        DropDiagnostics.Record("drop", "Split", paths, accepted: videos.Count > 0, note: vm.DropSummary);
     }
 
     /// <summary>
-    /// Pure-ish drop routing extracted for testability: filters the paths to videos and,
-    /// if any, loads the FIRST one via the existing <see cref="SplitViewModel.LoadCommand"/>
-    /// (Split loads a single file). Returns the filtered video paths that were considered.
-    /// Empty-after-filter is a no-op.
+    /// Pure-ish drop routing extracted for testability: hands the RAW dropped paths to the VM, which
+    /// loads the first video and accounts for everything it could not load (T-154). Returns the video
+    /// paths the drop contained — Split loads only the first of them.
+    ///
+    /// <para>It deliberately no longer filters before calling the VM. Filtering here and passing only
+    /// the survivors is exactly why Split could not report a refusal: the VM was never told anything had
+    /// been dropped that it did not receive.</para>
     /// </summary>
     internal static System.Collections.Generic.IReadOnlyList<string> HandleDroppedFiles(
         string[] paths, SplitViewModel vm)
     {
         var videos = VideoFileFilter.AcceptVideoFiles(paths);
-        if (videos.Count > 0)
-        {
-            vm.LoadCommand.Execute(videos[0]);
-        }
-
+        _ = vm.AddDroppedFilesAsync(paths);
         return videos;
     }
 

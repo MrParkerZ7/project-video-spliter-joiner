@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Collections.Specialized;
 using System.Diagnostics;
@@ -254,6 +255,26 @@ public sealed class SplitViewModel : ObservableObject
         private set => SetProperty(ref _statusText, value);
     }
 
+    private string? _dropSummary;
+
+    /// <summary>
+    /// Why a drop did not load everything you dropped — or null when it did (T-154).
+    ///
+    /// <para>Bulk Cut got this first; Split was left out of scope and kept discarding in silence, which
+    /// is the criterion this closes. Split's own refusal is one Bulk Cut has no phrase for: it opens
+    /// <b>one file at a time</b>, so dropping five videos loads the first and ignores four — no error,
+    /// no note, four files simply gone. From the outside that is the same "drag and drop is broken"
+    /// symptom the original report described.</para>
+    ///
+    /// <para>Null when nothing was refused, deliberately: a message on every drop is noise, and noise is
+    /// what teaches people to ignore the one that matters.</para>
+    /// </summary>
+    public string? DropSummary
+    {
+        get => _dropSummary;
+        private set => SetProperty(ref _dropSummary, value);
+    }
+
     /// <summary>
     /// The position the secondary "Add at time" affordance adds a marker at (T-064). The VM seeds this
     /// from the live playhead (see <see cref="SeedNewMarkerPositionFromPlayhead"/>) so the field
@@ -458,6 +479,49 @@ public sealed class SplitViewModel : ObservableObject
     public RelayCommand CancelCommand { get; }
 
     // ---- Load -------------------------------------------------------------------------------
+
+    /// <summary>
+    /// Account for a drop: load what can be loaded, and explain what could not (T-154). Returns the
+    /// video paths the drop contained (all of them, not just the loaded one).
+    ///
+    /// <para>Takes the <b>raw</b> dropped paths rather than pre-filtered ones. That is the whole point:
+    /// the old view-side <c>HandleDroppedFiles</c> filtered first and told the VM only about the
+    /// survivors, so the VM could not report what had been refused even in principle. Counting happens
+    /// here, where it is testable without WPF.</para>
+    ///
+    /// <para>The note is set <b>before</b> the load so it appears immediately rather than after a probe
+    /// that may take a moment; a load failure surfaces separately through <see cref="Operation"/>, and
+    /// the two are different facts about the same drop.</para>
+    /// </summary>
+    public async Task<IReadOnlyList<string>> AddDroppedFilesAsync(IReadOnlyList<string>? dropped)
+    {
+        if (dropped is null || dropped.Count == 0)
+        {
+            DropSummary = null;
+            return Array.Empty<string>();
+        }
+
+        var tally = DropRefusal.Classify(dropped);
+
+        // Split loads ONE file. Every video after the first is skipped — the refusal Bulk Cut cannot
+        // express, and the one most likely to be read as "it only half worked".
+        var skipped = Math.Max(0, tally.Videos.Count - 1);
+
+        DropSummary = DropRefusal.Describe(
+            "loaded",
+            tail: skipped > 0 ? "Split opens one file at a time." : null,
+            DropRefusal.NotVideo(tally.NotVideo),
+            DropRefusal.Folders(tally.Folders),
+            DropRefusal.DroppedTwice(tally.DuplicatesInDrop),
+            DropRefusal.OtherVideosSkipped(skipped));
+
+        if (tally.Videos.Count > 0)
+        {
+            await LoadAsync(tally.Videos[0]).ConfigureAwait(true);
+        }
+
+        return tally.Videos;
+    }
 
     /// <summary>
     /// Probe <paramref name="path"/> and read its keyframes. On a <see cref="ProbeResult.ProbeFailed"/>
@@ -1170,6 +1234,10 @@ public sealed class SplitViewModel : ObservableObject
         LastResult = null;
         KeyframeWarning = null;
         StatusText = null;
+
+        // T-154 — the drop note describes a drop that no longer has a screen to describe. Leaving it up
+        // is the stale-note bug this ticket also fixed on Bulk Cut, where it shipped.
+        DropSummary = null;
 
         // Reset the shared operation (clears any error/progress; no-op run is not in flight per CanClear).
         Operation.Reset();

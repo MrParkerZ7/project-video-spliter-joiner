@@ -251,8 +251,13 @@ public partial class BulkCutView : UserControl
         }
 
         e.Handled = true;
-        DropDiagnostics.Record("drop", "BulkCut", paths, accepted: true);
-        HandleDroppedFiles(paths, vm);
+        var videos = HandleDroppedFiles(paths, vm);
+
+        // T-154 — `accepted` used to be hard-coded `true` on every drop, including one where the filter
+        // refused everything. That is a lie in the one artifact the reporter is asked to paste into a
+        // bug report, and it defeats the log's whole purpose (telling "we never saw the drag" apart from
+        // "we saw it and refused it"). The note carries the same sentence the screen is showing.
+        DropDiagnostics.Record("drop", "BulkCut", paths, accepted: videos.Count > 0, note: vm.DropSummary);
     }
 
     /// <summary>

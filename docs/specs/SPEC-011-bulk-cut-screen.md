@@ -605,11 +605,19 @@ SPEC-007); the shared `IThumbnailService`/`FfmpegThumbnailService` frame source 
   reclaimed, which is the entire reason to press it.
 
 ### Dropped files are accounted for (`VideoFileFilter`, `BulkCutViewModel.AddDroppedFilesAsync` - T-154)
-- **I122** - a dropped file that is **not added is explained**, never silently discarded. Three paths
-  discard one - an unrecognised extension, a file already in the list, and the non-video half of a mixed
-  drop - and from outside the app all three are indistinguishable from a dead drop target, which is how
-  this reached us as *"drag and drop doesn't work"*. `DropSummary` accounts for them in one line
-  ("3 files were not added: 2 are not video files, 1 is already in the list").
+- **I122** - a dropped file that is **not added is explained**, never silently discarded. The paths that
+  discard one - the non-video half of a mixed drop, a file already in the list, a folder, and the same
+  path twice in one payload - are all indistinguishable from a dead drop target from outside the app,
+  which is how this reached us as *"drag and drop doesn't work"*. `DropSummary` accounts for them in one
+  line ("3 files were not added: 2 are not video files, 1 is already in the list").
+
+  **Corrected 2026-09-04 (T-154, Split/Join mirror).** This invariant originally listed *"an unrecognised
+  extension"* as a path `DropSummary` explains. It is not one, and never was: a drag whose payload holds
+  **no** recognised video is refused by `OnDragOver` (`HasAnyVideo` → `DragDropEffects.None`), so Windows
+  shows a no-entry cursor and **the drop event is never delivered** - no handler runs and no note can be
+  shown. The unrecognised-extension case is only reportable as part of a *mixed* drop. The shipped tests
+  did not catch the overstatement because they call `AddDroppedFilesAsync` directly, which bypasses the
+  DragOver gate the real gesture goes through. The cursor is that case's feedback; see I143.
 - **I123** - `DropSummary` is **null when nothing was refused**. A message on every drop is noise, and
   noise is what teaches people to ignore the one that matters.
 - **I124** - the accepted-container list errs toward **accepting**: 25 extensions including `.m2ts`/`.mts`
@@ -667,6 +675,27 @@ SPEC-007); the shared `IThumbnailService`/`FfmpegThumbnailService` frame source 
   same failure as I120's header (T-141) and the profile bar (T-136); the third occurrence is why it is
   asserted by a layout test measuring against the WINDOW, not the panel (an overflowing panel reports its
   own oversized width, so child-vs-panel checks pass against the very bug they target).
+
+### Drop accounting, corrected while mirroring it onto Split and Join (T-154, 2026-09-04)
+- **I140** - `Clear` nulls `DropSummary`. As shipped the note was written on drop and cleared by nothing
+  but a later drop, so "3 files were not added" survived *Clear all* and sat over an empty list
+  contradicting it. Found only because mirroring the screen onto two others would have reproduced the
+  bug three times over.
+- **I141** - a dropped **folder is called a folder**, not "not a video file". Explorer delivers a folder as
+  an ordinary FileDrop path with no extension, and the original arithmetic here (non-blank count minus
+  accepted count) swept folders and within-drop duplicates into "not video files" alike. Saying something
+  false about what the user just did is worse than saying nothing (`DropRefusal.Classify`).
+- **I142** - the `dragdrop.log` **`accepted` flag reports the real decision**. It was hard-coded `true` on
+  every drop, including ones where the filter took nothing - a lie in the single artifact the reporter is
+  asked to paste into a bug report, and one that defeats the log's whole purpose of telling "we never saw
+  the drag" apart from "we saw it and refused it". `note:` now carries the refusal sentence too.
+- **I143** - **boundary, stated rather than fixed:** a drag holding no recognised video is refused by
+  `OnDragOver` before any drop event exists, so no note can ever be shown for it - the no-entry cursor is
+  that case's feedback. This is what I122 originally overstated.
+- **I144** - all three screens speak **one refusal vocabulary** (`DropRefusal`), not three copies of it.
+  What each refuses genuinely differs - Bulk refuses a file already in its list, Join permits duplicates
+  and so must never say that, Split opens one file at a time - so the shared piece is the clause
+  vocabulary and the pluralisation, not one fixed sentence.
 
 ## Links
 - Design: D-004 (Bulk Cut screen)

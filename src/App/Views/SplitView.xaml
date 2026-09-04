@@ -128,7 +128,7 @@
                 <Grid Margin="12">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />  <!-- 0: file-info card -->
-                        <RowDefinition Height="Auto" />  <!-- 1: keyframe warning -->
+                        <RowDefinition Height="Auto" />  <!-- 1: advisory notes (keyframe warning + drop summary, stacked) -->
                         <RowDefinition Height="*" MinHeight="180" />  <!-- 2: Cut markers ‖ Parts nested OrientedSplitPanel (T-091) -->
                         <RowDefinition Height="Auto" />  <!-- 3: Output section -->
                         <RowDefinition Height="Auto" />  <!-- 4: Run / progress / op-state surfaces -->
@@ -186,18 +186,42 @@
                         </StackPanel>
                     </Border>
 
-                    <!-- Coarse-keyframe warning — warning role: muted-gold fill, gold border, primary text. -->
-                    <Border Grid.Row="1"
-                            Margin="0,10,0,0"
-                            Padding="8"
-                            Background="{StaticResource AccentMutedBrush}"
-                            BorderBrush="{StaticResource AccentBrush}"
-                            BorderThickness="1"
-                            CornerRadius="{StaticResource RadiusSm}"
-                            Visibility="{Binding KeyframeWarning, Converter={StaticResource NullToCollapsed}}">
-                        <TextBlock Text="{Binding KeyframeWarning}" TextWrapping="Wrap"
-                                   Foreground="{StaticResource TextPrimaryBrush}" />
-                    </Border>
+                    <!-- Row 1 holds this screen's advisory notes, stacked VERTICALLY (T-154). A vertical
+                         StackPanel does not clip along its stacking axis, so the drop note joins the
+                         keyframe warning here without renumbering the three Grid.Row attributes below —
+                         and without the horizontal-StackPanel trap that silently clipped controls off
+                         the right edge at 1280px three times (T-136, T-141, T-156). -->
+                    <StackPanel Grid.Row="1">
+
+                        <!-- Coarse-keyframe warning — warning role: muted-gold fill, gold border, primary text. -->
+                        <Border Margin="0,10,0,0"
+                                Padding="8"
+                                Background="{StaticResource AccentMutedBrush}"
+                                BorderBrush="{StaticResource AccentBrush}"
+                                BorderThickness="1"
+                                CornerRadius="{StaticResource RadiusSm}"
+                                Visibility="{Binding KeyframeWarning, Converter={StaticResource NullToCollapsed}}">
+                            <TextBlock Text="{Binding KeyframeWarning}" TextWrapping="Wrap"
+                                       Foreground="{StaticResource TextPrimaryBrush}" />
+                        </Border>
+
+                        <!-- T-154 — what the drop did NOT load, and why. Collapsed when a drop refused
+                             nothing, because a note on every drop is noise and noise is what teaches
+                             people to ignore the one that matters. Split's own case, which Bulk Cut has
+                             no phrase for: you dropped five videos, it opens one at a time. -->
+                        <Border Margin="0,10,0,0"
+                                Padding="8,4"
+                                Background="{StaticResource Surface2Brush}"
+                                BorderBrush="{StaticResource AccentBrush}"
+                                BorderThickness="1"
+                                CornerRadius="{StaticResource RadiusSm}"
+                                Visibility="{Binding DropSummary, Converter={StaticResource NullToCollapsed}}">
+                            <TextBlock Text="{Binding DropSummary}"
+                                       TextWrapping="Wrap"
+                                       FontSize="{StaticResource FontSizeSmall}"
+                                       Foreground="{StaticResource TextPrimaryBrush}" />
+                        </Border>
+                    </StackPanel>
 
                     <!-- ===== Cut markers ‖ Parts to export — MODE-AWARE nested OrientedSplitPanel (T-091) =====
                          Row 2 is now the single * region of the tool-panel Grid; it hosts a NESTED

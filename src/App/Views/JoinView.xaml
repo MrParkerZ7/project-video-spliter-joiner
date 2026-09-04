@@ -137,6 +137,27 @@
                           Padding="12">
                 <StackPanel>
 
+                    <!-- T-154 — what the drop did NOT add, and why. Collapsed when a drop refused
+                         nothing, because a note on every drop is noise and noise is what teaches people
+                         to ignore the one that matters.
+
+                         FIRST child on purpose: this whole tool panel lives inside the ScrollViewer
+                         above, so a note appended at the end can be scrolled out of view and never seen.
+                         The panel is vertical, which cannot clip along its stacking axis — the
+                         horizontal-StackPanel trap of T-136 / T-141 / T-156. -->
+                    <Border Margin="0,0,0,10"
+                            Padding="8,4"
+                            Background="{StaticResource Surface2Brush}"
+                            BorderBrush="{StaticResource AccentBrush}"
+                            BorderThickness="1"
+                            CornerRadius="{StaticResource RadiusSm}"
+                            Visibility="{Binding DropSummary, Converter={StaticResource NullToCollapsed}}">
+                        <TextBlock Text="{Binding DropSummary}"
+                                   TextWrapping="Wrap"
+                                   FontSize="{StaticResource FontSizeSmall}"
+                                   Foreground="{StaticResource TextPrimaryBrush}" />
+                    </Border>
+
                     <!-- ===== Compat banner =====
                          T-088 — the Add files… / Clear all buttons moved OUT of this panel and onto the
                          shared Split/Join tab-strip line (MainWindow), reclaiming this top row. The compat

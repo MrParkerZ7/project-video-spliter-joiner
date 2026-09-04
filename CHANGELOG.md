@@ -7,6 +7,26 @@ goal; `0.1.0` is the first end-to-end, shippable cut.
 
 ## [Unreleased]
 
+### Fixed
+- **Split and Join now say why a dropped file did not arrive.** Bulk Cut learned this in 1.2.0; the other
+  two screens still took what they recognised and discarded the rest without a word, which from the
+  outside is indistinguishable from a dead drop target. Each screen says its own truth: Split
+  **opens one file at a time**, so dropping five videos now tells you the other four were skipped and why
+  — previously they simply vanished. Join says when a file is not a video, and when you dropped the same
+  one twice in a single go.
+- **A dropped folder is now called a folder** — "1 is a folder (drop the files inside it)" — instead of
+  "not a video file", which was untrue and unhelpful for the most natural gesture there is.
+- **Clearing a screen clears its drop note.** On Bulk Cut the message stayed on screen after *Clear all*,
+  so an empty list could still be insisting three files were not added.
+- **The drag-and-drop log now records what actually happened.** Every drop was written down as accepted,
+  even when nothing was taken — in the one file you are asked to attach to a bug report, and about the
+  exact question it exists to answer (whether the app ever saw your drag at all).
+
+### Known limitation, now written down
+- Dragging files the app recognises **none** of never reaches the screen: Windows shows a no-entry cursor
+  and the app is never told the drop happened, so it cannot explain that one in words. The cursor is the
+  answer in that case. This was previously documented as something the message covered; it never was.
+
 ## [1.2.0] - 2026-09-02
 
 A **minor**, not a patch: this run added features (profile backup/restore, delete-originals, snapshot

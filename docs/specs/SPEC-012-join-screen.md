@@ -52,6 +52,17 @@ Joining clips must be lossless (stream-copy concat, no re-render), which only wo
 - **I27** — `Clear()` is a no-op when `!CanClear`; otherwise it empties `Items`, resets `Compat`/`IsCompatible`/`CompatSummary` to the "add at least 2 files" baseline, drops `LastResult`, resets `Operation`, and deliberately preserves `OutputPath`. (`Clear`, T-047)
 - **I28** — `CancelCommand` is `Operation.CancelCommand` — cancelling the Join screen delegates to the shared operation's cancel. (ctor wiring)
 
+### Dropped files are accounted for (`DropRefusal`, `JoinViewModel.AddDroppedFilesAsync` — T-154)
+- **I29** — a dropped file that is **not added is explained**, never silently discarded. `DropSummary` states it in one line, and the drop handler passes the **raw** paths to the view-model rather than filtering first — filtering in the view and telling the VM only about the survivors is precisely why this screen could not report a refusal even in principle. (`AddDroppedFilesAsync`, `JoinView.HandleDroppedFiles`)
+- **I30** — Join **never says "already in the list"**, unlike Bulk Cut. This screen permits the same clip twice on purpose (I3 — duplicates allowed), so borrowing that wording would contradict its own rule. Consistency across the three screens is one vocabulary, not one sentence.
+- **I31** — what Join must report instead is the same path appearing **twice inside one drop**: the shared filter dedupes within a payload, so the second copy vanishes — invisible, and inconsistent with adding it twice through two gestures, which is allowed. ("1 was dropped twice", `DropRefusal.DroppedTwice`)
+- **I32** — a mixed drop **still adds the videos**. One unsupported file must not poison the whole drop.
+- **I33** — `DropSummary` is **null when nothing was refused**. A message on every drop is noise, and noise is what teaches people to ignore the one that matters.
+- **I34** — a dropped **folder is called a folder**, not "not a video file" — describing the most natural gesture for a video tool with a false statement is a new defect, not a fix. (`DropRefusal.Classify`)
+- **I35** — `Clear()` nulls `DropSummary`. The note describes a list that no longer exists; leaving it up is the stale-note bug that shipped on Bulk Cut and was fixed there in the same change.
+- **I36** — *(uncovered — set in WPF code-behind; needs a windowed/STA harness, see `_GAPS.md`)* the `dragdrop.log` **`accepted` flag reports the real decision**, not a hard-coded `true`, and `note:` carries the same sentence the screen is showing. (`DropDiagnostics.Record`)
+- **I37** — *(uncovered by design — describes a region no drop event reaches, so there is nothing to assert; the decision is ADR-0023)* **boundary, stated rather than fixed:** a drag containing *no* recognised video never reaches any of this — `OnDragOver` answers `VideoFileFilter.HasAnyVideo` with `DragDropEffects.None`, Windows shows a no-entry cursor, and no drop event is delivered. The cursor is that case's feedback.
+
 ## Links
 - Design: —
 - Goals: G-001 (ship v1.0 stream-copy splitter/joiner), G-003 (drag-and-drop — drag to reorder join clips)

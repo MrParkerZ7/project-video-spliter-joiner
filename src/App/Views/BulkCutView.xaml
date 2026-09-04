@@ -457,40 +457,51 @@
                 </StackPanel>
             </Border>
 
-            <!-- ===== Apply report note — shared surface for apply-to-all (T-097) + profile apply (T-103) ===== -->
-            <Border Grid.Row="2"
-                    Margin="0,8,0,0"
-                    Padding="8,4"
-                    Background="{StaticResource Surface2Brush}"
-                    BorderBrush="{StaticResource BorderStrongBrush}"
-                    BorderThickness="1"
-                    CornerRadius="{StaticResource RadiusSm}"
-                    Visibility="{Binding ApplyToAllReport, Converter={StaticResource NullToCollapsed}}">
-                <TextBlock Text="{Binding ApplyReportSummary}"
-                           TextWrapping="Wrap"
-                           FontSize="{StaticResource FontSizeSmall}"
-                           Foreground="{StaticResource TextSecondaryBrush}" />
-            </Border>
+            <!-- Row 2 holds BOTH advisory notes, stacked VERTICALLY. They previously carried
+                 Grid.Row="2" each and so painted into the SAME cell: apply-to-all a batch, then drop a
+                 folder, and the two notes overdrew — the shorter one hidden entirely, the taller one
+                 showing its overhang around it. A vertical StackPanel cannot clip along its stacking
+                 axis, so this fixes the collision without renumbering anything. (Found reviewing the
+                 T-154 Split/Join mirror, 2026-09-04.) -->
+            <StackPanel Grid.Row="2">
 
-            <!-- T-154: why a drop did not add everything you dropped. Three paths used to discard a
-                 dropped file in SILENCE - an unrecognised extension, a file already in the list, and the
-                 non-video half of a mixed drop - and from the outside all three look like a dead drop
-                 target. That is how the bug reached us: "why it's work sometime doesn't work some time?"
-                 Collapsed when nothing was refused; a message on every drop is noise, and noise is what
-                 teaches people to ignore the one that matters. -->
-            <Border Grid.Row="2"
-                    Margin="0,8,0,0"
-                    Padding="8,4"
-                    Background="{StaticResource Surface2Brush}"
-                    BorderBrush="{StaticResource AccentBrush}"
-                    BorderThickness="1"
-                    CornerRadius="{StaticResource RadiusSm}"
-                    Visibility="{Binding DropSummary, Converter={StaticResource NullToCollapsed}}">
-                <TextBlock Text="{Binding DropSummary}"
-                           TextWrapping="Wrap"
-                           FontSize="{StaticResource FontSizeSmall}"
-                           Foreground="{StaticResource TextPrimaryBrush}" />
-            </Border>
+                <!-- ===== Apply report note — shared surface for apply-to-all (T-097) + profile apply (T-103) ===== -->
+                <Border Margin="0,8,0,0"
+                        Padding="8,4"
+                        Background="{StaticResource Surface2Brush}"
+                        BorderBrush="{StaticResource BorderStrongBrush}"
+                        BorderThickness="1"
+                        CornerRadius="{StaticResource RadiusSm}"
+                        Visibility="{Binding ApplyToAllReport, Converter={StaticResource NullToCollapsed}}">
+                    <TextBlock Text="{Binding ApplyReportSummary}"
+                               TextWrapping="Wrap"
+                               FontSize="{StaticResource FontSizeSmall}"
+                               Foreground="{StaticResource TextSecondaryBrush}" />
+                </Border>
+
+                <!-- T-154: why a drop did not add everything you dropped. The reportable paths are the
+                     non-video half of a mixed drop, a file already in the list, a folder, and the same
+                     path twice in one payload — from the outside every one looks like a dead drop
+                     target, which is how the bug reached us: "why it's work sometime doesn't work some
+                     time?" Collapsed when nothing was refused; a message on every drop is noise, and
+                     noise is what teaches people to ignore the one that matters.
+
+                     NOT reportable here: a drag holding NO recognised video is refused by OnDragOver
+                     before a drop event exists, so this note can never speak for that case (ADR-0023,
+                     SPEC-011 I143). The earlier wording claimed it did. -->
+                <Border Margin="0,8,0,0"
+                        Padding="8,4"
+                        Background="{StaticResource Surface2Brush}"
+                        BorderBrush="{StaticResource AccentBrush}"
+                        BorderThickness="1"
+                        CornerRadius="{StaticResource RadiusSm}"
+                        Visibility="{Binding DropSummary, Converter={StaticResource NullToCollapsed}}">
+                    <TextBlock Text="{Binding DropSummary}"
+                               TextWrapping="Wrap"
+                               FontSize="{StaticResource FontSizeSmall}"
+                               Foreground="{StaticResource TextPrimaryBrush}" />
+                </Border>
+            </StackPanel>
         </Grid>
 
         <!-- ★ G-039 / T-112 axis-aware body: the SAME two regions — preview pane + row-list — laid out

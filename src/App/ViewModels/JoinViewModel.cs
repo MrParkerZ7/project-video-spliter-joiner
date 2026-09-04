@@ -89,6 +89,27 @@ public sealed class JoinViewModel : ObservableObject
         private set => SetProperty(ref _compatSummary, value);
     }
 
+    private string? _dropSummary;
+
+    /// <summary>
+    /// Why a drop did not add everything you dropped — or null when it did (T-154).
+    ///
+    /// <para>Bulk Cut got this first; Join was left out of scope and kept discarding in silence, which is
+    /// the criterion this closes. Join's clauses are deliberately NOT Bulk Cut's: Join
+    /// <b>permits the same clip twice</b> by design (see <see cref="AddFilesAsync"/>), so "already in
+    /// the list" would contradict the screen's own rule. What it must report instead is the case where
+    /// the shared filter collapses two copies of one path inside a <i>single</i> drop — invisible today,
+    /// and inconsistent with adding the same clip twice via the picker.</para>
+    ///
+    /// <para>Null when nothing was refused, deliberately: a message on every drop is noise, and noise is
+    /// what teaches people to ignore the one that matters.</para>
+    /// </summary>
+    public string? DropSummary
+    {
+        get => _dropSummary;
+        private set => SetProperty(ref _dropSummary, value);
+    }
+
     /// <summary>True when the current item set is concat-compatible (drives the banner colour + run gate).</summary>
     public bool IsCompatible
     {
@@ -212,6 +233,41 @@ public sealed class JoinViewModel : ObservableObject
     public RelayCommand CancelCommand { get; }
 
     // ---- Add / remove / reorder -------------------------------------------------------------
+
+    /// <summary>
+    /// Account for a drop: add what can be added, and explain what could not (T-154). Returns the video
+    /// paths that were added.
+    ///
+    /// <para>Takes the <b>raw</b> dropped paths rather than pre-filtered ones. That is the whole point:
+    /// the old view-side <c>HandleDroppedFiles</c> filtered first and told the VM only about the
+    /// survivors, so the VM could not report what had been refused even in principle. Counting happens
+    /// here, where it is testable without WPF.</para>
+    /// </summary>
+    public async Task<IReadOnlyList<string>> AddDroppedFilesAsync(IReadOnlyList<string>? dropped)
+    {
+        if (dropped is null || dropped.Count == 0)
+        {
+            DropSummary = null;
+            return Array.Empty<string>();
+        }
+
+        var tally = DropRefusal.Classify(dropped);
+
+        // No AlreadyInList clause — Join allows the same clip twice on purpose.
+        DropSummary = DropRefusal.Describe(
+            "added",
+            tail: null,
+            DropRefusal.NotVideo(tally.NotVideo),
+            DropRefusal.Folders(tally.Folders),
+            DropRefusal.DroppedTwice(tally.DuplicatesInDrop));
+
+        if (tally.Videos.Count > 0)
+        {
+            await AddFilesAsync(tally.Videos).ConfigureAwait(true);
+        }
+
+        return tally.Videos;
+    }
 
     /// <summary>
     /// Append one <see cref="JoinItemViewModel"/> per path (duplicates allowed), fill each info chip
@@ -491,6 +547,10 @@ public sealed class JoinViewModel : ObservableObject
         Compat = null;
         IsCompatible = false;
         CompatSummary = "Add at least 2 files to join.";
+
+        // T-154 — the drop note describes a list that no longer exists. Leaving it up is the stale-note
+        // bug this ticket also fixed on Bulk Cut, where it shipped.
+        DropSummary = null;
 
         LastResult = null;
 

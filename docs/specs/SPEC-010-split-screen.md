@@ -169,6 +169,36 @@ separately. The Join screen. Keyframe-snap math and `MediaProbe` internals (Core
   precedes the reopen, and repeated split→clear→load cycles stay stable — whether or not `Clear` was
   called first (`LoadAsync` re-open path; `Player.Open`/`Unload` ordering).
 
+### Dropped files are accounted for (`DropRefusal`, `SplitViewModel.AddDroppedFilesAsync` — T-154)
+- **I41** — a dropped file that is **not loaded is explained**, never silently discarded. `DropSummary`
+  states it in one line, and the drop handler passes the **raw** paths to the view-model rather than
+  filtering first — filtering in the view and telling the VM only about the survivors is precisely why
+  this screen could not report a refusal even in principle.
+- **I42** — Split's own refusal, which Bulk Cut has no phrase for: it **opens one file at a time**, so a
+  drop of several videos loads the first and names the rest ("2 other videos were skipped — Split opens
+  one file at a time"). The count alone reads as a malfunction; the reason makes it a rule.
+- **I43** — `DropSummary` is **null when nothing was refused**. A message on every drop is noise, and
+  noise is what teaches people to ignore the one that matters.
+- **I44** — a dropped **folder is called a folder**, not "not a video file". Explorer delivers a folder as
+  an ordinary FileDrop path with no extension; describing the most natural gesture for a video tool
+  with a false statement is a new defect, not a fix (`DropRefusal.Classify`).
+- **I45** — `Clear` nulls `DropSummary`. The note describes a drop whose screen no longer exists; leaving
+  it up is the stale-note bug that shipped on Bulk Cut and was fixed there in the same change.
+- **I46** — the note is assigned **before the load is awaited**, so it is on screen immediately and the
+  drop handler can carry the same sentence into `dragdrop.log` for that drop. Asserting this needs a
+  probe that genuinely suspends — against a `Task.FromResult` fake the whole method completes
+  synchronously and the assertion passes either way (`BlockingProbe`).
+- **I47** — *(uncovered — set in WPF code-behind; needs a windowed/STA harness, see `_GAPS.md`)* the
+  `dragdrop.log` **`accepted` flag reports the real decision**, not a hard-coded `true`. The
+  log exists to tell "we never saw the drag" apart from "we saw it and refused it"; a drop recorded as
+  accepted when the filter took nothing defeats the one artifact the reporter is asked to paste into a
+  bug report (`DropDiagnostics.Record`, `note:` carries the refusal sentence).
+- **I48** — *(uncovered by design — describes a region no drop event reaches, so there is nothing to
+  assert; the decision is ADR-0023)* **boundary, stated rather than fixed:** a drag containing *no* recognised video never reaches
+  any of this. `OnDragOver` answers `VideoFileFilter.HasAnyVideo` with `DragDropEffects.None`, so Windows
+  shows a no-entry cursor and **no drop event is delivered** — the cursor is that case's feedback. Every
+  invariant above describes a drop that WAS accepted and still could not take everything in it.
+
 ## Links
 - Design: — (goal-driven; see G-020 / G-022 / G-026 task threads under `docs/todo/`)
 - Goals: G-020 (output-dir defaults to file folder + resets per load) · G-022 (add-cut parity across

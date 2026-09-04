@@ -57,9 +57,22 @@ A drop zone highlights while you drag a valid file over a screen.
 `.rm` `.rmvb`. That covers camcorder and Blu-ray footage (`.m2ts`/`.mts`) and phone video (`.3gp`), which
 earlier versions refused.
 
-**Anything that is not added now says so.** On Bulk Cut a short line appears above the list — for example
-*"3 files were not added: 2 are not video files, 1 is already in the list"*. Nothing is discarded in
-silence any more; if a drop seems to do nothing, that line tells you why.
+**Anything that is not added now says so — on all three screens.** A short line appears near the top of
+the screen you dropped onto, for example *"3 files were not added: 2 are not video files, 1 is already in
+the list"*. It is only there when something actually was refused. Each screen reports its own rules:
+
+- **Split** also tells you when it ignored the extras — *"2 other videos were skipped — Split opens one
+  file at a time"* — so a five-video drop that loads one no longer looks like a malfunction.
+- **Join** never says "already in the list", because it lets you add the same clip twice on purpose. It
+  does tell you if you dropped the identical file twice in one go, since only one copy is kept.
+- **Bulk Cut** keeps one row per source, so re-dropping something already listed is reported.
+
+A dropped **folder** is named as a folder — *"1 is a folder (drop the files inside it)"*. Folders are not
+expanded; drop the videos themselves.
+
+> **If you get a no-entry cursor and no highlight**, nothing in what you are dragging is a video the app
+> recognises. Windows does not deliver that drop at all, so there is no message to show — the cursor is
+> the answer. Check the recognised-formats list above.
 
 > **If a drag does nothing at all** — no highlight, no message — the app never received it. That is
 > usually Windows rather than this app: a stuck drag from an earlier operation (press <kbd>Esc</kbd> in
