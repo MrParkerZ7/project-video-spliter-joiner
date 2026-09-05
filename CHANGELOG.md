@@ -27,6 +27,14 @@ goal; `0.1.0` is the first end-to-end, shippable cut.
   and the run itself could fail. It now declines the new file and says a split is still running. Pressing
   Run twice did the same thing, and the Run button is now disabled while a split is in progress.
 
+### Changed
+- **The Bulk Cut footer has room to breathe.** Eight controls and three status notes had ended up on one
+  line, added a feature at a time, so the row you use to arm the irreversible options was the most
+  crowded thing on the screen. The output options now get their own full-width row above the buttons,
+  and the three destructive ones — *Replace originals*, *Auto-delete originals*, *and empty bin* — sit
+  together at the end instead of being interleaved with the ordinary settings. Nothing moved that you
+  press: Run stays where it was, and *Delete originals* stays at the far opposite end from it.
+
 ### Known limitation, now written down
 - Dragging files the app recognises **none** of never reaches the screen: Windows shows a no-entry cursor
   and the app is never told the drop happened, so it cannot explain that one in words. The cursor is the

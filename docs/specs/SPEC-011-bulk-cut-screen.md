@@ -676,6 +676,24 @@ SPEC-007); the shared `IThumbnailService`/`FfmpegThumbnailService` frame source 
   asserted by a layout test measuring against the WINDOW, not the panel (an overflowing panel reports its
   own oversized width, so child-vs-panel checks pass against the very bug they target).
 
+### The footer is two rows, and the destructive options are one group (T-160, 2026-09-05)
+- **I145** — the output options occupy their **own full-width row**, above the action row. Every ticket
+  that added an option added it to the single footer line, which reached eight interactive controls and
+  three conditional notes; I139's `WrapPanel` stopped them clipping, but wrapping inside a `*` column
+  squeezed between two `Auto` columns reflows them into a narrow ragged block while `RunScopeSummary`
+  wraps in its own column beside them. Both are correct alone and cramped together. Asserted structurally
+  — the options must end above where Run begins — so a future edit that folds them back onto Run's line
+  fails a test rather than merely reading as "a bit tight".
+- **I146** — the three irreversible controls (**Replace originals**, **Auto-delete originals**,
+  **and empty bin**) sit **together at the end** of the options row, after a separator, with
+  `DestructiveOutputNote` closing the group. Previously the danger-coloured note sat *between* Exact cut
+  and Auto-delete, so the red vocabulary was scattered through the row and nothing read as a block.
+- **I147** — I119/I146's placement rule survives the re-row: **Delete originals stays at the opposite end
+  from Run**, in its own grid column. T-146 established that separation after the first attempt put the
+  destructive button on the pixels Run had just vacated; moving both controls to a new row is exactly the
+  edit that quietly undoes such an invariant, so it is now asserted at five window widths rather than
+  trusted to a comment.
+
 ### Drop accounting, corrected while mirroring it onto Split and Join (T-154, 2026-09-04)
 - **I140** - `Clear` nulls `DropSummary`. As shipped the note was written on drop and cleared by nothing
   but a later drop, so "3 files were not added" survived *Clear all* and sat over an empty list

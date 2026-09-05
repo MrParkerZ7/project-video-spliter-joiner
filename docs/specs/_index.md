@@ -22,12 +22,12 @@ One spec per feature; numbered invariants are the source `todo-automate` derives
 | [SPEC-008](SPEC-008-operation-progress-eta.md) | operation-progress-eta | app | 45 | ? | ? |
 | [SPEC-009](SPEC-009-app-settings.md) | app-settings | app | 28 | ? | ? |
 | [SPEC-010](SPEC-010-split-screen.md) | split-screen | app | 51 | ? | ? |
-| [SPEC-011](SPEC-011-bulk-cut-screen.md) | bulk-cut-screen | app | 144 | ? | ? |
+| [SPEC-011](SPEC-011-bulk-cut-screen.md) | bulk-cut-screen | app | 147 | ? | ? |
 | [SPEC-012](SPEC-012-join-screen.md) | join-screen | app | 37 | ? | ? |
 | [SPEC-013](SPEC-013-preview-player.md) | preview-player | app | 52 | ? | ? |
 | [SPEC-014](SPEC-014-timeline.md) | timeline | app | 30 | ? | ? |
 | [SPEC-015](SPEC-015-app-shell-theming.md) | app-shell-theming | ui | 28 | 24 | 4 |
-| **TOTAL** | | | **727** | **see note** | **see note** |
+| **TOTAL** | | | **730** | **see note** | **see note** |
 
 **Invariant counts recounted mechanically 2026-09-02** (T-153) — they had drifted **in both
 directions** and are now generated from the spec files rather than hand-incremented:
@@ -40,7 +40,8 @@ directions** and are now generated from the spec files rather than hand-incremen
 
 Total documented invariants: **723** (633 before the 09-02 recount, 680 at that recount, +21 from
 T-154/T-155/T-156 documented the same day, +22 on 09-04 from T-154's Split/Join half — SPEC-010 +8,
-SPEC-012 +9, SPEC-011 +5; +4 more from T-157 — SPEC-010 +3, SPEC-008 +1). SPEC-010 and SPEC-012 drop to `?` coverage under the rule below; two of the
+SPEC-012 +9, SPEC-011 +5; +4 more from T-157 — SPEC-010 +3, SPEC-008 +1; +3 on 09-05 from T-160 —
+SPEC-011 I145-I147, the two-row footer). SPEC-010 and SPEC-012 drop to `?` coverage under the rule below; two of the
 new invariants are knowingly uncovered and say so in place — the honest `accepted` flag on the drop
 trace (SPEC-010 I47 / SPEC-012 I36) is set in WPF code-behind that needs a windowed harness, and the
 DragOver boundary (SPEC-010 I48 / SPEC-012 I37) documents a region no drop event ever reaches, so

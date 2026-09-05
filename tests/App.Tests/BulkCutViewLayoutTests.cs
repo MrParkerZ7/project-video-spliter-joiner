@@ -274,6 +274,57 @@ public sealed class BulkCutViewLayoutTests
             Environment.NewLine + string.Join(Environment.NewLine, failures));
     }
 
+    /// <summary>
+    /// T-160 (SPEC-011) — the options and the actions occupy SEPARATE rows.
+    ///
+    /// <para>Eight controls and three conditional notes had accreted onto one footer line, one ticket at
+    /// a time. T-156's <c>WrapPanel</c> stopped them clipping, but wrapping inside a <c>*</c> column
+    /// squeezed between two <c>Auto</c> columns just reflows them into a narrow ragged block while
+    /// <c>RunScopeSummary</c> wraps in its own column beside them.</para>
+    ///
+    /// <para>The cure is structural — the options get the full width on their own row — so the test is
+    /// structural too: the options must end above where Run begins. A future edit that folds them back
+    /// onto Run's line fails here rather than looking merely "a bit tight" on someone's screen.</para>
+    /// </summary>
+    [Trait("serves-spec", "SPEC-011")]
+    [Fact]
+    public void TheFooterOptionsSitOnTheirOwnRow_NotOnRunsLine()
+    {
+        var failures = new List<string>();
+
+        OnSta(() =>
+        {
+            foreach (var (w, h) in Sizes)
+            {
+                var view = new BulkCutView();
+                LayOut(view, w, h);
+
+                var options = Find<FrameworkElement>(view, "FooterOptions");
+                var run = Find<FrameworkElement>(view, "RunBatchButton");
+
+                if (options is null || run is null)
+                {
+                    failures.Add($"{w}x{h}: FooterOptions or RunBatchButton not found — the footer's shape changed");
+                    continue;
+                }
+
+                var optionsBottom = options.TranslatePoint(new Point(0, 0), view).Y + options.ActualHeight;
+                var runTop = run.TranslatePoint(new Point(0, 0), view).Y;
+
+                if (optionsBottom > runTop + 1)
+                {
+                    failures.Add(
+                        $"{w}x{h}: the options end at y={optionsBottom:0} but Run starts at y={runTop:0} — " +
+                        "they are sharing a line again, which is the crowding this fixed");
+                }
+            }
+        });
+
+        failures.Should().BeEmpty(
+            "the output options must own a full-width row above the action row:" +
+            Environment.NewLine + string.Join(Environment.NewLine, failures));
+    }
+
     // ---- plumbing ---------------------------------------------------------------------------------
 
     /// <summary>

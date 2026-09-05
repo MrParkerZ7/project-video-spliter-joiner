@@ -374,13 +374,21 @@ public sealed class BulkItemThumbnailTests
         await Task.WhenAll(rows.Select(r => r.StartKeyframeScanAsync()));
 
         // Wait for the piled-up grabs to actually reach the gate, then assert the bound never exceeded 3.
-        // T-159: this was a 500ms SpinUntil, which is a race rather than a wait — on a loaded machine
-        // (CI, or locally straight after a full build) the grabs had simply not arrived yet and the test
-        // failed for being early, not for the bound being wrong. The fake now signals from inside the
-        // same lock that counts them, so there is no window at all; the timeout below is only a
-        // deadlock guard and is deliberately generous.
+        //
+        // T-159: the original was `SpinUntil(() => thumbs.CurrentConcurrent >= 3, 500ms)` — a race, not a
+        // wait. On a loaded machine the grabs had not arrived inside the window and the test failed for
+        // being early rather than for the bound being wrong.
+        //
+        // T-159 follow-up: the first fix awaited the signal, and that was WRONG HERE. This test installs
+        // a PumpContext, whose Post() only enqueues — continuations run when someone calls Drain(). An
+        // `await` therefore parks a continuation in a queue nobody drains, and the test hangs forever,
+        // taking the other six in this class with it and leaving the test host unable to exit.
+        //
+        // So: keep the deterministic SIGNAL (set inside the same lock that counts the grabs, so there is
+        // no sampling window) but observe it by SPINNING, which needs no pump. The timeout is a deadlock
+        // guard, not a timing assumption.
         var reached = thumbs.WhenConcurrentReaches(3);
-        var spun = reached == await Task.WhenAny(reached, Task.Delay(TimeSpan.FromSeconds(30)));
+        var spun = SpinUntil(() => reached.IsCompleted, TimeSpan.FromSeconds(30));
         spun.Should().BeTrue("at least 3 grabs should be in flight against the gate");
         thumbs.PeakConcurrent.Should().BeLessThanOrEqualTo(3, "the shared gate caps concurrent ffmpeg frame grabs");
 
@@ -391,14 +399,38 @@ public sealed class BulkItemThumbnailTests
         // lock that counts them; the timeout is a deadlock guard only.
         thumbs.Gate!.TrySetResult();
         var draining = thumbs.WhenCallCountReaches(8);
-        var drained = draining == await Task.WhenAny(draining, Task.Delay(TimeSpan.FromSeconds(30)));
+        var drained = SpinUntil(() => draining.IsCompleted, TimeSpan.FromSeconds(30));
         drained.Should().BeTrue("every row's grab eventually runs, three at a time");
         thumbs.PeakConcurrent.Should().BeLessThanOrEqualTo(3);
     }
 
-    // T-159 — the SpinUntil helper that used to live here is gone along with its last two callers.
-    // Waiting on a wall-clock deadline for work another thread has queued is a race, not a wait: both
-    // uses failed on a loaded machine and reported the concurrency bound as broken when the grabs had
-    // simply not arrived yet. FakeThumbnailService now signals from inside the lock that counts them
-    // (WhenConcurrentReaches / WhenCallCountReaches). Deleted rather than left available to reuse.
+    /// <summary>
+    /// Spin until <paramref name="condition"/> holds, or the timeout expires.
+    ///
+    /// <para><b>Deliberately a spin, not an await</b> (T-159). This class installs a
+    /// <see cref="PumpContext"/> whose <c>Post</c> only enqueues — a continuation runs when the test
+    /// calls <c>Drain()</c>. Awaiting here would park the continuation in a queue nobody drains and hang
+    /// the test forever; that is exactly what the first version of the T-159 fix did, and it took the
+    /// whole class down with it.</para>
+    ///
+    /// <para>What T-159 actually changed is the CONDITION, not the mechanism: callers now spin on a
+    /// signal the fake sets inside the same lock that updates its counters, instead of sampling a
+    /// mutable counter against a short wall-clock deadline. The signal removes the race; the spin keeps
+    /// it usable under the pump; the timeout is a deadlock guard rather than a timing assumption.</para>
+    /// </summary>
+    private static bool SpinUntil(Func<bool> condition, TimeSpan timeout)
+    {
+        var deadline = DateTime.UtcNow + timeout;
+        while (DateTime.UtcNow < deadline)
+        {
+            if (condition())
+            {
+                return true;
+            }
+
+            Thread.Sleep(2);
+        }
+
+        return condition();
+    }
 }

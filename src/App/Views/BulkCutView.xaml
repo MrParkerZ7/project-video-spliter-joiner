@@ -980,7 +980,18 @@
 
         <!-- ================= Footer: output note + overall bar + Run/Cancel + lifecycle surfaces ================= -->
         <StackPanel Grid.Row="2" Margin="4,10,4,0">
+            <!-- T-160: TWO rows, not one. Every ticket that added an output option added it to the
+                 single footer row, which reached eight interactive controls and three conditional
+                 notes. T-156's WrapPanel stopped them CLIPPING, but wrapping inside a `*` column that
+                 is squeezed between two `Auto` columns just reflows them into a narrow ragged block
+                 while RunScopeSummary wraps in its own column at the same time. Both are correct
+                 alone and cramped together. Giving the options the full width costs one row that
+                 wrapping was already consuming, and lets Run keep a row to itself. -->
             <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />  <!-- 0: output options, full width -->
+                    <RowDefinition Height="Auto" />  <!-- 1: the actions - destructive | spacer | Run -->
+                </Grid.RowDefinitions>
                 <Grid.ColumnDefinitions>
                     <!-- 0: the destructive post-run action, alone, at the far left (T-146).
                          It gets its OWN column rather than a slot in a StackPanel because
@@ -1004,7 +1015,8 @@
                      finished, Run shifted left and this button appeared on the pixels Run had just
                      occupied, under the cursor of someone pressing Run repeatedly. Its own column
                      makes the separation structural instead of advisory. -->
-                <Button Grid.Column="0"
+                <Button Grid.Row="1"
+                        Grid.Column="0"
                         x:Name="DeleteOriginalsButton"
                         Style="{StaticResource ProfileDangerButton}"
                         Content="{Binding DeleteOriginalsLabel}"
@@ -1019,7 +1031,22 @@
                      "Replace originals" and both new checkboxes simply vanished off the right edge at
                      1280px. Exactly the failure T-136 fixed in the profile bar and T-141 in the header;
                      third time, so it is now pinned by a layout test. -->
-                <WrapPanel x:Name="FooterOptions" Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                <!-- T-160: grouped by CONSEQUENCE, in reading order - output, then precision, then the
+                     three destructive controls together at the end. Previously the danger-coloured
+                     options were interleaved with the neutral ones (the armed-state note sat between
+                     "Exact cut" and "Auto-delete"), so the red vocabulary was scattered across the row
+                     and nothing read as a block. A 1px rule separates the groups. Still a WrapPanel,
+                     never a horizontal StackPanel - a StackPanel CLIPS rather than wraps, which is the
+                     T-136 / T-141 / T-156 failure this row already shipped once. -->
+                <WrapPanel x:Name="FooterOptions"
+                           Grid.Row="0"
+                           Grid.Column="0"
+                           Grid.ColumnSpan="3"
+                           Margin="0,0,0,10"
+                           Orientation="Horizontal"
+                           VerticalAlignment="Center">
+
+                    <!-- ===== Group 1: where the output goes ===== -->
                     <!-- T-123: the note is bound, never hard-coded, so it can never contradict the mode. -->
                     <TextBlock Text="{Binding OutputNote}"
                                VerticalAlignment="Center"
@@ -1031,8 +1058,16 @@
                               IsChecked="{Binding Overwrite, Mode=TwoWay}"
                               IsEnabled="{Binding CollisionIsInert, Converter={StaticResource InverseBool}}"
                               ToolTip="Ignored while &quot;Replace originals&quot; is on — the destination is the source file." />
+
+                    <Rectangle Width="1"
+                               Height="16"
+                               Margin="16,0,0,0"
+                               VerticalAlignment="Center"
+                               Fill="{StaticResource BorderBrush}" />
+
+                    <!-- ===== Group 2: how the cut is made ===== -->
                     <!-- T-125: cut precision. Default (unchecked) keeps the lossless identity. -->
-                    <CheckBox Margin="18,0,0,0"
+                    <CheckBox Margin="16,0,0,0"
                               VerticalAlignment="Center"
                               Content="Exact cut"
                               IsChecked="{Binding ExactCut, Mode=TwoWay}"
@@ -1043,18 +1078,27 @@
                                Foreground="{StaticResource TextMutedBrush}"
                                FontSize="{StaticResource FontSizeSmall}" />
 
-                    <!-- T-156: the armed state must be visible BEFORE Run is pressed, not discovered
-                         after a batch has already deleted something. -->
-                    <TextBlock Text="{Binding DestructiveOutputNote}"
-                               Margin="14,0,0,0"
+                    <Rectangle Width="1"
+                               Height="16"
+                               Margin="16,0,0,0"
                                VerticalAlignment="Center"
-                               FontWeight="SemiBold"
-                               Foreground="{StaticResource DangerBrush}"
-                               FontSize="{StaticResource FontSizeSmall}"
-                               Visibility="{Binding DestructiveOutputNote, Converter={StaticResource NullToCollapsed}}" />
+                               Fill="{StaticResource BorderBrush}" />
 
-                    <!-- The destructive choice: deliberately NOT a look-alike peer of the checkbox above -
+                    <!-- ===== Group 3: the irreversible ones, together =====
+                         Each is deliberately NOT a look-alike peer of the neutral checkboxes above -
                          danger colour-role + warning glyph + bold weight (three differentiators). -->
+                    <CheckBox Margin="16,0,0,0"
+                              VerticalAlignment="Center"
+                              IsChecked="{Binding ReplaceOriginal, Mode=TwoWay}"
+                              ToolTip="Write each trimmed result OVER its original file. Replaced originals go to the Recycle Bin. You will be asked to confirm before the batch runs.">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="⚠" Margin="0,0,5,0" Foreground="{StaticResource DangerBrush}" />
+                            <TextBlock Text="Replace originals"
+                                       FontWeight="SemiBold"
+                                       Foreground="{StaticResource DangerBrush}" />
+                        </StackPanel>
+                    </CheckBox>
+
                     <!-- T-156: reclaim space without two manual steps after every batch. Both default
                          OFF; the second is disabled until the first is on (emptying the bin frees
                          nothing this app put there otherwise), and arming it asks once because the pair
@@ -1078,20 +1122,20 @@
                         </StackPanel>
                     </CheckBox>
 
-                    <CheckBox Margin="18,0,0,0"
-                              VerticalAlignment="Center"
-                              IsChecked="{Binding ReplaceOriginal, Mode=TwoWay}"
-                              ToolTip="Write each trimmed result OVER its original file. Replaced originals go to the Recycle Bin. You will be asked to confirm before the batch runs.">
-                        <StackPanel Orientation="Horizontal">
-                            <TextBlock Text="⚠" Margin="0,0,5,0" Foreground="{StaticResource DangerBrush}" />
-                            <TextBlock Text="Replace originals"
-                                       FontWeight="SemiBold"
-                                       Foreground="{StaticResource DangerBrush}" />
-                        </StackPanel>
-                    </CheckBox>
+                    <!-- T-156: the armed state must be visible BEFORE Run is pressed, not discovered
+                         after a batch has already deleted something. T-160 moved it to the END of the
+                         destructive group - it summarises what the two boxes above just armed, so it
+                         belongs after them rather than between the neutral options and them. -->
+                    <TextBlock Text="{Binding DestructiveOutputNote}"
+                               Margin="14,0,0,0"
+                               VerticalAlignment="Center"
+                               FontWeight="SemiBold"
+                               Foreground="{StaticResource DangerBrush}"
+                               FontSize="{StaticResource FontSizeSmall}"
+                               Visibility="{Binding DestructiveOutputNote, Converter={StaticResource NullToCollapsed}}" />
                 </WrapPanel>
 
-                <StackPanel Grid.Column="2" Orientation="Horizontal">
+                <StackPanel Grid.Row="1" Grid.Column="2" Orientation="Horizontal">
                     <!-- T-134: what Run will actually do, said BEFORE it is pressed. The count was already
                          on the button and it was still not enough - a user imported a batch, set one cut,
                          pressed Run, got one file, and had to ask why. Hidden entirely when every row will
