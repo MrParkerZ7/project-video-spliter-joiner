@@ -14,6 +14,12 @@ goal; `0.1.0` is the first end-to-end, shippable cut.
   **opens one file at a time**, so dropping five videos now tells you the other four were skipped and why
   — previously they simply vanished. Join says when a file is not a video, and when you dropped the same
   one twice in a single go.
+- **The file picker now offers every format the app accepts, and explains what it cannot use.** The
+  *Video files* filter still listed seven extensions while dragging accepted 26 — so an `.m2ts`, the very
+  format whose absence started this, was invisible in the picker even though dropping one worked. The
+  list is now derived from the same set the drop path uses, so the two can never disagree again. And a
+  file chosen under *All files* that the app cannot open is refused **in words** rather than silently, on
+  all three screens.
 - **A dropped folder is now called a folder** — "1 is a folder (drop the files inside it)" — instead of
   "not a video file", which was untrue and unhelpful for the most natural gesture there is.
 - **Clearing a screen clears its drop note.** On Bulk Cut the message stayed on screen after *Clear all*,

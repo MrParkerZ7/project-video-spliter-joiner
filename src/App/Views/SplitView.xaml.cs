@@ -106,7 +106,9 @@ public partial class SplitView : UserControl
         var dialog = new OpenFileDialog
         {
             Title = "Select a video to split",
-            Filter = "Video files|*.mp4;*.mkv;*.mov;*.avi;*.webm;*.m4v;*.ts|All files|*.*",
+            // T-158: derived from VideoFileFilter, never hand-typed - the two doors into this screen
+            // must offer and accept the same set.
+            Filter = VideoFileFilter.DialogFilter,
             CheckFileExists = true,
         };
 
@@ -119,7 +121,10 @@ public partial class SplitView : UserControl
 
         if (dialog.ShowDialog() == true)
         {
-            vm.LoadCommand.Execute(dialog.FileName);
+            // T-158: through the SAME counting entry point the drop path uses, so a file chosen under
+            // "All files" that this app cannot use is refused in words rather than in silence. The two
+            // doors into this screen must answer the same question the same way.
+            _ = vm.AddDroppedFilesAsync(new[] { dialog.FileName });
         }
     }
 

@@ -143,7 +143,9 @@ public partial class JoinView : UserControl
         var dialog = new OpenFileDialog
         {
             Title = "Select videos to join",
-            Filter = "Video files|*.mp4;*.mkv;*.mov;*.avi;*.webm;*.m4v;*.ts|All files|*.*",
+            // T-158: derived from VideoFileFilter, never hand-typed - the two doors into this screen
+            // must offer and accept the same set.
+            Filter = VideoFileFilter.DialogFilter,
             CheckFileExists = true,
             Multiselect = true,
         };
@@ -157,7 +159,8 @@ public partial class JoinView : UserControl
 
         if (dialog.ShowDialog() == true)
         {
-            vm.AddFilesCommand.Execute(dialog.FileNames);
+            // T-158: same counting entry point as the drop path — see SplitView for why.
+            _ = vm.AddDroppedFilesAsync(dialog.FileNames);
         }
     }
 

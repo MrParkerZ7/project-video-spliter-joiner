@@ -34,6 +34,22 @@ public static class VideoFileFilter
     };
 
     /// <summary>
+    /// The <see cref="Microsoft.Win32.OpenFileDialog"/> filter string, BUILT from the same set the drop
+    /// path accepts (T-158).
+    ///
+    /// <para>All three pickers used to carry a hand-typed seven-extension list while this set had grown
+    /// to 26. So an <c>.m2ts</c> — the very format whose absence produced the original report — was
+    /// invisible under "Video files" even though DROPPING one worked. The two doors into the same screen
+    /// disagreed, and the one a frustrated user falls back to was the stale one.</para>
+    ///
+    /// <para>Derived rather than duplicated, so the two can never drift again: adding an extension above
+    /// changes what the picker offers, with nothing else to remember.</para>
+    /// </summary>
+    public static string DialogFilter =>
+        "Video files|" + string.Join(";", VideoExtensions.OrderBy(e => e, StringComparer.Ordinal).Select(e => "*" + e))
+        + "|All files|*.*";
+
+    /// <summary>
     /// Keep only paths whose extension is a known video type (case-insensitive), drop everything
     /// else, dedupe (case-insensitive on the full path), preserve first-seen order.
     /// Null/empty input yields an empty list.
