@@ -481,18 +481,46 @@
                          plain bounded Grid + internal list scroll keeps Run reachable per D6.) -->
                     <StackPanel Grid.Row="4">
 
-                    <!-- ===== Primary Run (gold, count-aware) + Cancel ===== -->
-                    <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
-                        <Button Style="{StaticResource AccentButton}"
-                                Content="{Binding RunLabel}"
-                                Padding="16,6"
-                                Command="{Binding RunSplitCommand}" />
-                        <Button Content="Cancel"
-                                Margin="6,0,0,0"
-                                Padding="10,5"
-                                Command="{Binding CancelCommand}"
-                                Visibility="{Binding Operation.CanCancel, Converter={StaticResource BoolToVisibility}}" />
-                    </StackPanel>
+                    <!-- ===== Action row: destructive at one end, Run at the other (T-162) =====
+                         A Grid, NOT a horizontal StackPanel. T-146 learned this on Bulk Cut the hard way:
+                         appending the destructive button after Run in a StackPanel and setting
+                         HorizontalAlignment="Left" does nothing, because alignment is inert along a
+                         StackPanel's stacking axis — the button landed on the pixels Run had just
+                         occupied, under the cursor of someone pressing Run repeatedly. Its own column
+                         makes the separation structural instead of advisory. -->
+                    <Grid x:Name="SplitActionRow" Margin="0,12,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />   <!-- 0: delete original, far left OF THIS ROW -->
+                            <ColumnDefinition Width="*" />      <!-- 1: the gap that keeps them apart -->
+                            <ColumnDefinition Width="Auto" />   <!-- 2: Run + Cancel -->
+                        </Grid.ColumnDefinitions>
+
+                        <!-- T-162: hidden until it can actually do something. A permanently-greyed
+                             destructive button just trains people to ignore it, and this one is only
+                             offered once every produced part is verified on disk. -->
+                        <Button Grid.Column="0"
+                                x:Name="DeleteOriginalButton"
+                                Style="{StaticResource DangerButton}"
+                                Content="{Binding DeleteOriginalLabel}"
+                                Margin="0,0,28,0"
+                                VerticalAlignment="Center"
+                                Command="{Binding DeleteOriginalCommand}"
+                                ToolTip="Send the source file to the Recycle Bin. Offered only once every part this split produced is on disk and non-empty — if any part is missing, the source is the only copy of that footage and nothing is deleted. Never a permanent delete."
+                                Visibility="{Binding CanDeleteOriginal, Converter={StaticResource BoolToVisibility}}" />
+
+                        <StackPanel Grid.Column="2" Orientation="Horizontal">
+                            <Button Style="{StaticResource AccentButton}"
+                                    Content="{Binding RunLabel}"
+                                    Padding="16,6"
+                                    x:Name="RunSplitButton"
+                                    Command="{Binding RunSplitCommand}" />
+                            <Button Content="Cancel"
+                                    Margin="6,0,0,0"
+                                    Padding="10,5"
+                                    Command="{Binding CancelCommand}"
+                                    Visibility="{Binding Operation.CanCancel, Converter={StaticResource BoolToVisibility}}" />
+                        </StackPanel>
+                    </Grid>
 
                     <ProgressBar Height="16"
                                  Margin="0,10,0,0"

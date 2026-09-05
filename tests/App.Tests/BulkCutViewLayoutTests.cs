@@ -35,11 +35,8 @@ namespace VideoSplitJoiner.App.Tests;
 /// </summary>
 public sealed class BulkCutViewLayoutTests
 {
-    /// <summary>The window sizes checked, from a wide monitor down to a cramped one.</summary>
-    private static readonly (double W, double H)[] Sizes =
-    {
-        (1600, 900), (1280, 800), (1024, 768), (900, 700), (760, 620),
-    };
+    /// <summary>The window sizes checked — shared with every other layout suite (T-162).</summary>
+    private static (double W, double H)[] Sizes => StaViewHarness.Sizes;
 
     /// <summary>The floor the middle row promises (<c>RootGrid</c> row 1 <c>MinHeight</c>).</summary>
     private const double ContentFloor = 220;
@@ -420,111 +417,22 @@ public sealed class BulkCutViewLayoutTests
     }
 
     // ---- plumbing ---------------------------------------------------------------------------------
+    //
+    // T-162: the STA worker, theme loading and visual-tree helpers moved to StaViewHarness so the Split
+    // screen's layout suite could share them. They could NOT be copied - Application is a process-wide
+    // singleton pinned to its creating thread and the themes hold unfrozen Freezables, so a second STA
+    // worker fails with "cannot access Freezable across threads".
 
-    /// <summary>
-    /// ONE STA thread for the whole class, shared by every test.
-    ///
-    /// <para><see cref="Application"/> is a process-wide singleton pinned to the thread that created it,
-    /// and the app's themes hold unfrozen Freezables (a <c>DropShadowEffect</c>). A thread per test
-    /// therefore fails on the second test with "cannot access Freezable across threads" - a plumbing
-    /// error that says nothing about layout. One worker, reused, removes the whole class of noise.</para>
-    /// </summary>
-    private static readonly Lazy<StaWorker> Worker = new(() => new StaWorker(), isThreadSafe: true);
-
-    private static void OnSta(Action body) => Worker.Value.Run(body);
-
-    private sealed class StaWorker
-    {
-        private readonly System.Collections.Concurrent.BlockingCollection<(Action Body, System.Threading.Tasks.TaskCompletionSource Done)> _queue = new();
-
-        public StaWorker()
-        {
-            var thread = new Thread(() =>
-            {
-                EnsureApplicationResources();
-                foreach (var (body, done) in _queue.GetConsumingEnumerable())
-                {
-                    try
-                    {
-                        body();
-                        done.TrySetResult();
-                    }
-                    catch (Exception ex)
-                    {
-                        done.TrySetException(ex);
-                    }
-                }
-            })
-            {
-                IsBackground = true,
-            };
-
-            thread.SetApartmentState(ApartmentState.STA);
-            thread.Start();
-        }
-
-        public void Run(Action body)
-        {
-            var done = new System.Threading.Tasks.TaskCompletionSource(
-                System.Threading.Tasks.TaskCreationOptions.RunContinuationsAsynchronously);
-            _queue.Add((body, done));
-
-            done.Task.Wait(TimeSpan.FromSeconds(60)).Should().BeTrue(
-                "laying out a few views must not hang");
-            done.Task.GetAwaiter().GetResult();   // rethrow whatever the body threw, with its own message
-        }
-    }
-
-    /// <summary>
-    /// Load the app's REAL theme dictionaries. A stubbed theme would prove nothing — the styles are part
-    /// of what is under test, and a `StaticResource` that does not resolve is exactly the class of bug
-    /// this catches.
-    /// </summary>
-    private static void EnsureApplicationResources()
-    {
-        if (Application.Current is not null)
-        {
-            return;
-        }
-
-        var app = new Application();
-        foreach (var relative in new[] { "Themes/Tokens.xaml", "Themes/Controls.xaml" })
-        {
-            app.Resources.MergedDictionaries.Add(new ResourceDictionary
-            {
-                Source = new Uri(
-                    "pack://application:,,,/VideoSplitJoiner.App;component/" + relative, UriKind.Absolute),
-            });
-        }
-    }
+    private static void OnSta(Action body) => StaViewHarness.OnSta(body);
 
     private static void LayOut(FrameworkElement view, double width, double height)
-    {
-        view.Measure(new Size(width, height));
-        view.Arrange(new Rect(0, 0, width, height));
-        view.UpdateLayout();
-    }
+        => StaViewHarness.LayOut(view, width, height);
 
     private static T? Find<T>(DependencyObject root, string name)
         where T : FrameworkElement
-        => Descendants<T>(root).FirstOrDefault(e => e.Name == name);
+        => StaViewHarness.Find<T>(root, name);
 
     private static IEnumerable<T> Descendants<T>(DependencyObject root)
         where T : DependencyObject
-    {
-        var count = VisualTreeHelper.GetChildrenCount(root);
-        for (var i = 0; i < count; i++)
-        {
-            var child = VisualTreeHelper.GetChild(root, i);
-            if (child is T hit)
-            {
-                yield return hit;
-            }
-
-            foreach (var deeper in Descendants<T>(child))
-            {
-                yield return deeper;
-            }
-        }
-    }
+        => StaViewHarness.Descendants<T>(root);
 }

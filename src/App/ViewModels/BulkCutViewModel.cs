@@ -655,12 +655,12 @@ public sealed class BulkCutViewModel : ObservableObject
                 continue;
             }
 
-            if (SamePath(output, row.Path))
+            if (FileFacts.Same(output, row.Path))
             {
                 continue; // replace-originals: the output IS the original
             }
 
-            if (!IsNonEmptyFile(output) || !FileThere(row.Path))
+            if (!FileFacts.IsNonEmpty(output) || !FileFacts.Exists(row.Path))
             {
                 continue;
             }
@@ -669,42 +669,8 @@ public sealed class BulkCutViewModel : ObservableObject
         }
     }
 
-    private static bool SamePath(string a, string b)
-    {
-        try
-        {
-            return string.Equals(System.IO.Path.GetFullPath(a), System.IO.Path.GetFullPath(b), StringComparison.OrdinalIgnoreCase);
-        }
-        catch
-        {
-            return false;
-        }
-    }
 
-    private static bool IsNonEmptyFile(string path)
-    {
-        try
-        {
-            var fi = new System.IO.FileInfo(path);
-            return fi.Exists && fi.Length > 0;
-        }
-        catch
-        {
-            return false; // unreadable => never treat its source as safe to delete
-        }
-    }
 
-    private static bool FileThere(string path)
-    {
-        try
-        {
-            return System.IO.File.Exists(path);
-        }
-        catch
-        {
-            return false;
-        }
-    }
 
     /// <summary>T-144 - how many originals could be reclaimed.</summary>
     public int DeletableOriginalCount => DeletableOriginals().Count();
@@ -774,7 +740,7 @@ public sealed class BulkCutViewModel : ObservableObject
         {
             // Re-check at deletion time: the eligibility list was built BEFORE the unload, and the world
             // may have moved since the confirmation dialog was answered.
-            if (!FileThere(row.Path) || !IsNonEmptyFile(row.OutputPath))
+            if (!FileFacts.Exists(row.Path) || !FileFacts.IsNonEmpty(row.OutputPath))
             {
                 continue;
             }
@@ -784,7 +750,7 @@ public sealed class BulkCutViewModel : ObservableObject
                 _originalDisposer.DisposeOriginalBackup(row.Path);
 
                 // The disposer is best-effort BY CONTRACT, so verify rather than assume it worked.
-                if (FileThere(row.Path))
+                if (FileFacts.Exists(row.Path))
                 {
                     refusedPaths.Add(row.Path);
                     continue;

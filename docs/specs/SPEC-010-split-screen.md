@@ -169,6 +169,36 @@ separately. The Join screen. Keyframe-snap math and `MediaProbe` internals (Core
   precedes the reopen, and repeated split→clear→load cycles stay stable — whether or not `Clear` was
   called first (`LoadAsync` re-open path; `Player.Open`/`Unload` ordering).
 
+### Reclaiming the source after a split (`DeleteOriginal`, `IOriginalDisposer` — T-162, G-052)
+- **I52** — **the source may be binned only when EVERY produced part is on disk and non-empty.** This is
+  the invariant the whole feature hangs on, and it is where Split differs from Bulk Cut in kind rather
+  than degree: Bulk asks "is this row's one output there?", Split turns ONE source into N parts, so
+  binning the source while part 4 of 6 is missing loses footage that exists nowhere else — the source is
+  the only copy of the material those parts were cut from. A **zero-byte** part counts as missing:
+  `File.Exists` says yes and the footage is still gone.
+- **I53** — eligibility is computed **fresh on every read**, never remembered from the run. A split may
+  be minutes old and a part may have been moved or emptied since.
+- **I54** — it is **re-checked again at deletion time**, after the confirmation is answered and after the
+  player handle is released. That confirm→sweep window is what T-150 closed on Bulk Cut; copying the
+  feature without copying the fix would have re-opened it here.
+- **I55** — the **preview player's handle is released first** (`Player.Unload()`, not `Stop()`), because
+  it holds the source open and the disposer would otherwise refuse the very file the user asked to
+  remove — T-145's lesson, applied to the file being deleted rather than a row's.
+- **I56** — deletion goes to the **Recycle Bin, never a permanent delete** (`IOriginalDisposer` →
+  `ShellRecycleBin`, ADR-0022). Recoverability is the whole safety argument for offering this at all.
+- **I57** — an **unwired host deletes nothing**: `_originalDisposer` is null by default, and the control
+  never enables. The confirmation gate likewise **defaults to refusing**, so a host that forgets to wire
+  a prompt cannot delete a user's file.
+- **I58** — a refusal **names who is holding the file** via the Restart Manager, and a throwing lookup
+  degrades to a plain refusal — a diagnostic must never be the reason a deletion path fails (T-155).
+- **I59** — a part written **over the source itself** is never binned. Split's output dir defaults to the
+  source's own folder (I-061 lineage), so this is reachable rather than theoretical, and deleting it
+  would destroy the only copy.
+- **I60** — the control sits in its **own grid column at the opposite end from Run**, and revealing it
+  does not move Run. T-146 established this on Bulk Cut after the first attempt put the destructive
+  button on the pixels Run had just vacated; Split's action row is a `Grid` for the same reason, asserted
+  at five window widths rather than trusted to a comment.
+
 ### A load never tears down a running split (T-157)
 - **I49** — **a load is refused while a split is running, and says why.** `LoadAsync` and `RunSplitAsync`
   share one `OperationViewModel`, so a load starting mid-split disposed the split's own

@@ -174,48 +174,9 @@
              cluster: a muted ✕ glyph on a plain surface chip at rest, revealing a
              Danger border + Danger glyph only on hover so the destructive intent
              surfaces on approach (never shouts). Tokens only. -->
-        <Style x:Key="ProfileDangerButton" TargetType="Button">
-            <Setter Property="Foreground" Value="{StaticResource TextMutedBrush}" />
-            <Setter Property="Background" Value="{StaticResource Surface2Brush}" />
-            <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}" />
-            <Setter Property="BorderThickness" Value="1" />
-            <Setter Property="FontFamily" Value="{StaticResource AppFontFamily}" />
-            <Setter Property="FontSize" Value="{StaticResource FontSizeBody}" />
-            <Setter Property="Padding" Value="9,5" />
-            <Setter Property="Cursor" Value="Hand" />
-            <Setter Property="SnapsToDevicePixels" Value="True" />
-            <Setter Property="Template">
-                <Setter.Value>
-                    <ControlTemplate TargetType="Button">
-                        <Border x:Name="Bd"
-                                Background="{TemplateBinding Background}"
-                                BorderBrush="{TemplateBinding BorderBrush}"
-                                BorderThickness="{TemplateBinding BorderThickness}"
-                                CornerRadius="{StaticResource RadiusSm}"
-                                SnapsToDevicePixels="True">
-                            <ContentPresenter HorizontalAlignment="Center"
-                                              VerticalAlignment="Center"
-                                              Margin="{TemplateBinding Padding}"
-                                              RecognizesAccessKey="True" />
-                        </Border>
-                        <ControlTemplate.Triggers>
-                            <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Bd" Property="Background" Value="{StaticResource Surface3Brush}" />
-                                <Setter TargetName="Bd" Property="BorderBrush" Value="{StaticResource DangerBrush}" />
-                                <Setter Property="Foreground" Value="{StaticResource DangerBrush}" />
-                            </Trigger>
-                            <Trigger Property="IsPressed" Value="True">
-                                <Setter TargetName="Bd" Property="Opacity" Value="0.85" />
-                            </Trigger>
-                            <Trigger Property="IsEnabled" Value="False">
-                                <Setter Property="Opacity" Value="0.4" />
-                                <Setter Property="Cursor" Value="Arrow" />
-                            </Trigger>
-                        </ControlTemplate.Triggers>
-                    </ControlTemplate>
-                </Setter.Value>
-            </Setter>
-        </Style>
+        <!-- T-162: the danger-button style moved to Themes/Controls.xaml as DangerButton when the
+             Split screen needed the same vocabulary for its own delete-original control. Two screens
+             using one look is the promote-to-shared rule; two copies of it is how they drift apart. -->
     </UserControl.Resources>
 
     <Grid x:Name="RootGrid"
@@ -397,7 +358,7 @@
                                 Click="OnClearThumbnailClicked" />
 
                         <!-- MUTED: Delete — muted ✕, danger-on-hover. -->
-                        <Button Style="{StaticResource ProfileDangerButton}"
+                        <Button Style="{StaticResource DangerButton}"
                                 Content="✕"
                                 Margin="8,0,0,0"
                                 VerticalAlignment="Center"
@@ -1091,7 +1052,7 @@
                 <Button Grid.Row="1"
                         Grid.Column="0"
                         x:Name="DeleteOriginalsButton"
-                        Style="{StaticResource ProfileDangerButton}"
+                        Style="{StaticResource DangerButton}"
                         Content="{Binding DeleteOriginalsLabel}"
                         Margin="0,0,28,0"
                         VerticalAlignment="Center"

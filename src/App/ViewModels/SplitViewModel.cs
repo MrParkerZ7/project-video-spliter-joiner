@@ -11,6 +11,8 @@ using System.Threading.Tasks;
 using VideoSplitJoiner.App.Media;
 using VideoSplitJoiner.App.Settings;
 using VideoSplitJoiner.Core.Errors;
+using VideoSplitJoiner.App.Io;
+using VideoSplitJoiner.Core.Io;
 using VideoSplitJoiner.Core.Ffmpeg;
 using VideoSplitJoiner.Core.Media;
 using VideoSplitJoiner.Core.Split;
@@ -34,6 +36,9 @@ public sealed class SplitViewModel : ObservableObject
     private readonly IMediaProbe _probe;
     private readonly ISplitEngine _splitEngine;
     private readonly IAppSettings _settings;
+
+    /// <summary>T-162 — the Recycle-Bin seam; null ⇒ the delete-source control never enables.</summary>
+    private readonly IOriginalDisposer? _originalDisposer;
     private readonly IWaveformService _waveforms;
 
     // Number of waveform columns (peak buckets) requested from the Core service (D-002: ~1500–2000).
@@ -97,11 +102,16 @@ public sealed class SplitViewModel : ObservableObject
         IMediaPlayer? player = null,
         IAppSettings? settings = null,
         IThumbnailService? thumbnails = null,
-        IWaveformService? waveforms = null)
+        IWaveformService? waveforms = null,
+        IOriginalDisposer? originalDisposer = null)
     {
         _probe = probe ?? throw new ArgumentNullException(nameof(probe));
         _splitEngine = splitEngine ?? throw new ArgumentNullException(nameof(splitEngine));
         _settings = settings ?? new AppSettings();
+
+        // T-162 (G-052): null by default, so a host that never wires a disposer can never delete a
+        // source file. Same defaulting rule Bulk Cut uses.
+        _originalDisposer = originalDisposer;
 
         // T-084: the audio-waveform source (Core, ffmpeg-backed). A null service falls back to the
         // inert NullWaveformService so existing constructions / tests behave as no-audio (band hidden),
@@ -138,6 +148,7 @@ public sealed class SplitViewModel : ObservableObject
         Operation.PropertyChanged += OnOperationChanged;
 
         LoadCommand = new RelayCommand(p => _ = LoadAsync(p as string));
+        DeleteOriginalCommand = new RelayCommand(_ => DeleteOriginal(), _ => CanDeleteOriginal);
         AddMarkerCommand = new RelayCommand(_ => AddMarker(NewMarkerPosition), _ => CanAddMarker);
         AddCutAtCommand = new RelayCommand(p => { if (p is TimeSpan t) AddCutAt(t); }, _ => CanAddMarker);
         SetCutAtPlayheadCommand = new RelayCommand(_ => SetCutAtPlayhead(), _ => CanSetCutAtPlayhead);
@@ -255,6 +266,171 @@ public sealed class SplitViewModel : ObservableObject
         private set => SetProperty(ref _statusText, value);
     }
 
+    // ---- T-162 (G-052): reclaim the source file after a successful split ------------------------
+
+    /// <summary>
+    /// Whether the loaded source can be sent to the Recycle Bin right now.
+    ///
+    /// <para><b>The all-parts rule is the whole ticket.</b> Bulk Cut asks "is this row's one output on
+    /// disk?"; a split turns ONE source into N parts, so the question here is "are <b>all</b> of them on
+    /// disk and non-empty?". Binning a 4 GB source when part 4 of 6 failed to write loses footage that
+    /// exists nowhere else — the source is the only copy of the material those parts were cut from.</para>
+    ///
+    /// <para>Evaluated FRESH on every read rather than remembered from the run: the split may be minutes
+    /// old and a part may have been moved or emptied since.</para>
+    /// </summary>
+    private bool SourceIsDeletable => DeletableSource() is not null;
+
+    /// <summary>The source path that may be binned, or null when any clause fails.</summary>
+    private string? DeletableSource()
+    {
+        if (_originalDisposer is null || Operation.IsRunning)
+        {
+            return null;
+        }
+
+        var source = InputPath;
+        if (string.IsNullOrWhiteSpace(source) || !FileFacts.Exists(source))
+        {
+            return null;
+        }
+
+        var segments = LastResult?.Segments;
+        if (segments is null || segments.Count == 0)
+        {
+            return null;   // no split ran, or it produced nothing
+        }
+
+        foreach (var segment in segments)
+        {
+            // EVERY part must be on disk and non-empty. One missing part and the source stays.
+            if (!FileFacts.IsNonEmpty(segment.Path))
+            {
+                return null;
+            }
+
+            // Degenerate but reachable: Split's output dir defaults to the source's own folder (T-061),
+            // so a part could be written over the source. Binning it would destroy the only copy.
+            if (FileFacts.Same(segment.Path, source))
+            {
+                return null;
+            }
+        }
+
+        return source;
+    }
+
+    /// <summary>T-162 — the delete-source gate.</summary>
+    public bool CanDeleteOriginal => SourceIsDeletable;
+
+    /// <summary>Count-and-prize label, so the user sees what they get before pressing it.</summary>
+    public string DeleteOriginalLabel
+    {
+        get
+        {
+            var source = DeletableSource();
+            return source is null
+                ? "✕ Delete original"
+                : string.Create(
+                    CultureInfo.InvariantCulture,
+                    $"✕ Delete original ({System.IO.Path.GetFileName(source)} · {MediaFormat.FormatSize(_inputSizeBytes)})");
+        }
+    }
+
+    /// <summary>
+    /// Confirmation gate for <see cref="DeleteOriginal"/> — (name, bytes) =&gt; proceed. Defaults to
+    /// <b>false</b> so a host that never wires it can never delete anything, mirroring Bulk Cut's
+    /// <c>ConfirmDeleteOriginals</c>.
+    /// </summary>
+    public Func<string, long, bool> ConfirmDeleteOriginal { get; set; } = (_, _) => false;
+
+    /// <summary>
+    /// T-162 — send the source to the Recycle Bin, never a permanent delete.
+    /// </summary>
+    public void DeleteOriginal()
+    {
+        var source = DeletableSource();
+        if (source is null || _originalDisposer is null)
+        {
+            return;
+        }
+
+        if (!ConfirmDeleteOriginal(System.IO.Path.GetFileName(source), _inputSizeBytes))
+        {
+            return;
+        }
+
+        // T-145's lesson, on this screen: the preview player holds the source open, so without releasing
+        // it first the disposer refuses the very file the user asked to remove. Unload closes the media
+        // element; Stop() only halts playback and is not enough.
+        Player.Unload();
+
+        // Re-check AFTER the unload and AFTER the confirmation was answered — that window is what T-150
+        // closed on Bulk Cut, and copying the feature without copying the fix would re-open it here.
+        if (DeletableSource() is null)
+        {
+            StatusText = "Nothing was deleted — the parts are no longer all on disk.";
+            RaiseDeleteOriginalState();
+            return;
+        }
+
+        try
+        {
+            _originalDisposer.DisposeOriginalBackup(source);
+        }
+        catch
+        {
+            // Fall through to the existence check: the disposer is best-effort by contract.
+        }
+
+        var name = System.IO.Path.GetFileName(source);
+
+        if (FileFacts.Exists(source))
+        {
+            // T-155's lesson: name who is holding it. If the holder is ours that is a bug with an
+            // address; if it is a scanner or the shell's thumbnail cache, no self-release would ever
+            // have helped and the user can see why instead of watching the app retry.
+            var holders = SafeHolders(source);
+            StatusText = holders.Count == 0
+                ? $"Could not remove {name} — it is still in use."
+                : $"Could not remove {name} — still in use: {string.Join(", ", holders)}.";
+        }
+        else
+        {
+            StatusText = $"Sent {name} to the Recycle Bin.";
+        }
+
+        RaiseDeleteOriginalState();
+    }
+
+    /// <summary>
+    /// Who is holding a file the disposer refused. Injectable so the refusal MESSAGE is testable without
+    /// holding a real OS lock (the same seam Bulk Cut uses — a diagnostic must never be the reason a
+    /// deletion path throws).
+    /// </summary>
+    internal Func<string, IReadOnlyList<string>> LookupFileHolders { get; set; } =
+        VideoSplitJoiner.App.Io.FileLockOwner.WhoIsHolding;
+
+    private IReadOnlyList<string> SafeHolders(string path)
+    {
+        try
+        {
+            return LookupFileHolders(path) ?? Array.Empty<string>();
+        }
+        catch
+        {
+            return Array.Empty<string>();
+        }
+    }
+
+    /// <summary>Re-gate the delete-source control after anything that could change its eligibility.</summary>
+    private void RaiseDeleteOriginalState()
+    {
+        OnPropertyChanged(nameof(CanDeleteOriginal));
+        OnPropertyChanged(nameof(DeleteOriginalLabel));
+        DeleteOriginalCommand.RaiseCanExecuteChanged();
+    }
+
     private string? _dropSummary;
 
     /// <summary>
@@ -331,7 +507,15 @@ public sealed class SplitViewModel : ObservableObject
     public SplitResult? LastResult
     {
         get => _lastResult;
-        private set => SetProperty(ref _lastResult, value);
+        private set
+        {
+            if (SetProperty(ref _lastResult, value))
+            {
+                // T-162: the produced parts ARE the delete-source eligibility, so the control has to
+                // re-gate the moment a run lands or is cleared.
+                RaiseDeleteOriginalState();
+            }
+        }
     }
 
     /// <summary>The shared progress / cancel / error operation state for the run.</summary>
@@ -478,6 +662,9 @@ public sealed class SplitViewModel : ObservableObject
     /// (a file loaded and no split running). See <see cref="Clear"/> (T-047).
     /// </summary>
     public RelayCommand ClearCommand { get; }
+
+    /// <summary>T-162 — bin the source file once every produced part is verified on disk.</summary>
+    public RelayCommand DeleteOriginalCommand { get; }
 
     /// <summary>Cancel the in-flight run — delegates to <see cref="OperationViewModel.CancelCommand"/>.</summary>
     public RelayCommand CancelCommand { get; }
@@ -1486,6 +1673,10 @@ public sealed class SplitViewModel : ObservableObject
         {
             OnPropertyChanged(nameof(CanClear));
             ClearCommand.RaiseCanExecuteChanged();
+
+            // T-162: a run in flight makes the source undeletable (DeletableSource refuses while
+            // Operation.IsRunning), so the control re-gates with the run rather than lagging it.
+            RaiseDeleteOriginalState();
         }
     }
 

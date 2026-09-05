@@ -27,6 +27,16 @@ goal; `0.1.0` is the first end-to-end, shippable cut.
   and the run itself could fail. It now declines the new file and says a split is still running. Pressing
   Run twice did the same thing, and the Run button is now disabled while a split is in progress.
 
+### Added
+- **Split can reclaim its source file.** A split *multiplies* disk usage — cutting a 4 GB recording into
+  six parts leaves 8 GB where 4 GB was, and the source is the one file you no longer want. Bulk Cut could
+  already clean up after itself; Split now can too. A **Delete original** button appears once the split
+  finishes, names the file and its size, and sends it to the Recycle Bin — never a permanent delete.
+  It is offered **only when every part the split produced is on disk and non-empty**: if any part is
+  missing or empty, the source is the only copy of that footage left, so nothing is deleted and the app
+  says so. It sits at the far opposite end of the row from Run, so it never appears under the cursor of
+  someone pressing Run.
+
 ### Changed
 - **Cut profiles are a bar you click, not a dropdown you open.** Profiles can carry a picture, and the
   old picker hid every one of them behind a closed list — so you chose by name and only saw the picture
