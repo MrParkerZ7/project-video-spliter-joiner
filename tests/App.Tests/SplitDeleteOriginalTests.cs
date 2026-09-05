@@ -319,6 +319,56 @@ public sealed class SplitDeleteOriginalTests : IDisposable
         return vm;
     }
 
+    // ---- The wiring the tests cannot see -------------------------------------------------------
+
+    /// <summary>
+    /// T-162 — the SHIPPED app must actually hand Split a disposer.
+    ///
+    /// <para>Every test above injects one, so all of them pass whether or not the composition root does.
+    /// On the first pass of T-162 it did not: the feature was fully built, fully tested, and completely
+    /// inert in the application, because <c>MainViewModel</c> constructed <c>SplitViewModel</c> without
+    /// the argument. A green suite said nothing about it.</para>
+    ///
+    /// <para>This asserts the composition root's SOURCE rather than its behaviour, deliberately:
+    /// constructing the real <c>MainViewModel</c> would build the FFME player and the ffmpeg graph,
+    /// which is a far heavier and flakier thing to do than reading the one line that matters. The repo
+    /// already asserts against source this way where behaviour is impractical to reach — the installer
+    /// script test (T-147) and the spec-index guard (T-153).</para>
+    /// </summary>
+    [Trait("serves-spec", "SPEC-010")]
+    [Fact]
+    public void TheCompositionRootWiresADisposerIntoSplit()
+    {
+        var root = FindRepoRoot();
+        var main = Path.Combine(root, "src", "App", "ViewModels", "MainViewModel.cs");
+        File.Exists(main).Should().BeTrue($"MainViewModel.cs should be at {main}");
+
+        var text = File.ReadAllText(main);
+        var i = text.IndexOf("new SplitViewModel(", StringComparison.Ordinal);
+        i.Should().BeGreaterThan(0, "the composition root should still construct a SplitViewModel");
+
+        // The construction call, up to its closing paren-semicolon.
+        var end = text.IndexOf(");", i, StringComparison.Ordinal);
+        var call = text.Substring(i, end - i);
+
+        call.Should().Contain(
+            "originalDisposer:",
+            "without it the Delete-original feature is inert in the shipped app while every test above " +
+            "still passes — which is exactly what happened the first time");
+    }
+
+    private static string FindRepoRoot()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "VideoSplitJoiner.sln")))
+        {
+            dir = dir.Parent;
+        }
+
+        dir.Should().NotBeNull("the test must be able to find the repo root");
+        return dir!.FullName;
+    }
+
     // ---- The degenerate case Split can actually reach -----------------------------------------
 
     [Trait("serves-spec", "SPEC-010")]

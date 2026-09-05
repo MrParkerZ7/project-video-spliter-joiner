@@ -33,3 +33,4 @@ numbering order. The index reflects the **actual** records present.
 | [0021](0021-profiles-survive-reinstall-via-backup-file.md) | Profiles survive reinstall by not being touched; portability via a backup file with images inline, rather than migrating the two storage roots | Accepted |
 | [0022](0022-silent-shell-recycle-over-vb-fileio.md) | Bin files through SHFileOperation directly, not VB's FileIO helper — no UIOption value is silent, so every locked file raised a dialog | Accepted |
 | [0023](0023-refuse-at-the-cursor-not-in-words.md) | A drag with no recognised video stays refused at the cursor rather than accepted-then-explained; the spec claim that it was explained is corrected | Accepted |
+| [0024](0024-per-screen-delete-eligibility.md) | Delete-original eligibility is decided per screen (Bulk: one row, one output · Split: one source, ALL N parts) — the predicates are shared, the rule is not | Accepted |

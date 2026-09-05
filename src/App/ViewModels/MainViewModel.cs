@@ -104,7 +104,14 @@ public sealed class MainViewModel : ObservableObject
 
         // The in-app preview player is FFME-backed (FfmeMediaPlayer, decodes via ffmpeg); PlayerView
         // attaches its FFME MediaElement on Loaded. Unattached here, so construction stays render-free.
-        Split = new SplitViewModel(probe, splitEngine, new FfmeMediaPlayer(), settings, thumbnailService, waveformService);
+        // T-162 (G-052): the disposer for "Delete original". Passed HERE rather than defaulted inside
+        // the view model, for the same reason Bulk Cut's is (T-144/T-140) — null means the feature is
+        // simply unavailable, so a test that forgets to inject one can never bin real files. The flip
+        // side is that forgetting it HERE leaves the feature inert in the shipped app while every test
+        // still passes, which is exactly what happened on the first pass of T-162.
+        Split = new SplitViewModel(
+            probe, splitEngine, new FfmeMediaPlayer(), settings, thumbnailService, waveformService,
+            originalDisposer: new RecycleBinOriginalDisposer());
         Join = new JoinViewModel(joinEngine, probe, settings);
 
         // D-004 / T-097 — the Bulk Cut screen shares the SAME probe / split engine / thumbnail service /

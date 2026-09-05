@@ -258,12 +258,29 @@ where the real implementation is OS-specific, implementable *outside* Core:
   `KeepOriginalBackupDisposer` (**the default** — nothing is ever destroyed, at the cost of a leftover
   `.vsj-original` beside the output) and `DeleteOriginalBackupDisposer`. The Windows **Recycle-Bin**
   implementation lives in the App assembly instead — `App/Io/RecycleBinOriginalDisposer`, over
-  `Microsoft.VisualBasic.FileIO.FileSystem.DeleteFile(…, RecycleOption.SendToRecycleBin)` — because
-  Core targets plain `net8.0` and stays OS- and UI-free while the Recycle Bin is a Windows shell
-  concept. `MainViewModel` wires that one in, which is what keeps "replace the original" undoable
-  after the batch ends and even after the app exits. Every implementation is **best-effort by
-  contract**: failing to dispose a backup leaves a recoverable file and must never fail an otherwise
-  successful run.
+  `App/Io/ShellRecycleBin` (`SHFileOperation` with `FOF_ALLOWUNDO | FOF_SILENT | FOF_NOCONFIRMATION |
+  FOF_NOERRORUI`, **ADR-0022**) — because Core targets plain `net8.0` and stays OS- and UI-free while
+  the Recycle Bin is a Windows shell concept. It went through
+  `Microsoft.VisualBasic.FileIO.FileSystem.DeleteFile` until T-155: `UIOption` has only `AllDialogs` and
+  `OnlyErrorDialogs`, so every locked file raised a shell dialog on every run and there was no silent
+  option to choose. Every implementation is **best-effort by contract**: failing to dispose a backup
+  leaves a recoverable file and must never fail an otherwise successful run.
+
+  **`MainViewModel` wires the Recycle-Bin implementation into BOTH screens** — Bulk Cut (T-144) and
+  Split (T-162) — which is what keeps every "the original is gone" gesture undoable after the run ends
+  and even after the app exits. It is passed at the composition root rather than defaulted inside the
+  view models on purpose: `null` means the feature is simply unavailable, so a test that forgets to
+  inject one can never bin real files. The cost of that choice is the mirror-image failure — forgetting
+  it at the composition root leaves the feature inert in the shipped app while every test still passes,
+  which happened on T-162's first pass and is now guarded by a test that reads this file.
+
+- **Deleting an original is asked in two different ways, on purpose.** Bulk Cut deletes one original
+  per row, each against its own single output: "is this row's output on disk?". Split deletes one source
+  that produced **N parts**, so the question is "are they **ALL** on disk and non-empty?" — binning a
+  4 GB source when part 4 of 6 is missing loses footage that exists nowhere else. The two eligibility
+  rules are therefore **deliberately not shared** (**[ADR 0024](adr/0024-per-screen-delete-eligibility.md)**);
+  what IS shared is `App/Io/FileFacts` (the never-throwing `Exists` / `IsNonEmpty` / `Same` predicates
+  both rules are built from) and the Recycle-Bin mechanism beneath them.
 
 ## Bulk Cut tab — batch intro/outro trim (`Core/Bulk/`, `App/ViewModels/`, `App/Views/`)
 

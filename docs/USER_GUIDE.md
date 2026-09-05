@@ -139,6 +139,34 @@ You can also press **Clear** at any time (when no split is running) to unload th
 screen — the preview goes blank and the markers, parts, and results are all cleared, ready for a new
 file.
 
+### Reclaiming space after a split
+
+A split **multiplies** disk usage: cutting a 4 GB recording into six parts leaves 8 GB where 4 GB was,
+and the source is usually the one file you no longer want.
+
+**By hand.** Once the split finishes, a **Delete original** button appears at the far left of the footer,
+naming the file and roughly how much space it frees. It sends the source to the **Recycle Bin** — never
+a permanent delete — and asks you to confirm first, defaulting to *No*.
+
+It only appears when **every part the split produced is on disk and is not empty**. That rule is the
+whole point of the feature being safe: if one part failed to write, the source is the only copy of that
+footage left, so nothing is offered and nothing is deleted. The check runs again at the moment you
+confirm, so a part that disappears while the dialog is open is caught too.
+
+**Automatically.** Two checkboxes above the buttons:
+
+- **Auto-delete source** — after a split finishes and every part is verified, the source goes to the
+  Recycle Bin with no further gesture. A split that produced an incomplete set still deletes nothing.
+- **⚠ and empty bin** — also empties the Recycle Bin, so the space is actually freed. Only available
+  once auto-delete is on, and it asks you once before arming, because **together these two delete your
+  source permanently and it cannot be restored**. Emptying the bin is not limited to this app's files:
+  it removes everything in the Recycle Bin, including files other programs put there.
+
+Both are off by default and are remembered **separately from Bulk Cut's** — arming one screen never arms
+the other. While either is on, a red line in the footer says what the next split will do, before you
+press Run. Turning auto-delete back off also switches the bin option off; it will ask again if you turn
+it on later.
+
 ### Why cuts snap to keyframes
 
 Stream copy (`-c copy`) is lossless and near-instant precisely because it copies existing encoded
