@@ -205,6 +205,28 @@ Also in (T-147): `ProfileBackup` (`Export`, `Plan`, `Apply`, `ImportPlan`, the v
   contract as the explicit thumbnail upload (I76), and for the same reason: a silent backup is
   indistinguishable from a broken button.
 
+### The picker is a scrollable bar, not a dropdown (`BulkCutView.xaml` `ProfileBar` — T-161)
+- **I95** — profiles are chosen from a **horizontal strip of chips shown at rest**, not a `ComboBox`.
+  Profiles carry pictures — I75/I76 and the snapshot gesture (T-135) exist precisely so they can — and a
+  closed dropdown hid every one of them until after the user had already chosen by name, which is the
+  one moment the picture cannot help.
+- **I96** — the bar is bound to the **same two properties the ComboBox used**, `Profiles` and
+  `SelectedProfile`. Selection semantics, `HasSelectedProfile`, and every apply/thumbnail/delete command
+  are therefore untouched by the change — the surface moved, the model did not.
+- **I97** — **a click SELECTS; it never applies.** `Apply to all` rewrites the cut points of every ticked
+  row, and a strip you scroll makes a stray click far cheaper than opening a dropdown and picking a row,
+  so wiring apply to selection would put a bulk edit one misclick away. Asserted directly: setting
+  `SelectedProfile` changes no row's intro or outro, and the apply command still does.
+- **I98** — the bar **scrolls inside a fixed cap** (`MaxWidth`) rather than widening with the profile
+  count, so the apply actions beside it never get displaced. This bar is the original clipping site
+  (I120's sibling, T-136), which is why the cap is pinned by a layout test rather than trusted: a plain
+  "is it inside the window" check passes with or without it, because the surrounding `WrapPanel` would
+  simply wrap the actions onto the next line.
+- **I99** — the selected chip is distinguished by **three differentiators, never a tint alone** — accent
+  border, muted-accent fill, and a visible accent bar under the label. The bar is reserved with
+  `Visibility="Hidden"` at rest and the border thickness is constant, so moving the selection changes no
+  measurement and the row cannot twitch.
+
 ## Links
 - Design: — ADR-0021 (profiles survive reinstall by not being touched; portability via a backup file rather than a two-root migration) - (feature tasks T-096 apply-to-all convention · T-102 model/persistence/apply · T-103 VM command glue · T-106 thumbnail model/store · T-107 thumbnail UI glue · T-129 upload-failure reporting - T-147 backup/restore + installer guarantee)
 - Goals: G-037, G-038 (profile thumbnails), G-051 (profiles you can keep), G-044 (thumbnail change works — and says so when it does not)

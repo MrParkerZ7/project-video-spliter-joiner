@@ -25,6 +25,55 @@
         <!-- Profile row: [thumb chip] Name — the ComboBox ItemTemplate (drives BOTH the drop-down rows
              and the selection box). The muted chip is the placeholder; the Image covers it when a
              thumbnail path resolves, and stays transparent (chip shows) when it is null/missing. -->
+        <!-- T-161: one profile chip in the scrollable bar. Selected state is marked by THREE
+             differentiators, never a tint alone — accent border (colour-role), muted-accent fill
+             (colour-role), and a visible accent bar under the label (ornament).
+
+             The bar is reserved with Visibility="Hidden" rather than Collapsed at rest, so selecting a
+             chip changes no measurement and the row cannot twitch as the selection moves; likewise the
+             border thickness is constant and only its brush changes. -->
+        <Style x:Key="ProfileChipItem" TargetType="ListBoxItem">
+            <Setter Property="Margin" Value="0,0,6,0" />
+            <Setter Property="Padding" Value="6,3" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ListBoxItem">
+                        <Border x:Name="Chip"
+                                Background="{StaticResource Surface2Brush}"
+                                BorderBrush="{StaticResource BorderBrush}"
+                                BorderThickness="1"
+                                CornerRadius="{StaticResource RadiusSm}"
+                                SnapsToDevicePixels="True">
+                            <StackPanel Margin="{TemplateBinding Padding}">
+                                <ContentPresenter />
+                                <Rectangle x:Name="SelectedBar"
+                                           Height="3"
+                                           Margin="0,3,0,0"
+                                           RadiusX="1.5"
+                                           RadiusY="1.5"
+                                           Visibility="Hidden"
+                                           Fill="{StaticResource AccentBrush}" />
+                            </StackPanel>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Chip" Property="BorderBrush" Value="{StaticResource BorderStrongBrush}" />
+                            </Trigger>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="Chip" Property="BorderBrush" Value="{StaticResource AccentBrush}" />
+                                <Setter TargetName="Chip" Property="Background" Value="{StaticResource AccentMutedBrush}" />
+                                <Setter TargetName="SelectedBar" Property="Visibility" Value="Visible" />
+                            </Trigger>
+                            <Trigger Property="IsKeyboardFocused" Value="True">
+                                <Setter TargetName="Chip" Property="BorderBrush" Value="{StaticResource AccentBrush}" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <DataTemplate x:Key="ProfileItemTemplate" DataType="{x:Type profiles:CutProfile}">
             <StackPanel Orientation="Horizontal">
                 <Border Width="28" Height="28"
@@ -251,16 +300,40 @@
                          has grown to eight controls while the tab's split is user-resizable (G-039). The
                          set-at-playhead row already uses this idiom. -->
                     <WrapPanel VerticalAlignment="Center">
-                        <!-- HERO: thumbnail picker ([thumb chip] Name). Natural height
-                             (fits the 28px chip) makes it the tallest element; a wider
-                             MinWidth gives the selected profile's thumbnail room. -->
-                        <ComboBox MinWidth="164"
-                                  VerticalAlignment="Center"
-                                  ItemsSource="{Binding Profiles}"
-                                  SelectedItem="{Binding SelectedProfile, Mode=TwoWay}"
-                                  ItemTemplate="{StaticResource ProfileItemTemplate}"
-                                  ToolTip="Choose a saved cut profile to apply"
-                                  Visibility="{Binding HasProfiles, Converter={StaticResource BoolToVisibility}}" />
+                        <!-- HERO: the profile BAR (T-161, was a ComboBox).
+                             Profiles carry pictures - T-129 and T-135 both exist so a profile can have a
+                             recognisable one - and a closed dropdown hid every picture until after you
+                             had already chosen by name. A horizontal strip shows them at rest, so
+                             choosing is one click on the thing you recognise; "too many profiles"
+                             degrades into scrolling instead of a taller and taller popup.
+
+                             Same two bindings the ComboBox used (Profiles / SelectedProfile), so every
+                             command, gate and apply action below is untouched. A click SELECTS and
+                             nothing more - "Apply to all" rewrites every ticked row's cut points, which
+                             must not be one misclick away on a strip you are scrolling.
+
+                             MaxWidth + horizontal scroll is what keeps it from pushing the action
+                             buttons off the row: this bar is the ORIGINAL clipping site (T-136). -->
+                        <ListBox x:Name="ProfileBar"
+                                 MaxWidth="420"
+                                 VerticalAlignment="Center"
+                                 Background="Transparent"
+                                 BorderThickness="0"
+                                 Padding="0"
+                                 ItemsSource="{Binding Profiles}"
+                                 SelectedItem="{Binding SelectedProfile, Mode=TwoWay}"
+                                 ItemTemplate="{StaticResource ProfileItemTemplate}"
+                                 ItemContainerStyle="{StaticResource ProfileChipItem}"
+                                 ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                                 ScrollViewer.VerticalScrollBarVisibility="Disabled"
+                                 ToolTip="Click a saved cut profile to select it, then use Apply to selected / Apply to all"
+                                 Visibility="{Binding HasProfiles, Converter={StaticResource BoolToVisibility}}">
+                            <ListBox.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <StackPanel Orientation="Horizontal" />
+                                </ItemsPanelTemplate>
+                            </ListBox.ItemsPanel>
+                        </ListBox>
 
                         <!-- SECONDARY: Apply as a paired split-control — one bordered
                              Surface2 container, two flat segments split by a 1px rule. -->

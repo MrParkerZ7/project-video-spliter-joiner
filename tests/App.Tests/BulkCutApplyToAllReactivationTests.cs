@@ -195,6 +195,52 @@ public sealed class BulkCutApplyToAllReactivationTests
         b.IntroEnd.Snapped.Should().Be(TimeSpan.FromSeconds(30), "the re-saved profile's NEW intro propagates");
     }
 
+    // ---- T-161: selecting a profile is NOT applying it ---------------------------------------
+
+    /// <summary>
+    /// T-161 (SPEC-007) — choosing a profile in the bar must change nothing but the selection.
+    ///
+    /// <para>The picker became a strip of clickable chips you scroll, which makes a stray click far
+    /// cheaper than opening a dropdown and choosing a row. <c>Apply to all</c> rewrites the cut points of
+    /// every ticked row, so wiring that to selection would put a bulk edit one misclick away. The design
+    /// decision was "a click SELECTS, never applies", and this is what holds it.</para>
+    /// </summary>
+    [Fact]
+    [Trait("serves-spec", "SPEC-007")]
+    public async Task SelectingAProfile_ChangesNothingButTheSelection()
+    {
+        var (vm, probe, _) = Build();
+        var a = await AddRowAsync(vm, probe, @"C:\v\a.mp4", 100, 2, introSeconds: 12, outroSeconds: 88);
+        vm.SelectedItem = a;
+        vm.SaveProfile("Series");
+
+        var b = await AddRowAsync(vm, probe, @"C:\v\b.mp4", 100, 2, introSeconds: 4);
+
+        // Deselect FIRST. SaveProfile leaves its new profile selected, so assigning the same instance
+        // again is a no-op that SetProperty short-circuits - the first version of this test did exactly
+        // that, and a mutation making selection apply survived it completely untouched.
+        vm.SelectedProfile = null;
+        vm.SelectedProfile.Should().BeNull(
+            "precondition - the assignment under test must be a REAL change, or it tests nothing");
+
+        var introBefore = b.IntroEnd.Snapped;
+        var hadOutro = b.OutroStart is not null;
+
+        // The gesture under test: pick the profile, and do nothing else.
+        vm.SelectedProfile = vm.Profiles.Single(p => p.Name == "Series");
+        vm.SelectedProfile.Should().NotBeNull("the selection took");
+
+        b.IntroEnd.Snapped.Should().Be(
+            introBefore, "selecting a profile must not rewrite a row's cut - only Apply does");
+        (b.OutroStart is not null).Should().Be(
+            hadOutro, "selecting a profile must not add or remove an outro");
+
+        // And Apply is still what applies, so the selection was genuinely live throughout.
+        vm.ApplyProfileToAll();
+        b.IntroEnd.Snapped.Should().Be(
+            TimeSpan.FromSeconds(12), "Apply to all is what applies - proving the selection was live");
+    }
+
     // ---- Boundary cases from the Case-Coverage Matrix ----------------------------------------
 
     [Fact]

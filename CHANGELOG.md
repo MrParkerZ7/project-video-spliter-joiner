@@ -28,6 +28,12 @@ goal; `0.1.0` is the first end-to-end, shippable cut.
   Run twice did the same thing, and the Run button is now disabled while a split is in progress.
 
 ### Changed
+- **Cut profiles are a bar you click, not a dropdown you open.** Profiles can carry a picture, and the
+  old picker hid every one of them behind a closed list — so you chose by name and only saw the picture
+  afterwards. They now sit in a row you can see at a glance; click one to select it, and the
+  *Apply to selected* / *Apply to all* buttons work exactly as before. With more profiles than fit, the
+  row scrolls instead of pushing the buttons off the screen. Clicking a profile only selects it — it
+  never applies anything on its own, because applying rewrites the cut points of every ticked row.
 - **The Bulk Cut footer has room to breathe.** Eight controls and three status notes had ended up on one
   line, added a feature at a time, so the row you use to arm the irreversible options was the most
   crowded thing on the screen. The output options now get their own full-width row above the buttons,

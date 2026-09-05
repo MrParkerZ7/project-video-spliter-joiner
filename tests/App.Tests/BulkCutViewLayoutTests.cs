@@ -44,6 +44,9 @@ public sealed class BulkCutViewLayoutTests
     /// <summary>The floor the middle row promises (<c>RootGrid</c> row 1 <c>MinHeight</c>).</summary>
     private const double ContentFloor = 220;
 
+    /// <summary>The cap the profile bar promises (<c>ProfileBar</c> <c>MaxWidth</c>, T-161).</summary>
+    private const double ProfileBarMaxWidth = 420;
+
     [Trait("serves-spec", "SPEC-011")]
     [Fact]
     public void TheContentAreaSurvivesAGrowingProfileBar_AtEveryRealisticWindowSize()
@@ -322,6 +325,97 @@ public sealed class BulkCutViewLayoutTests
 
         failures.Should().BeEmpty(
             "the output options must own a full-width row above the action row:" +
+            Environment.NewLine + string.Join(Environment.NewLine, failures));
+    }
+
+    /// <summary>
+    /// T-161 (SPEC-007) — the profile bar SCROLLS; it never pushes the apply actions off the row.
+    ///
+    /// <para>The ComboBox became a horizontal strip of clickable chips so the pictures profiles already
+    /// carry (T-129, T-135) are visible at rest instead of hidden behind a closed dropdown. The obvious
+    /// way to get that wrong is to let the strip grow with the profile count until the apply buttons
+    /// beside it walk off the screen — which is <b>exactly</b> what T-136 fixed on this very bar.</para>
+    ///
+    /// <para>So it is tested with the bar POPULATED. An empty bar is collapsed and proves nothing; the
+    /// interesting layout only exists once there are more profiles than fit.</para>
+    /// </summary>
+    [Trait("serves-spec", "SPEC-007")]
+    [Fact]
+    public void TheProfileBarScrolls_AndNeverPushesTheApplyActionsOffScreen()
+    {
+        var failures = new List<string>();
+
+        OnSta(() =>
+        {
+            foreach (var (w, h) in Sizes)
+            {
+                var settings = new FakeSettings();
+                for (var i = 0; i < 14; i++)
+                {
+                    settings.SaveProfile(new VideoSplitJoiner.Core.Profiles.CutProfile(
+                        $"Season {i + 1} opener", TimeSpan.FromSeconds(12), TimeSpan.FromSeconds(30)));
+                }
+
+                var view = new BulkCutView
+                {
+                    DataContext = new VideoSplitJoiner.App.ViewModels.BulkCutViewModel(
+                        new BulkFakeProbe(), new ThrowingFakeSplitEngine(), new FakeThumbnailService(),
+                        settings, new FakeBulkTrimEngine()),
+                };
+
+                LayOut(view, w, h);
+
+                var bar = Find<FrameworkElement>(view, "ProfileBar");
+                if (bar is null)
+                {
+                    failures.Add($"{w}x{h}: ProfileBar not found — the profile card's shape changed");
+                    continue;
+                }
+
+                // Pin the CAP, not merely "inside the window". The surrounding WrapPanel already stops
+                // the bar overflowing the window on its own — it would simply take the whole line and
+                // wrap the apply buttons underneath — so an on-screen check passes with or without the
+                // cap and proves nothing. The first version of this test did exactly that and its
+                // mutation survived. What the cap actually buys is the bar staying beside its actions
+                // instead of displacing them, so that is what is asserted.
+                var barWidth = bar.ActualWidth;
+                if (barWidth > ProfileBarMaxWidth + 2)
+                {
+                    failures.Add(
+                        $"{w}x{h}: the profile bar is {barWidth:0}px wide — 14 profiles widened it past its " +
+                        $"{ProfileBarMaxWidth:0}px cap instead of scrolling inside it");
+                }
+
+                var barRight = bar.TranslatePoint(new Point(0, 0), view).X + barWidth;
+                if (barRight > w + 1)
+                {
+                    failures.Add(
+                        $"{w}x{h}: the profile bar itself ends at x={barRight:0}, past the {w:0}px window");
+                }
+
+                // The actions that act on the selection must remain on screen beside it. This is the
+                // T-136 failure restated: the bar grew, and everything after it left the building.
+                foreach (var b in Descendants<Button>(view))
+                {
+                    var content = b.Content as string;
+                    if (content is null || !content.Contains("Apply to", StringComparison.Ordinal))
+                    {
+                        continue;
+                    }
+
+                    var right = b.TranslatePoint(new Point(0, 0), view).X + b.ActualWidth;
+                    if (right > w + 1)
+                    {
+                        failures.Add(
+                            $"{w}x{h}: \"{content}\" ends at x={right:0}, past the {w:0}px window — the " +
+                            "profile bar pushed the apply actions off the edge");
+                    }
+                }
+            }
+        });
+
+        failures.Should().BeEmpty(
+            "a long profile list must scroll inside the bar, not widen it:" +
             Environment.NewLine + string.Join(Environment.NewLine, failures));
     }
 
