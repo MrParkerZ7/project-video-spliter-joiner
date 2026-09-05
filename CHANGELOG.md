@@ -21,11 +21,23 @@ goal; `0.1.0` is the first end-to-end, shippable cut.
 - **The drag-and-drop log now records what actually happened.** Every drop was written down as accepted,
   even when nothing was taken — in the one file you are asked to attach to a bug report, and about the
   exact question it exists to answer (whether the app ever saw your drag at all).
+- **Opening a second file on the Split screen can no longer break the split you are already running.**
+  Dropping a video — or pressing Load, or using the picker — while a split was exporting quietly tore
+  that export down from the inside: **the Cancel button stopped cancelling it**, its progress line reset,
+  and the run itself could fail. It now declines the new file and says a split is still running. Pressing
+  Run twice did the same thing, and the Run button is now disabled while a split is in progress.
 
 ### Known limitation, now written down
 - Dragging files the app recognises **none** of never reaches the screen: Windows shows a no-entry cursor
   and the app is never told the drop happened, so it cannot explain that one in words. The cursor is the
   answer in that case. This was previously documented as something the message covered; it never was.
+
+### Internal
+- A thumbnail-gate test failed at random — it waited on two wall-clock deadlines for work another thread
+  had queued, so it lost whenever the machine was busy and reported the concurrency bound as broken when
+  the grabs had simply not arrived yet. Both waits are now signalled from inside the lock that counts
+  them. This matters more than it used to: the release gate only became capable of failing last week, and
+  a gate that fails at random is barely better than one that cannot fail at all.
 
 ## [1.2.0] - 2026-09-02
 

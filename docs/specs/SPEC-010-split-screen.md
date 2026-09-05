@@ -169,6 +169,20 @@ separately. The Join screen. Keyframe-snap math and `MediaProbe` internals (Core
   precedes the reopen, and repeated split→clear→load cycles stay stable — whether or not `Clear` was
   called first (`LoadAsync` re-open path; `Player.Open`/`Unload` ordering).
 
+### A load never tears down a running split (T-157)
+- **I49** — **a load is refused while a split is running, and says why.** `LoadAsync` and `RunSplitAsync`
+  share one `OperationViewModel`, so a load starting mid-split disposed the split's own
+  `CancellationTokenSource`, detached its Cancel button, and reset its progress line. All three doors
+  land in `LoadAsync` — the drop, the tab-strip Load button, and the picker — so the guard sits there;
+  the drop path refuses one step earlier so it can put the reason in `DropSummary` rather than
+  `StatusText`. Refusing in silence would re-create the very defect I41 exists to fix.
+- **I50** — **`CanRunSplit` requires no run in flight.** It gated on file, markers, output dir and
+  selection — everything about the *request* and nothing about the *operation* — so a second Run
+  re-entered the same `Operation` and disposed the first split's token mid-export. `CanClear` has always
+  carried this clause (I38); Run had not.
+- **I51** — the operation-level backstop is SPEC-008 I45: re-entering `BeginRun` throws rather than
+  corrupting the run in flight. I49 and I50 keep a user gesture from ever reaching it.
+
 ### Dropped files are accounted for (`DropRefusal`, `SplitViewModel.AddDroppedFilesAsync` — T-154)
 - **I41** — a dropped file that is **not loaded is explained**, never silently discarded. `DropSummary`
   states it in one line, and the drop handler passes the **raw** paths to the view-model rather than

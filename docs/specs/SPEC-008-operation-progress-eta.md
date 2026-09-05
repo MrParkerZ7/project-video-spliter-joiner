@@ -112,6 +112,15 @@ the Bulk Cut profile-thumbnail upload); the XAML bindings and converters that re
 - **I41** — `ReportFailure(error)` with a non-null error and **no run in flight** puts that failure on the same surface a failed run uses: `Error` becomes it, `ResultSummary` is cleared, and `State = Failed` — so the Completed / Cancelled surfaces drop (I18) and the taskbar goes red (I13). A deliberate gesture that is not a tracked run therefore never fails silently, and a stale green "done" line never sits beside a fresh red error. *(`ReportFailure`)*
 - **I42** — `ReportFailure(error)` **while a run is in flight** (`IsRunning`) sets `Error` and nothing else: `State` stays `Running`, `ResultSummary` is left alone, and the run keeps its own lifecycle (`CanCancel` still true) and still ends in its own Completed / Cancelled / Failed — a side gesture cannot derail it. The run's own end does not clear that error either: it survives onto the run's terminal surface until the next `BeginRun` or `Reset` clears it (I2 / I9). *(`ReportFailure` `IsRunning` early return; `Complete` / `EndRun` leave `Error` untouched)*
 - **I43** — `ReportFailure(null)` **retracts** a previously reported failure: `Error` goes back to null, and a `State` of `Failed` returns to `Idle` so no red taskbar lingers with nothing left to explain it (I13 / I14). Every other state (`Idle` / `Completed` / `Cancelled`, or a run in flight) is left exactly as it is, and a `ResultSummary` an earlier report cleared is **not** restored. *(`ReportFailure` null branch)*
+- **I45** — **a second run on a live operation is refused, loudly** (T-157). `BeginRun` throws
+  `InvalidOperationException` when `IsRunning`. Its first two statements dispose and replace the
+  `CancellationTokenSource`; entered mid-run that disposes the token the RUNNING work is still observing
+  (and that `WaitForExitAsync` has registered on), repoints `Cancel` at the newcomer, and resets the
+  progress and status the user is watching — **silently**. Split reached this by ordinary use: `LoadAsync`
+  and `RunSplitAsync` share one instance, so dropping a second video mid-export tore the export down.
+  Every screen already guarded `Clear` with `!IsRunning`; nothing guarded a second run. The throw is the
+  backstop for every caller — callers that can reach it by a real gesture refuse earlier and in words
+  (SPEC-010 I49). *(`BeginRun` re-entrancy guard)*
 - **I44** — `ReportFailure` starts no run and ends none — it is purely additive: `Progress`, `StatusText`, `EtaText`, the stopwatch, the estimator and the run's `CancellationTokenSource` are all left as they were (neither `BeginRun` nor `EndRun` runs). Reporting from a fresh/idle VM therefore leaves `Progress == 0`, `EtaText == null` and `CanCancel == false`; reporting after a completed run leaves that run's `Progress == 1` in place. *(`ReportFailure`)*
 
 > **Known open question — a completed run can carry a standing error (I42 vs I18/I41).** `Complete()` sets

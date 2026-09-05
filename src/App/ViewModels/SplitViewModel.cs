@@ -428,7 +428,11 @@ public sealed class SplitViewModel : ObservableObject
         !string.IsNullOrWhiteSpace(InputPath)
         && Markers.Count >= 1
         && !string.IsNullOrWhiteSpace(OutputDir)
-        && SelectedSegmentCount >= 1;
+        && SelectedSegmentCount >= 1
+        // T-157 — and not while one is already running. This gate checked everything about the REQUEST
+        // and nothing about the operation, so a second Run re-entered the same Operation and disposed
+        // the first split's token mid-export. Clear has always carried this clause; Run had not.
+        && !Operation.IsRunning;
 
     // ---- Commands ---------------------------------------------------------------------------
 
@@ -501,6 +505,16 @@ public sealed class SplitViewModel : ObservableObject
             return Array.Empty<string>();
         }
 
+        // T-157 — a load routes through the SAME Operation as a running split, so letting one start
+        // here would tear that split down. Refuse it, and say so: refusing in silence would re-create
+        // the exact defect this note exists to fix.
+        if (Operation.IsRunning)
+        {
+            DropSummary =
+                "Nothing was loaded — a split is still running. Wait for it to finish, or cancel it first.";
+            return Array.Empty<string>();
+        }
+
         var tally = DropRefusal.Classify(dropped);
 
         // Split loads ONE file. Every video after the first is skipped — the refusal Bulk Cut cannot
@@ -532,6 +546,16 @@ public sealed class SplitViewModel : ObservableObject
     {
         if (string.IsNullOrWhiteSpace(path))
         {
+            return;
+        }
+
+        // T-157 — the load and the split share one Operation, so starting a load mid-split disposed the
+        // split's own CancellationTokenSource and detached its Cancel button. Every screen already
+        // guarded Clear with !Operation.IsRunning; Load was guarded by nothing. Reachable from the drop,
+        // the tab-strip Load button, and the picker — all three land here.
+        if (Operation.IsRunning)
+        {
+            StatusText = "A split is still running — wait for it to finish, or cancel it first.";
             return;
         }
 

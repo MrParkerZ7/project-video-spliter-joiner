@@ -170,7 +170,13 @@ public sealed class JoinViewModel : ObservableObject
     public bool CanRunJoin =>
         Items.Count >= 2
         && IsCompatible
-        && !string.IsNullOrWhiteSpace(OutputPath);
+        && !string.IsNullOrWhiteSpace(OutputPath)
+        // T-157 — and not while one is already running. Like Split's CanRunSplit, this gate checked
+        // everything about the REQUEST and nothing about the operation, so a second Run re-entered
+        // BeginRun and disposed the first join's CancellationTokenSource mid-run. `CanClear` has
+        // carried this clause since T-047; Run had not. (Join's ADD path is unaffected — unlike Split's
+        // load, it never touches Operation — so only this door needed closing here.)
+        && !Operation.IsRunning;
 
     /// <summary>
     /// Clear all is enabled only with at least one item AND no join running (T-047) — don't wipe the

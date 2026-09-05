@@ -444,6 +444,25 @@ public sealed class OperationViewModel : ObservableObject
         out IProgress<OperationStatus> status,
         out CancellationToken token)
     {
+        // T-157 — refuse re-entry loudly instead of corrupting the run in flight.
+        //
+        // The two statements below dispose and replace the CancellationTokenSource. Entered while a run
+        // is live, that disposes the RUNNING operation's token (which it is still observing, and which
+        // WaitForExitAsync has registered on), repoints Cancel at the newcomer, and resets the progress
+        // and status the user is watching. It did all of that silently.
+        //
+        // Split reached this by ordinary use: LoadAsync and RunSplitAsync share one instance, so
+        // dropping a second video mid-export tore the export down. That door is now shut at the caller
+        // (SplitViewModel refuses the load and says so), and this guard is the backstop for every other
+        // caller — present and future — because a second run on a live operation is a programming error,
+        // and the old behaviour made it an invisible one.
+        if (IsRunning)
+        {
+            throw new InvalidOperationException(
+                "This operation is already running. Starting a second run would dispose the first one's " +
+                "CancellationTokenSource out from under it and detach Cancel. Wait for it, or cancel it.");
+        }
+
         _cts?.Dispose();
         _cts = new CancellationTokenSource();
         token = _cts.Token;

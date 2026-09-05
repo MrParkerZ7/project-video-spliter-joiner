@@ -250,6 +250,58 @@ internal sealed class FakeThumbnailService : IThumbnailService
     /// <summary>High-water mark of concurrent grabs — asserts the batch concurrency bound (T-108).</summary>
     public int PeakConcurrent { get; private set; }
 
+    private TaskCompletionSource? _reached;
+    private int _reachedTarget;
+
+    /// <summary>
+    /// Completes once <paramref name="count"/> grabs are concurrently parked in this fake (T-159).
+    ///
+    /// <para>Replaces spinning on <see cref="CurrentConcurrent"/> against a wall-clock deadline. That
+    /// pattern is a race, not a wait: on a loaded machine — a CI runner, or a local run right after a
+    /// full build — the grabs simply had not arrived within the window yet, and the test failed for
+    /// being early rather than for the bound being wrong. Signalled from inside the same lock that
+    /// increments the counter, so there is no window between reaching the count and observing it.</para>
+    /// </summary>
+    public Task WhenConcurrentReaches(int count)
+    {
+        lock (_lock)
+        {
+            if (CurrentConcurrent >= count)
+            {
+                return Task.CompletedTask;
+            }
+
+            _reachedTarget = count;
+            _reached ??= new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            return _reached.Task;
+        }
+    }
+
+    private TaskCompletionSource? _called;
+    private int _calledTarget;
+
+    /// <summary>
+    /// Completes once <paramref name="count"/> grabs have been STARTED in total (T-159) — the drain-side
+    /// counterpart to <see cref="WhenConcurrentReaches"/>, signalled from the same lock that increments
+    /// <see cref="GetThumbnailCallCount"/>. Replaces a 2-second spin, which is the wait that was
+    /// actually flaking: releasing a gate and giving eight queued grabs two wall-clock seconds to all
+    /// arrive is a race against machine load, not an assertion about the code.
+    /// </summary>
+    public Task WhenCallCountReaches(int count)
+    {
+        lock (_lock)
+        {
+            if (GetThumbnailCallCount >= count)
+            {
+                return Task.CompletedTask;
+            }
+
+            _calledTarget = count;
+            _called ??= new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            return _called.Task;
+        }
+    }
+
     public async Task<string?> GetThumbnailAsync(string inputPath, TimeSpan time, int width, CancellationToken ct)
     {
         TaskCompletionSource? gate;
@@ -261,6 +313,16 @@ internal sealed class FakeThumbnailService : IThumbnailService
             if (CurrentConcurrent > PeakConcurrent)
             {
                 PeakConcurrent = CurrentConcurrent;
+            }
+
+            if (_reached is not null && CurrentConcurrent >= _reachedTarget)
+            {
+                _reached.TrySetResult();
+            }
+
+            if (_called is not null && GetThumbnailCallCount >= _calledTarget)
+            {
+                _called.TrySetResult();
             }
 
             gate = Gate;

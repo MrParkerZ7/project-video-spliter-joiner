@@ -373,31 +373,32 @@ public sealed class BulkItemThumbnailTests
         // Resolve every row's keyframes → each fires its initial intro grab; the parked grabs pile up.
         await Task.WhenAll(rows.Select(r => r.StartKeyframeScanAsync()));
 
-        // Give the piled-up grabs a moment to reach the gate, then assert the bound never exceeded 3.
-        var spun = SpinUntil(() => thumbs.CurrentConcurrent >= 3, TimeSpan.FromMilliseconds(500));
+        // Wait for the piled-up grabs to actually reach the gate, then assert the bound never exceeded 3.
+        // T-159: this was a 500ms SpinUntil, which is a race rather than a wait — on a loaded machine
+        // (CI, or locally straight after a full build) the grabs had simply not arrived yet and the test
+        // failed for being early, not for the bound being wrong. The fake now signals from inside the
+        // same lock that counts them, so there is no window at all; the timeout below is only a
+        // deadlock guard and is deliberately generous.
+        var reached = thumbs.WhenConcurrentReaches(3);
+        var spun = reached == await Task.WhenAny(reached, Task.Delay(TimeSpan.FromSeconds(30)));
         spun.Should().BeTrue("at least 3 grabs should be in flight against the gate");
         thumbs.PeakConcurrent.Should().BeLessThanOrEqualTo(3, "the shared gate caps concurrent ffmpeg frame grabs");
 
         // Release the parked grabs so they all drain — the bound still held throughout.
+        // T-159: this was the wait that actually flaked. Releasing the gate and giving eight queued
+        // grabs TWO wall-clock seconds to all arrive is a race against machine load, not an assertion
+        // about the code — it lost whenever the run followed a full build. Now signalled from the same
+        // lock that counts them; the timeout is a deadlock guard only.
         thumbs.Gate!.TrySetResult();
-        var drained = SpinUntil(() => thumbs.GetThumbnailCallCount >= 8, TimeSpan.FromSeconds(2));
+        var draining = thumbs.WhenCallCountReaches(8);
+        var drained = draining == await Task.WhenAny(draining, Task.Delay(TimeSpan.FromSeconds(30)));
         drained.Should().BeTrue("every row's grab eventually runs, three at a time");
         thumbs.PeakConcurrent.Should().BeLessThanOrEqualTo(3);
     }
 
-    private static bool SpinUntil(Func<bool> condition, TimeSpan timeout)
-    {
-        var deadline = DateTime.UtcNow + timeout;
-        while (DateTime.UtcNow < deadline)
-        {
-            if (condition())
-            {
-                return true;
-            }
-
-            Thread.Sleep(2);
-        }
-
-        return condition();
-    }
+    // T-159 — the SpinUntil helper that used to live here is gone along with its last two callers.
+    // Waiting on a wall-clock deadline for work another thread has queued is a race, not a wait: both
+    // uses failed on a loaded machine and reported the concurrency bound as broken when the grabs had
+    // simply not arrived yet. FakeThumbnailService now signals from inside the lock that counts them
+    // (WhenConcurrentReaches / WhenCallCountReaches). Deleted rather than left available to reuse.
 }
