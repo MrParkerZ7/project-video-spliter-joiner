@@ -38,6 +38,10 @@ public sealed class MainViewModelLayoutToggleTests
         public bool? BulkAutoDeleteOriginals { get; set; }
         public bool? BulkAutoEmptyRecycleBin { get; set; }
 
+        public bool? SplitAutoDeleteSource { get; set; }
+
+        public bool? SplitAutoEmptyRecycleBin { get; set; }
+
         public double? BulkHorizontalSplitRatio { get; set; }
         public double? BulkVerticalSplitRatio { get; set; }
 

@@ -127,6 +127,10 @@ public sealed class LastTabRestoreTests : IDisposable
         public bool? BulkAutoDeleteOriginals { get; set; }
         public bool? BulkAutoEmptyRecycleBin { get; set; }
 
+        public bool? SplitAutoDeleteSource { get; set; }
+
+        public bool? SplitAutoEmptyRecycleBin { get; set; }
+
         public double? HorizontalSplitRatio { get; set; }
 
         public double? VerticalSplitRatio { get; set; }
@@ -232,6 +236,10 @@ public sealed class LastTabRestoreTests : IDisposable
         public bool? BulkApplyCutToAllRows { get => _inner.BulkApplyCutToAllRows; set { _inner.BulkApplyCutToAllRows = value; _onWrite(); } }
         public bool? BulkAutoDeleteOriginals { get => _inner.BulkApplyCutToAllRows; set { _inner.BulkApplyCutToAllRows = value; _onWrite(); } }
         public bool? BulkAutoEmptyRecycleBin { get => _inner.BulkApplyCutToAllRows; set { _inner.BulkApplyCutToAllRows = value; _onWrite(); } }
+
+        public bool? SplitAutoDeleteSource { get => _inner.SplitAutoDeleteSource; set { _inner.SplitAutoDeleteSource = value; _onWrite(); } }
+
+        public bool? SplitAutoEmptyRecycleBin { get => _inner.SplitAutoEmptyRecycleBin; set { _inner.SplitAutoEmptyRecycleBin = value; _onWrite(); } }
 
         public double? HorizontalSplitRatio { get => _inner.HorizontalSplitRatio; set { _inner.HorizontalSplitRatio = value; _onWrite(); } }
 

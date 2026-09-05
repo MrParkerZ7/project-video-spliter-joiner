@@ -55,6 +55,54 @@ public sealed class SplitViewLayoutTests
             Environment.NewLine + string.Join(Environment.NewLine, failures));
     }
 
+    /// <summary>
+    /// T-163 (SPEC-010) — the two destructive checkboxes wrap; they never clip off the right edge.
+    ///
+    /// <para>Split's footer lives inside the tool pane, which is narrower than the window, and this
+    /// panel gained two checkboxes plus a danger note. A horizontal <c>StackPanel</c> neither wraps nor
+    /// scrolls — it silently CLIPS — and that exact failure has shipped four times here (T-136 the
+    /// profile bar, T-141 the header, T-156 and T-160 the Bulk footer). Measured against the WINDOW,
+    /// because an overflowing panel reports its own oversized width and child-vs-panel checks pass
+    /// against the very bug they are written to catch.</para>
+    /// </summary>
+    [Trait("serves-spec", "SPEC-010")]
+    [Fact]
+    public void TheSplitFooterOptionsWrapInsteadOfClipping()
+    {
+        var failures = new List<string>();
+
+        StaViewHarness.OnSta(() =>
+        {
+            foreach (var (w, h) in Sizes)
+            {
+                var view = new SplitView();
+                StaViewHarness.LayOut(view, w, h);
+
+                var options = StaViewHarness.Find<FrameworkElement>(view, "SplitFooterOptions");
+                if (options is null)
+                {
+                    failures.Add($"{w}x{h}: SplitFooterOptions not found — the footer's shape changed");
+                    continue;
+                }
+
+                foreach (var child in StaViewHarness.Descendants<CheckBox>(options))
+                {
+                    var right = child.TranslatePoint(new Point(0, 0), view).X + child.ActualWidth;
+                    if (right > w + 1)
+                    {
+                        failures.Add(
+                            $"{w}x{h}: an option ends at x={right:0}, past the {w:0}px window — it is " +
+                            "off-screen, which is how destructive checkboxes became invisible before");
+                    }
+                }
+            }
+        });
+
+        failures.Should().BeEmpty(
+            "the Split footer options must wrap onto another line rather than disappear:" +
+            Environment.NewLine + string.Join(Environment.NewLine, failures));
+    }
+
     [Trait("serves-spec", "SPEC-010")]
     [Fact]
     public void DeleteOriginalSitsAtTheOppositeEndFromRun_AndRevealingItDoesNotMoveRun()

@@ -423,6 +423,139 @@ public sealed class SplitViewModel : ObservableObject
         }
     }
 
+    // ---- T-163 (G-052): do it automatically, if you asked for it -------------------------------
+
+    /// <summary>
+    /// T-163 — bin the source automatically once a split finishes cleanly.
+    ///
+    /// <para>Deliberately a SEPARATE setting from Bulk Cut's: arming one screen must not silently arm
+    /// the other. Off by default — a destructive default is not a default.</para>
+    /// </summary>
+    public bool AutoDeleteSource
+    {
+        get => _settings.SplitAutoDeleteSource ?? false;
+        set
+        {
+            if (AutoDeleteSource == value)
+            {
+                return;
+            }
+
+            _settings.SplitAutoDeleteSource = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(CanAutoEmptyRecycleBin));
+            OnPropertyChanged(nameof(DestructiveOutputNote));
+
+            if (!value)
+            {
+                // Disarm the bin box too. Without this, tick-both → untick-this → re-tick-this would
+                // silently re-enable PERMANENT deletion on consent given for a configuration that no
+                // longer existed. T-156 found this on Bulk Cut and it is subtle enough to re-lose.
+                AutoEmptyRecycleBin = false;
+            }
+        }
+    }
+
+    /// <summary>
+    /// T-163 — empty the Recycle Bin after an automatic delete, since binning alone frees no space.
+    ///
+    /// <para><b>Together with <see cref="AutoDeleteSource"/> this is permanent deletion with no undo.</b>
+    /// Everything that makes deleting the source safe to offer — it goes to the bin, you can restore it,
+    /// the all-parts rule is re-checked at deletion time — rests on the file still existing afterwards.
+    /// So the setter refuses to arm without a caller-supplied confirmation, and an unwired host can
+    /// never turn it on.</para>
+    /// </summary>
+    public bool AutoEmptyRecycleBin
+    {
+        get => _settings.SplitAutoEmptyRecycleBin ?? false;
+        set
+        {
+            if (AutoEmptyRecycleBin == value)
+            {
+                return;
+            }
+
+            if (value)
+            {
+                if (!AutoDeleteSource || !ConfirmPermanentDeletion())
+                {
+                    OnPropertyChanged();   // snap the checkbox back
+                    return;
+                }
+            }
+
+            _settings.SplitAutoEmptyRecycleBin = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(DestructiveOutputNote));
+        }
+    }
+
+    /// <summary>The bin checkbox is only meaningful once auto-delete is on.</summary>
+    public bool CanAutoEmptyRecycleBin => AutoDeleteSource;
+
+    /// <summary>
+    /// T-163 — asked ONCE, before permanent deletion is armed. Defaults to refusing, so an unwired or
+    /// half-wired host cannot arm it; the view supplies the real dialog, which must say that
+    /// <c>SHEmptyRecycleBin</c> empties the WHOLE bin, including files other programs put there.
+    /// </summary>
+    public Func<bool> ConfirmPermanentDeletion { get; set; } = () => false;
+
+    /// <summary>
+    /// T-163 — emptying the bin, injectable so the destructive step is testable without emptying the
+    /// developer's own bin. Defaults to doing NOTHING for exactly that reason.
+    /// </summary>
+    public Action EmptyRecycleBinAction { get; set; } = () => { };
+
+    /// <summary>
+    /// T-163 — the armed state, said BEFORE Run is pressed rather than discovered afterwards.
+    ///
+    /// <para>It says "Recycle Bin" when only auto-delete is on, because binning IS recoverable and
+    /// overstating it teaches people to ignore the warning that matters.</para>
+    /// </summary>
+    public string? DestructiveOutputNote =>
+        AutoDeleteSource && AutoEmptyRecycleBin
+            ? "The source will be deleted PERMANENTLY after a successful split — not recoverable"
+            : AutoDeleteSource
+                ? "The source will be sent to the Recycle Bin after a successful split"
+                : null;
+
+    /// <summary>
+    /// T-163 — run the delete automatically once a split lands, if the user armed it.
+    ///
+    /// <para>Routed through <see cref="DeleteOriginal"/> unchanged, so the all-parts rule, the
+    /// deletion-time re-check, the handle release and the reporting are the same code. A second
+    /// deletion path would be a second place for this to go wrong ([[T-156]]'s rule).</para>
+    ///
+    /// <para>The confirmation is skipped because the checkbox IS the consent, given in advance — but a
+    /// split that produced an incomplete set still deletes nothing, because that decision lives in
+    /// <see cref="DeletableSource"/> rather than in the prompt.</para>
+    /// </summary>
+    private void RunAutoDeleteIfArmed()
+    {
+        if (!AutoDeleteSource)
+        {
+            return;
+        }
+
+        var previousConfirm = ConfirmDeleteOriginal;
+        try
+        {
+            ConfirmDeleteOriginal = (_, _) => true;   // consent was given by ticking the box
+            DeleteOriginal();
+        }
+        finally
+        {
+            ConfirmDeleteOriginal = previousConfirm;
+        }
+
+        // Only empty the bin if the source actually went into it. Emptying after a refused delete would
+        // destroy unrelated files for no gain.
+        if (AutoEmptyRecycleBin && InputPath is { } src && !FileFacts.Exists(src))
+        {
+            EmptyRecycleBinAction();
+        }
+    }
+
     /// <summary>Re-gate the delete-source control after anything that could change its eligibility.</summary>
     private void RaiseDeleteOriginalState()
     {
@@ -1318,6 +1451,11 @@ public sealed class SplitViewModel : ObservableObject
             {
                 _settings.LastOutputDir = OutputDir;
             }
+
+            // T-163: last, and only on a COMPLETED run. Reaching here means the operation succeeded;
+            // whether the produced parts are all actually on disk is still decided inside
+            // DeleteOriginal, which is the point of routing through it rather than duplicating the rule.
+            RunAutoDeleteIfArmed();
         }
     }
 

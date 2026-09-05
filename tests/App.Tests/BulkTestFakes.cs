@@ -377,6 +377,10 @@ internal sealed class FakeSettings : IAppSettings
     public bool? BulkAutoDeleteOriginals { get; set; }
     public bool? BulkAutoEmptyRecycleBin { get; set; }
 
+    public bool? SplitAutoDeleteSource { get; set; }
+
+    public bool? SplitAutoEmptyRecycleBin { get; set; }
+
 
     public double? BulkHorizontalSplitRatio { get; set; }
 

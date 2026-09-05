@@ -16,6 +16,63 @@ public partial class SplitView : UserControl
     public SplitView()
     {
         InitializeComponent();
+
+        // T-162/T-163: supply the real confirmations for the destructive source-deletion path. Both
+        // view-model gates default to REFUSING, so forgetting this wiring can never silently destroy a
+        // user's file — it can only leave the feature inert.
+        DataContextChanged += (_, e) =>
+        {
+            if (e.NewValue is SplitViewModel vm)
+            {
+                vm.ConfirmDeleteOriginal = ConfirmDeleteOriginal;
+                vm.ConfirmPermanentDeletion = ConfirmPermanentDeletion;
+                vm.EmptyRecycleBinAction = () => VideoSplitJoiner.App.Io.ShellRecycleBin.EmptyBin();
+            }
+        };
+    }
+
+    /// <summary>
+    /// T-162 — the delete-source gate. Names the file and the space reclaimed (that is the point of the
+    /// feature), says plainly that it goes to the Recycle Bin, and defaults to No so a stray Enter does
+    /// not remove someone's footage.
+    /// </summary>
+    private static bool ConfirmDeleteOriginal(string name, long bytes)
+    {
+        var size = bytes >= 1024L * 1024 * 1024
+            ? string.Format(System.Globalization.CultureInfo.InvariantCulture, "{0:0.#} GB", bytes / 1024d / 1024d / 1024d)
+            : string.Format(System.Globalization.CultureInfo.InvariantCulture, "{0} MB", System.Math.Max(1, bytes / 1024 / 1024));
+
+        var result = MessageBox.Show(
+            $"Send \"{name}\" to the Recycle Bin, freeing about {size}?" + System.Environment.NewLine + System.Environment.NewLine +
+            "Every part this split produced has been checked and is on disk. Nothing is deleted " +
+            "permanently — you can restore the source from the Recycle Bin.",
+            "Delete the original?",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Warning,
+            MessageBoxResult.No);
+
+        return result == MessageBoxResult.Yes;
+    }
+
+    /// <summary>
+    /// T-163 — asked ONCE, before permanent deletion is armed. It must say that emptying the bin is not
+    /// scoped to this app: SHEmptyRecycleBin empties the WHOLE bin, including files other programs put
+    /// there. Defaults to No.
+    /// </summary>
+    private static bool ConfirmPermanentDeletion()
+    {
+        var result = MessageBox.Show(
+            "The source file will be deleted PERMANENTLY after a successful split." + System.Environment.NewLine +
+            "It cannot be restored." + System.Environment.NewLine + System.Environment.NewLine +
+            "This also empties the whole Recycle Bin, including files deleted by other programs." +
+            System.Environment.NewLine + System.Environment.NewLine +
+            "Turn this on?",
+            "Delete the source permanently?",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Warning,
+            MessageBoxResult.No);
+
+        return result == MessageBoxResult.Yes;
     }
 
     private void OnCopyErrorClicked(object sender, RoutedEventArgs e)

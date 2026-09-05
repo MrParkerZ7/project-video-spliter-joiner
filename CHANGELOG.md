@@ -36,6 +36,13 @@ goal; `0.1.0` is the first end-to-end, shippable cut.
   missing or empty, the source is the only copy of that footage left, so nothing is deleted and the app
   says so. It sits at the far opposite end of the row from Run, so it never appears under the cursor of
   someone pressing Run.
+- **Split can do it automatically too**, with the same two checkboxes Bulk Cut has: *Auto-delete source*
+  and, behind it, *and empty bin*. Both are off by default and remembered separately from Bulk Cut's —
+  arming one screen never arms the other. A split that produced an incomplete set of parts still deletes
+  nothing, the second box cannot be armed on its own, arming it asks once and says that emptying the bin
+  removes files other programs deleted too, and turning auto-delete back off disarms it again. The
+  footer says in red what is armed *before* you press Run — and says "Recycle Bin" rather than
+  "permanent" while it is still recoverable.
 
 ### Changed
 - **Cut profiles are a bar you click, not a dropdown you open.** Profiles can carry a picture, and the

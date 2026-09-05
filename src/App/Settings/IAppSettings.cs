@@ -107,6 +107,23 @@ public interface IAppSettings
     bool? BulkAutoEmptyRecycleBin { get; set; }
 
     /// <summary>
+    /// T-163 (G-052) — delete the SPLIT source automatically once a split finishes cleanly.
+    ///
+    /// <para>Deliberately separate from <see cref="BulkAutoDeleteOriginals"/>: arming one screen must
+    /// not silently arm the other. Null/absent = OFF — a destructive default is not a default.</para>
+    /// </summary>
+    bool? SplitAutoDeleteSource { get; set; }
+
+    /// <summary>
+    /// T-163 (G-052) — empty the Recycle Bin after an automatic split-source delete.
+    ///
+    /// <para><b>Combined with <see cref="SplitAutoDeleteSource"/> this is permanent deletion with no
+    /// undo</b>, so it is meaningless (and refused) on its own, defaults OFF, and is gated behind an
+    /// explicit confirmation.</para>
+    /// </summary>
+    bool? SplitAutoEmptyRecycleBin { get; set; }
+
+    /// <summary>
     /// The screen the app was last on (T-143), restored on startup beside <see cref="LayoutMode"/>.
     /// <c>null</c> = never recorded / an older settings file, which reads as <see cref="AppTab.Split"/>.
     /// </summary>

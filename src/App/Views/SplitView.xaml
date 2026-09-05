@@ -481,6 +481,47 @@
                          plain bounded Grid + internal list scroll keeps Run reachable per D6.) -->
                     <StackPanel Grid.Row="4">
 
+                    <!-- ===== T-163: reclaim the source automatically =====
+                         A WrapPanel, never a horizontal StackPanel: a StackPanel neither wraps nor
+                         scrolls, it silently CLIPS whatever does not fit off the right edge, and this
+                         panel is narrow (it lives inside the tool pane). That failure has shipped four
+                         times already — T-136 the profile bar, T-141 the header, T-156 and T-160 the
+                         Bulk footer — so it is not repeated here on the way in.
+
+                         Both default OFF; the second is disabled until the first is on, because
+                         emptying the bin frees nothing this app put there otherwise, and arming it asks
+                         once because the pair is permanent deletion with no undo. -->
+                    <WrapPanel x:Name="SplitFooterOptions" Margin="0,10,0,0" VerticalAlignment="Center">
+                        <CheckBox VerticalAlignment="Center"
+                                  Content="Auto-delete source"
+                                  IsChecked="{Binding AutoDeleteSource, Mode=TwoWay}"
+                                  ToolTip="After a split finishes and every part is verified on disk, send the source file to the Recycle Bin automatically. A split that produced an incomplete set never deletes anything." />
+
+                        <CheckBox Margin="12,0,0,0"
+                                  VerticalAlignment="Center"
+                                  IsEnabled="{Binding CanAutoEmptyRecycleBin}"
+                                  IsChecked="{Binding AutoEmptyRecycleBin, Mode=TwoWay}"
+                                  ToolTip="Also empty the Recycle Bin, so the space is actually freed. This makes the deletion PERMANENT and unrecoverable, and empties the whole bin — including files this app never touched.">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="⚠" Margin="0,0,5,0" Foreground="{StaticResource DangerBrush}" />
+                                <TextBlock Text="and empty bin"
+                                           FontWeight="SemiBold"
+                                           Foreground="{StaticResource DangerBrush}" />
+                            </StackPanel>
+                        </CheckBox>
+
+                        <!-- The armed state, visible BEFORE Run is pressed rather than discovered after
+                             a split has already removed something. -->
+                        <TextBlock Text="{Binding DestructiveOutputNote}"
+                                   Margin="14,0,0,0"
+                                   VerticalAlignment="Center"
+                                   TextWrapping="Wrap"
+                                   FontWeight="SemiBold"
+                                   Foreground="{StaticResource DangerBrush}"
+                                   FontSize="{StaticResource FontSizeSmall}"
+                                   Visibility="{Binding DestructiveOutputNote, Converter={StaticResource NullToCollapsed}}" />
+                    </WrapPanel>
+
                     <!-- ===== Action row: destructive at one end, Run at the other (T-162) =====
                          A Grid, NOT a horizontal StackPanel. T-146 learned this on Bulk Cut the hard way:
                          appending the destructive button after Run in a StackPanel and setting

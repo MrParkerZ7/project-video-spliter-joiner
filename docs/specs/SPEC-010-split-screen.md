@@ -199,6 +199,32 @@ separately. The Join screen. Keyframe-snap math and `MediaProbe` internals (Core
   button on the pixels Run had just vacated; Split's action row is a `Grid` for the same reason, asserted
   at five window widths rather than trusted to a comment.
 
+### Doing it automatically, if you armed it (`AutoDeleteSource` — T-163, G-052)
+- **I61** — **two independent flags, both default OFF, both persisted** (`SplitAutoDeleteSource`,
+  `SplitAutoEmptyRecycleBin`). They are deliberately **separate from Bulk Cut's**: arming one screen must
+  not silently arm the other — different files, a different moment, and the user consented to one of
+  them. A settings file written before the feature, or a corrupt one, leaves both OFF: an unreadable
+  file is not consent (SPEC-009 I27/I28's rule).
+- **I62** — the bin flag is **meaningless and refused without** the delete flag, and its checkbox is
+  disabled to say so.
+- **I63** — arming the bin flag **asks once**, via a gate that **defaults to refusing**, so an unwired or
+  half-wired host can never turn permanent deletion on. The prompt must state that
+  `SHEmptyRecycleBin` empties the **whole** bin, including files other programs put there.
+- **I64** — turning auto-delete **off disarms the bin flag**. Without this, tick-both →
+  untick-first → re-tick-first would silently re-arm permanent deletion on consent given for a
+  configuration that no longer existed. Subtle enough that T-156 found it on Bulk Cut and it is worth
+  re-stating here; re-arming asks again rather than inheriting the earlier yes.
+- **I65** — auto-delete is **routed through `DeleteOriginal` unchanged**, so I52's all-parts rule, I54's
+  deletion-time re-check, I55's handle release and the reporting are the same code. One deletion path
+  means one place for it to go wrong (T-156's rule). The confirmation is skipped — the checkbox IS the
+  consent, given in advance — but the **safety** decisions live in `DeletableSource`, not in the prompt,
+  so a split that produced an incomplete set still deletes nothing.
+- **I66** — the bin is emptied **only after the source actually went into it**. Emptying after a refused
+  delete would destroy unrelated files for no gain, because the bin is not scoped to this app.
+- **I67** — `DestructiveOutputNote` states the armed state **before Run is pressed**, in the danger
+  colour, and says **"Recycle Bin"** when only auto-delete is on. Binning IS recoverable, and
+  overstating it teaches people to ignore the warning that matters.
+
 ### A load never tears down a running split (T-157)
 - **I49** — **a load is refused while a split is running, and says why.** `LoadAsync` and `RunSplitAsync`
   share one `OperationViewModel`, so a load starting mid-split disposed the split's own
