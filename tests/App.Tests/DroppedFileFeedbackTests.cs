@@ -29,10 +29,17 @@ public sealed class DroppedFileFeedbackTests : IDisposable
     {
         _dir = Path.Combine(Path.GetTempPath(), "vsj-t154-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(_dir);
+
+        // Point the drag-drop trace at THIS test's temp folder. Without it these tests append to the
+        // user's real %LOCALAPPDATA% log — the exact file T-154 asks a reporter to attach. A real log
+        // was found holding 332 lines written by `dotnet test`, and because the 256KB cap evicts the
+        // OLDER half, a local test run could delete the reporter's own drop line before they read it.
+        DropDiagnostics.LogDirectory = _dir;
     }
 
     public void Dispose()
     {
+        DropDiagnostics.ResetLogDirectory();
         try { Directory.Delete(_dir, recursive: true); } catch { /* best-effort */ }
     }
 
@@ -204,6 +211,91 @@ public sealed class DroppedFileFeedbackTests : IDisposable
 
         act.Should().NotThrow("a diagnostic must never be the reason a drop fails");
     }
+
+    /// <summary>
+    /// A hover must not flood the file. OLE raises DragOver per mouse message, so the unthrottled
+    /// version wrote a line per frame: a real user's log held 1408 "over" against ~118 "drop", and each
+    /// line was synchronous disk I/O on the UI thread DURING the gesture being diagnosed.
+    /// </summary>
+    [Fact]
+    public void ARepeatedDragOverCollapsesToOneLine()
+    {
+        for (var i = 0; i < 50; i++)
+        {
+            DropDiagnostics.Record("over", "Split", new[] { Make("a.mp4") }, accepted: true);
+        }
+
+        Lines().Count(l => l.Contains("over", StringComparison.Ordinal))
+            .Should().Be(1, "fifty identical hover frames are one fact, not fifty");
+    }
+
+    /// <summary>
+    /// …but a CHANGE of decision still records. That transition — the cursor flipping between accept and
+    /// refuse as the payload is re-evaluated — is the thing the log is actually asked to show.
+    /// </summary>
+    [Fact]
+    public void AChangedDragOverDecisionStillRecords()
+    {
+        DropDiagnostics.Record("over", "Split", new[] { Make("a.txt") }, accepted: false);
+        DropDiagnostics.Record("over", "Split", new[] { Make("a.txt") }, accepted: false);   // collapsed
+        DropDiagnostics.Record("over", "Split", new[] { Make("b.mp4") }, accepted: true);    // a change
+
+        Lines().Count(l => l.Contains("over", StringComparison.Ordinal))
+            .Should().Be(2, "the refuse and the accept are two different facts");
+    }
+
+    /// <summary>A drop is never collapsed — it is the one line the whole trace exists for.</summary>
+    [Fact]
+    public void EveryDropIsRecorded_EvenAfterAHover()
+    {
+        DropDiagnostics.Record("over", "Split", new[] { Make("a.mp4") }, accepted: true);
+        DropDiagnostics.Record("drop", "Split", new[] { Make("a.mp4") }, accepted: true);
+        DropDiagnostics.Record("drop", "Split", new[] { Make("a.mp4") }, accepted: true);
+
+        Lines().Count(l => l.Contains("drop", StringComparison.Ordinal))
+            .Should().Be(2, "two drops are two events, however identical");
+    }
+
+    /// <summary>The trace must land in the test's own folder, never the user's real log.</summary>
+    [Fact]
+    public void TheTraceIsRedirectableAwayFromTheUsersRealLog()
+    {
+        DropDiagnostics.LogPath.Should().StartWith(_dir);
+
+        DropDiagnostics.Record("drop", "TestOnly", new[] { Make("a.mp4") }, accepted: true);
+
+        File.Exists(Path.Combine(_dir, "dragdrop.log")).Should().BeTrue();
+        DropDiagnostics.LogPath.Should().NotContain(
+            "LOCALAPPDATA", "and certainly not the file a reporter is asked to attach");
+    }
+
+    /// <summary>
+    /// A SECOND drag records its own hover, even when identical to the first.
+    ///
+    /// <para>The collapse key is cleared on drop for this reason. Without it, someone who drops a file,
+    /// then drags the same file again, would produce no "over" line the second time — and the log's whole
+    /// job is answering "did the app see my drag?" for the attempt the user is describing. Found by a
+    /// surviving mutant: nothing had asserted the clear.</para>
+    /// </summary>
+    [Fact]
+    public void ASecondDragAfterADropRecordsItsOwnHover()
+    {
+        var file = Make("a.mp4");
+
+        DropDiagnostics.Record("over", "Split", new[] { file }, accepted: true);
+        DropDiagnostics.Record("drop", "Split", new[] { file }, accepted: true);
+
+        // The same drag again — a new gesture, so it must leave its own trace.
+        DropDiagnostics.Record("over", "Split", new[] { file }, accepted: true);
+
+        Lines().Count(l => l.Contains("over", StringComparison.Ordinal))
+            .Should().Be(2, "a new drag is a new event, however identical to the last one");
+    }
+
+    private static string[] Lines()
+        => File.Exists(DropDiagnostics.LogPath)
+            ? File.ReadAllLines(DropDiagnostics.LogPath)
+            : Array.Empty<string>();
 
     /// <summary>
     /// T-154 — the header must name the running build. Two copies of this app ran side by side during

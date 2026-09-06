@@ -102,7 +102,12 @@ New-Item -ItemType Directory -Force -Path $PublishDir | Out-Null
 
 # --- 1. dotnet publish (single-file, self-contained, win-x64) ----------------
 Write-Step "Publishing (single-file, self-contained, win-x64) ..."
-if (-not (Test-Path $Dotnet)) { throw "dotnet not found at '$Dotnet'." }
+# T-151: resolve, do not merely Test-Path. CI passes -Dotnet 'dotnet' (a PATH command) and Test-Path is
+# a FILESYSTEM probe, so the guard threw before the release workflow ever reached a publish. Accept both
+# a full path and a bare command name; Get-Command covers each.
+if (-not (Get-Command $Dotnet -ErrorAction SilentlyContinue)) {
+    throw "dotnet not found: '$Dotnet' is neither a file nor a command on PATH."
+}
 & $Dotnet publish $AppProj -c Release -r win-x64 -p:PublishSingleFile=true -o $PublishDir
 if ($LASTEXITCODE -ne 0) { throw "dotnet publish failed (exit $LASTEXITCODE)." }
 

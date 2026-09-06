@@ -44,6 +44,19 @@ jobs:
           "version=$v" >> $env:GITHUB_OUTPUT
           Write-Host "Building version $v"
 
+          # T-151: FAIL FAST if the tag and Directory.Build.props disagree.
+          # package.ps1 reads <Version> from the props file and names the zip after it, while every step
+          # below (checksums, the uploaded asset list) names it after the TAG. Nothing reconciled the two,
+          # so a tag that did not match the props would build a correctly-named-for-props zip, then
+          # silently omit it from SHA256SUMS.txt and from the release assets — a release missing its
+          # portable download, with every step reporting success. Cheaper to stop here.
+          $props = [xml](Get-Content Directory.Build.props)
+          $propsVersion = $props.Project.PropertyGroup.Version
+          if ($propsVersion -ne $v) {
+            throw "Version mismatch: tag says '$v' but Directory.Build.props says '$propsVersion'. " +
+                  "Bump the props file (and the CHANGELOG) to match the tag before releasing."
+          }
+
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '8.0.x'
@@ -73,7 +86,10 @@ jobs:
       - name: Build installer
         shell: pwsh
         run: |
-          & "$env:ProgramFiles(x86)\Inno Setup 6\ISCC.exe" `
+          # T-151: BRACED. PowerShell ends an unbraced $env: name at the paren, so the old form expanded
+          # to "C:\Program Files(x86)\..." - a folder that does not exist - and this step could never
+          # have run. ${env:ProgramFiles(x86)} keeps the parens inside the variable name.
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" `
             "/DMyAppVersion=${{ steps.ver.outputs.version }}" packaging\VideoSplitJoiner.iss
 
       - name: Checksums

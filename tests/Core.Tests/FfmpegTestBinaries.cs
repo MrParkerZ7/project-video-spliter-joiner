@@ -40,6 +40,21 @@ internal static class FfmpegTestBinaries
     /// <summary>Full path to ffprobe.exe, or null when it cannot be found anywhere.</summary>
     public static string? Ffprobe => FfprobePath.Value;
 
+    /// <summary>
+    /// The resolved ffmpeg path, or a loud failure. Use this AFTER <c>SkipIfMissing</c> has run: the
+    /// nullable <see cref="Ffmpeg"/> is what answers "is it here?", and passing it straight into a
+    /// process call produced CS8604 at every site. Throwing names the ordering mistake instead of
+    /// letting a null reach ffmpeg and surface as something less obvious.
+    /// </summary>
+    public static string FfmpegRequired =>
+        Ffmpeg ?? throw new InvalidOperationException(
+            "ffmpeg was not resolved — a test used FfmpegRequired without checking SkipIfMissing first.");
+
+    /// <inheritdoc cref="FfmpegRequired"/>
+    public static string FfprobeRequired =>
+        Ffprobe ?? throw new InvalidOperationException(
+            "ffprobe was not resolved — a test used FfprobeRequired without checking SkipIfMissing first.");
+
     public static bool FfmpegExists => Ffmpeg is not null;
 
     public static bool FfprobeExists => Ffprobe is not null;

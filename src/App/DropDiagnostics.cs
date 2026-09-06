@@ -32,9 +32,31 @@ public static class DropDiagnostics
 
     private static readonly object Gate = new();
 
+    private static string? _logDirectory;
+    private static string? _lastOverKey;
+
+    /// <summary>
+    /// Where the trace is written. Defaults to the user's real log folder; a test points it at a temp
+    /// directory instead (T-154 follow-up).
+    ///
+    /// <para><b>This seam is not tidiness.</b> Without it the suite wrote into the very file the
+    /// reporter is asked to attach: 332 of the 1526 lines in a real user's log came from
+    /// <c>dotnet test</c>. Worse, the 256KB cap evicts the OLDER half, so a local test run could delete
+    /// the reporter's actual drop line before they ever opened the file — a diagnostic destroying the
+    /// evidence it exists to preserve. <c>ErrorLogWriter</c> has carried the same seam for exactly this
+    /// reason since it was written; this one simply never got it.</para>
+    /// </summary>
+    public static string LogDirectory
+    {
+        get => _logDirectory ?? ErrorLogWriter.DefaultLogDirectory();
+        set => _logDirectory = value;
+    }
+
+    /// <summary>Restore the real user log folder (a test calls this on teardown).</summary>
+    public static void ResetLogDirectory() => _logDirectory = null;
+
     /// <summary>Full path of the trace file. Stable so it can be quoted in a bug report.</summary>
-    public static string LogPath =>
-        Path.Combine(ErrorLogWriter.DefaultLogDirectory(), "dragdrop.log");
+    public static string LogPath => Path.Combine(LogDirectory, "dragdrop.log");
 
     /// <summary>
     /// Record one drag-drop event. <paramref name="stage"/> is <c>"over"</c> or <c>"drop"</c>;
@@ -65,7 +87,32 @@ public static class DropDiagnostics
 
             lock (Gate)
             {
-                var dir = ErrorLogWriter.DefaultLogDirectory();
+                // COLLAPSE a repeated drag-over. OLE raises DragOver per mouse message, so a two-second
+                // hover wrote hundreds of identical lines: a real user's log held 1408 "over" against
+                // ~118 "drop" — the signal was 8% of the file, and every one of those lines was
+                // File.Exists + FileInfo.Length + AppendAllText on the UI thread DURING the very gesture
+                // this trace exists to diagnose.
+                //
+                // Only consecutive IDENTICAL over-lines are dropped, so a decision CHANGE (the cursor
+                // flipping from refuse to accept as the payload is re-evaluated) still records — which is
+                // the thing the log is actually asked to show. A "drop" always writes, and clears the
+                // key so the next drag starts fresh.
+                if (string.Equals(stage, "over", StringComparison.Ordinal))
+                {
+                    var key = $"{screen}|{count}|{kinds}|{accepted}|{note}";
+                    if (string.Equals(_lastOverKey, key, StringComparison.Ordinal))
+                    {
+                        return;
+                    }
+
+                    _lastOverKey = key;
+                }
+                else
+                {
+                    _lastOverKey = null;
+                }
+
+                var dir = LogDirectory;
                 Directory.CreateDirectory(dir);
 
                 var path = LogPath;

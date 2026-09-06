@@ -132,11 +132,11 @@ public sealed class DeleteOriginalsTests : IDisposable
             HeldPath = null;
         }
 
+#pragma warning disable CS0067 // this fake raises none of these; the interface requires all of them
         public event EventHandler? PositionChanged;
 
         public event EventHandler? DurationAvailable;
 
-#pragma warning disable CS0067
         public event EventHandler? Seeked;
 
         public event EventHandler? Ended;

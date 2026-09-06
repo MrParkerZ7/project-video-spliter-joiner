@@ -92,7 +92,7 @@ public sealed class SmartCutEngineIntegrationTests : IDisposable
     private string MakeCoarseGopSource()
     {
         var path = Path.Combine(_dir, "src.mp4");
-        Run(FfmpegTestBinaries.Ffmpeg,
+        Run(FfmpegTestBinaries.FfmpegRequired,
             "-y", "-hide_banner", "-loglevel", "error",
             "-f", "lavfi", "-i", $"testsrc=size=320x240:rate=25:duration={SourceSeconds}",
             "-f", "lavfi", "-i", $"sine=frequency=440:duration={SourceSeconds}",
@@ -105,7 +105,7 @@ public sealed class SmartCutEngineIntegrationTests : IDisposable
 
     private static double DurationOf(string path)
     {
-        var raw = Run(FfmpegTestBinaries.Ffprobe,
+        var raw = Run(FfmpegTestBinaries.FfprobeRequired,
             "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", path).Trim();
         return double.Parse(raw, System.Globalization.CultureInfo.InvariantCulture);
     }
@@ -169,7 +169,9 @@ public sealed class SmartCutEngineIntegrationTests : IDisposable
 
     [Trait("serves-spec", "SPEC-002")]
     [SkippableFact]
-    public async Task TheLosslessPathReallyDoesSnap_SoTheDifferenceIsDemonstrated_NotAssumed()
+    // Synchronous by nature: every step here shells out to ffmpeg/ffprobe and blocks. It was
+    // declared `async Task` with nothing to await, which is what CS1998 was pointing at.
+    public void TheLosslessPathReallyDoesSnap_SoTheDifferenceIsDemonstrated_NotAssumed()
     {
         if (ShouldSkip())
         {
@@ -180,7 +182,7 @@ public sealed class SmartCutEngineIntegrationTests : IDisposable
         var dest = Path.Combine(_dir, "lossless.mp4");
 
         // Stream-copy from the SNAPPED time, which is what the lossless route does.
-        Run(FfmpegTestBinaries.Ffmpeg,
+        Run(FfmpegTestBinaries.FfmpegRequired,
             "-y", "-hide_banner", "-loglevel", "error",
             "-ss", GopSeconds.ToString(System.Globalization.CultureInfo.InvariantCulture),
             "-i", src, "-c", "copy", dest);
