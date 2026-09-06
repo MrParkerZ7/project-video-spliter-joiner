@@ -95,6 +95,14 @@ goal; `0.1.0` is the first end-to-end, shippable cut.
 - The build is back to **zero warnings** (it had drifted to 5): two unreachable-null warnings in the ffmpeg
   integration tests, a test declared `async` with nothing to await, and a `#pragma` placed one line too
   low to cover the events it was suppressing.
+- Two guards for bugs that hide behind a green suite. **Every screen that can take a disposer is now
+  checked to actually receive one** from the app's composition root — the Delete-original feature once
+  shipped completely inert because that one argument was missing, with every unit test passing, and only
+  Split was guarded against a repeat. The new check discovers the screens by reflection rather than
+  naming them, so a third one is covered the day it is written. **And the invariant totals in the
+  spec index can no longer disagree with the specs**: the table's TOTAL row and the plain-English count
+  above it are both compared against the per-spec rows, which are recounted from the spec files. Those
+  two figures once sat 28 apart for two days with the suite green, because nothing compared them.
 
 ## [1.2.0] - 2026-09-02
 

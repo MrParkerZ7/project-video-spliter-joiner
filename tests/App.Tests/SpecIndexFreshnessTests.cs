@@ -31,6 +31,16 @@ public sealed class SpecIndexFreshnessTests
         @"^\|\s*\[(?<id>SPEC-\d+)\]\((?<file>SPEC-[^)]+)\)\s*\|[^|]*\|[^|]*\|\s*(?<count>\d+)\s*\|",
         RegexOptions.Compiled | RegexOptions.Multiline);
 
+    /// <summary>The TOTAL row at the foot of the index table.</summary>
+    private static readonly Regex TotalRow = new(
+        @"^\|\s*\*\*TOTAL\*\*\s*\|[^|]*\|[^|]*\|\s*\*\*(?<count>\d+)\*\*\s*\|",
+        RegexOptions.Compiled | RegexOptions.Multiline);
+
+    /// <summary>The prose headline above the notes: <c>Total documented invariants: **762**</c>.</summary>
+    private static readonly Regex Headline = new(
+        @"Total documented invariants:\s*\*\*(?<count>\d+)\*\*",
+        RegexOptions.Compiled);
+
     private static string? SpecsDir()
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
@@ -173,5 +183,93 @@ public sealed class SpecIndexFreshnessTests
 
         onDisk.Except(indexed, StringComparer.OrdinalIgnoreCase).Should().BeEmpty(
             "a spec nobody indexes is a spec nobody audits");
+    }
+
+    /// <summary>
+    /// The sum of the per-spec rows, recounted from the specs themselves — the ground truth the two
+    /// summary figures below are checked against. Returns null when the specs cannot be located.
+    /// </summary>
+    private static int? SumOfSpecRows()
+    {
+        var dir = SpecsDir();
+        if (dir is null)
+        {
+            return null;
+        }
+
+        var total = 0;
+        foreach (Match m in IndexRow.Matches(File.ReadAllText(Path.Combine(dir, "_index.md"))))
+        {
+            var file = Path.Combine(dir, m.Groups["file"].Value);
+            total += File.Exists(file) ? CountInvariants(file) : int.Parse(m.Groups["count"].Value);
+        }
+
+        return total;
+    }
+
+    /// <summary>
+    /// T-166 — the <c>**TOTAL**</c> row must equal the rows above it.
+    ///
+    /// <para>The original guard recounts each per-spec row against its spec file and is precise about
+    /// it. It has nothing whatever to say about the TOTAL row, because that row's first cell is
+    /// <c>**TOTAL**</c> rather than a linked <c>SPEC-NNN</c> and the row regex therefore skips it. So
+    /// the one figure a reader is most likely to quote was the one figure nothing checked.</para>
+    ///
+    /// <para>It went wrong exactly as you would expect: the headline and the table disagreed for two
+    /// days, 723 against 751, with the suite green the whole time. The index's own prose asked whoever
+    /// edited it to keep them in step by hand — which is the same hand-maintained-copy arrangement that
+    /// let the picker filter go stale (T-158) and let _GAPS.md claim 9 deferred while listing 13.</para>
+    /// </summary>
+    [Fact]
+    public void TheTotalRowEqualsTheSumOfTheSpecRows()
+    {
+        var expected = SumOfSpecRows();
+        if (expected is null)
+        {
+            return; // reported by TheSpecsDirectoryIsFound
+        }
+
+        var indexText = File.ReadAllText(Path.Combine(SpecsDir()!, "_index.md"));
+        var row = TotalRow.Match(indexText);
+
+        row.Success.Should().BeTrue(
+            "the index must still carry a **TOTAL** row for this to check — if the table was " +
+            "restructured, this guard needs to follow it rather than be deleted");
+
+        int.Parse(row.Groups["count"].Value).Should().Be(
+            expected.Value,
+            "the TOTAL row must equal the per-spec rows above it, which are recounted from the specs " +
+            "themselves — a summary figure that disagrees with what it summarises is worse than no " +
+            "summary, because people quote it");
+    }
+
+    /// <summary>
+    /// T-166 — the prose headline must equal the same sum.
+    ///
+    /// <para>Separate from the TOTAL row on purpose: they are two independently hand-typed copies of one
+    /// number, and the two-day 723-vs-751 disagreement was between exactly these two. Checking one
+    /// against the other would leave both free to drift together; both are checked against the rows,
+    /// which are checked against the specs on disk.</para>
+    /// </summary>
+    [Fact]
+    public void ThePlainEnglishHeadlineEqualsTheSameSum()
+    {
+        var expected = SumOfSpecRows();
+        if (expected is null)
+        {
+            return; // reported by TheSpecsDirectoryIsFound
+        }
+
+        var indexText = File.ReadAllText(Path.Combine(SpecsDir()!, "_index.md"));
+        var headline = Headline.Match(indexText);
+
+        headline.Success.Should().BeTrue(
+            "the index must still state 'Total documented invariants: **N**' — it is the figure quoted " +
+            "in README and ROADMAP, so it is the one most worth pinning");
+
+        int.Parse(headline.Groups["count"].Value).Should().Be(
+            expected.Value,
+            "the headline is the number a human reads; it drifted 28 away from the table for two days " +
+            "with the suite green, because nothing compared them");
     }
 }

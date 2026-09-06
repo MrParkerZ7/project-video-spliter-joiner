@@ -22,12 +22,12 @@ One spec per feature; numbered invariants are the source `todo-automate` derives
 | [SPEC-008](SPEC-008-operation-progress-eta.md) | operation-progress-eta | app | 45 | ? | ? |
 | [SPEC-009](SPEC-009-app-settings.md) | app-settings | app | 28 | ? | ? |
 | [SPEC-010](SPEC-010-split-screen.md) | split-screen | app | 72 | ? | ? |
-| [SPEC-011](SPEC-011-bulk-cut-screen.md) | bulk-cut-screen | app | 150 | ? | ? |
+| [SPEC-011](SPEC-011-bulk-cut-screen.md) | bulk-cut-screen | app | 151 | ? | ? |
 | [SPEC-012](SPEC-012-join-screen.md) | join-screen | app | 40 | ? | ? |
 | [SPEC-013](SPEC-013-preview-player.md) | preview-player | app | 52 | ? | ? |
 | [SPEC-014](SPEC-014-timeline.md) | timeline | app | 30 | ? | ? |
 | [SPEC-015](SPEC-015-app-shell-theming.md) | app-shell-theming | ui | 28 | 24 | 4 |
-| **TOTAL** | | | **762** | **see note** | **see note** |
+| **TOTAL** | | | **763** | **see note** | **see note** |
 
 **Invariant counts recounted mechanically 2026-09-02** (T-153) — they had drifted **in both
 directions** and are now generated from the spec files rather than hand-incremented:
@@ -38,17 +38,23 @@ directions** and are now generated from the spec files rather than hand-incremen
   - SPEC-013: listed 48, actually 52 (+4)
   - SPEC-014: listed 35, actually 30 (-5)
 
-Total documented invariants: **762** (633 before the 09-02 recount, 680 at that recount, +21 from
+Total documented invariants: **763** (633 before the 09-02 recount, 680 at that recount, +21 from
 T-154/T-155/T-156 documented the same day, +22 on 09-04 from T-154's Split/Join half — SPEC-010 +8,
 SPEC-012 +9, SPEC-011 +5; +4 more from T-157 — SPEC-010 +3, SPEC-008 +1; +3 on 09-05 from T-160 —
 SPEC-011 I145-I147, the two-row footer; +5 from T-161 — SPEC-007 I95-I99, the scrollable profile bar; +9 from T-162 — SPEC-010 I52-I60, delete-original on Split; +7 from T-163 — SPEC-010 I61-I67, the auto layer;
 +9 on 09-06 from T-158 — the picker filter, SPEC-010 I68-I70 · SPEC-011 I148-I150 ·
 SPEC-012 I38-I40, added late because T-164 closed for G-052 hours before T-158 landed;
-+2 from the T-154 trace follow-up — SPEC-010 I71-I72).
++2 from the T-154 trace follow-up — SPEC-010 I71-I72;
++1 from T-167 — SPEC-011 I151, the composition-root guard generalised across screens).
 
-**Keep this headline and the TOTAL row in step.** They disagreed for two days (723 vs 751) because
-`SpecIndexFreshnessTests` only parses rows whose first cell is a linked `SPEC-NNN` — the TOTAL row
-and every line of prose here are invisible to it. SPEC-010 and SPEC-012 drop to `?` coverage under the rule below; two of the
+**The headline and the TOTAL row are enforced, not maintained (T-166).**
+`TheTotalRowEqualsTheSumOfTheSpecRows` and `ThePlainEnglishHeadlineEqualsTheSameSum` check both against
+the per-spec rows, which are themselves recounted from the specs on disk — so all three can only be
+wrong deliberately. They are checked against the rows rather than against each other, because they are
+two hand-typed copies of one number and checking a copy against a copy leaves both free to drift
+together: these two disagreed for two days (723 vs 751) with the suite green, back when the guard
+parsed only rows whose first cell is a linked `SPEC-NNN` and was blind to everything else on the page.
+SPEC-010 and SPEC-012 drop to `?` coverage under the rule below; two of the
 new invariants are knowingly uncovered and say so in place — the honest `accepted` flag on the drop
 trace (SPEC-010 I47 / SPEC-012 I36) is set in WPF code-behind that needs a windowed harness, and the
 DragOver boundary (SPEC-010 I48 / SPEC-012 I37) documents a region no drop event ever reaches, so

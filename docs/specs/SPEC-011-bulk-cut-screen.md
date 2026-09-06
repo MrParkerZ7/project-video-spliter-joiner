@@ -648,6 +648,17 @@ SPEC-007); the shared `IThumbnailService`/`FfmpegThumbnailService` frame source 
   ("Still in use: ep1.mp4 (held by ffmpeg.exe)"). Best-effort and diagnostic only: a failed lookup degrades
   to the filename alone and never affects whether the delete is attempted.
 
+### The seam is optional, so the wiring is what gets guarded (T-167, 2026-09-06)
+- **I151** — **every view-model whose constructor accepts an `IOriginalDisposer` is passed one by
+  `MainViewModel`.** The parameter is optional and defaults to null on purpose: null means the delete
+  feature is *unavailable*, so a test that forgets to inject one can never bin real files (the T-140
+  lesson). The exact price of that safety is that forgetting it in the **composition root** is equally
+  silent — and T-162 shipped Split's whole delete-original feature inert for that reason, fully built and
+  fully tested, with a green suite that proved only that the seam worked when something used it. The
+  guard **discovers** the screens by reflection rather than naming them, so a third screen gaining the
+  feature is covered the day it compiles; it asserts a floor of the two known screens first, because a
+  reflection query that silently matches nothing is the vacuous test this project keeps paying for.
+
 ### Auto-delete after a clean batch (T-156)
 - **I132** - `AutoDeleteOriginals` runs the **existing** `DeleteOriginals()` sweep automatically once a
   batch finishes - same eligibility re-checks (I111, I118), same per-row isolation, same reporting. There

@@ -339,8 +339,7 @@ public sealed class SplitDeleteOriginalTests : IDisposable
     [Fact]
     public void TheCompositionRootWiresADisposerIntoSplit()
     {
-        var root = FindRepoRoot();
-        var main = Path.Combine(root, "src", "App", "ViewModels", "MainViewModel.cs");
+        var main = RepoPaths.Source("src", "App", "ViewModels", "MainViewModel.cs");
         File.Exists(main).Should().BeTrue($"MainViewModel.cs should be at {main}");
 
         var text = File.ReadAllText(main);
@@ -355,18 +354,6 @@ public sealed class SplitDeleteOriginalTests : IDisposable
             "originalDisposer:",
             "without it the Delete-original feature is inert in the shipped app while every test above " +
             "still passes — which is exactly what happened the first time");
-    }
-
-    private static string FindRepoRoot()
-    {
-        var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "VideoSplitJoiner.sln")))
-        {
-            dir = dir.Parent;
-        }
-
-        dir.Should().NotBeNull("the test must be able to find the repo root");
-        return dir!.FullName;
     }
 
     // ---- The degenerate case Split can actually reach -----------------------------------------

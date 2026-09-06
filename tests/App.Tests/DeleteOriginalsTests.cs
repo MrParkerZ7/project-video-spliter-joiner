@@ -673,4 +673,74 @@ public sealed class DeleteOriginalsTests : IDisposable
             Path.GetFileName(a.Path),
             "'1 could not be removed' leaves the user hunting for which of twelve files it was");
     }
+
+    // ---- The wiring no view-model test can see -------------------------------------------------
+
+    /// <summary>
+    /// T-167 — every screen that CAN take an <see cref="IOriginalDisposer"/> must actually be handed one
+    /// by the composition root.
+    ///
+    /// <para>T-162 shipped Split's whole delete-original feature <b>inert</b>: fully built, fully tested,
+    /// and doing nothing in the application, because <c>MainViewModel</c> constructed
+    /// <c>SplitViewModel</c> without the argument. The parameter is optional and defaults to null on
+    /// purpose — null means "feature unavailable", so a test that forgets to inject one can never bin
+    /// real files (the T-140 lesson) — and the exact price of that safety is that forgetting it in the
+    /// composition root is <i>also</i> silent. Every test in this file injects a fake, so all of them
+    /// pass either way.</para>
+    ///
+    /// <para>Split got a guard for this; Bulk Cut had none, with the same seam and the same destructive
+    /// consequence. Rather than hand-write a second copy, this <b>discovers</b> the screens: any
+    /// view-model whose constructor accepts the seam is required to be passed it. A third screen gaining
+    /// the feature is covered the day it compiles, instead of the day someone remembers. Hand-maintained
+    /// lists of things-to-check are how the picker filter went stale (T-158).</para>
+    ///
+    /// <para>It asserts the composition root's SOURCE, deliberately: constructing the real
+    /// <c>MainViewModel</c> would build the FFME player and the ffmpeg graph — far heavier and flakier
+    /// than reading the one line that matters. The repo asserts against source this way where behaviour
+    /// is impractical to reach (T-147's installer script, T-153's spec index).</para>
+    /// </summary>
+    [Trait("serves-spec", "SPEC-011")]
+    [Fact]
+    public void EveryScreenThatCanTakeADisposerIsHandedOneByTheCompositionRoot()
+    {
+        var screens = typeof(BulkCutViewModel).Assembly
+            .GetTypes()
+            .Where(t => t.IsClass && !t.IsAbstract && t.Name.EndsWith("ViewModel", StringComparison.Ordinal))
+            .Where(t => t.GetConstructors().Any(
+                c => c.GetParameters().Any(p => p.ParameterType == typeof(IOriginalDisposer))))
+            .Select(t => t.Name)
+            .OrderBy(n => n, StringComparer.Ordinal)
+            .ToList();
+
+        // The floor. Without it a reflection query that matched NOTHING — a renamed interface, a moved
+        // namespace, a `where` clause that quietly stopped matching — would sail through the loop below
+        // and report green while checking zero screens. A test that cannot fail is this project's most
+        // expensive recurring bug; the two known screens are asserted as a MINIMUM, never as the list.
+        screens.Should().Contain(
+            new[] { nameof(BulkCutViewModel), nameof(SplitViewModel) },
+            "both screens take a disposer today — if this query stops finding them it has stopped " +
+            "testing anything, and the loop below would pass vacuously");
+
+        var main = RepoPaths.Source("src", "App", "ViewModels", "MainViewModel.cs");
+        File.Exists(main).Should().BeTrue($"MainViewModel.cs should be at {main}");
+        var text = File.ReadAllText(main);
+
+        foreach (var screen in screens)
+        {
+            var start = text.IndexOf($"new {screen}(", StringComparison.Ordinal);
+            start.Should().BeGreaterThan(
+                0,
+                $"the composition root should construct a {screen} — if it moved behind a factory, this " +
+                "guard needs to follow it there rather than be deleted");
+
+            var end = text.IndexOf(");", start, StringComparison.Ordinal);
+            var call = text.Substring(start, end - start);
+
+            call.Should().Contain(
+                "originalDisposer:",
+                $"{screen} accepts an IOriginalDisposer but the composition root passes none, so its " +
+                "delete feature is inert in the shipped app while every unit test still passes — " +
+                "exactly what shipped on the first pass of T-162");
+        }
+    }
 }
