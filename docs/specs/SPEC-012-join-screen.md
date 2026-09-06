@@ -52,6 +52,17 @@ Joining clips must be lossless (stream-copy concat, no re-render), which only wo
 - **I27** — `Clear()` is a no-op when `!CanClear`; otherwise it empties `Items`, resets `Compat`/`IsCompatible`/`CompatSummary` to the "add at least 2 files" baseline, drops `LastResult`, resets `Operation`, and deliberately preserves `OutputPath`. (`Clear`, T-047)
 - **I28** — `CancelCommand` is `Operation.CancelCommand` — cancelling the Join screen delegates to the shared operation's cancel. (ctor wiring)
 
+### The picker offers what the app accepts (`VideoFileFilter.DialogFilter` — T-158)
+- **I38** — the file picker's *Video files* filter is **derived from the accept-list**, never hand-typed.
+  It carried seven extensions while the drop path accepted 26, so an `.m2ts` — the very format whose
+  absence produced the original report — was invisible in the picker even though dropping one worked. The
+  two doors into this screen cannot disagree about what the app can open.
+- **I39** — the filter keeps its **"All files" escape hatch**. An allowlist is a guess about a container;
+  that entry is how someone opens the one the guess got wrong.
+- **I40** — a file chosen through the picker goes through the **same counting entry point** as a dropped
+  one (`AddDroppedFilesAsync`), so anything the app cannot use is refused **in words** rather than
+  silently added or silently ignored. Both doors answer the same question the same way.
+
 ### Dropped files are accounted for (`DropRefusal`, `JoinViewModel.AddDroppedFilesAsync` — T-154)
 - **I29** — a dropped file that is **not added is explained**, never silently discarded. `DropSummary` states it in one line, and the drop handler passes the **raw** paths to the view-model rather than filtering first — filtering in the view and telling the VM only about the survivors is precisely why this screen could not report a refusal even in principle. (`AddDroppedFilesAsync`, `JoinView.HandleDroppedFiles`)
 - **I30** — Join **never says "already in the list"**, unlike Bulk Cut. This screen permits the same clip twice on purpose (I3 — duplicates allowed), so borrowing that wording would contradict its own rule. Consistency across the three screens is one vocabulary, not one sentence.

@@ -694,6 +694,17 @@ SPEC-007); the shared `IThumbnailService`/`FfmpegThumbnailService` frame source 
   edit that quietly undoes such an invariant, so it is now asserted at five window widths rather than
   trusted to a comment.
 
+### The picker offers what the app accepts (`VideoFileFilter.DialogFilter` — T-158)
+- **I148** — the file picker's *Video files* filter is **derived from the accept-list**, never hand-typed.
+  It carried seven extensions while the drop path accepted 26, so an `.m2ts` — the very format whose
+  absence produced the original report — was invisible in the picker even though dropping one worked. The
+  two doors into this screen cannot disagree about what the app can open.
+- **I149** — the filter keeps its **"All files" escape hatch**. An allowlist is a guess about a container;
+  that entry is how someone opens the one the guess got wrong.
+- **I150** — a file chosen through the picker goes through the **same counting entry point** as a dropped
+  one (`AddDroppedFilesAsync`), so anything the app cannot use is refused **in words** rather than
+  silently added or silently ignored. Both doors answer the same question the same way.
+
 ### Drop accounting, corrected while mirroring it onto Split and Join (T-154, 2026-09-04)
 - **I140** - `Clear` nulls `DropSummary`. As shipped the note was written on drop and cleared by nothing
   but a later drop, so "3 files were not added" survived *Clear all* and sat over an empty list

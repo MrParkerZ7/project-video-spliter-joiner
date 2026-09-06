@@ -17,7 +17,7 @@ How to build, run, test, and contribute to VideoSplitJoiner. See also [ARCHITECT
 ```
 dotnet build -c Debug            # 0-warning build is the bar
 dotnet run --project src/App     # launch the app
-dotnet test                      # full suite (~880 tests: App + Core)
+dotnet test                      # full suite (App + Core; ~1450 tests and growing)
 ```
 - **Zero warnings** is enforced by convention (Core builds with warnings-as-errors).
 - The suite is **xUnit + FluentAssertions**. `CoreIsUiFreeTests` fails the build if `src/Core` ever references WPF —

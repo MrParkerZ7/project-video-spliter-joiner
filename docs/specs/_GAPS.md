@@ -3,8 +3,14 @@
 After the 2026-08-22 `todo-automate` bootstrap, 549 / 565 invariants (97%) were covered and **16 were
 deferred** — each needing a source refactor (extract a pure helper / add an injectable seam) or verified
 another way. **T-105 (2026-08-24) closed 7 of them** by making the code testable (behavior-preserving
-extractions, views/handlers delegating to the new helpers). Coverage is now **556 / 565 (98%)**; the
-**9 below remain deferred**.
+extractions, views/handlers delegating to the new helpers).
+
+**13 gaps remain deferred** — the list below is authoritative; count it, do not trust a number
+restated in prose. This header used to read "556 / 565 (98%) … 9 below remain deferred" while the
+section said 13, because both figures were hand-maintained and only one got updated. The coverage
+RATIO is deliberately not restated here at all: the denominator moved from 565 to 760 as invariants
+were added, and [`_index.md`](_index.md) is the one place that tracks it (and says plainly that the
+Covered/Gaps columns are not re-measured).
 
 ## ✅ Closed by T-105 (helper-extraction / seam + `serves-spec` tests)
 - **SPEC-001 I31** — `SplitEngine` now takes an injectable `IDiskSpaceProbe` (relocated to

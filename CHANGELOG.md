@@ -33,6 +33,15 @@ goal; `0.1.0` is the first end-to-end, shippable cut.
   and the run itself could fail. It now declines the new file and says a split is still running. Pressing
   Run twice did the same thing, and the Run button is now disabled while a split is in progress.
 
+- **The drag-and-drop log no longer drowns the answer it exists to give.** Windows raises a drag event per
+  mouse message, and the log wrote one line per event: a real user's file held 1408 hover lines against
+  ~118 actual drops, so the thing you attach to a bug report was 92% noise — and each of those lines did
+  disk work on the UI thread *during* the very gesture being diagnosed. Repeated identical hover lines now
+  collapse to one; a change of decision still records, and drops are never collapsed.
+- **Running the tests can no longer eat your drag-and-drop log.** The suite wrote into the real log
+  alongside the app — 332 of 1526 lines in one user's file came from a local test run — and because the
+  log discards its older half when it fills, a test run could delete the drop line you were about to send
+  before you ever opened the file. The tests now write to a temp folder of their own.
 ### Added
 - **Split can reclaim its source file.** A split *multiplies* disk usage — cutting a 4 GB recording into
   six parts leaves 8 GB where 4 GB was, and the source is the one file you no longer want. Bulk Cut could
@@ -75,6 +84,17 @@ goal; `0.1.0` is the first end-to-end, shippable cut.
   the grabs had simply not arrived yet. Both waits are now signalled from inside the lock that counts
   them. This matters more than it used to: the release gate only became capable of failing last week, and
   a gate that fails at random is barely better than one that cannot fail at all.
+- The release workflow had never run — no tag has ever existed in this repo — and it held two errors that
+  would each have failed its first execution: an unbraced `$env:ProgramFiles(x86)` that PowerShell parses
+  as a function call, and no check that the tag being released matches the version in the build. Both are
+  fixed and the workflow's PowerShell was executed rather than eyeballed, so its first real run is no
+  longer also its first test. Tagging remains deliberately the maintainer's call (T-151).
+- `packaging/package.ps1` tested for the dotnet binary with `Test-Path`, which answers "is there a file at
+  this path" — false for a bare `dotnet` resolved from `PATH`, which is how it is normally invoked. It now
+  asks `Get-Command`, which answers the question actually being asked.
+- The build is back to **zero warnings** (it had drifted to 5): two unreachable-null warnings in the ffmpeg
+  integration tests, a test declared `async` with nothing to await, and a `#pragma` placed one line too
+  low to cover the events it was suppressing.
 
 ## [1.2.0] - 2026-09-02
 

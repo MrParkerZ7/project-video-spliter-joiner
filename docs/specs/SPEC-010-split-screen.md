@@ -169,6 +169,30 @@ separately. The Join screen. Keyframe-snap math and `MediaProbe` internals (Core
   precedes the reopen, and repeated split→clear→load cycles stay stable — whether or not `Clear` was
   called first (`LoadAsync` re-open path; `Player.Open`/`Unload` ordering).
 
+### The drop trace is the reporter's evidence, so the app must not spoil it (T-154 follow-up)
+- **I71** — a **repeated drag-over collapses to one line**. OLE raises `DragOver` per mouse message, so
+  the unthrottled version wrote a line per frame: a real user's log held **1408 `over` against ~118
+  `drop`** — the signal was 8% of the file — and every line was `File.Exists` + `FileInfo.Length` +
+  `AppendAllText` on the UI thread *during* the gesture being diagnosed. Only consecutive IDENTICAL
+  over-lines are dropped, so a **decision change** still records; a `drop` is never collapsed, and it
+  clears the key so the next drag traces afresh.
+- **I72** — the trace directory is **injectable**, and the test suite points it at a temp folder. Without
+  that seam the suite appended to the user's real log — 332 of 1526 lines in an actual user's file came
+  from `dotnet test` — and because the 256KB cap evicts the OLDER half, a local test run could delete the
+  reporter's own drop line before they ever opened it. A diagnostic destroying the evidence it exists to
+  preserve is worse than no diagnostic. `ErrorLogWriter` has carried the same seam since it was written.
+
+### The picker offers what the app accepts (`VideoFileFilter.DialogFilter` — T-158)
+- **I68** — the file picker's *Video files* filter is **derived from the accept-list**, never hand-typed.
+  It carried seven extensions while the drop path accepted 26, so an `.m2ts` — the very format whose
+  absence produced the original report — was invisible in the picker even though dropping one worked. The
+  two doors into this screen cannot disagree about what the app can open.
+- **I69** — the filter keeps its **"All files" escape hatch**. An allowlist is a guess about a container;
+  that entry is how someone opens the one the guess got wrong.
+- **I70** — a file chosen through the picker goes through the **same counting entry point** as a dropped
+  one (`AddDroppedFilesAsync`), so anything the app cannot use is refused **in words** rather than
+  silently added or silently ignored. Both doors answer the same question the same way.
+
 ### Reclaiming the source after a split (`DeleteOriginal`, `IOriginalDisposer` — T-162, G-052)
 - **I52** — **the source may be binned only when EVERY produced part is on disk and non-empty.** This is
   the invariant the whole feature hangs on, and it is where Split differs from Bulk Cut in kind rather

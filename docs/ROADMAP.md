@@ -21,9 +21,9 @@ The day-to-day task/goal board lives under `docs/todo/`; this is the durable fea
 | ✅ | UI | Dark + gold theme, custom window chrome + vector caption icons, themed scrollbar + tooltips, vertical/horizontal layout modes, audio waveform strip |
 | ✅ | Robustness | Global crash safety net; safe FFME re-open (MediaReopenGuard); in-flight keyframe-scan dedup + honest Preparing/ETA |
 | ✅ | Packaging | App-local ffmpeg bundling; single-file publish; portable-.NET dev setup |
-| ✅ | Quality | Living-spec layer (15 SPEC-NNN, 606/615 invariants covered — audited, then the gaps closed; see [specs/_index.md](specs/_index.md)), 1111 automated tests, `serves-spec:` traceability |
-| ✅ | Release | MIT `LICENSE` at the repo root, added when v1.0.0 was cut — the bundled ffmpeg's own terms stay recorded in `THIRD-PARTY-NOTICES.md` / [adr/0012-gpl-lgpl-licensing-fork.md](adr/0012-gpl-lgpl-licensing-fork.md) |
-| ✅ | Release | **v1.1.0** (2026-08-29) — Exact cut, Replace originals, visible snapping, and the Bulk Cut selection + profile-thumbnail fixes; 1111 tests green at the cut ([CHANGELOG.md](../CHANGELOG.md)). The tag-driven release build targets the dedicated installer repo `MrParkerZ7/installer-video-spliter-joiner` for the installer + portable zip, so binaries never live in this tree — its publish step still depends on the `RELEASE_PAT` secret (Ops row below) |
+| ✅ | Quality | Living-spec layer — 15 numbered specs with `serves-spec:` traceability; the invariant count and what has actually been measured live in [specs/_index.md](specs/_index.md) rather than being restated here, because a number copied into a roadmap is a number that goes stale |
+| ✅ | Release | MIT `LICENSE` at the repo root, added when v1.0.0 was prepared (see the release row below — it was never tagged) — the bundled ffmpeg's own terms stay recorded in `THIRD-PARTY-NOTICES.md` / [adr/0012-gpl-lgpl-licensing-fork.md](adr/0012-gpl-lgpl-licensing-fork.md) |
+| ⚠ | Release | **v1.1.0 / v1.2.0 are CHANGELOG entries, not published releases.** Both are written up in [CHANGELOG.md](../CHANGELOG.md) and their work shipped to `main`, but **no git tag has ever existed in this repo** (`git tag` and `git ls-remote --tags` are both empty), so [release.yml](../.github/workflows/release.yml) — which triggers only on `push: tags: v*.*.*` — has never executed and nothing has been published to the installer repo. Cutting the first real tag is [T-151](todo/T-151.md), and it is deliberately the user's call |
 
 ## Deferred / future 📋
 
