@@ -112,7 +112,19 @@ public sealed class BulkCutViewModel : ObservableObject
 
     // T-107: width (px) of the auto-captured intro-end frame stored as a profile's default thumbnail
     // (displayed tiny in the picker, but stored crisp so an upload/override reads cleanly too).
-    private const int ProfileThumbnailWidth = 96;
+    /// <summary>
+    /// The ONE width every thumbnail source stores at (SPEC-007 I74) — auto capture, snapshot, and
+    /// (since T-169) uploads too.
+    ///
+    /// <para>Raised 96 -> 320 by T-169's decision. 96 was chosen when the picture was only ever shown in
+    /// a 28px chip; the hover preview shows it at several times that, and this app's OTHER hover preview
+    /// — the scrub bar's — already captures at 160 and displays 160x90. Leaving profiles at 96 would have
+    /// shipped a preview narrower than one the app already has.</para>
+    ///
+    /// <para>Existing pictures keep whatever width they were saved at; nothing is migrated. Cost is
+    /// negligible either way — a real store measured 10,483 bytes for 11 pictures.</para>
+    /// </summary>
+    private const int ProfileThumbnailWidth = 320;
 
     /// <summary>
     /// Default settle window (T-115) before a SETTLED row selection opens in the shared preview player.
@@ -1858,10 +1870,17 @@ public sealed class BulkCutViewModel : ObservableObject
             return ThumbnailAttachOutcome.ProfileNotSaved; // the profile must be saved before a thumbnail can hang off it
         }
 
+        // T-169: normalize BEFORE the store sees it, so every source converges on one width — which is
+        // what SPEC-007 I74 has always claimed and, until now, was not true of uploads. Best-effort: a
+        // null means "already small enough, or could not be re-encoded", and the original is stored
+        // untouched exactly as before. Shrinking only; a 64px picture is never blown up to 320.
+        var normalized = ImageNormalizer.ShrinkToWidth(imagePath, ProfileThumbnailWidth);
+        var toStore = normalized ?? imagePath;
+
         string storedPath;
         try
         {
-            storedPath = _thumbnailStore.Save(existing.Name, imagePath);
+            storedPath = _thumbnailStore.Save(existing.Name, toStore);
         }
         catch (Exception ex)
         {
@@ -1872,6 +1891,22 @@ public sealed class BulkCutViewModel : ObservableObject
             return ex is FileNotFoundException or DirectoryNotFoundException or ArgumentException
                 ? ThumbnailAttachOutcome.ImageUnreadable
                 : ThumbnailAttachOutcome.StoreFailed;
+        }
+
+        finally
+        {
+            // The re-encoded temp file has served its purpose whether the store took it or threw.
+            if (normalized is not null)
+            {
+                try
+                {
+                    File.Delete(normalized);
+                }
+                catch
+                {
+                    // best-effort; a stray temp file is not worth failing an upload over
+                }
+            }
         }
 
         _settings.SaveProfile(existing with { ThumbnailPath = storedPath });

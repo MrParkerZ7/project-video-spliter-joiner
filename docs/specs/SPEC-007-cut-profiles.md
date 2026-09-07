@@ -141,7 +141,9 @@ Also in (T-147): `ProfileBackup` (`Export`, `Plan`, `Apply`, `ImportPlan`, the v
   (`TryAttachThumbnail`): the **auto** capture at `IntroEnd.Snapped` when a profile is saved, the
   **upload** of a chosen image file, and the **snapshot** of the frame currently on screen
   (`SnapshotProfileThumbnailAsync`, T-135). All three store at `ProfileThumbnailWidth`, so the stored
-  picture is the same size whichever produced it.
+  picture is the same size whichever produced it. **True since T-169** (I106): this was written as
+  though already so while the upload path copied bytes verbatim, and a real store held 6 uploads at
+  64px against 4 captures at 96.
 - **I75** — the snapshot grabs at `Player.Position` from the SELECTED row's file — the frame the user is
   looking at, never the intro-end the auto path uses — and is gated by `CanSnapshotProfileThumbnail`
   (a selected profile AND a selected row AND `Player.IsReady`), with `SnapshotUnavailableReason` naming
@@ -204,6 +206,42 @@ Also in (T-147): `ProfileBackup` (`Export`, `Plan`, `Apply`, `ImportPlan`, the v
   failure reaches `Operation.Error` with a headline, an actionable hint, and copyable detail - the same
   contract as the explicit thumbnail upload (I76), and for the same reason: a silent backup is
   indistinguishable from a broken button.
+
+### Hovering a profile shows its picture big enough to recognise (T-169, 2026-09-07)
+- **I101** — hovering a profile chip opens a **preview card** showing that profile's picture at
+  **320px**, against the chip's 28px, plus the **full name** (the chip trims it) and the **intro/outro
+  values**. A picture alone does not identify a profile; the card is what makes I95's promise — pictures
+  visible *before* you choose — actually answerable.
+- **I102** — the card is a **`ToolTip`**, not the `Popup` the scrub bars use. Those popups **track the
+  cursor** along a timeline, which is why they cannot be tooltips; hovering an item to see a card needs
+  no tracking, and `ToolTipService` supplies the open delay, the dismissal and the screen-edge flip.
+  `ShowDuration` is raised to defeat WPF's ~5s auto-hide (a panel you hold the cursor on to read must not
+  vanish mid-look) and `InitialShowDelay` stops the card strobing as the cursor sweeps the wrapped grid
+  of chips (SPEC-011 I152).
+- **I103** — the card is declared in the **item `DataTemplate`**, never in the `ProfileChipItem` style,
+  and takes its `DataContext` from **`PlacementTarget.DataContext`**. Both halves are load-bearing and
+  both were found by testing, not by reading: a `UIElement` in a `Style` setter is a **single shared
+  instance** across every item, and a `ToolTip` is a **logical** child that does not inherit the
+  template's `DataContext`, so a plain `{Binding}` resolves to null. Either mistake renders a card that
+  is present, correctly sized, and **completely empty** — visible to a user, invisible to any test that
+  only asserts the card exists.
+- **I104** — a profile with **no picture still gets a useful card**: the letterbox collapses and the name
+  and values carry it. An empty image box is worse than none, and a profile without a picture is a normal
+  outcome (I78), not a failure.
+- **I105** — the card **never intercepts the click that selects**. I97 requires a click to SELECT, and a
+  card sitting under the cursor is exactly what would break it. A `ToolTip` is never hit-testable and
+  never focusable; both are asserted rather than assumed.
+- **I106** — **every source now stores at one width, and that width is 320** — which is what I74 has
+  always claimed and, until now, was false for uploads. Captures and snapshots grab at it through ffmpeg;
+  an **upload is re-encoded** to it instead of being copied byte-for-byte (I42's verbatim copy still
+  describes the store, which now receives an already-normalized file). Measured on a real machine before
+  the change: 6 of 11 stored pictures were 64px uploads against 4 captures at 96, so preview sharpness
+  silently depended on how the picture had been made.
+- **I107** — normalization **only ever shrinks**. A picture already narrower than the target is stored
+  untouched: inflating a 64px image to 320 adds bytes and no detail, turning "small but sharp" into
+  "large and soft" — the outcome the preview exists to avoid. It is also **best-effort**: any failure
+  stores the original, because a picture that cannot be re-encoded is still a picture and refusing it
+  would turn a cosmetic improvement into data loss.
 
 ### The upload gesture refuses a file that is not an image (T-170, 2026-09-07)
 - **I100** — an **upload whose file is not an image is refused in words**, and nothing is copied into the

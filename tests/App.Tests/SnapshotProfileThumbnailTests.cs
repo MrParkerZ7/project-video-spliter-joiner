@@ -160,7 +160,7 @@ public sealed class SnapshotProfileThumbnailTests : IDisposable
         grab.Time.Should().Be(
             TimeSpan.FromSeconds(91),
             "the point of the gesture is THIS frame — not the intro-end the automatic capture uses");
-        grab.Width.Should().Be(96, "it must match the auto path's width or the stored pictures differ in size");
+        grab.Width.Should().Be(320, "it must match the auto path's width or the stored pictures differ in size (T-169 raised it 96 -> 320)");
     }
 
     [Trait("serves-spec", "SPEC-007")]

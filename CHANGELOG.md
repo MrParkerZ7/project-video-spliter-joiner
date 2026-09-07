@@ -50,6 +50,18 @@ goal; `0.1.0` is the first end-to-end, shippable cut.
   log discards its older half when it fills, a test run could delete the drop line you were about to send
   before you ever opened the file. The tests now write to a temp folder of their own.
 ### Added
+- **Hover a profile to see its picture properly.** The profile chips show their picture at 28 pixels,
+  which is too small to tell two frames of the same show apart — so choosing by picture, which is why the
+  bar exists at all, only half worked. Hovering a profile now opens a card showing the picture at **320
+  pixels**, with the profile's full name (the chip trims it) and the intro/outro it would apply. It waits
+  a moment before appearing, so sweeping across the bar does not flash cards at you, and it stays up as
+  long as you keep the cursor there instead of vanishing after five seconds. A profile with no picture
+  still gets a card — just the name and its values, with no empty frame.
+- **Profile pictures are now all stored at the same size.** Pictures captured from a video were saved at
+  96 pixels wide while pictures you *uploaded* were stored at whatever size they happened to be — on this
+  machine, six of eleven were 64 pixels — so how sharp a profile looked depended on how its picture had
+  been made, with nothing explaining why. Every route now stores at 320. Pictures already smaller are left
+  exactly as they are rather than being blown up, and existing profiles keep what they have.
 - **Split can reclaim its source file.** A split *multiplies* disk usage — cutting a 4 GB recording into
   six parts leaves 8 GB where 4 GB was, and the source is the one file you no longer want. Bulk Cut could
   already clean up after itself; Split now can too. A **Delete original** button appears once the split

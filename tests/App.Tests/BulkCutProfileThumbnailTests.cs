@@ -214,6 +214,83 @@ public sealed class BulkCutProfileThumbnailTests : IDisposable
         vm.Operation.Error!.Message.Should().NotContain("not an image");
     }
 
+    /// <summary>
+    /// T-169 (SPEC-007 I74) — an UPLOAD is normalized to the stored width, like the other two sources.
+    ///
+    /// <para>The wiring test, not the algorithm test. <c>ImageNormalizerTests</c> proves the shrink works;
+    /// this proves the upload path actually calls it. T-162 shipped a whole feature inert because every
+    /// unit test passed and nothing asserted the call site.</para>
+    /// </summary>
+    [Fact]
+    [Trait("serves-spec", "SPEC-007")]
+    public async Task Upload_APictureWiderThanTheStoredWidth_IsShrunkBeforeItIsStored()
+    {
+        var (vm, probe, settings, _, _) = Build();
+        var row = await AddRowAsync(vm, probe, @"C:\ep01.mp4", 100, 2, introSeconds: 10);
+        vm.SelectedItem = row;
+        vm.SaveProfile("Series");
+
+        vm.UploadThumbnail(vm.SelectedProfile, MakeWidePng("huge.png", 900, 500))
+            .Should().BeTrue();
+
+        var stored = settings.CutProfiles.Single().ThumbnailPath!;
+        PixelWidthOf(stored).Should().Be(320,
+            "every source must converge on one stored width, which is what SPEC-007 I74 claims — an " +
+            "upload copied verbatim is how that claim became false");
+    }
+
+    /// <summary>T-169 — a picture already smaller is stored as it is; nothing is upscaled.</summary>
+    [Fact]
+    [Trait("serves-spec", "SPEC-007")]
+    public async Task Upload_APictureNarrowerThanTheStoredWidth_IsNotInflated()
+    {
+        var (vm, probe, settings, _, _) = Build();
+        var row = await AddRowAsync(vm, probe, @"C:\ep01.mp4", 100, 2, introSeconds: 10);
+        vm.SelectedItem = row;
+        vm.SaveProfile("Series");
+
+        vm.UploadThumbnail(vm.SelectedProfile, MakeWidePng("small.png", 64, 36))
+            .Should().BeTrue();
+
+        var stored = settings.CutProfiles.Single().ThumbnailPath!;
+        PixelWidthOf(stored).Should().Be(64,
+            "blowing a 64px picture up to 320 adds bytes and no detail — 6 of the 11 pictures in the " +
+            "real store that prompted this work are 64px wide");
+    }
+
+    private string MakeWidePng(string name, int width, int height)
+    {
+        Directory.CreateDirectory(_srcDir);
+        var path = Path.Combine(_srcDir, name);
+
+        var stride = width * 4;
+        var pixels = new byte[stride * height];
+        for (var i = 0; i < pixels.Length; i++)
+        {
+            pixels[i] = (byte)(i % 251);
+        }
+
+        var bitmap = System.Windows.Media.Imaging.BitmapSource.Create(
+            width, height, 96, 96, System.Windows.Media.PixelFormats.Bgra32, null, pixels, stride);
+        var encoder = new System.Windows.Media.Imaging.PngBitmapEncoder();
+        encoder.Frames.Add(System.Windows.Media.Imaging.BitmapFrame.Create(bitmap));
+        using var stream = File.Create(path);
+        encoder.Save(stream);
+        return path;
+    }
+
+    private static int PixelWidthOf(string path)
+    {
+        var image = new System.Windows.Media.Imaging.BitmapImage();
+        image.BeginInit();
+        image.CacheOption = System.Windows.Media.Imaging.BitmapCacheOption.OnLoad;
+        image.CreateOptions = System.Windows.Media.Imaging.BitmapCreateOptions.IgnoreImageCache;
+        image.UriSource = new Uri(path, UriKind.Absolute);
+        image.EndInit();
+        image.Freeze();
+        return image.PixelWidth;
+    }
+
     private string MakeImage(string fileName = "frame.jpg", string content = "img-bytes")
     {
         Directory.CreateDirectory(_srcDir);
@@ -278,8 +355,10 @@ public sealed class BulkCutProfileThumbnailTests : IDisposable
 
         thumbs.GetThumbnailCallCount.Should().Be(1, "the auto-default grabbed exactly one frame");
         grabbedAt.Should().Be(row.IntroEnd.Snapped, "the default thumbnail is the row's snapped intro-end frame");
-        thumbs.Requests[0].Width.Should().Be(96,
-            "the auto-default grabs at the NAMED ProfileThumbnailWidth (96), not an arbitrary size");
+        thumbs.Requests[0].Width.Should().Be(320,
+            "the auto-default grabs at the NAMED ProfileThumbnailWidth, not an arbitrary size. T-169 " +
+            "raised it 96 -> 320 so the hover preview has pixels to show; every source must move together " +
+            "or SPEC-007 I74 stops being true");
         thumbs.Requests[0].InputPath.Should().Be(row.Path, "and from the row's own source file");
 
         var saved = settings.CutProfiles.Single();

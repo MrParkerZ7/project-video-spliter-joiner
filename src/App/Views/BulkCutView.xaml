@@ -39,6 +39,80 @@
              The bar is reserved with Visibility="Hidden" rather than Collapsed at rest, so selecting a
              chip changes no measurement and the row cannot twitch as the selection moves; likewise the
              border thickness is constant and only its brush changes. -->
+        <!-- T-169: the hover preview. The chip shows the picture at 28px, which is too small to tell
+             two frames of the same show apart - so T-161's promise (pictures visible BEFORE you choose)
+             was only half kept.
+
+             A ToolTip, not the Popup used by the scrub bars. The plan said Popup on the grounds of
+             precedent, and building it changed the answer: PlayerView's and BulkRowScrubView's popups
+             TRACK THE CURSOR along a timeline, which is why they cannot be tooltips. Hovering an item to
+             see a card needs no tracking, and ToolTipService gives the open delay, the dismissal and the
+             screen-edge flip for free - including the open delay the plan itself flagged as "the one
+             thing ToolTip would have given". Its two objections are both settable: ShowDuration defeats
+             the 5-second auto-hide, and the themed MaxWidth of 360 comfortably holds a 320px picture. -->
+        <Style x:Key="ProfilePreviewCard" TargetType="ToolTip">
+            <Setter Property="Background" Value="{StaticResource Surface0Brush}" />
+            <Setter Property="BorderBrush" Value="{StaticResource BorderStrongBrush}" />
+            <Setter Property="HasDropShadow" Value="True" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="MaxWidth" Value="360" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ToolTip">
+                        <Border Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="1"
+                                CornerRadius="{StaticResource RadiusSm}"
+                                Padding="4"
+                                SnapsToDevicePixels="True">
+                            <StackPanel Width="320">
+                                <!-- Letterboxed so the card does not resize as you move between
+                                     profiles whose pictures differ in aspect. Uniform, never
+                                     UniformToFill: this is the view where detail matters, so nothing
+                                     is cropped away. Collapsed entirely when the profile has no
+                                     picture - that is a normal state (I78), not a failure. -->
+                                <Border Height="180"
+                                        Background="{StaticResource VideoBgBrush}"
+                                        CornerRadius="{StaticResource RadiusSm}"
+                                        ClipToBounds="True"
+                                        Visibility="{Binding ThumbnailPath, Converter={StaticResource NullToCollapsed}}">
+                                    <Image Source="{Binding ThumbnailPath, Converter={StaticResource PathToBitmap}}"
+                                           Stretch="Uniform" />
+                                </Border>
+
+                                <!-- The full name. The chip trims it, so this is where a long one
+                                     becomes readable (T-168 bounded the chip label at 220px). -->
+                                <TextBlock Text="{Binding Name}"
+                                           Margin="4,6,4,0"
+                                           TextWrapping="Wrap"
+                                           FontWeight="SemiBold"
+                                           Foreground="{StaticResource TextPrimaryBrush}" />
+
+                                <!-- What the profile would DO, so the card identifies it rather than
+                                     merely enlarging it. -->
+                                <StackPanel Orientation="Horizontal" Margin="4,3,4,4">
+                                    <TextBlock Text="intro "
+                                               FontSize="{StaticResource FontSizeSmall}"
+                                               Foreground="{StaticResource TextMutedBrush}" />
+                                    <TextBlock Text="{Binding IntroFromStart, Converter={StaticResource Clock}}"
+                                               FontFamily="{StaticResource MonoFontFamily}"
+                                               FontSize="{StaticResource FontSizeSmall}"
+                                               Foreground="{StaticResource AccentTextBrush}" />
+                                    <TextBlock Text="  ·  outro "
+                                               FontSize="{StaticResource FontSizeSmall}"
+                                               Foreground="{StaticResource TextMutedBrush}" />
+                                    <TextBlock Text="{Binding OutroFromEnd, Converter={StaticResource Clock}, TargetNullValue='to end'}"
+                                               FontFamily="{StaticResource MonoFontFamily}"
+                                               FontSize="{StaticResource FontSizeSmall}"
+                                               Foreground="{StaticResource TextPrimaryBrush}" />
+                                </StackPanel>
+                            </StackPanel>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <Style x:Key="ProfileChipItem" TargetType="ListBoxItem">
             <!-- T-168: the bottom 6 is the WRAP gutter. It was 0 while the bar was a single
                  non-wrapping strip, where no chip ever had one below it. -->
@@ -84,7 +158,30 @@
         </Style>
 
         <DataTemplate x:Key="ProfileItemTemplate" DataType="{x:Type profiles:CutProfile}">
-            <StackPanel Orientation="Horizontal">
+            <!-- T-169: the preview card hangs off the TEMPLATE root, not off ProfileChipItem.
+                 A UIElement in a Style setter is a SINGLE shared instance across every item, so a
+                 tooltip declared there has one ambiguous DataContext and renders nothing per-chip. A
+                 DataTemplate is instantiated per item, so each chip gets its own card bound to its own
+                 profile. -->
+            <StackPanel Orientation="Horizontal"
+                        Background="Transparent"
+                        ToolTipService.InitialShowDelay="450"
+                        ToolTipService.ShowDuration="120000"
+                        ToolTipService.BetweenShowDelay="0"
+                        ToolTipService.Placement="Top">
+                <!-- ShowDuration defeats WPF's ~5s auto-hide: this is a panel you hold the cursor on to
+                     read, and having it vanish mid-look restates the original complaint.
+                     InitialShowDelay stops the card strobing as the cursor sweeps the wrapped grid of
+                     chips T-168 introduced. Background=Transparent so the gaps between the thumbnail
+                     and the label are still hover targets rather than holes. -->
+                <StackPanel.ToolTip>
+                    <!-- A ToolTip is a LOGICAL child, not a visual one, so it does not inherit the
+                         template's DataContext and a plain {Binding} resolves to null. The profile
+                         reaches it through the element it is placed against. -->
+                    <ToolTip Style="{StaticResource ProfilePreviewCard}"
+                             DataContext="{Binding PlacementTarget.DataContext,
+                                                   RelativeSource={RelativeSource Self}}" />
+                </StackPanel.ToolTip>
                 <Border Width="28" Height="28"
                         Background="{StaticResource Surface2Brush}"
                         BorderBrush="{StaticResource BorderBrush}"
