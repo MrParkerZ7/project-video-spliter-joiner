@@ -119,12 +119,129 @@ public sealed class BulkCutProfileThumbnailTests : IDisposable
             .ToList();
     }
 
+    /// <summary>
+    /// Writes a file that is a REAL image as far as the app's acceptance check is concerned: the
+    /// format's magic bytes, followed by <paramref name="content"/>.
+    ///
+    /// <para>T-170: these used to be plain text in a <c>.jpg</c>, so the whole upload suite proved the
+    /// app accepts things that are not images — which is precisely the defect T-170 exists to fix. The
+    /// content still trails the signature, so every assertion that distinguishes one picture from
+    /// another by its bytes keeps working unchanged.</para>
+    /// </summary>
+    /// <summary>
+    /// T-170 (SPEC-007) — a file that is not an image is REFUSED, in words, and nothing is stored.
+    ///
+    /// <para>Reproduces the defect exactly as found: a real store held a 1-byte file containing the
+    /// character <c>x</c>, attached to a profile as its picture. The picker offers an <i>All files</i>
+    /// option and sets only <c>CheckFileExists</c>; the store copies bytes verbatim (I42) and the record
+    /// validates nothing (I35) — every layer did what it was told and nobody asked the question.</para>
+    /// </summary>
+    [Fact]
+    [Trait("serves-spec", "SPEC-007")]
+    public async Task Upload_AFileThatIsNotAnImage_IsRefusedInWords_AndNothingIsStored()
+    {
+        var (vm, probe, settings, _, store) = Build();
+        var row = await AddRowAsync(vm, probe, @"C:\v\ep01.mp4", 100, 2, introSeconds: 10);
+        vm.SelectedItem = row;
+        vm.SaveProfile("Series");
+
+        var junk = MakeNonImage("notes.jpg");   // 1 byte, the character 'x' — the reported file
+
+        vm.UploadThumbnail(vm.SelectedProfile, junk)
+            .Should().BeFalse("a 1-byte text file is not a picture, whatever it is named");
+
+        vm.Operation.Error.Should().NotBeNull("a refusal the user cannot see is the original bug");
+        vm.Operation.Error!.Message.Should().Contain(
+            "not an image",
+            "the message must say what is wrong with the FILE, not blame the store");
+
+        settings.CutProfiles.Single().ThumbnailPath.Should().BeNull(
+            "the profile must not end up pointing at junk");
+        // The store root is created lazily on first Save, so "never created" is the strongest possible
+        // evidence that nothing was written for a refused pick.
+        (Directory.Exists(store.Root) ? Directory.GetFiles(store.Root) : Array.Empty<string>())
+            .Should().BeEmpty("nothing may be copied into the store for a file the app has already refused");
+    }
+
+    /// <summary>
+    /// T-170 (SPEC-007 I73) — a refused upload leaves the picture the user already had byte-identical.
+    /// I73 promises copy-then-swap durability; the 1-byte file in the real store means something once
+    /// wrote a stub where a picture had been, so this pins the promise rather than trusting it.
+    /// </summary>
+    [Fact]
+    [Trait("serves-spec", "SPEC-007")]
+    public async Task Upload_RefusedNonImage_LeavesTheExistingPictureByteIdentical()
+    {
+        var (vm, probe, settings, _, _) = Build();
+        var row = await AddRowAsync(vm, probe, @"C:\v\ep01.mp4", 100, 2, introSeconds: 10);
+        vm.SelectedItem = row;
+        vm.SaveProfile("Series");
+
+        vm.UploadThumbnail(vm.SelectedProfile, MakeImage("good.png", "the picture the user already had"))
+            .Should().BeTrue("precondition: a real picture is attached");
+
+        var kept = settings.CutProfiles.Single().ThumbnailPath!;
+        var before = File.ReadAllBytes(kept);
+
+        vm.UploadThumbnail(vm.SelectedProfile, MakeNonImage("junk.png"))
+            .Should().BeFalse("the second pick is not an image");
+
+        File.Exists(kept).Should().BeTrue("the existing picture must survive a refused replacement");
+        File.ReadAllBytes(kept).Should().Equal(before, "byte-identical, per I73 — not merely present");
+        settings.CutProfiles.Single().ThumbnailPath.Should().Be(kept, "the profile still points at what it had");
+    }
+
+    /// <summary>
+    /// T-170 — a MISSING pick keeps its own message. "That file is not an image" would be true and
+    /// unhelpful for a file that was moved or deleted, so the check is guarded on existence and the
+    /// missing case still falls through to the store's own diagnosis.
+    /// </summary>
+    [Fact]
+    [Trait("serves-spec", "SPEC-007")]
+    public async Task Upload_MissingFile_StillSaysItCouldNotBeRead_NotThatItIsNotAnImage()
+    {
+        var (vm, probe, _, _, _) = Build();
+        var row = await AddRowAsync(vm, probe, @"C:\v\ep01.mp4", 100, 2, introSeconds: 10);
+        vm.SelectedItem = row;
+        vm.SaveProfile("Series");
+
+        vm.UploadThumbnail(vm.SelectedProfile, Path.Combine(_srcDir, "gone.png"))
+            .Should().BeFalse();
+
+        vm.Operation.Error!.Message.Should().Contain(
+            "could not be read",
+            "a file that is gone is a different problem from a file that is not a picture");
+        vm.Operation.Error!.Message.Should().NotContain("not an image");
+    }
+
     private string MakeImage(string fileName = "frame.jpg", string content = "img-bytes")
+    {
+        Directory.CreateDirectory(_srcDir);
+        var path = Path.Combine(_srcDir, fileName);
+        File.WriteAllBytes(path, ImageBytes(fileName, content));
+        return path;
+    }
+
+    /// <summary>A file that exists and is definitely NOT an image — T-170's actual defect.</summary>
+    private string MakeNonImage(string fileName, string content = "x")
     {
         Directory.CreateDirectory(_srcDir);
         var path = Path.Combine(_srcDir, fileName);
         File.WriteAllText(path, content);
         return path;
+    }
+
+    private static byte[] ImageBytes(string fileName, string content)
+    {
+        byte[] magic = Path.GetExtension(fileName).ToLowerInvariant() switch
+        {
+            ".png" => new byte[] { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A },
+            ".gif" => new byte[] { 0x47, 0x49, 0x46, 0x38 },
+            ".bmp" => new byte[] { 0x42, 0x4D },
+            _ => new byte[] { 0xFF, 0xD8, 0xFF },   // JPEG, and the default for .jpg/.jpeg
+        };
+
+        return magic.Concat(System.Text.Encoding.UTF8.GetBytes(content)).ToArray();
     }
 
     private static async Task<BulkItemViewModel> AddRowAsync(

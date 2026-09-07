@@ -205,6 +205,22 @@ Also in (T-147): `ProfileBackup` (`Export`, `Plan`, `Apply`, `ImportPlan`, the v
   contract as the explicit thumbnail upload (I76), and for the same reason: a silent backup is
   indistinguishable from a broken button.
 
+### The upload gesture refuses a file that is not an image (T-170, 2026-09-07)
+- **I100** — an **upload whose file is not an image is refused in words**, and nothing is copied into the
+  store. Every layer was individually correct and the whole was not: the store copies bytes verbatim
+  (I42), the record validates nothing (I35), and the picker offers an *All files* escape hatch with only
+  `CheckFileExists` set — so a real store ended up holding a **1-byte file containing the character
+  `x`** attached to a profile as its picture. The check is a **leading-byte signature test** over exactly
+  the formats the picker offers, and it sits on the **upload** path only: the auto and snapshot frames
+  are written by ffmpeg at this app's own request, so validating them would be checking our own output.
+  A **missing** pick keeps its existing, more useful message (*"could not be read … may have been moved,
+  renamed or deleted"*) rather than being told it is not an image — the guard is conditioned on the file
+  existing.
+
+  Bounded deliberately: this refuses files that are **not images**; it does not certify that an image is
+  undamaged. A truncated JPEG with an intact header still passes here and falls back to the placeholder
+  at decode time. Saying so is the point — the invariant claims what it enforces and no more.
+
 ### The picker is a full-width wrapping bar, not a dropdown (`BulkCutView.xaml` `ProfileBar` — T-161, re-shaped T-168)
 - **I95** — profiles are chosen from a **full-width bar of chips shown at rest, wrapping onto new
   lines**, not a `ComboBox`.

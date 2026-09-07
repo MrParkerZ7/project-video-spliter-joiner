@@ -82,6 +82,13 @@ public enum ThumbnailAttachOutcome
     /// <summary>The chosen image is missing or unusable as a source (the store refused it).</summary>
     ImageUnreadable,
 
+    /// <summary>
+    /// The chosen file is not an image at all — its leading bytes match no format the picker offers
+    /// (T-170). Distinct from <see cref="ImageUnreadable"/>, which is a real image the store could not
+    /// take; this one never should have been offered to the store.
+    /// </summary>
+    NotAnImage,
+
     /// <summary>The store could not copy the image in (locked target, unwritable root, I/O error).</summary>
     StoreFailed,
 }
@@ -1770,6 +1777,20 @@ public sealed class BulkCutViewModel : ObservableObject
         {
             outcome = ThumbnailAttachOutcome.NoImageChosen;
         }
+        else if (File.Exists(imagePath) && !ImageSignature.IsImage(imagePath))
+        {
+            // T-170. Checked HERE and not inside TryAttachThumbnail on purpose: this is the trust
+            // boundary. An upload is a file the user picked off their disk through a dialog with an
+            // "All files" escape hatch; the auto and snapshot paths are frames THIS app just asked
+            // ffmpeg to write, so validating them would be checking our own output. The store copies
+            // bytes verbatim (SPEC-007 I42) and never looked, which is how a 1-byte file containing
+            // the character 'x' came to be attached to a profile in a real store.
+            //
+            // Guarded on File.Exists so a MISSING pick keeps its own, more useful message: it falls
+            // through to the store, which throws FileNotFound -> ImageUnreadable ("may have been moved,
+            // renamed or deleted"). "That file is not an image" would be true but unhelpful.
+            outcome = ThumbnailAttachOutcome.NotAnImage;
+        }
         else
         {
             outcome = TryAttachThumbnail(profile.Name, imagePath, out detail);
@@ -1889,6 +1910,11 @@ public sealed class BulkCutViewModel : ObservableObject
                 ErrorCategory.CorruptInput,
                 "That image could not be read, so the profile thumbnail was not changed.",
                 "The file may have been moved, renamed or deleted. Choose another image."),
+            ThumbnailAttachOutcome.NotAnImage => (
+                ErrorCategory.InvalidArgument,
+                "That file is not an image, so the profile thumbnail was not changed.",
+                "Pick a PNG, JPEG, BMP, GIF, WEBP or TIFF. The file dialog's \"All files\" option will "
+                + "let you choose anything, including files this app cannot show."),
             _ => (
                 ErrorCategory.PermissionDenied,
                 "That image could not be stored as the profile's thumbnail.",

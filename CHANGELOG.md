@@ -8,6 +8,13 @@ goal; `0.1.0` is the first end-to-end, shippable cut.
 ## [Unreleased]
 
 ### Fixed
+- **A file that is not a picture can no longer become a profile's picture.** The *Thumbnail…* chooser has
+  an *All files* option, and whatever you picked through it was copied in and reported as success — no
+  layer ever asked whether the file was an image. A real profile store on this machine ended up with a
+  **1-byte text file** attached to a profile as its thumbnail. The app now refuses anything that is not a
+  PNG, JPEG, BMP, GIF, WEBP or TIFF, says so in words, and leaves the picture you already had exactly as
+  it was. A file that has been *moved or deleted* still gets its own, more useful message rather than
+  being told it is not an image.
 - **Split and Join now say why a dropped file did not arrive.** Bulk Cut learned this in 1.2.0; the other
   two screens still took what they recognised and discarded the rest without a word, which from the
   outside is indistinguishable from a dead drop target. Each screen says its own truth: Split
