@@ -205,8 +205,9 @@ Also in (T-147): `ProfileBackup` (`Export`, `Plan`, `Apply`, `ImportPlan`, the v
   contract as the explicit thumbnail upload (I76), and for the same reason: a silent backup is
   indistinguishable from a broken button.
 
-### The picker is a scrollable bar, not a dropdown (`BulkCutView.xaml` `ProfileBar` — T-161)
-- **I95** — profiles are chosen from a **horizontal strip of chips shown at rest**, not a `ComboBox`.
+### The picker is a full-width wrapping bar, not a dropdown (`BulkCutView.xaml` `ProfileBar` — T-161, re-shaped T-168)
+- **I95** — profiles are chosen from a **full-width bar of chips shown at rest, wrapping onto new
+  lines**, not a `ComboBox`.
   Profiles carry pictures — I75/I76 and the snapshot gesture (T-135) exist precisely so they can — and a
   closed dropdown hid every one of them until after the user had already chosen by name, which is the
   one moment the picture cannot help.
@@ -214,14 +215,25 @@ Also in (T-147): `ProfileBackup` (`Export`, `Plan`, `Apply`, `ImportPlan`, the v
   `SelectedProfile`. Selection semantics, `HasSelectedProfile`, and every apply/thumbnail/delete command
   are therefore untouched by the change — the surface moved, the model did not.
 - **I97** — **a click SELECTS; it never applies.** `Apply to all` rewrites the cut points of every ticked
-  row, and a strip you scroll makes a stray click far cheaper than opening a dropdown and picking a row,
+  row, and a bar you click straight across makes a stray click far cheaper than opening a dropdown and
+  picking a row,
   so wiring apply to selection would put a bulk edit one misclick away. Asserted directly: setting
   `SelectedProfile` changes no row's intro or outro, and the apply command still does.
-- **I98** — the bar **scrolls inside a fixed cap** (`MaxWidth`) rather than widening with the profile
-  count, so the apply actions beside it never get displaced. This bar is the original clipping site
-  (I120's sibling, T-136), which is why the cap is pinned by a layout test rather than trusted: a plain
-  "is it inside the window" check passes with or without it, because the surrounding `WrapPanel` would
-  simply wrap the actions onto the next line.
+- **I98** — the bar spans the card's **full width and WRAPS**; it never scrolls sideways. **T-161 said
+  the opposite** — *"scrolls inside a fixed cap (`MaxWidth`) rather than widening"* — and named a
+  `WrapPanel` wrapping the actions onto the next line as the failure mode the cap existed to prevent.
+  That is now the intended design (SPEC-011 I152): the actions have their own row, so nothing beside
+  the bar can be displaced and the horizontal cap has no job left. What the cap actually bought — a
+  header whose height does not grow with the profile count — is preserved by **rotating it onto the
+  other axis** (SPEC-011 I153). Scrolling did not disappear; it turned 90°.
+
+  Two mechanisms are non-obvious enough to state. A `WrapPanel` inside a `ScrollViewer` whose
+  horizontal scrolling is `Auto` **or** `Hidden` is measured at **infinite width** and therefore never
+  wraps — only `Disabled` makes it wrap, so that attribute is load-bearing and its mutation is dead.
+  And T-161's vacuity lesson still holds verbatim: an *"is it inside the window"* check is satisfied
+  by construction here, so wrapping is asserted as **≥2 distinct chip Y bands** and full width is
+  asserted against the **bar** and not merely the card — the first version of that test checked only
+  the card and the restored 420px cap survived it.
 - **I99** — the selected chip is distinguished by **three differentiators, never a tint alone** — accent
   border, muted-accent fill, and a visible accent bar under the label. The bar is reserved with
   `Visibility="Hidden"` at rest and the border thickness is constant, so moving the selection changes no

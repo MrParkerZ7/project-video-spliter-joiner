@@ -5,8 +5,15 @@
              xmlns:views="clr-namespace:VideoSplitJoiner.App.Views"
              xmlns:vm="clr-namespace:VideoSplitJoiner.App.ViewModels"
              xmlns:bulk="clr-namespace:VideoSplitJoiner.Core.Bulk;assembly=VideoSplitJoiner.Core"
-             xmlns:profiles="clr-namespace:VideoSplitJoiner.Core.Profiles;assembly=VideoSplitJoiner.Core">
+             xmlns:profiles="clr-namespace:VideoSplitJoiner.Core.Profiles;assembly=VideoSplitJoiner.Core"
+             xmlns:sys="clr-namespace:System;assembly=mscorlib">
     <UserControl.Resources>
+        <!-- T-168: the chip list's vertical cap - two chip rows. Named rather than inline so the
+             layout test asserts against THIS value instead of a hand-copied duplicate of it.
+             One row = 28px thumb + 6px selected-bar band + 6px chip padding + 2px border + 6px
+             item gutter = 48. Two rows = 96, plus 4px of slack. Past it the list scrolls; it never
+             grows the header, which is what T-161's MaxWidth bought on the other axis. -->
+        <sys:Double x:Key="ProfileBarMaxHeight">100</sys:Double>
         <conv:NullToCollapsedConverter x:Key="NullToCollapsed" />
         <conv:BoolToVisibilityConverter x:Key="BoolToVisibility" />
         <conv:InverseBoolConverter x:Key="InverseBool" />
@@ -33,7 +40,9 @@
              chip changes no measurement and the row cannot twitch as the selection moves; likewise the
              border thickness is constant and only its brush changes. -->
         <Style x:Key="ProfileChipItem" TargetType="ListBoxItem">
-            <Setter Property="Margin" Value="0,0,6,0" />
+            <!-- T-168: the bottom 6 is the WRAP gutter. It was 0 while the bar was a single
+                 non-wrapping strip, where no chip ever had one below it. -->
+            <Setter Property="Margin" Value="0,0,6,6" />
             <Setter Property="Padding" Value="6,3" />
             <Setter Property="Cursor" Value="Hand" />
             <Setter Property="Template">
@@ -86,8 +95,13 @@
                     <Image Source="{Binding ThumbnailPath, Converter={StaticResource PathToBitmap}}"
                            Stretch="UniformToFill" />
                 </Border>
+                <!-- T-168: MaxWidth is what makes TextTrimming mean anything. This template is a
+                     horizontal StackPanel, which measures its children at INFINITE width, so an
+                     unbounded name produced a chip wider than the card. That used to scroll; with
+                     horizontal scrolling now Disabled it would be a silent clip instead. -->
                 <TextBlock Text="{Binding Name}"
                            Margin="8,0,2,0"
+                           MaxWidth="220"
                            VerticalAlignment="Center"
                            TextTrimming="CharacterEllipsis" />
             </StackPanel>
@@ -241,7 +255,6 @@
                  unchanged; the empty state stays an unobtrusive Save affordance. -->
             <Border Grid.Row="1"
                     Margin="0,8,0,0"
-                    HorizontalAlignment="Left"
                     VerticalAlignment="Center"
                     Padding="10,7"
                     Background="{StaticResource SurfaceBrush}"
@@ -260,127 +273,64 @@
                          scrolls - it silently CLIPS whatever does not fit off the right edge, and this bar
                          has grown to eight controls while the tab's split is user-resizable (G-039). The
                          set-at-playhead row already uses this idiom. -->
-                    <WrapPanel VerticalAlignment="Center">
-                        <!-- HERO: the profile BAR (T-161, was a ComboBox).
-                             Profiles carry pictures - T-129 and T-135 both exist so a profile can have a
-                             recognisable one - and a closed dropdown hid every picture until after you
-                             had already chosen by name. A horizontal strip shows them at rest, so
-                             choosing is one click on the thing you recognise; "too many profiles"
-                             degrades into scrolling instead of a taller and taller popup.
+                    <!-- ROW 1 — the chip list, full width, WRAPPING (T-168, was a 420px scroller).
+                         T-161 capped this at MaxWidth=420 and scrolled it sideways, which kept it beside
+                         its actions but hid most profiles behind a scrollbar - the opposite of what the
+                         bar exists for (I95: pictures visible BEFORE you choose).
 
-                             Same two bindings the ComboBox used (Profiles / SelectedProfile), so every
-                             command, gate and apply action below is untouched. A click SELECTS and
-                             nothing more - "Apply to all" rewrites every ticked row's cut points, which
-                             must not be one misclick away on a strip you are scrolling.
+                         Three attributes make the wrap work, and none is cosmetic:
+                           * ItemsPanel = WrapPanel        - a StackPanel neither wraps nor scrolls, it CLIPS (T-136).
+                           * Horizontal scrolling DISABLED - a WrapPanel inside a ScrollViewer whose
+                             horizontal scrolling is Auto OR Hidden is measured at INFINITE width and
+                             therefore never wraps. Only Disabled makes it wrap. Set this back to Auto and
+                             the bar silently stops wrapping while the diff still looks right.
+                           * MaxHeight + vertical scroll   - T-161's cap ROTATED onto the free axis. This
+                             card lives in the header, where T-141 already fought a row that grew until it
+                             pushed the tab off-screen; measured, an uncapped wrap grows the header 154px
+                             at 760x620 and pushes Run 74px off-screen against 72px of slack. "Too many
+                             profiles" still degrades into scrolling - downward now, on the axis where
+                             splitting the rows removed the displacement hazard. -->
+                    <ListBox x:Name="ProfileBar"
+                             MaxHeight="{StaticResource ProfileBarMaxHeight}"
+                             Background="Transparent"
+                             BorderThickness="0"
+                             Padding="0"
+                             ItemsSource="{Binding Profiles}"
+                             SelectedItem="{Binding SelectedProfile, Mode=TwoWay}"
+                             ItemTemplate="{StaticResource ProfileItemTemplate}"
+                             ItemContainerStyle="{StaticResource ProfileChipItem}"
+                             ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                             ScrollViewer.VerticalScrollBarVisibility="Auto"
+                             ToolTip="Click a saved cut profile to select it, then use Apply to selected / Apply to all"
+                             Visibility="{Binding HasProfiles, Converter={StaticResource BoolToVisibility}}">
+                        <ListBox.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <WrapPanel Orientation="Horizontal" />
+                            </ItemsPanelTemplate>
+                        </ListBox.ItemsPanel>
+                    </ListBox>
 
-                             MaxWidth + horizontal scroll is what keeps it from pushing the action
-                             buttons off the row: this bar is the ORIGINAL clipping site (T-136). -->
-                        <ListBox x:Name="ProfileBar"
-                                 MaxWidth="420"
-                                 VerticalAlignment="Center"
-                                 Background="Transparent"
-                                 BorderThickness="0"
-                                 Padding="0"
-                                 ItemsSource="{Binding Profiles}"
-                                 SelectedItem="{Binding SelectedProfile, Mode=TwoWay}"
-                                 ItemTemplate="{StaticResource ProfileItemTemplate}"
-                                 ItemContainerStyle="{StaticResource ProfileChipItem}"
-                                 ScrollViewer.HorizontalScrollBarVisibility="Auto"
-                                 ScrollViewer.VerticalScrollBarVisibility="Disabled"
-                                 ToolTip="Click a saved cut profile to select it, then use Apply to selected / Apply to all"
-                                 Visibility="{Binding HasProfiles, Converter={StaticResource BoolToVisibility}}">
-                            <ListBox.ItemsPanel>
-                                <ItemsPanelTemplate>
-                                    <StackPanel Orientation="Horizontal" />
-                                </ItemsPanelTemplate>
-                            </ListBox.ItemsPanel>
-                        </ListBox>
+                    <!-- ROW 2 — the actions, on their own full-width wrapping row (T-168).
+                         T-160's footer cure applied one region north: these used to share the chip list's
+                         WrapPanel, so they were whatever the bar left them.
 
-                        <!-- SECONDARY: Apply as a paired split-control — one bordered
-                             Surface2 container, two flat segments split by a 1px rule. -->
-                        <Border Margin="8,0,0,0"
-                                VerticalAlignment="Center"
-                                Background="{StaticResource Surface2Brush}"
-                                BorderBrush="{StaticResource BorderBrush}"
-                                BorderThickness="1"
-                                CornerRadius="{StaticResource RadiusSm}"
-                                SnapsToDevicePixels="True"
-                                Visibility="{Binding HasProfiles, Converter={StaticResource BoolToVisibility}}">
-                            <StackPanel Orientation="Horizontal">
-                                <Button Style="{StaticResource ProfileSegmentButton}"
-                                        Content="⧉ Apply to selected"
-                                        ToolTip="Apply the chosen profile to the selected row (re-snapped + re-validated)"
-                                        Command="{Binding ApplyProfileToSelectedCommand}" />
-                                <Rectangle Width="1" Fill="{StaticResource BorderBrush}" />
-                                <!-- Primary apply action — SemiBold marks "all" as the emphasised choice
-                                     of the pair; relabelled from the terse "⧉ all" so it reads unambiguously
-                                     as "apply to all" (T-116). -->
-                                <Button Style="{StaticResource ProfileSegmentButton}"
-                                        Content="⧉ Apply to all"
-                                        FontWeight="SemiBold"
-                                        ToolTip="Apply the chosen profile to every checked row (outro measured from the end so uneven lengths align)"
-                                        Command="{Binding ApplyProfileToAllCommand}" />
-                            </StackPanel>
-                        </Border>
-
-                        <!-- T-129: change the selected profile's picture from the ALWAYS-VISIBLE profile
-                             bar. The upload/clear pair also lives inside the "Save current as…" popup, but
-                             that popup only opens when saving a NEW profile (and is itself gated on
-                             CanSaveProfile), so for a user who just wants to re-picture an existing profile
-                             the gesture was effectively unreachable — the likeliest reason it read as
-                             missing. Reuses the same handler as the popup's button. -->
-                        <!-- T-135: capture the frame on screen as this profile's picture. Sits beside the
-                             file-picker upload because they do the same job from different sources; the
-                             disabled reason is surfaced in the tooltip rather than leaving it inert. -->
-                        <Button Style="{StaticResource ProfileSegmentButton}"
-                                Content="📷 Use current frame"
-                                Margin="8,0,0,0"
-                                VerticalAlignment="Center"
-                                Command="{Binding SnapshotProfileThumbnailCommand}"
-                                ToolTip="{Binding SnapshotUnavailableReason, TargetNullValue='Make the frame showing in the preview this profile''s thumbnail'}" />
-
-                        <Button Style="{StaticResource ProfileSegmentButton}"
-                                Content="🖼 Thumbnail…"
-                                Margin="8,0,0,0"
-                                VerticalAlignment="Center"
-                                ToolTip="Choose a picture for the selected profile's thumbnail. Save a profile first if none is selected."
-                                IsEnabled="{Binding HasSelectedProfile}"
-                                Click="OnUploadThumbnailClicked" />
-
-                        <!-- T-139: removal moved here with the rest of the thumbnail editing. It used to
-                             live in the save popup, where it acted on the PREVIOUSLY selected profile. -->
-                        <Button Style="{StaticResource ProfileSegmentButton}"
-                                Content="✕ Picture"
-                                Margin="8,0,0,0"
-                                VerticalAlignment="Center"
-                                ToolTip="Remove the selected profile's picture (falls back to the placeholder)"
-                                IsEnabled="{Binding HasSelectedProfile}"
-                                Click="OnClearThumbnailClicked" />
-
-                        <!-- MUTED: Delete — muted ✕, danger-on-hover. -->
-                        <Button Style="{StaticResource DangerButton}"
-                                Content="✕"
-                                Margin="8,0,0,0"
-                                VerticalAlignment="Center"
-                                ToolTip="Delete the selected profile"
-                                Command="{Binding DeleteProfileCommand}"
-                                Visibility="{Binding HasProfiles, Converter={StaticResource BoolToVisibility}}" />
-
-                        <!-- Empty state: unobtrusive hint next to the always-present Save button -->
-                        <TextBlock Text="Save a cut profile"
-                                   Margin="2,0,0,0"
-                                   VerticalAlignment="Center"
-                                   FontSize="{StaticResource FontSizeSmall}"
-                                   Foreground="{StaticResource TextMutedBrush}"
-                                   Visibility="{Binding HasProfiles, Converter={StaticResource BoolToCollapsed}}" />
-
+                         ORDER IS THE MECHANISM, not taste. Inside a WrapPanel adjacency is decided by flow
+                         order - HorizontalAlignment is inert (the T-146 trap) and a Grid column is not
+                         available. So:
+                           * Save is FIRST because it is the only ungated control: its position must not
+                             move when HasProfiles flips.
+                           * Delete is LAST, after even the rare backup pair, so the destructive control is
+                             never adjacent to the one people press repeatedly (I119/I147).
+                         The row itself carries NO Visibility gate - gating stays per-control (I110), or the
+                         whole row collapses and G-044 happens again. -->
+                    <WrapPanel x:Name="ProfileActions" Margin="0,8,0,0">
                         <!-- PRIMARY: Save current row's cut as a named profile — accent
-                             (the create action), ✚ vector glyph in the app's icon style
+                             (the create action), vector glyph in the app's icon style
                              (matches Split's HeroButton add-cut). Themed inline popup,
                              not a raw dialog. -->
                         <Button x:Name="SaveProfileButton"
                                 Style="{StaticResource AccentButton}"
-                                Margin="8,0,0,0"
+                                Margin="0,0,8,6"
                                 Padding="12,5"
                                 VerticalAlignment="Center"
                                 ToolTip="Save the selected row's current intro/outro as a reusable named profile"
@@ -403,26 +353,106 @@
                             </StackPanel>
                         </Button>
 
+                        <!-- Empty state: unobtrusive hint next to the always-present Save button -->
+                        <TextBlock Text="Save a cut profile"
+                                   Margin="2,0,8,6"
+                                   VerticalAlignment="Center"
+                                   FontSize="{StaticResource FontSizeSmall}"
+                                   Foreground="{StaticResource TextMutedBrush}"
+                                   Visibility="{Binding HasProfiles, Converter={StaticResource BoolToCollapsed}}" />
+
+                        <!-- SECONDARY: Apply as a paired split-control — one bordered
+                             Surface2 container, two flat segments split by a 1px rule. -->
+                        <Border Margin="0,0,8,6"
+                                VerticalAlignment="Center"
+                                Background="{StaticResource Surface2Brush}"
+                                BorderBrush="{StaticResource BorderBrush}"
+                                BorderThickness="1"
+                                CornerRadius="{StaticResource RadiusSm}"
+                                SnapsToDevicePixels="True"
+                                Visibility="{Binding HasProfiles, Converter={StaticResource BoolToVisibility}}">
+                            <StackPanel Orientation="Horizontal">
+                                <Button Style="{StaticResource ProfileSegmentButton}"
+                                        Content="⧉ Apply to selected"
+                                        ToolTip="Apply the chosen profile to the selected row (re-snapped + re-validated)"
+                                        Command="{Binding ApplyProfileToSelectedCommand}" />
+                                <Rectangle Width="1" Fill="{StaticResource BorderBrush}" />
+                                <!-- Primary apply action — SemiBold marks "all" as the emphasised choice
+                                     of the pair; relabelled from the terse "all" so it reads unambiguously
+                                     as "apply to all" (T-116). -->
+                                <Button Style="{StaticResource ProfileSegmentButton}"
+                                        Content="⧉ Apply to all"
+                                        FontWeight="SemiBold"
+                                        ToolTip="Apply the chosen profile to every checked row (outro measured from the end so uneven lengths align)"
+                                        Command="{Binding ApplyProfileToAllCommand}" />
+                            </StackPanel>
+                        </Border>
+
+                        <!-- T-129: change the selected profile's picture from the ALWAYS-VISIBLE profile
+                             bar. The upload/clear pair also lives inside the "Save current as…" popup, but
+                             that popup only opens when saving a NEW profile (and is itself gated on
+                             CanSaveProfile), so for a user who just wants to re-picture an existing profile
+                             the gesture was effectively unreachable — the likeliest reason it read as
+                             missing. Reuses the same handler as the popup's button. -->
+                        <!-- T-135: capture the frame on screen as this profile's picture. Sits beside the
+                             file-picker upload because they do the same job from different sources; the
+                             disabled reason is surfaced in the tooltip rather than leaving it inert. -->
+                        <Button Style="{StaticResource ProfileSegmentButton}"
+                                Content="📷 Use current frame"
+                                Margin="0,0,8,6"
+                                VerticalAlignment="Center"
+                                Command="{Binding SnapshotProfileThumbnailCommand}"
+                                ToolTip="{Binding SnapshotUnavailableReason, TargetNullValue='Make the frame showing in the preview this profile''s thumbnail'}" />
+
+                        <Button Style="{StaticResource ProfileSegmentButton}"
+                                Content="🖼 Thumbnail…"
+                                Margin="0,0,8,6"
+                                VerticalAlignment="Center"
+                                ToolTip="Choose a picture for the selected profile's thumbnail. Save a profile first if none is selected."
+                                IsEnabled="{Binding HasSelectedProfile}"
+                                Click="OnUploadThumbnailClicked" />
+
+                        <!-- T-139: removal moved here with the rest of the thumbnail editing. It used to
+                             live in the save popup, where it acted on the PREVIOUSLY selected profile. -->
+                        <Button Style="{StaticResource ProfileSegmentButton}"
+                                Content="✕ Picture"
+                                Margin="0,0,8,6"
+                                VerticalAlignment="Center"
+                                ToolTip="Remove the selected profile's picture (falls back to the placeholder)"
+                                IsEnabled="{Binding HasSelectedProfile}"
+                                Click="OnClearThumbnailClicked" />
+
                         <!-- T-147: backup / restore. Profiles already survive an uninstall (the installer
                              deletes nothing under the user profile, asserted by InstallerLeavesUserDataTests),
                              but "survives IF you reinstall on the same machine" is not the same promise as
                              "you can get them back" - a new PC, a wiped disk, or a profile you want to share
-                             all need a file. Last in the bar because they are the rarest actions; plain
-                             segment styling because neither is destructive on its own (the restore's
+                             all need a file. Near the end of the row because they are the rarest actions;
+                             plain segment styling because neither is destructive on its own (the restore's
                              overwrite decision is gated separately). -->
                         <Button Style="{StaticResource ProfileSegmentButton}"
                                 Content="⭳ Back up…"
-                                Margin="16,0,0,0"
+                                Margin="8,0,8,6"
                                 VerticalAlignment="Center"
                                 ToolTip="Save every profile, pictures included, to one file you can keep or move to another PC"
                                 Command="{Binding ExportProfilesCommand}" />
 
                         <Button Style="{StaticResource ProfileSegmentButton}"
                                 Content="⭱ Restore…"
-                                Margin="8,0,0,0"
+                                Margin="0,0,8,6"
                                 VerticalAlignment="Center"
                                 ToolTip="Add profiles from a backup file. Profiles you already have are kept unless you say otherwise."
                                 Command="{Binding ImportProfilesCommand}" />
+
+                        <!-- MUTED: Delete — muted glyph, danger-on-hover. LAST in flow order: see the row
+                             comment above. Inside a WrapPanel this is the only expressible form of "not
+                             next to the button people press repeatedly". -->
+                        <Button Style="{StaticResource DangerButton}"
+                                Content="✕"
+                                Margin="16,0,0,6"
+                                VerticalAlignment="Center"
+                                ToolTip="Delete the selected profile"
+                                Command="{Binding DeleteProfileCommand}"
+                                Visibility="{Binding HasProfiles, Converter={StaticResource BoolToVisibility}}" />
                     </WrapPanel>
 
                     <!-- Themed inline name input (Popup anchored under the Save button) -->

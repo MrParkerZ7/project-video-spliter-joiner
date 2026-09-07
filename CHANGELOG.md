@@ -60,6 +60,18 @@ goal; `0.1.0` is the first end-to-end, shippable cut.
   "permanent" while it is still recoverable.
 
 ### Changed
+- **The profiles bar shows your profiles instead of hiding them.** The bar was capped at a fixed width and
+  scrolled sideways, so with more than a handful of profiles most of them sat off the edge behind a
+  scrollbar — which defeats the point of showing pictures at all. The card now takes the **full width** of
+  its row and the profile chips **wrap onto new lines**. The buttons that act on a profile moved to their
+  **own row underneath**, where they get the full width too and wrap in turn instead of being squeezed by
+  whatever the bar left them.
+- **…and a long profile list still cannot push Run off the screen.** The old width cap was doing a real
+  job: keeping the header from growing. Removing it outright grows the header by 154px on a small window
+  and pushes **Run 74px off-screen**. So the cap moved rather than vanished — the chip list is bounded at
+  two rows and scrolls **downward** past that, so "too many profiles" still degrades into scrolling, just
+  on the axis where it costs nothing. A single 300-character profile name can no longer take a whole row
+  to itself either.
 - **Cut profiles are a bar you click, not a dropdown you open.** Profiles can carry a picture, and the
   old picker hid every one of them behind a closed list — so you chose by name and only saw the picture
   afterwards. They now sit in a row you can see at a glance; click one to select it, and the

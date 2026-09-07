@@ -659,6 +659,36 @@ SPEC-007); the shared `IThumbnailService`/`FfmpegThumbnailService` frame source 
   feature is covered the day it compiles; it asserts a floor of the two known screens first, because a
   reflection query that silently matches nothing is the vacuous test this project keeps paying for.
 
+### The profiles card is full width and stacked in two bands (T-168, 2026-09-07)
+- **I152** — the profiles card takes the **full width of its header row**, and its chip list and action
+  row are **STACKED — chips above actions**, never side by side. It carried
+  `HorizontalAlignment="Left"` and was therefore content-sized, so its right edge moved with whatever
+  controls happened to be visible; the row's own comment already claimed *"profiles bar, full width"*.
+  This is I145's footer cure applied one region north. Asserted structurally — the card fills its host,
+  **the bar fills the card**, and the actions begin below where the chips end — with a SHORT profile list,
+  because a full one fills the row by itself and a `Left`-aligned card would pass.
+- **I153** — the chip list is bounded on the **VERTICAL** axis (`MaxHeight`, two chip rows) and **scrolls**
+  past the bound, so the header's height is **independent of the profile count**. This is T-161's
+  `MaxWidth` rotated onto the axis the new layout is free on, and it is measured rather than tasteful: at
+  760x620 an uncapped wrap grows the header **154px** and pushes Run **74px off-screen** against **72px**
+  of slack. Both halves are asserted — the cap AND `ScrollableHeight > 0` — because a cap that clipped
+  instead of scrolling would re-create the silent loss the wrap was introduced to remove. I120 bounds the
+  CONTENT area and stays true throughout; it never bounded the header, which is the hole this closes.
+- **I154** — in the action row, **Save is FIRST and ✕ Delete is LAST**, after even the rare backup pair.
+  Inside a `WrapPanel` adjacency is decided by **flow order** — `HorizontalAlignment` is inert (the T-146
+  trap) and a Grid column, T-160's mechanism, is unavailable — so ordinal position is the only expressible
+  form of I119/I147's rule that a destructive control must not sit beside the one people press repeatedly.
+  Save is first for the matching reason: it is the only **ungated** control, so its position must not move
+  when `HasProfiles` flips. The row itself carries **no** `Visibility` gate; gating stays per-control
+  (I110), or the row collapses and G-044 happens again.
+- **I155** — **one very long profile name cannot swallow a row.** `ProfileItemTemplate` is a horizontal
+  `StackPanel`, which measures its children at infinite width, so the chip label is width-bounded and
+  trims. The assertion here was rewritten once for being unfalsifiable: *"the chip does not extend past
+  the bar"* is true whether or not the label is bounded, because a `WrapPanel` measures children against
+  the available width — deleting the cap left that test green. What the bound actually buys is that a
+  300-character name does not take the whole line, so it is asserted as a chip-width ceiling **plus** at
+  least one neighbour still sharing its row.
+
 ### Auto-delete after a clean batch (T-156)
 - **I132** - `AutoDeleteOriginals` runs the **existing** `DeleteOriginals()` sweep automatically once a
   batch finishes - same eligibility re-checks (I111, I118), same per-row isolation, same reporting. There
