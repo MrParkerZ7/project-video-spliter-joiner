@@ -8,6 +8,8 @@ sources:
   - src/App/ViewModels/MainViewModel.cs
   - src/App/Views/MainWindow.xaml
   - src/App/Views/MainWindow.xaml.cs
+  - src/App/ViewModels/WindowChromeMath.cs
+  - src/App/ViewModels/CrashReport.cs
   - src/App/Views/OrientedSplitPanel.cs
   - src/App/Views/Converters.cs
   - src/App/Views/WindowStateConverters.cs
@@ -17,7 +19,7 @@ sources:
   - src/App/App.xaml.cs
   - src/Core/Errors/ErrorLogWriter.cs
 serves-goal: [G-023, G-027, G-029, G-031, G-032, G-035]
-updated: 2026-08-22
+updated: 2026-09-12
 ---
 
 ## What
@@ -57,8 +59,8 @@ tooltip, splitter, caption buttons, HeroButton); the global crash handlers in `A
 specs); `OperationViewModel` progress/ETA/taskbar-state semantics (its own spec — this spec only covers
 that the shell *routes* `CurrentOperation` to it); `AppSettings` file persistence mechanics (its own
 spec — this spec covers only the VM-side write-through/seed of layout state); ffmpeg preview init
-(`InitializeFfmpegForPreview` — covered by the FFME/preview spec); `ErrorLogWriter`'s ffmpeg-failure
-`TryWrite`/`BuildLogBody` path (error-reporting spec — this spec covers only the crash path).
+(`InitializeFfmpegForPreview` — no spec yet); `ErrorLogWriter`'s ffmpeg-failure
+`TryWrite`/`BuildLogBody` path (error reporting — no spec yet; this spec covers only the crash path).
 
 ## Current behavior & invariants
 
@@ -140,12 +142,14 @@ spec — this spec covers only the VM-side write-through/seed of layout state); 
   (`WindowStateConverters.cs`; `MainWindow.xaml` root grid margin)
 - **I23** — The maximized window is clamped to the monitor **work area** (excludes the taskbar) via a
   `WM_GETMINMAXINFO` hook that sets `ptMaxPosition`/`ptMaxSize` from `MONITORINFO.rcWork` relative to the
-  monitor origin. (`MainWindow.xaml.cs` `WndProc`/`WmGetMinMaxInfo`)
+  monitor origin. (`MainWindow.xaml.cs` `WndProc`/`WmGetMinMaxInfo`, which delegates the rect math to
+  `WindowChromeMath.MaximizedWorkAreaBounds`)
 - **I24** — `App.OnStartup` wires all three managed unhandled-exception sinks: `DispatcherUnhandledException`
   logs, shows a copyable crash dialog, and sets `e.Handled = true` (recoverable UI error stays alive);
   `AppDomain.UnhandledException` logs best-effort; `TaskScheduler.UnobservedTaskException` logs and calls
   `SetObserved()`; every handler body is wrapped in its own try/catch so a throw inside a crash handler
-  never recurses. (`App.xaml.cs` `WireGlobalExceptionHandlers` and the three handlers)
+  never recurses. (`App.xaml.cs` `WireGlobalExceptionHandlers` and the three handlers; the crash dialog's
+  text is composed by `CrashReport.ComposeMessage`)
 - **I25** — `ErrorLogWriter.TryWriteCrash(source, ex)` writes `crash-<sanitized-source>-<yyyyMMdd-HHmmss>.log`
   (Guid-suffixed on same-second collision) under `%LOCALAPPDATA%/VideoSplitJoiner/logs`, containing the
   UTC timestamp and each exception's Type/Message/Stack walked through the whole inner-exception chain
@@ -165,5 +169,5 @@ spec — this spec covers only the VM-side write-through/seed of layout state); 
 ## Links
 - Design: D-001 (layout axis) · D-003 / D-004 (50/50 tool panel + Bulk tab)
 - Goals: G-023 (themed border) · G-027 (themed scrollbar) · G-029 (vector caption icons) · G-031 (global crash handlers) · G-032 (vertical layout) · G-035 (50/50 tool panel)
-- Related specs: SPEC (Split screen) · SPEC (Join screen) · SPEC (Bulk Cut screen) · SPEC (OperationViewModel progress/ETA/taskbar) · SPEC (AppSettings persistence) · SPEC (error reporting / ErrorLogWriter ffmpeg path)
-- Key code: `src/App/ViewModels/MainViewModel.cs` · `src/App/Views/MainWindow.xaml(.cs)` · `src/App/Views/OrientedSplitPanel.cs` · `src/App/Views/Converters.cs` · `src/App/Views/WindowStateConverters.cs` · `src/App/Themes/Tokens.xaml` · `src/App/Themes/Controls.xaml` · `src/App/App.xaml.cs` · `src/Core/Errors/ErrorLogWriter.cs`
+- Related specs: SPEC-010 (Split screen) · SPEC-012 (Join screen) · SPEC-011 (Bulk Cut screen — its I151 guards the `IOriginalDisposer` wiring in `MainViewModel`) · SPEC-008 (OperationViewModel progress/ETA/taskbar) · SPEC-009 (AppSettings persistence) · error reporting / `ErrorLogWriter` ffmpeg path (no spec yet)
+- Key code: `src/App/ViewModels/MainViewModel.cs` · `src/App/Views/MainWindow.xaml(.cs)` · `src/App/ViewModels/WindowChromeMath.cs` · `src/App/ViewModels/CrashReport.cs` · `src/App/Views/OrientedSplitPanel.cs` · `src/App/Views/Converters.cs` · `src/App/Views/WindowStateConverters.cs` · `src/App/Themes/Tokens.xaml` · `src/App/Themes/Controls.xaml` · `src/App/App.xaml.cs` · `src/Core/Errors/ErrorLogWriter.cs`

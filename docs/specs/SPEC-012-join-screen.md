@@ -7,8 +7,10 @@ status: current
 sources:
   - src/App/ViewModels/JoinViewModel.cs
   - src/App/ViewModels/JoinItemViewModel.cs
+  - src/App/DropRefusal.cs
+  - src/App/VideoFileFilter.cs
 serves-goal: [G-001, G-003]
-updated: 2026-08-22
+updated: 2026-09-12
 ---
 
 ## What
@@ -18,9 +20,9 @@ The Join tab view-model (`JoinViewModel`, T-008). It gathers video clips into an
 Joining clips must be lossless (stream-copy concat, no re-render), which only works when every input shares codec/container/resolution/timebase parameters. Rather than let the user run a join that ffmpeg would refuse mid-way (leaving a half-written file), the Join screen validates compatibility continuously as clips are added/removed/reordered and gates the Run button on the verdict. Order matters (it drives the output sequence), so the list is explicitly ordered with reorder affordances. Routing all engine work through the shared `OperationViewModel` gives the Join screen the same progress/cancel/error surface as the Split screen. Cross-session folder memory (T-038) saves the user re-navigating to their clip and output folders each launch.
 
 ## Scope
-**In:** the `JoinViewModel` + `JoinItemViewModel` contract — item add/remove/reorder, per-item probe/info-chip/duration/size, the live compatibility check and its summary/verdict, `CanRunJoin`/`CanClear`/`HasClips` gating, count-aware `RunLabel` + estimated-result readouts, `RunJoinAsync` request building and success/refusal handling, `Clear`, and `LastInputDir`/`LastOutputDir` memory.
+**In:** the `JoinViewModel` + `JoinItemViewModel` contract — item add/remove/reorder, per-item probe/info-chip/duration/size, the live compatibility check and its summary/verdict, `CanRunJoin`/`CanClear`/`HasClips` gating, count-aware `RunLabel` + estimated-result readouts, `RunJoinAsync` request building and success/refusal handling, `Clear`, and `LastInputDir`/`LastOutputDir` memory; plus drop and picker intake — `AddDroppedFilesAsync`, `DropSummary` via `DropRefusal`, and the `VideoFileFilter.DialogFilter` picker (I29–I40).
 
-**Out:** the `IJoinEngine` concat/compatibility-detection internals (its own core spec — this spec treats the engine as a black box returning `CompatReport`/`JoinResult`); the shared `OperationViewModel` progress/cancel/error-surface mechanics (its own spec — this spec only verifies the join wires into it); the `IAppSettings` persistence mechanics; the WPF view / drag-drop code-behind hit-testing (this spec covers only the VM-level `AddFilesAsync`/`Move` entry points those call).
+**Out:** the `IJoinEngine` concat/compatibility-detection internals (its own core spec — this spec treats the engine as a black box returning `CompatReport`/`JoinResult`); the shared `OperationViewModel` progress/cancel/error-surface mechanics (its own spec — this spec only verifies the join wires into it); the `IAppSettings` persistence mechanics; the WPF view / drag-drop code-behind hit-testing (this spec covers the VM-level entry points those call — `AddFilesAsync`/`Move`/`AddDroppedFilesAsync` — plus the drop trace's `accepted` flag, I36, and the DragOver boundary, I37).
 
 ## Current behavior & invariants
 - **I1** — `AddFilesAsync(null)` is a no-op: no items added, no probe, no compat check. (`JoinViewModel.AddFilesAsync`, guard at top)
@@ -77,5 +79,5 @@ Joining clips must be lossless (stream-copy concat, no re-render), which only wo
 ## Links
 - Design: —
 - Goals: G-001 (ship v1.0 stream-copy splitter/joiner), G-003 (drag-and-drop — drag to reorder join clips)
-- Related specs: SPEC (Split screen), SPEC (OperationViewModel surface), SPEC (join engine / compatibility) — cross-reference once authored
+- Related specs: SPEC-010 (Split screen), SPEC-008 (OperationViewModel surface), SPEC-003 (join engine / compatibility)
 - Key code: `src/App/ViewModels/JoinViewModel.cs`, `src/App/ViewModels/JoinItemViewModel.cs`

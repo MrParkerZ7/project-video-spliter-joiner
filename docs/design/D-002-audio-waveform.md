@@ -1,8 +1,9 @@
 # D-002 · Audio Waveform Above the Timeline
 
-> Design record (draft) — render the loaded video's **audio waveform** as an aligned band above the Split
+> Design record — render the loaded video's **audio waveform** as an aligned band above the Split
 > screen's timeline/mark bar, so the user can see speech vs silence to place cut points.
-> Status: **draft** (sealed by `todo-design-done`). Board artifact: `docs/todo/D-002.md`.
+> Status: **confirmed** (sealed 2026-07-19 via `todo-design-done`). Board artifact: `docs/todo/D-002.md`.
+> → spec: [SPEC-006](../specs/SPEC-006-waveform-service.md) (extraction) · [SPEC-014](../specs/SPEC-014-timeline.md) (the band above the timeline)
 
 ## 1. Problem / motivation
 A splitter's hardest task is finding the *right* cut point — usually a silence between sentences/scenes. Today

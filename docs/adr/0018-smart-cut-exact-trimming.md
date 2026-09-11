@@ -2,7 +2,8 @@
 
 ## Status
 
-Accepted.
+Accepted. Updated 2026-09-11 — `Exact` + "Replace originals" now goes through the shared replace
+machinery (T-130), and its H.264/HEVC encoders are GPL-only — see § Update.
 
 ## Context
 
@@ -188,3 +189,28 @@ G-042; the lossless promise is why the app exists.
 - **If exact cutting is extended to the Split screen, or married more closely to replace-in-place, the
   destination contract must be shared rather than re-implemented** — verify-then-`File.Replace`-with-backup
   and the `IOriginalDisposer` seam live in `SplitEngine` today and would have to be lifted, not copied.
+
+## Update — 2026-09-11
+
+**`Exact` + "Replace originals" now gets the replace-in-place safety net (T-130).** The Negative
+*"`Exact` + 'Replace originals' does not get the replace-in-place safety net"* no longer holds, and the
+last forced follow-on was met for the replace step by lifting it, as asked (the verify pass itself stays in
+`SplitEngine`; the exact path relies on `SmartCutEngine`'s own produced-file checks):
+
+- The backup-and-replace logic moved out of `SplitEngine` into `Core/Io/OriginalReplacer`
+  (`src/Core/Io/OriginalReplacer.cs:10-14,24`); `SplitEngine.ReplaceOriginalInPlace` delegates to it
+  (`src/Core/Split/SplitEngine.cs:529-530`).
+- `SmartCutEngine` still ends with its own delete-then-move, so `BulkTrimEngine` never gives it the source
+  as its destination. Under `ReplaceOriginal` it cuts to a `.vsj-exact` sibling and swaps that in through
+  `OriginalReplacer` (`src/Core/Bulk/BulkTrimEngine.cs:250-277`). With no `IOriginalDisposer` wired, the
+  row takes the lossless route with an `exact cut unavailable (replacing originals)` warning instead
+  (`:240-247`).
+- *"Exact cutting is Bulk-Cut-only today"* is still true: `MainViewModel` passes a `SmartCutEngine` only to
+  `BulkCutViewModel` (`src/App/ViewModels/MainViewModel.cs:123-130`).
+
+**The H.264/HEVC entries of the encoder map depend on GPL-only encoders.** Decision (d)'s `h264`→`libx264` and `hevc`→`libx265`
+(`src/Core/Split/SmartCutArgsBuilder.cs:21-24`) name encoders ffmpeg includes only in a GPL build. Because
+`TryResolveEncoders` checks only the map, not the running ffmpeg, a build without the encoder does not
+produce the (e) fallback for a cut that needs a head re-encode: the head command fails, `SmartCutEngine` throws `SplitException`
+(`SmartCutEngine.cs:124-129`), and the row is Failed. The licensing consequence is recorded in
+[ADR 0012](0012-gpl-lgpl-licensing-fork.md) § Update.

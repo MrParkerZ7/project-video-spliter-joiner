@@ -10,9 +10,35 @@ element used for the in-app **video preview**. FFME P/Invoke-loads the bundled f
 **shared** libraries (see the FFmpeg entry below) from the `ffmpeg/` folder at runtime.
 
 - Project: https://github.com/unosquare/ffmediaelement
-- Package: `FFME.Windows` (NuGet), which binds to `FFmpeg.AutoGen 7.0.0` (the ffmpeg 7.x ABI).
+- Package: `FFME.Windows` (NuGet), which binds to `FFmpeg.AutoGen 7.0.0` (the ffmpeg 7.x ABI; see the
+  FFmpeg.AutoGen entry below).
 - License: **Ms-PL** (Microsoft Public License), per the package. FFME itself is a managed
   library; the accompanying native decoding is provided by FFmpeg (below).
+- FFME's package `LICENSE` also covers third-party code carried in FFME: files derived from the
+  **NAudio** library (Ms-PL) and the **SoundTouch** audio-processing wrapper (`SoundTouch.cs`,
+  Copyright (c) Olli Parviainen, **LGPL-2.1**). The full texts are in the `LICENSE` file inside the `FFME.Windows` NuGet
+  package; that file is not copied into the distributable.
+
+## FFmpeg.AutoGen
+
+This product bundles **FFmpeg.AutoGen** (version `7.0.0`) — the managed FFmpeg bindings FFME is built on.
+It is a NuGet dependency of `FFME.Windows`, so it ships inside the published application.
+
+- Project: https://github.com/Ruslan-B/FFmpeg.AutoGen
+- License: **LGPL-3.0** (GNU Lesser General Public License, version 3), per the package's `LICENSE.txt`.
+  Copyright © Ruslan Balanukhin.
+
+## .NET 8 runtime (self-contained publish)
+
+The packaged distributable is published **single-file and self-contained** (`packaging/package.ps1`;
+`SelfContained` is set for single-file publishes in `src/App/VideoSplitJoiner.App.csproj`), so it embeds
+the Microsoft **.NET 8 runtime** and the **Windows Desktop runtime** (WPF).
+
+- Project: https://dot.net/
+- License: **MIT**, per the runtime packages (`Microsoft.NETCore.App.Runtime.win-x64`,
+  `Microsoft.WindowsDesktop.App.Runtime.win-x64`). Copyright (c) .NET Foundation and Contributors. The
+  .NET runtime's own third-party notices are in the `Microsoft.NETCore.App.Runtime.win-x64` NuGet package
+  (`THIRD-PARTY-NOTICES.TXT`); they are not copied into the distributable.
 
 ## FFmpeg
 

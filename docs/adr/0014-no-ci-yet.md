@@ -3,7 +3,8 @@
 ## Status
 
 Accepted — partly superseded 2026-08-28 (a tag-driven release workflow landed; the
-push/PR test gate did not — see § Update)
+push/PR test gate did not — see § Update); the release gate runs the real integration tests
+since T-149 (see § Update — 2026-09-11)
 
 ## Context
 
@@ -163,3 +164,24 @@ box. Late and rare, but no longer never.
 - **Supersede this record fully with a new ADR** — per `README.md`'s "a later decision
   supersedes an earlier one" — when the push/PR gate lands, and update its Status column
   in the index.
+
+## Update — 2026-09-11: the release gate runs the real integration tests (T-149)
+
+The *"Point 3 … is NOT met"* bullet in the 2026-08-28 Update is no longer true on the tag-driven gate,
+and the *"give `FfmpegTestBinaries` an environment / `ffmpeg-shared/` fallback first"* follow-on is done.
+
+- **The fetch now runs before the tests.** In `.github/workflows/release.yml` the *"Fetch bundled ffmpeg
+  shared build"* step (`:67-69`) comes ahead of *"Test (release gate)"* (`:71-77`), and the test step sets
+  `VSJ_FFMPEG_DIR: ${{ github.workspace }}/ffmpeg-shared` and `VSJ_REQUIRE_FFMPEG: '1'`.
+- **`FfmpegTestBinaries` searches instead of assuming.** `tests/Core.Tests/FfmpegTestBinaries.cs:106-134`
+  tries `VSJ_FFMPEG_DIR`, then `ffmpeg-shared/` and `ffmpeg/` walking up from the test output, then the
+  test output folder, then `PATH`, and the old hard-coded `D:\_env_storeage\…` path last.
+- **A missing binary no longer passes silently.** `Require` (`:144-173`) skips the test visibly when the
+  binary is absent, and fails it when `VSJ_REQUIRE_FFMPEG` is set — so on the release gate, integration
+  tests that did not run are a red build, not a green one. (The Context's *"self-skip when the binaries
+  are absent … so the suite is green"* describes the pre-T-149 guard.)
+
+**What this does not change.** `release.yml` is still the only workflow under `.github/workflows/` and it
+still triggers only on `v*.*.*` tags and `workflow_dispatch`, so the `push` / `pull_request` gate remains
+the primary debt and every Negative above still stands for ordinary commits. The remaining *Revised
+follow-ons* are unchanged apart from the `FfmpegTestBinaries` one, which this closes.

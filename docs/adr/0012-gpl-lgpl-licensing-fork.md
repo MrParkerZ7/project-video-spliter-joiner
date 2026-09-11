@@ -2,7 +2,8 @@
 
 ## Status
 
-Accepted
+Accepted — updated 2026-09-11: frame-exact cutting (ADR 0018) of H.264/HEVC sources now invokes GPL-only
+encoders, so the LGPL escape is no longer feature-neutral; the public-license choice is still open (see § Update)
 
 ## Context
 
@@ -80,6 +81,36 @@ via `package.ps1 -FfmpegSource`.**
 - Whenever the bundled build's license changes, `THIRD-PARTY-NOTICES.md` § Licensing (and the
   bundled `LICENSE`) must be updated to match — the notices are the single source of truth for
   what was actually shipped.
+
+## Update — 2026-09-11: frame-exact cutting of H.264/HEVC depends on GPL-only encoders
+
+The Context bullet *"The split/join engine only ever shells out … with pure stream-copy args"* still
+holds for `SplitEngine` and `JoinEngine`, but it no longer describes every ffmpeg command the product
+runs. [ADR 0018](0018-smart-cut-exact-trimming.md) added `SmartCutEngine`, which the production
+composition root hands to Bulk Cut (`src/App/ViewModels/MainViewModel.cs:126`) and whose head leg
+re-encodes. `SmartCutArgsBuilder` (`src/Core/Split/SmartCutArgsBuilder.cs:18-30`) maps an `h264`/`avc1`
+source to `libx264` and an `hevc`/`h265` source to `libx265` — encoders ffmpeg includes only in a GPL
+(`--enable-gpl`) build.
+
+That changes two claims above:
+
+- *"No edit to `src/Core` or `src/App` is required"* still holds for producing an LGPL build, but the
+  escape is no longer feature-neutral: the code does not know which license the bundled build carries,
+  yet frame-exact cutting of H.264/HEVC now relies on encoders only the GPL build contains; keeping that
+  feature working on an LGPL build would need a code change (e.g. a different encoder map).
+- An LGPL build does not degrade gracefully. `SmartCutArgsBuilder.TryResolveEncoders` (`:50-88`) checks
+  only its codec → encoder map, never whether the running ffmpeg carries that encoder, so it does not
+  report a fallback. When the head command fails, `SmartCutEngine` throws `SplitException`
+  (`src/Core/Split/SmartCutEngine.cs:124-129`) instead of returning `FellBack`, and `BulkTrimEngine`
+  records the row as Failed (`src/Core/Bulk/BulkTrimEngine.cs:333-339`) rather than taking the lossless
+  cut. Packaged with an LGPL `-FfmpegSource`, an `Exact` cut on an H.264 or HEVC source that needs a head
+  re-encode (its start is not already on a keyframe, and its audio codec, if any, is in the map) would fail
+  its row.
+
+**Still open.** The public-license choice required by the first *Forced follow-on* above is not recorded
+here or in any later ADR. This update records only the constraint on that choice, not the choice.
+Separately, the `<Version>0.1.0` target named in the Decision is no longer the current version — see
+`Directory.Build.props`.
 
 ---
 

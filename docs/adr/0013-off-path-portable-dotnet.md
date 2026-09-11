@@ -81,6 +81,21 @@ maintained in one authoritative place rather than rediscovered each time packagi
 - If the portable SDK is ever relocated or added to PATH, revisit this ADR and the runbook so the
   default no longer points at a dead path.
 
+## Update — 2026-09-11: the guard resolves with `Get-Command`, not `Test-Path` (T-151)
+
+The `Test-Path` guard quoted in the Decision is gone. `Test-Path` is a filesystem check, so a bare command
+name such as `dotnet` never passed it — the release workflow's `-Dotnet 'dotnet'`
+(`.github/workflows/release.yml:81`) threw before it reached the publish, contradicting the *"or a bare
+`dotnet` if on PATH"* claim above. `packaging/package.ps1:105-110` now checks
+`Get-Command $Dotnet -ErrorAction SilentlyContinue` and throws
+`"dotnet not found: '$Dotnet' is neither a file nor a command on PATH."`, so both a full path and a
+command on `PATH` are accepted. The absolute-path default, the `-Dotnet` override and the fail-loudly
+intent are unchanged.
+
+The _Related_ footer below calls ADR 0001 *"superseded by the keyframe-snap decision in ADR 0009"*. ADR 0001
+was never superseded: keyframe-snap is one of its own recorded consequences, and ADR 0009 covers how the
+keyframes are scanned (pointer corrected 2026-09-12).
+
 _Related: ADR 0010 (shared-ffmpeg bundling — same "sensible absolute default, overridable via a
 `-…Source`/`-…` parameter" pattern for the packaging script's other machine-specific input) and
 ADR 0011 (self-contained single-file win-x64 publish — the `dotnet publish` step this path drives).

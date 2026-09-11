@@ -2,7 +2,11 @@
 
 ## Status
 
-Accepted.
+Accepted. Amended by [ADR 0017](0017-output-mode-replace-original.md) — rule (d) holds only under
+`OutputMode.NewFile`; under `ReplaceOriginal` the source is the destination
+(`src/Core/Bulk/BulkTrimEngine.cs:385-388`) — and by [ADR 0018](0018-smart-cut-exact-trimming.md) — a
+`CutPrecision.Exact` row is cut by `SmartCutEngine`, a second ffmpeg code path
+(`BulkTrimEngine.cs:248-258`). The default lossless route is still the reuse described here.
 
 ## Context
 

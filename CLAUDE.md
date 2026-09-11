@@ -5,7 +5,8 @@ A .NET 8 WPF app that splits and joins video **without re-encoding**. See [READM
 
 ## Layout
 
-- `src/Core/` — `VideoSplitJoiner.Core`, UI-free media logic (Ffmpeg, Media, Split, Join, Errors).
+- `src/Core/` — `VideoSplitJoiner.Core`, UI-free media logic (Ffmpeg, Media, Split, Join, Bulk, Errors,
+  Io, Profiles, Thumbnails, Waveform).
 - `src/App/` — `VideoSplitJoiner.App`, WPF UI + hand-rolled MVVM view models.
 - `tests/Core.Tests/`, `tests/App.Tests/` — xUnit + FluentAssertions.
 - `packaging/package.ps1` — single-file self-contained win-x64 publish + bundled ffmpeg + zip.
@@ -25,11 +26,15 @@ A .NET 8 WPF app that splits and joins video **without re-encoding**. See [READM
   `MonoFontFamily`) + `IBM Plex Sans` (`SansFontFamily`) ship as `Resource` TTFs in `src/App/Fonts/`
   (SIL OFL-1.1 — see `THIRD-PARTY-NOTICES.md`) and are referenced via pack URI with system fallbacks
   (`…#IBM Plex Mono, Consolas, Cascadia Mono`). Reference the font tokens, don't name a face directly.
-- **Both screens are two-column: visual left / tools right (G-019).** Split and Join use a Grid with a
-  draggable `GridSplitter` — LEFT is the preview + timeline (Split) / clip list (Join), RIGHT is a
-  scrollable tool panel (Load, Clear, and every control below). The right panel is 360px by default
-  (300–520 range). Match the sample's structure — header + "lossless · no re-encode" tagline, gold
-  format badge, file-info card, section headers, mono DIR/NAME fields, Join "Estimated result" panel.
+- **Split and Join are two-column: visual left / tools right (G-019).** Both host their two regions in
+  `Views/OrientedSplitPanel` with a draggable splitter between them — LEFT is the preview + timeline
+  (Split) / clip list (Join), RIGHT is the tool panel — scrollable in Join; in Split a bounded Grid whose
+  Cut-markers / Parts lists scroll internally (D-003 / T-090) (Load/Clear live on the shared tab-strip
+  line, T-088). The split is a persisted per-axis ratio (the first region's fraction — defaults 0.7
+  horizontal / 0.62 vertical), not a fixed width; neither region shrinks below 80px. Bulk Cut uses the
+  same panel for its preview pane + row list, with its own ratio pair (defaults 0.4 / 0.5). Match the
+  sample's structure — header + "lossless · no re-encode" tagline, gold format badge, file-info card,
+  section headers, mono DIR/NAME fields, Join "Estimated result" panel.
   Formatting/estimate helpers are pure and unit-tested in `Core/Media/MediaFormat.cs`.
 - **The Split timeline shows an audio waveform (G-033 / D-002).** A Core `IWaveformService` /
   `FfmpegWaveformService` extracts a normalized peak array (ffmpeg → downsampled **mono PCM to a temp file** —
@@ -39,11 +44,12 @@ A .NET 8 WPF app that splits and joins video **without re-encoding**. See [READM
   its `0..duration` x-axis**, with the playhead + marker ticks + click-to-seek **fused across both** (one aligned
   unit — it stacks together in vertical mode). No-audio → band hidden. Mirrors the `IThumbnailService` pattern.
 - **Layout has a horizontal ⇄ vertical mode toggle (G-032 / D-001).** `MainViewModel.IsVertical` (backed by
-  `AppSettings.LayoutMode`, persisted) drives a title-bar toggle; both Split and Join host their three regions in a
+  `AppSettings.LayoutMode`, persisted) drives a title-bar toggle; Split, Join and Bulk Cut each host their two regions in a
   reusable `Views/OrientedSplitPanel` (a `Grid` subclass that flips its RowDefinitions↔ColumnDefinitions + child
   placement + the `GridSplitter` orientation on `IsVertical`) — **one instance of each region, no duplicated markup**.
   Split ratios are remembered **per-axis** (`HorizontalSplitRatio`/`VerticalSplitRatio`). Don't re-duplicate region
-  markup per mode or tie layout to a hardcoded axis; add regions to the panel. See `docs/design/D-001-vertical-monitor-mode.md`.
+  markup per mode or tie layout to a hardcoded axis; put new content inside the panel's two regions, or nest another
+  `OrientedSplitPanel` (as Split's Cut-markers ‖ Parts pair does, T-091). See `docs/design/D-001-vertical-monitor-mode.md`.
 - **Scrollbars are themed app-wide (G-027).** An implicit `ScrollBar` style (no `x:Key`) lives in
   `Themes/Controls.xaml` — thin, dark track, rounded `BorderStrong` thumb that goes `AccentBrush` gold on
   hover/drag, both orientations. Don't reintroduce the default light Windows scrollbar or per-view overrides.
@@ -94,8 +100,13 @@ A .NET 8 WPF app that splits and joins video **without re-encoding**. See [READM
   old "default to remembered `LastOutputDir`" behavior — the file's folder wins.
 - **The `-c copy` no-re-encode invariant is sacred (split + join).** Split and join must never emit
   an encoder flag. The args-builders forbid encoder tokens and require a bare `copy`; the invariant
-  is re-asserted at runtime before launch and by unit tests on the token list. Do not add a
-  re-encode path in v1.
+  is re-asserted at runtime before launch and by unit tests on the token list. Lossless is the
+  default everywhere. The one re-encode path is the opt-in frame-exact cut (Bulk Cut's Exact cut,
+  `CutPrecision.Exact`, ADR 0018), and it lives in the separate `SmartCutEngine`, not in `SplitEngine`/
+  `JoinEngine`: it re-encodes at most one GOP — the head fragment (requested start → next keyframe), or the
+  whole range if it lies inside one GOP (no keyframe between start and end) — and stream-copies the rest; a
+  start already on a keyframe, or a source whose codecs it cannot reproduce, falls back to the lossless cut.
+  Do not add a re-encode branch to `SplitEngine`/`JoinEngine` or another re-encode path.
 - **No auto-detect.** The black/white/scene auto-detect feature was removed (no `Core/Detect`,
   no `SplitPointDetector`, no candidate UI). Do not reintroduce a detect layer or candidate ticks;
   cuts are placed manually (typed marker, "set cut at playhead", or timeline click).
@@ -111,9 +122,10 @@ A .NET 8 WPF app that splits and joins video **without re-encoding**. See [READM
   HW decode and installs a `scale=W:H` downscale filter (`PreviewScale`, capped ~1080p) for smooth
   4K playback. This is preview-only: the split stays `-c copy` and is never decoded, so the cut is
   always full source resolution. Keep 4K/decode changes on the preview side of the seam.
-- **Keyframe-snap is intentional.** Cuts snap to the nearest keyframe (ties → earlier, clamps at
-  ends). This is a design guarantee, not a bug — surface deltas/warnings, don't try to make cuts
-  frame-exact.
+- **Keyframe-snap is intentional (and the default).** Cuts snap to the nearest keyframe (ties → earlier,
+  clamps at ends). This is a design guarantee of the lossless path, not a bug — surface deltas/warnings,
+  don't try to make the lossless path frame-exact. Frame-exact is opt-in only (Bulk Cut's Exact cut →
+  `SmartCutEngine`, see the `-c copy` bullet); keep `CutPrecision.Lossless` the default.
 - **Keyframe indexing is background + non-blocking.** `SplitViewModel.LoadAsync` gates only on the
   fast metadata probe and **opens the preview before the keyframe scan runs**; the scan indexes in a
   cancellable background task (`IsIndexingKeyframes` / `KeyframesReady`), a new load cancels the prior
@@ -181,15 +193,21 @@ A .NET 8 WPF app that splits and joins video **without re-encoding**. See [READM
   blanks the preview via `IMediaPlayer.Unload()`, cancels the background keyframe index, and clears
   markers/segments/results; Join's **Clear all** empties the clip list. Both are guarded off while an
   operation is running. Keep `Unload` on the player seam (blank surface + reset duration/playing state).
-- **Drag/drop plumbing is code-behind that routes to existing VM commands.** Drop and drag handlers
-  live in the view code-behind (`SplitView`/`JoinView`) and add **no** load/add/reorder logic — a
-  file drop routes to `LoadCommand` (Split, first file) / `AddFilesCommand` (Join, all files); a
-  clip-row drag routes to `JoinViewModel.Move` → the same `MoveAsync` the Up/Down buttons use (one
-  reorder path). The **accept-filter is a pure, tested helper** (`VideoFileFilter.AcceptVideoFiles` /
-  `HasAnyVideo`) — keep it WPF-free and unit-tested; don't inline extension checks in code-behind.
+- **Drag/drop plumbing is code-behind that routes to existing VM entry points.** Drop and drag handlers
+  live in the view code-behind (`SplitView`/`JoinView`/`BulkCutView`) and add **no** load/add/reorder
+  logic — a file drop hands the **raw, unfiltered** paths to the screen VM's `AddDroppedFilesAsync`
+  (T-154; the file pickers use the same door since T-158), which loads the first video (Split) / adds every
+  video (Join) / adds every video not already in the list (Bulk Cut), counts what it could not take via the pure `DropRefusal`, and publishes that sentence
+  as `DropSummary`. Don't filter in the view before the VM call — the VM can only report refusals it was
+  handed. Drag-overs and drops are traced, best-effort, by `DropDiagnostics`
+  (`%LOCALAPPDATA%/VideoSplitJoiner/logs/dragdrop.log`, capped; consecutive identical drag-over lines are
+  collapsed, a drop always writes). A clip-row drag routes to `JoinViewModel.Move`
+  → the same `MoveAsync` the Up/Down buttons use (one reorder path). The **accept-filter is a pure, tested helper** (`VideoFileFilter.AcceptVideoFiles` /
+  `HasAnyVideo`, which `OnDragOver` uses to refuse a drag holding no video) — keep it WPF-free and
+  unit-tested; don't inline extension checks in code-behind.
   **Internal vs external drags are distinguished by payload type** (`typeof(JoinItemViewModel)` =
   reorder, `DataFormats.FileDrop` = external add), never by guessing — preserve that when touching the
-  Join drop handler. Do not add new drop-side business logic; wire it through the existing commands.
+  Join drop handler. Do not add new drop-side business logic; wire it through the existing VM entry points.
 
 ## Rebuild before reporting a UI fix done
 

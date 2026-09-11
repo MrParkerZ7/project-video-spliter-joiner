@@ -6,6 +6,7 @@ title: Timeline strip (playhead, markers, waveform)
 status: current
 sources:
   - src/App/ViewModels/TimelineMath.cs
+  - src/App/ViewModels/BulkScrubMath.cs
   - src/App/ViewModels/TimelineViewModel.cs
   - src/App/ViewModels/TimelineTick.cs
   - src/App/ViewModels/WaveformViewModel.cs
@@ -14,17 +15,17 @@ sources:
   - src/App/ViewModels/BulkItemViewModel.cs
   - src/App/ViewModels/CutMarkerViewModel.cs
 serves-goal: [G-002, G-033, G-036]
-updated: 2026-08-22
+updated: 2026-09-12
 ---
 
 ## What
-The timeline strip is the horizontal scrub surface under the Split player and the per-row scrub bar in the Bulk Cut tab. It renders a **playhead**, one **marker tick** per cut, and an optional **audio-waveform band** over a normalized `x = time/duration · width` coordinate system, and turns clicks into either a **seek** (click near a tick) or a **snapped cut** (click on empty track). In the Bulk Cut tab the same coordinate system drives a **dual-handle scrub** — a gold intro-end handle, an optional blue outro-start handle, a bright keep-span between them and dimmed drop-scrims outside — where dragging a handle pushes a live requested time to the marker VM, which re-snaps to the nearest keyframe on release. All projection/mapping logic lives in WPF-free view models (`TimelineMath`, `TimelineViewModel`, `WaveformViewModel`, `BulkItemViewModel`, `CutMarkerViewModel`); the `*.xaml.cs` code-behind is a pure render + hit-test seam.
+The timeline strip is the horizontal scrub surface under the Split player and the per-row scrub bar in the Bulk Cut tab. It renders a **playhead**, one **marker tick** per cut, and an optional **audio-waveform band** over a normalized `x = time/duration · width` coordinate system, and turns clicks into either a **seek** (click near a tick) or a **snapped cut** (click on empty track). In the Bulk Cut tab the same coordinate system drives a **dual-handle scrub** — a gold intro-end handle, an optional blue outro-start handle, a bright keep-span between them and dimmed drop-scrims outside — where dragging a handle pushes a live requested time to the marker VM, which re-snaps to the nearest keyframe on release. All projection/mapping logic lives in WPF-free view models (`TimelineMath`, `BulkScrubMath`, `TimelineViewModel`, `WaveformViewModel`, `BulkItemViewModel`, `CutMarkerViewModel`); the `*.xaml.cs` code-behind is a pure render + hit-test seam.
 
 ## Why
 A time-only marker list is hard to reason about spatially; users need to *see* where their cuts fall relative to the whole clip and to place/seek cuts by pointing. The strip gives that spatial map while keeping the risky parts — snapping, dedupe, seek — routed through the already-tested owner commands (`SplitViewModel.AddCutAt`, `SeekToMarkerCommand`, `CutMarkerViewModel.Requested`→re-snap) so the timeline adds *projection*, never new cut logic. Splitting the pure time↔width mapping into `TimelineMath` makes the geometry unit-testable without a WPF host, and the waveform band (D-002) plus the Bulk dual-handle scrub (D-004) reuse that exact mapping so every overlay aligns to the same moment.
 
 ## Scope
-**In:** the pure normalized time↔width mapping (`TimelineMath`); `TimelineViewModel` projection (playhead, marker ticks, event-driven re-projection) and its click/seek command routing; `WaveformViewModel` data/state contract (peaks, HasAudio, IsLoading lifecycle); the Bulk dual-handle scrub *geometry/interaction invariants that are unit-testable via the VM* — handle re-snap on requested-change, kept-duration, valid-cut/no-op-trim geometry, outro toggle. View-only render/hit-test behaviors (WPF code-behind) are documented and explicitly tagged **(view-only)**.
+**In:** the pure normalized time↔width mapping (`TimelineMath`); `TimelineViewModel` projection (playhead, marker ticks, event-driven re-projection) and its click/seek command routing; `WaveformViewModel` data/state contract (peaks, HasAudio, IsLoading lifecycle); the Bulk dual-handle scrub *geometry/interaction invariants that are unit-testable via the VM* — handle re-snap on requested-change, kept-duration, valid-cut/no-op-trim geometry, outro toggle. The render/hit-test geometry is extracted into pure helpers (`TimelineMath`, `BulkScrubMath`, T-105) the code-behind delegates to; what remains purely WPF layout is explicitly tagged **(view-only)**.
 **Out:** the actual pixel rendering (`DrawWave`/`DrawTrack`/`DrawOverlay`/`DrawHandle` Canvas draws, brush/theme resolution, `StreamGeometry` build) — verified by visual QA, not unit tests. Keyframe snapping internals (owned by `CutMarkerViewModel` / the Core media-probe snap spec), the split/trim engines, thumbnail-hover preview, and the player itself are adjacent specs.
 
 ## Current behavior & invariants
@@ -69,16 +70,16 @@ A time-only marker list is hard to reason about spatially; users need to *see* w
 - **I29** — `AddOutro`/`ClearOutro` toggle `HasOutro`; `OutroStart` is the snapped handle when present and `null` when absent. *(BulkItemViewModel.HasOutro / AddOutro / ClearOutro)*
 - **I30** — `IsNoOpTrim` is true when the net result keeps the whole file — intro ≈ 0 **and** (no outro, or outro ≈ EOF) — driving `RowState.NoOpTrim` and auto-disabling the row. *(BulkItemViewModel.IsNoOpTrim)*
 
-**View-only render / hit-test — WPF code-behind (documented, NOT unit-test targets)**
-- **I31 (view-only)** — A timeline click prefers the nearest marker tick within `TickHitRadiusPx` (6px) → routes to seek; otherwise `ClickAt(clickX / width)` drops a snapped cut. Both the wave band and the track route through the same handler. *(TimelineView.OnTrackClicked + NearestTick)*
-- **I32 (view-only)** — Bulk scrub render: `introX = clamp(introSnapped/total)·width`; dropped-intro scrim `[0→introX]` + dropped-outro scrim `[outroX→width]` (`DropScrimBrush`); keep-span `[min(introX,outroX)→max]` (`AccentMutedBrush`, the brightest element); while dragging, the grabbed handle paints at the clamped cursor X and on release repaints at the settled `Snapped` (snap-on-release). *(BulkRowScrubView.Redraw / OnUp)*
-- **I33 (view-only)** — `PickHandle` grabs the nearer of intro/outro within `HandleHitRadiusPx` (8px); a miss does nothing (rows are not click-to-seek); an equidistant tie is broken by vertical position (top half → intro, bottom half → outro). *(BulkRowScrubView.PickHandle)*
+**Render / hit-test — the geometry (x-mapping, keep-span, tick and handle hit tests, per-column peak) lives in pure helpers (`TimelineMath`, `BulkScrubMath`, T-105); the brushes, drag-time clamp and `minBar` floor stay in code-behind; I34 is wholly view-only**
+- **I31** — A timeline click prefers the nearest marker tick within `TickHitRadiusPx` (6px) → routes to seek; otherwise `ClickAt(clickX / width)` drops a snapped cut. Both the wave band and the track route through the same handler. *(TimelineMath.NearestNormalizedIndex, called from TimelineView.OnTrackClicked + NearestTick)*
+- **I32** — Bulk scrub render: `introX = clamp(introSnapped/total)·width`; dropped-intro scrim `[0→introX]` + dropped-outro scrim `[outroX→width]` (`DropScrimBrush`); keep-span `[min(introX,outroX)→max]` (`AccentMutedBrush`, the brightest element); while dragging, the grabbed handle paints at the clamped cursor X and on release repaints at the settled `Snapped` (snap-on-release). *(BulkScrubMath.SecondsToX / KeepSpan; drawn by BulkRowScrubView.Redraw / OnUp)*
+- **I33** — `PickHandle` grabs the nearer of intro/outro within `HandleHitRadiusPx` (8px); a miss does nothing (rows are not click-to-seek); an equidistant tie is broken by vertical position (top half → intro, bottom half → outro). *(BulkScrubMath.PickHandle, called from BulkRowScrubView.PickHandle)*
 - **I34 (view-only)** — The waveform band is `Visible` only when `Waveform.HasAudio` is true, else `Collapsed` (zero layout height); the playhead + marker ticks are drawn full-height across BOTH the wave and track canvases so they align as one unit. *(TimelineView.ApplyWaveBandVisibility + DrawOverlay)*
-- **I35 (view-only)** — Waveform re-bucketing: each pixel column takes the **max** peak over its source window (`PeakForColumn`, so downsampling keeps the loudest sample rather than dropping it; fewer peaks than columns → nearest sample), and a `minBar` (0.75px) floor keeps silence visible as a faint centre line. *(TimelineView.PeakForColumn / BuildWaveGeometry)*
+- **I35** — Waveform re-bucketing: each pixel column takes the **max** peak over its source window (`PeakForColumn`, so downsampling keeps the loudest sample rather than dropping it; fewer peaks than columns → nearest sample), and a `minBar` (0.75px) floor keeps silence visible as a faint centre line. *(TimelineMath.PeakForColumn; `minBar` in TimelineView.BuildWaveGeometry)*
 
 ## Links
 - Design: [D-002](../design/D-002-audio-waveform.md) (audio-waveform band) · [D-004](../design/D-004/README.md) (Bulk Cut dual-handle scrub) · [D-001](../design/D-001-vertical-monitor-mode.md) (vertical mode reuses the strip)
 - Goals: G-002 (timeline overlay — playhead/markers/click-to-cut·seek, T-014) · G-033 (audio waveform, T-084) · G-036 (Bulk Cut tab, T-097)
-- Related specs: — (none authored yet — adjacent: keyframe-snap / media-probe, player position/duration)
-- Key code: `src/App/ViewModels/TimelineMath.cs` · `TimelineViewModel.cs` · `TimelineTick.cs` · `WaveformViewModel.cs` · `src/App/Views/TimelineView.xaml.cs` · `BulkRowScrubView.xaml.cs` · `src/App/ViewModels/BulkItemViewModel.cs` · `CutMarkerViewModel.cs`
-- Tests: `tests/App.Tests/TimelineTests.cs` · `WaveformViewModelTests.cs` · `BulkItemViewModelTests.cs`
+- Related specs: SPEC-004 (keyframe-snap / media-probe) · SPEC-013 (preview player — position/duration) · SPEC-006 (waveform service — the peaks the band draws)
+- Key code: `src/App/ViewModels/TimelineMath.cs` · `BulkScrubMath.cs` · `TimelineViewModel.cs` · `TimelineTick.cs` · `WaveformViewModel.cs` · `src/App/Views/TimelineView.xaml.cs` · `BulkRowScrubView.xaml.cs` · `src/App/ViewModels/BulkItemViewModel.cs` · `CutMarkerViewModel.cs`
+- Tests: `tests/App.Tests/TimelineTests.cs` · `WaveformViewModelTests.cs` · `BulkItemViewModelTests.cs` · `ViewGeometryMathTests.cs` (the T-105 helpers — I31–I33, I35)

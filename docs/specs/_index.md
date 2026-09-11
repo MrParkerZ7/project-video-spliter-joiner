@@ -10,24 +10,24 @@ One spec per feature; numbered invariants are the source `todo-automate` derives
 
 ## Specs
 
-| Spec | Slug | Area | Invariants | Covered | Gaps |
-|------|------|------|:--:|:--:|:--:|
-| [SPEC-001](SPEC-001-stream-copy-split.md) | stream-copy-split | core | 47 | 46 | 1 |
-| [SPEC-002](SPEC-002-bulk-trim-engine.md) | bulk-trim-engine | core | 60 | ? | ? |
-| [SPEC-003](SPEC-003-join-concat.md) | join-concat | core | 31 | 30 | 1 |
-| [SPEC-004](SPEC-004-media-probe.md) | media-probe | core | 32 | 32 | 0 |
-| [SPEC-005](SPEC-005-thumbnail-service.md) | thumbnail-service | core | 25 | 25 | 0 |
-| [SPEC-006](SPEC-006-waveform-service.md) | waveform-service | core | 23 | 23 | 0 |
-| [SPEC-007](SPEC-007-cut-profiles.md) | cut-profiles | core | 107 | ? | ? |
-| [SPEC-008](SPEC-008-operation-progress-eta.md) | operation-progress-eta | app | 45 | ? | ? |
-| [SPEC-009](SPEC-009-app-settings.md) | app-settings | app | 28 | ? | ? |
-| [SPEC-010](SPEC-010-split-screen.md) | split-screen | app | 72 | ? | ? |
-| [SPEC-011](SPEC-011-bulk-cut-screen.md) | bulk-cut-screen | app | 155 | ? | ? |
-| [SPEC-012](SPEC-012-join-screen.md) | join-screen | app | 40 | ? | ? |
-| [SPEC-013](SPEC-013-preview-player.md) | preview-player | app | 52 | ? | ? |
-| [SPEC-014](SPEC-014-timeline.md) | timeline | app | 35 | ? | ? |
-| [SPEC-015](SPEC-015-app-shell-theming.md) | app-shell-theming | ui | 28 | 24 | 4 |
-| **TOTAL** | | | **780** | **see note** | **see note** |
+| Spec | Slug | Area | Invariants | Covered | Gaps | What |
+|------|------|------|:--:|:--:|:--:|------|
+| [SPEC-001](SPEC-001-stream-copy-split.md) | stream-copy-split | core | 47 | 46 | 1 | Stream-copy split engine |
+| [SPEC-002](SPEC-002-bulk-trim-engine.md) | bulk-trim-engine | core | 60 | ? | ? | Bulk trim engine (keep one middle segment) |
+| [SPEC-003](SPEC-003-join-concat.md) | join-concat | core | 31 | 30 | 1 | Join / concat engine |
+| [SPEC-004](SPEC-004-media-probe.md) | media-probe | core | 32 | 32 | 0 | Media probe — duration, keyframes, snapping |
+| [SPEC-005](SPEC-005-thumbnail-service.md) | thumbnail-service | core | 25 | 25 | 0 | Thumbnail service |
+| [SPEC-006](SPEC-006-waveform-service.md) | waveform-service | core | 23 | 23 | 0 | Audio waveform service |
+| [SPEC-007](SPEC-007-cut-profiles.md) | cut-profiles | core | 107 | ? | ? | Cut profiles — model, persistence, apply |
+| [SPEC-008](SPEC-008-operation-progress-eta.md) | operation-progress-eta | app | 45 | ? | ? | Operation progress, status & ETA |
+| [SPEC-009](SPEC-009-app-settings.md) | app-settings | app | 28 | ? | ? | App settings persistence |
+| [SPEC-010](SPEC-010-split-screen.md) | split-screen | app | 72 | ? | ? | Split screen (markers, segments, output) |
+| [SPEC-011](SPEC-011-bulk-cut-screen.md) | bulk-cut-screen | app | 155 | ? | ? | Bulk Cut screen (batch trim UI) |
+| [SPEC-012](SPEC-012-join-screen.md) | join-screen | app | 40 | ? | ? | Join screen |
+| [SPEC-013](SPEC-013-preview-player.md) | preview-player | app | 52 | ? | ? | Preview player (transport, seek, reopen safety) |
+| [SPEC-014](SPEC-014-timeline.md) | timeline | app | 35 | ? | ? | Timeline strip (playhead, markers, waveform) |
+| [SPEC-015](SPEC-015-app-shell-theming.md) | app-shell-theming | ui | 28 | 24 | 4 | App shell — window chrome, layout modes, theming, crash safety |
+| **TOTAL** | | | **780** | **see note** | **see note** | |
 
 **Invariant counts recounted mechanically 2026-09-02** (T-153) — they had drifted **in both
 directions** and are now generated from the spec files rather than hand-incremented:
@@ -36,7 +36,8 @@ directions** and are now generated from the spec files rather than hand-incremen
   - SPEC-007: listed 72, actually 94 (+22)
   - SPEC-011: listed 102, actually 121 (+19)
   - SPEC-013: listed 48, actually 52 (+4)
-  - SPEC-014: listed 35, actually 30 (-5)
+  - SPEC-014: listed 35, actually 30 (-5) — **this one was wrong**: 35 was right; the recount could not see
+    five qualified labels (see the 2026-09-11 entry below)
 
 Total documented invariants: **780** (633 before the 09-02 recount, 680 at that recount, +21 from
 T-154/T-155/T-156 documented the same day, +22 on 09-04 from T-154's Split/Join half — SPEC-010 +8,
@@ -50,8 +51,8 @@ SPEC-012 I38-I40, added late because T-164 closed for G-052 hours before T-158 l
 their heading were reworded in place, so SPEC-007 did not move for that one;
 +1 from T-170 — SPEC-007 I100, the upload refuses a file that is not an image;
 +7 from T-169 — SPEC-007 I101-I107, the hover preview card and one stored width for every source;
-+5 found, not added, on 2026-09-11 — SPEC-014 I31-I35 had always existed but are labelled
-`**I31 (view-only)**`, a form the freshness guard's pattern could not see, so the guard and this row
++5 found, not added, on 2026-09-11 — SPEC-014 I31-I35 had always existed but were labelled
+`**I31 (view-only)**` (I34 still is), a form the freshness guard's pattern could not see, so the guard and this row
 agreed on 30 while the file held 35. The pattern now accepts a qualifier inside the bold).
 
 **The headline and the TOTAL row are enforced, not maintained (T-166).**

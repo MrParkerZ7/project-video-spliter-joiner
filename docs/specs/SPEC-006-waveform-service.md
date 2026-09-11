@@ -6,7 +6,7 @@ title: Audio waveform service
 status: current
 sources: [src/Core/Waveform/IWaveformService.cs, src/Core/Waveform/FfmpegWaveformService.cs]
 serves-goal: [G-033]
-updated: 2026-08-22
+updated: 2026-09-12
 ---
 
 ## What
@@ -35,7 +35,7 @@ shape, PCM→peak bucketing/normalization math, best-effort/null semantics, the 
 copy, no-cache-on-failure), `Clear`/`ClearAll`, the temp-path layout, and construction defaults.
 **Out:** the App-layer background extraction wiring in `SplitViewModel.LoadAsync` (stale-guard / cancel-on-new-load),
 the `WaveformViewModel` (`Peaks`/`IsLoading`/`HasAudio`), and the `TimelineView` waveform-band rendering / fused
-playhead-marker-click (T-084, a separate App spec). The `FfmpegRunner`/`FfmpegArgs` mechanics (SPEC for the ffmpeg
+playhead-marker-click (T-084, a separate App spec — the `WaveformViewModel` state is SPEC-014's). The `FfmpegRunner`/`FfmpegArgs` mechanics (SPEC for the ffmpeg
 runner). Automatic silence-detection, spectrogram, and audio editing (explicitly out per D-002 §7).
 
 ## Current behavior & invariants
@@ -66,5 +66,5 @@ runner). Automatic silence-detection, spectrogram, and audio editing (explicitly
 ## Links
 - Design: D-002 (`docs/design/D-002-audio-waveform.md`; board artifact `docs/todo/D-002.md`)
 - Goals: G-033 (tasks T-083 Core service · T-084 App VM+view · T-085 docs)
-- Related specs: — (App-layer waveform VM/TimelineView band = T-084, spec TBD)
+- Related specs: SPEC-014 (App-layer `WaveformViewModel` state + `TimelineView` band, T-084)
 - Key code: `src/Core/Waveform/IWaveformService.cs`, `src/Core/Waveform/FfmpegWaveformService.cs`; tests `tests/Core.Tests/FfmpegWaveformServiceTests.cs`

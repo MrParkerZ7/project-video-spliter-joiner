@@ -12,8 +12,11 @@ sources:
   - src/App/Settings/ProfileBackup.cs
   - packaging/VideoSplitJoiner.iss
   - src/App/ViewModels/BulkCutViewModel.cs
-serves-goal: [G-037, G-038, G-044, G-051]
-updated: 2026-09-01
+  - src/App/ImageSignature.cs
+  - src/App/Io/ImageNormalizer.cs
+  - src/App/Views/BulkCutView.xaml
+serves-goal: [G-037, G-038, G-044, G-051, G-053, G-054]
+updated: 2026-09-12
 ---
 
 ## What
@@ -40,7 +43,8 @@ Users cutting a season of episodes want to define "trim the 12s intro and the 20
 ## Scope
 **In:** the `CutProfile` record and its validation (including the optional `ThumbnailPath` member); `AppSettings` profile persistence (`CutProfiles` list, `SaveProfile` upsert, `DeleteProfile` + its thumbnail-file cascade, JSON round-trip via `CutProfileDto` incl. `thumbnailPath`, tolerant/backward-compatible load); `CutProfileApplier.ApplyProfile` (intro/outro application, per-row re-snap + re-validate, `ApplyToAllReport`) and `CutProfileApplier.BuildProfileFromRow`; the `ProfileThumbnailStore` file store (`Save`/`Delete`/`DeleteByPath`/`DefaultRoot`/`SafeFileName`); and the **T-107 thumbnail glue** on `BulkCutViewModel` (`SaveProfileWithAutoThumbnailAsync` auto-default capture, `UploadThumbnail`, `ClearThumbnail`, `AttachThumbnail`/`TryAttachThumbnail`) **plus the T-129 upload-failure reporting** on that glue (`ThumbnailAttachOutcome`, `ReportThumbnailUploadFailure`, `ClearThumbnailUploadError`, and the messages they place on `Operation.Error`).
 Also in (T-147): `ProfileBackup` (`Export`, `Plan`, `Apply`, `ImportPlan`, the versioned file shape) and the `BulkCutViewModel` glue over it (`ExportProfiles`/`ImportProfiles`, `ExportProfilesCommand`/`ImportProfilesCommand`, the `ChooseProfileExportPath`/`ChooseProfileImportPath`/`ConfirmProfileOverwrite` host hooks), plus the **installer's hands-off guarantee** over user-data folders.
-**Out:** the `OperationViewModel` lifecycle itself — state machine, progress, ETA, taskbar mapping, and the `ReportFailure` entry point's own state rules (SPEC-008); the WPF error block that renders `Operation.Error` (SPEC-011/SPEC-015); the **non-thumbnail** T-103 `BulkCutViewModel` command glue (`SaveProfile`/`ApplyProfileToSelected`/`ApplyProfileToAll`/`DeleteSelectedProfile`, the profile bar, command enable/disable) — covered by SPEC-011; the keyframe-snap and cut-validity engine behind `BulkItemViewModel.IntroEnd`/`OutroStart`/`IsValidCut` (its own spec); the per-row cut-point frame thumbnails (T-108 — SPEC-011); the non-profile `AppSettings` fields (folders, layout mode, split ratios); the WPF profile-picker view/`PathToBitmapConverter` rendering; the file dialogs and MessageBox behind the backup hooks (view glue); automatic/scheduled/cloud backup (not built - backup is a manual gesture); and any migration of existing installs between the two storage roots (explicitly rejected - ADR-0021).
+Also in (T-161/T-168/T-169/T-170): the `ProfileBar` chip picker in `BulkCutView.xaml` and its hover preview card (I95–I99, I101–I105), the upload's not-an-image refusal (`ImageSignature`, I100), and upload width normalization (`ImageNormalizer`, I106–I107).
+**Out:** the `OperationViewModel` lifecycle itself — state machine, progress, ETA, taskbar mapping, and the `ReportFailure` entry point's own state rules (SPEC-008); the WPF error block that renders `Operation.Error` (SPEC-011/SPEC-015); the **non-thumbnail** T-103 `BulkCutViewModel` command glue (`SaveProfile`/`ApplyProfileToSelected`/`ApplyProfileToAll`/`DeleteSelectedProfile`, the profile bar's card layout and control gating, command enable/disable) — covered by SPEC-011; the keyframe-snap and cut-validity engine behind `BulkItemViewModel.IntroEnd`/`OutroStart`/`IsValidCut` (its own spec); the per-row cut-point frame thumbnails (T-108 — SPEC-011); the non-profile `AppSettings` fields (folders, layout mode, split ratios); `PathToBitmapConverter`'s own path→bitmap rendering; the file dialogs and MessageBox behind the backup hooks (view glue); automatic/scheduled/cloud backup (not built - backup is a manual gesture); and any migration of existing installs between the two storage roots (explicitly rejected - ADR-0021).
 
 ## Current behavior & invariants
 
@@ -119,7 +123,7 @@ Also in (T-147): `ProfileBackup` (`Export`, `Plan`, `Apply`, `ImportPlan`, the v
 - **I60** — the cascade is optional and best-effort: an `AppSettings` with **no** wired store (`AppSettings(file)`) simply skips the thumbnail cleanup — the profile is still removed and persisted, without throwing (`_thumbnailStore?.Delete`).
 
 ### Profile-thumbnail glue — auto-default / upload / clear (T-107) (`src/App/ViewModels/BulkCutViewModel.cs`)
-- **I61** — `SaveProfileWithAutoThumbnailAsync(name)` auto-captures the selected row's **intro-end frame** as the profile's default thumbnail: it grabs exactly one frame at `row.IntroEnd.Snapped` (width `ProfileThumbnailWidth` = 96), copies it into the `ProfileThumbnailStore`, persists the stored path onto the profile, and re-points the bar's `SelectedProfile` at the thumbnailed instance.
+- **I61** — `SaveProfileWithAutoThumbnailAsync(name)` auto-captures the selected row's **intro-end frame** as the profile's default thumbnail: it grabs exactly one frame at `row.IntroEnd.Snapped` (width `ProfileThumbnailWidth` = 320 — the one stored width of I106), copies it into the `ProfileThumbnailStore`, persists the stored path onto the profile, and re-points the bar's `SelectedProfile` at the thumbnailed instance.
 - **I62** — the auto-default persists the profile **first** and is never blocked on the grab: a grab that returns **null** still saves the profile with a `null` thumbnail (placeholder) (`SaveProfileWithAutoThumbnailAsync` step 1 → `SaveProfile`, then best-effort attach).
 - **I63** — a grab that **throws** never blocks or fails the save: the profile still saves with a `null` thumbnail (`SaveProfileWithAutoThumbnailAsync` try/catch, and the `TryAttachThumbnail` catch behind `AttachThumbnail`).
 - **I64** — with **no selected row**, `SaveProfileWithAutoThumbnailAsync` is a no-op: nothing is saved and no frame grab is attempted.
@@ -141,9 +145,11 @@ Also in (T-147): `ProfileBackup` (`Export`, `Plan`, `Apply`, `ImportPlan`, the v
   (`TryAttachThumbnail`): the **auto** capture at `IntroEnd.Snapped` when a profile is saved, the
   **upload** of a chosen image file, and the **snapshot** of the frame currently on screen
   (`SnapshotProfileThumbnailAsync`, T-135). All three store at `ProfileThumbnailWidth`, so the stored
-  picture is the same size whichever produced it. **True since T-169** (I106): this was written as
-  though already so while the upload path copied bytes verbatim, and a real store held 6 uploads at
-  64px against 4 captures at 96.
+  picture is the same size whichever produced it. **Closer since T-169 (I106), still not literally
+  true:** this was written as though already so while the upload path copied bytes verbatim, and a real
+  store held 6 uploads at 64px against 4 captures at 96. T-169 brought uploads into line, but a capture
+  is exactly 320 wide while an upload narrower than 320 is kept narrower, and a restored picture keeps
+  whatever width it was backed up at.
 - **I75** — the snapshot grabs at `Player.Position` from the SELECTED row's file — the frame the user is
   looking at, never the intro-end the auto path uses — and is gated by `CanSnapshotProfileThumbnail`
   (a selected profile AND a selected row AND `Player.IsReady`), with `SnapshotUnavailableReason` naming
@@ -231,25 +237,27 @@ Also in (T-147): `ProfileBackup` (`Export`, `Plan`, `Apply`, `ImportPlan`, the v
 - **I105** — the card **never intercepts the click that selects**. I97 requires a click to SELECT, and a
   card sitting under the cursor is exactly what would break it. A `ToolTip` is never hit-testable and
   never focusable; both are asserted rather than assumed.
-- **I106** — **every source now stores at one width, and that width is 320** — which is what I74 has
-  always claimed and, until now, was false for uploads. Captures and snapshots grab at it through ffmpeg;
-  an **upload is re-encoded** to it instead of being copied byte-for-byte (I42's verbatim copy still
+- **I106** — **every gesture now targets one width, 320** — the width I74 has always claimed. Captures
+  and snapshots grab at it through ffmpeg (`scale=320:-1`, so exactly 320 — which **enlarges** a source
+  narrower than that, e.g. a 176x144 `.3gp`); an **upload is re-encoded** down to it (`ImageNormalizer.ShrinkToWidth`) instead of being copied byte-for-byte (I42's verbatim copy still
   describes the store, which now receives an already-normalized file). Measured on a real machine before
   the change: 6 of 11 stored pictures were 64px uploads against 4 captures at 96, so preview sharpness
-  silently depended on how the picture had been made.
-- **I107** — normalization **only ever shrinks**. A picture already narrower than the target is stored
-  untouched: inflating a 64px image to 320 adds bytes and no detail, turning "small but sharp" into
+  silently depended on how the picture had been made. **Not covered:** a picture restored from a
+  backup (I91) is stored exactly as it was backed up and is never normalized.
+- **I107** — **upload** normalization **only ever shrinks** (captures are not normalized — see I106). An
+  upload already narrower than the target is stored untouched: inflating a 64px image to 320 adds bytes and no detail, turning "small but sharp" into
   "large and soft" — the outcome the preview exists to avoid. It is also **best-effort**: any failure
   stores the original, because a picture that cannot be re-encoded is still a picture and refusing it
-  would turn a cosmetic improvement into data loss.
+  would turn a cosmetic improvement into data loss. (`ImageNormalizer.ShrinkToWidth` returns null for both
+  cases and the caller stores the original.)
 
 ### The upload gesture refuses a file that is not an image (T-170, 2026-09-07)
 - **I100** — an **upload whose file is not an image is refused in words**, and nothing is copied into the
   store. Every layer was individually correct and the whole was not: the store copies bytes verbatim
   (I42), the record validates nothing (I35), and the picker offers an *All files* escape hatch with only
   `CheckFileExists` set — so a real store ended up holding a **1-byte file containing the character
-  `x`** attached to a profile as its picture. The check is a **leading-byte signature test** over exactly
-  the formats the picker offers, and it sits on the **upload** path only: the auto and snapshot frames
+  `x`** attached to a profile as its picture. The check is a **leading-byte signature test**
+  (`ImageSignature.IsImage`) over exactly the formats the picker offers, and it sits on the **upload** path only: the auto and snapshot frames
   are written by ffmpeg at this app's own request, so validating them would be checking our own output.
   A **missing** pick keeps its existing, more useful message (*"could not be read … may have been moved,
   renamed or deleted"*) rather than being told it is not an image — the guard is conditioned on the file

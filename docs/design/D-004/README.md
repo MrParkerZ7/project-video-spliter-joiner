@@ -1,6 +1,6 @@
 # D-004 — Bulk Cut tab (batch intro + optional-outro trim)
 
-> Status: **draft** · a third screen tab that trims the long intro (and optional outro) off **many videos at once**,
+> Status: **confirmed** (sealed 2026-08-13 via `todo-design-done`) · → spec: [SPEC-002](../../specs/SPEC-002-bulk-trim-engine.md) (engine) · [SPEC-011](../../specs/SPEC-011-bulk-cut-screen.md) (screen) · a third screen tab that trims the long intro (and optional outro) off **many videos at once**,
 > stream-copy only, to shrink files fast. Companion: [`./core-flow.md`](./core-flow.md) (batch-run flow + full edge matrix).
 
 ---

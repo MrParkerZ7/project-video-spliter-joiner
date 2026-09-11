@@ -112,3 +112,8 @@ Concretely:
 - Caption glyph/style changes stay in the `*CaptionGeometry` resources + `CaptionButton`/
   `CloseCaptionButton` styles in `Controls.xaml` so the three icons stay visually consistent;
   don't reintroduce a symbol-font glyph path (the reason T-076 retired it).
+
+## Update — 2026-09-12: the theming pointer
+
+The theming pointer in the Context above names ADR 0004, which records no theming decisions; theming is
+specified in `docs/specs/SPEC-015-app-shell-theming.md`.

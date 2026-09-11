@@ -12,8 +12,16 @@ sources:
   - src/App/ViewModels/CutProfileApplier.cs
   - src/App/ViewModels/RelayCommand.cs
   - src/App/ViewModels/MainViewModel.cs
-serves-goal: [G-036, G-037, G-038, G-039, G-040, G-041, G-042, G-043]
-updated: 2026-09-02
+  - src/App/Views/BulkCutView.xaml
+  - src/App/Views/BulkCutView.xaml.cs
+  - src/App/Io/ShellRecycleBin.cs
+  - src/App/Io/FileLockOwner.cs
+  - src/App/Io/FileFacts.cs
+  - src/App/DropRefusal.cs
+  - src/App/VideoFileFilter.cs
+  - src/App/DropDiagnostics.cs
+serves-goal: [G-036, G-037, G-038, G-039, G-040, G-041, G-042, G-043, G-050, G-053]
+updated: 2026-09-12
 ---
 
 ## What
@@ -49,7 +57,12 @@ frame thumbnails `IntroThumbnailPath`/`OutroThumbnailPath`, request builders, ba
 the **row-facing snap readout** on `CutMarkerViewModel` (`SnapNote`/`HasSnapNote`/`SuppressSnapNote`, G-041/G-042)
 and the WPF-free IN/OUT commit guard `CutTimeCommit`, and the two batch-wide output/precision choices the tab
 owns (`ReplaceOriginal` + `CollisionIsInert`/`OutputNote` + the counted `ConfirmReplaceOriginals` seam;
-`ExactCut` + `PrecisionNote`) as they appear on this screen.
+`ExactCut` + `PrecisionNote`) as they appear on this screen. Also in: **delete originals** — the manual sweep,
+its auto-delete / auto-empty-bin layer, and the silent Recycle Bin path behind them (`ShellRecycleBin`,
+`FileLockOwner`; I111–I118, I127–I138); **dropped-file intake** and the picker filter (`AddDroppedFilesAsync`,
+`DropSummary`, `DropRefusal`, `VideoFileFilter`, `DropDiagnostics`; I122–I126, I140–I144, I148–I150); the
+`BulkCutView.xaml` **layout rules** the invariants assert (I109, I110, I119, I120, I139, I145–I147, I152–I155);
+and the composition-root guard that the disposer is wired in (I151).
 
 **Out:** the batch execution engine itself (`IBulkTrimEngine` / `BulkTrimEngine` — collision policy resolution,
 disk pre-flight, the per-item ffmpeg trim, `BatchResult`/`BatchOutcome` construction); the kept-segment request
@@ -62,7 +75,7 @@ inside `FfmeMediaPlayer`/`MediaReopenGuard` (T-080); cut-profile persistence (`I
 `CutProfile`, T-102) and the **profile-thumbnail** model/store/persistence + the T-107 auto-default/upload/clear
 glue (`ProfileThumbnailStore`, `SaveProfileWithAutoThumbnailAsync`/`UploadThumbnail`/`ClearThumbnail`, T-106/107 —
 SPEC-007); the shared `IThumbnailService`/`FfmpegThumbnailService` frame source the cut-point grabs reuse
-(SPEC-005); the WPF views and drag-drop routing. Those are adjacent specs.
+(SPEC-005); the WPF views' pixel rendering, beyond the layout rules named above. Those are adjacent specs.
 
 ## Current behavior & invariants
 
@@ -550,8 +563,8 @@ SPEC-007); the shared `IThumbnailService`/`FfmpegThumbnailService` frame source 
   controls while the tab's split is user-resizable (T-136).
 - **I110** — the bar's ACTION buttons (📷 Use current frame, 🖼 Thumbnail…) are **shown and disabled with a
   reason**, never hidden, when there is no profile to act on — `SnapshotUnavailableReason` names the
-  missing precondition. Only the picker and Delete are `HasProfiles`-gated, because a picker with nothing
-  to pick is genuinely meaningless. Hiding a control is how the upload became unreachable in G-044 and how
+  missing precondition. Only the picker, the Apply to selected / Apply to all split-control and Delete are
+  `HasProfiles`-gated, because with no profile to pick they are genuinely meaningless. Hiding a control is how the upload became unreachable in G-044 and how
   the snapshot button became unfindable in T-136.
 
 - **I111** — **Delete originals** (T-144) offers a row's SOURCE for the Recycle Bin only when every one of
@@ -620,7 +633,7 @@ SPEC-007); the shared `IThumbnailService`/`FfmpegThumbnailService` frame source 
   DragOver gate the real gesture goes through. The cursor is that case's feedback; see I143.
 - **I123** - `DropSummary` is **null when nothing was refused**. A message on every drop is noise, and
   noise is what teaches people to ignore the one that matters.
-- **I124** - the accepted-container list errs toward **accepting**: 25 extensions including `.m2ts`/`.mts`
+- **I124** - the accepted-container list (`VideoFileFilter.VideoExtensions`) errs toward **accepting**, including `.m2ts`/`.mts`
   (AVCHD - camcorders, Blu-ray rips) and `.3gp` (phone video), which were absent and silently refused. It
   remains an allowlist rather than accept-anything, so a document handed to ffmpeg fails at the door
   rather than three steps later.
@@ -755,11 +768,13 @@ SPEC-007); the shared `IThumbnailService`/`FfmpegThumbnailService` frame source 
   an ordinary FileDrop path with no extension, and the original arithmetic here (non-blank count minus
   accepted count) swept folders and within-drop duplicates into "not video files" alike. Saying something
   false about what the user just did is worse than saying nothing (`DropRefusal.Classify`).
-- **I142** - the `dragdrop.log` **`accepted` flag reports the real decision**. It was hard-coded `true` on
+- **I142** - *(uncovered — set in `BulkCutView.OnDrop` code-behind; needs a windowed/STA harness, see
+  `_GAPS.md`)* the `dragdrop.log` **`accepted` flag reports the real decision**. It was hard-coded `true` on
   every drop, including ones where the filter took nothing - a lie in the single artifact the reporter is
   asked to paste into a bug report, and one that defeats the log's whole purpose of telling "we never saw
   the drag" apart from "we saw it and refused it". `note:` now carries the refusal sentence too.
-- **I143** - **boundary, stated rather than fixed:** a drag holding no recognised video is refused by
+- **I143** - *(uncovered by design — describes a region no drop event reaches, so there is nothing to
+  assert; the decision is ADR-0023)* **boundary, stated rather than fixed:** a drag holding no recognised video is refused by
   `OnDragOver` before any drop event exists, so no note can ever be shown for it - the no-entry cursor is
   that case's feedback. This is what I122 originally overstated.
 - **I144** - all three screens speak **one refusal vocabulary** (`DropRefusal`), not three copies of it.

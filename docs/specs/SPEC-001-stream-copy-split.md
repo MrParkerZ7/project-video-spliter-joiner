@@ -12,8 +12,11 @@ sources:
   - src/Core/Split/SplitResult.cs
   - src/Core/Split/SplitSegment.cs
   - src/Core/Split/SplitException.cs
-serves-goal: [G-001, G-005]
-updated: 2026-08-30
+  - src/Core/Split/SmartCutEngine.cs
+  - src/Core/Split/SmartCutPlanner.cs
+  - src/Core/Split/SmartCutArgsBuilder.cs
+serves-goal: [G-001, G-005, G-042]
+updated: 2026-09-12
 ---
 
 ## What
@@ -39,7 +42,8 @@ that keeps the operation lossless, cancel-safe, and honest about what it wrote.
 snap rules), the segment-muxer vs per-segment extraction routing, `SplitArgsBuilder` ffmpeg-command shape
 and the copy invariant (`SatisfiesCopyInvariant` / `ForbiddenEncoderTokens`), segment selection
 (`SelectedSegmentIndices`), overwrite refusal, disk pre-flight, temp-then-move cancel-safety, request-shape
-validation, ffmpeg-failure mapping, output naming, and the `SplitResult` / `SplitSegment` contract.
+validation, ffmpeg-failure mapping, output naming, and the `SplitResult` / `SplitSegment` contract; and the
+separate frame-exact engine (`SmartCutPlanner` / `SmartCutArgsBuilder` / `SmartCutEngine`, T-124, I40–I48).
 **Out:** Keyframe probing / snapping internals (`IMediaProbe.SnapToNearestKeyframe`, `GetKeyframesAsync`,
 `AverageGop` — cited but owned by the probe spec); the ffmpeg runner and error-mapper internals
 (`IFfmpegRunner`, `FfmpegErrorMapper`); per-part / staged progress reporting (T-044 / T-069) except where it
@@ -150,11 +154,12 @@ It is specified in SPEC-002 I40–I44, with the frame-exact caller at I56–I60 
   `DefaultNamingPattern` (`{name}_part{index:00}{ext}`).
 
 ## Links
-- Design: D-001 (v1.0 split/join core) · related D-004 (bulk cut reuses this engine via `KeptSegmentSelector`)
+- Design: — (no D-NNN for the v1.0 core; goal G-001) · related D-004 (bulk cut reuses this engine via `KeptSegmentSelector`)
 - Goals: G-001 (ship v1.0 stream-copy splitter) · G-005 (fast 4K split — copy is resolution-independent)
-- Related specs: SPEC (bulk-cut / kept-middle trim) — reuses this engine's per-segment path; SPEC (join engine) — sibling copy operation
+- Related specs: SPEC-002 (bulk-trim-engine) — reuses this engine's per-segment path; SPEC-003 (join-concat) — sibling copy operation
 - Key code: `src/Core/Split/SplitEngine.cs` · `SplitArgsBuilder.cs` · `SplitPlan.cs` (`SplitPlanner`) ·
-  `SplitRequest.cs` · `SplitResult.cs` · `SplitSegment.cs` · `SplitException.cs`
+  `SplitRequest.cs` · `SplitResult.cs` · `SplitSegment.cs` · `SplitException.cs` · frame-exact:
+  `SmartCutEngine.cs` · `SmartCutPlanner.cs` · `SmartCutArgsBuilder.cs`
 
 ## Frame-exact ("smart") cutting — SmartCutEngine (T-124, epic G-042)
 

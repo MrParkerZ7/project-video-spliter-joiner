@@ -8,7 +8,7 @@ sources:
   - src/App/Settings/AppSettings.cs
   - src/App/Settings/IAppSettings.cs
 serves-goal: [G-010, G-037, G-039]
-updated: 2026-09-02
+updated: 2026-09-12
 ---
 
 ## What
@@ -16,7 +16,9 @@ updated: 2026-09-02
 set of "remember where I was / how I had it" values to a single JSON file
 (`%APPDATA%/VideoSplitJoiner/settings.json` by default) via `System.Text.Json`: the last input and
 output folders, the layout axis, the two per-axis split ratios (plus a second, **Bulk-specific**
-per-axis ratio pair, G-039), and the saved cut profiles. Reads happen
+per-axis ratio pair, G-039), the saved cut profiles, the last-used tab, and the per-screen preference
+flags (Bulk Cut's apply-cut-to-all-rows, and the auto-delete / auto-empty-bin pair on each of Bulk Cut and
+Split). Reads happen
 once on construction; every setter persists its change immediately and best-effort. The store is robust
 by design — a missing, empty, corrupt, or older/partial file degrades to documented defaults and never
 crashes the app, and a write failure is swallowed while the value stays live in memory for the session.
@@ -38,7 +40,9 @@ the Bulk-specific `BulkHorizontalSplitRatio`/`BulkVerticalSplitRatio` pair** —
 the shared `ClampRatio` load-side sanitization), `LayoutMode` persistence, the dirty-check setters, the atomic
 temp-then-rename write + swallowed-write-failure behavior, and the **settings-persistence** aspects of
 `CutProfiles` (round-trip via the file, seconds encoding, missing-field → empty, key-omission, corrupt-row
-skip, dedup-on-load, no loss of siblings).
+skip, dedup-on-load, no loss of siblings); and the persistence of the preference keys `LastTab` (T-143),
+`BulkApplyCutToAllRows` (T-133 — its ON default is SPEC-011 I103's), `BulkAutoDeleteOriginals`/
+`BulkAutoEmptyRecycleBin` (T-156) and `SplitAutoDeleteSource`/`SplitAutoEmptyRecycleBin` (T-163).
 
 **Out:** the cut-profile *mutation* semantics — `SaveProfile` upsert-in-place and `DeleteProfile`
 by-name/no-op, and the profile model's own validation and apply-to-cut behavior — belong to
@@ -127,11 +131,13 @@ out of scope.
   **same** `ClampRatio` sanitization applied to the Split-tab ratios (I12/I13). (`ClampRatio` applied to
   `dto.BulkHorizontalSplitRatio` / `dto.BulkVerticalSplitRatio` in `Load`)
 
-### Bulk Cut preferences (T-143, T-156)
+### Bulk Cut preferences (T-143, T-156; the Split pair, T-163)
 - **I26** - `LastTab` remembers the tab the user was last on, so the app reopens where they left it, as
   the layout orientation already did. Absent/unknown falls back to the first tab rather than throwing.
 - **I27** - `BulkAutoDeleteOriginals` and `BulkAutoEmptyRecycleBin` persist the two destructive Bulk Cut
-  preferences. **Both are `bool?` and absent means OFF**: a settings file written by an older build must
+  preferences, and `SplitAutoDeleteSource`/`SplitAutoEmptyRecycleBin` (T-163) the Split screen's pair, under
+  their own keys so arming one screen never arms the other. **All four are `bool?` and absent means OFF**: a
+  settings file written by an older build must
   not silently arm a destructive option, so the tolerant-load default is the safe one rather than the
   convenient one.
 - **I28** - every preference writes through the same `Save()` path and only **on change** (the setters

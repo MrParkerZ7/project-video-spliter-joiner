@@ -21,13 +21,13 @@ numbering order. The index reflects the **actual** records present.
 | [0009](0009-two-path-keyframe-scan.md) | Two-path keyframe scan — demux packets primary, decode fallback, cache | Accepted |
 | [0010](0010-shared-ffmpeg-bundling.md) | Shared (not static) ffmpeg build, gitignored, dual-consumer, ABI-pinned 7.x | Accepted |
 | [0011](0011-single-file-publish-no-trim.md) | Self-contained single-file win-x64 + ReadyToRun, PublishTrimmed banned | Accepted |
-| [0012](0012-gpl-lgpl-licensing-fork.md) | GPL-by-default ffmpeg, LGPL escape via `-FfmpegSource` | Accepted |
+| [0012](0012-gpl-lgpl-licensing-fork.md) | GPL-by-default ffmpeg, LGPL escape via `-FfmpegSource` | Accepted — updated 2026-09-11 (Exact cut of H.264/HEVC needs GPL-only encoders; public-license choice still open) |
 | [0013](0013-off-path-portable-dotnet.md) | Absolute dotnet path baked into packaging | Accepted |
-| [0014](0014-no-ci-yet.md) | Deferred CI gate despite 517 tests + CoreIsUiFree guard | Accepted |
-| [0015](0015-bulk-trim-reuses-split-single-segment.md) | Batch intro/outro trim reuses SplitEngine's single-segment path — no second ffmpeg code path | Accepted |
+| [0014](0014-no-ci-yet.md) | Deferred CI gate despite 517 tests + CoreIsUiFree guard | Accepted — partly superseded (tag-driven release gate with real integration tests; no push/PR gate) |
+| [0015](0015-bulk-trim-reuses-split-single-segment.md) | Batch intro/outro trim reuses SplitEngine's single-segment path — no second ffmpeg code path | Accepted — amended by 0017 (rule (d)) and 0018 (Exact rows use a second ffmpeg path) |
 | [0016](0016-shared-bulk-preview-player-and-cut-profiles.md) | One shared Bulk Cut preview player bound to the selected row (not per-row) + cut profiles persisted in AppSettings | Accepted |
-| [0017](0017-output-mode-replace-original.md) | Opt-in "replace originals" as a separate OutputMode axis (not a 4th CollisionPolicy) — verify-all, then replace in place via a Recycle-Bin backup | Accepted |
-| [0018](0018-smart-cut-exact-trimming.md) | Frame-exact ("smart") cutting as a separate opt-in engine — re-encode one head GOP, copy the rest; stream copy stays the default | Accepted |
+| [0017](0017-output-mode-replace-original.md) | Opt-in "replace originals" as a separate OutputMode axis (not a 4th CollisionPolicy) — verify-all, then replace in place via a Recycle-Bin backup | Accepted — amended by 0022 (recycle mechanism); updated 2026-09-11 (T-130) |
+| [0018](0018-smart-cut-exact-trimming.md) | Frame-exact ("smart") cutting as a separate opt-in engine — re-encode one head GOP, copy the rest; stream copy stays the default | Accepted — updated 2026-09-11 (T-130; H.264/HEVC encoders are GPL-only) |
 | [0019](0019-row-intent-vs-computed-eligibility.md) | A Bulk Cut row's selection is two properties — a bindable user intent and a read-only computed eligibility (merging them back reintroduces a dead checkbox) | Accepted |
 | [0020](0020-unsafe-for-ffme-input-stream.md) | Allow unsafe blocks in the app so a file whose path cannot be a URI (a share whose name has a space) can be opened through FFME's IMediaInputStream | Accepted |
 | [0021](0021-profiles-survive-reinstall-via-backup-file.md) | Profiles survive reinstall by not being touched; portability via a backup file with images inline, rather than migrating the two storage roots | Accepted |

@@ -52,12 +52,18 @@ never a silent window.
   time**, following the cursor with an `mm:ss` label, so you can find a split point by sight without
   moving the main playhead. Thumbnails are grabbed by a separate ffmpeg process and cached; a failed
   grab simply shows nothing and never blocks.
+- **Audio waveform on the Split timeline** — the loaded file's audio is drawn as a waveform band on
+  the timeline. It is extracted in the background by a separate ffmpeg pass, so it never holds up the
+  preview; a file with no audio simply has no band.
 - **Full player controls** to land the exact split point — **skip** ±1s / ±5s / ±10s / ±20s / ±1m /
   ±5m / ±10m / ±20m, **frame-step** ±1 frame, **jump to start / end**, a **volume slider + mute**, and
   a **playback-speed** selector (0.25×–2×). The ±10m / ±20m skips make traversing long clips quick;
   nudge the playhead onto the precise frame, then "Set cut at playhead".
 - **Resizable video pane** — drag the splitter under the preview to grow or shrink the video area
-  against the markers / output panel below it.
+  against the timeline below it.
+- **Horizontal ⇄ vertical layout** — a title-bar button flips every screen between the side-by-side
+  layout and a stacked one (on Split: video + timeline on top, tools below). Each layout keeps its own splitter position, and
+  the app reopens in the layout you last used.
 - **4K support** — the preview uses hardware-accelerated decoding and a downscaled preview surface so
   large 4K sources play back smoothly, while the cut itself stays resolution-independent (`-c copy`
   is never decoded).
@@ -92,15 +98,17 @@ never a silent window.
   the intro-end frame on save, or choose your own with **Thumbnail…**) and applied later to one row or
   to every ticked row. A profile's outro is measured **from the end of the file**, so "drop the last 12
   seconds of credits" lands correctly on a 22-minute and a 24-minute episode alike. Profiles persist in
-  `settings.json`; their pictures live in `%LOCALAPPDATA%/VideoSplitJoiner/profile-thumbs/`.
+  `settings.json`; their pictures live in `%LOCALAPPDATA%/VideoSplitJoiner/profile-thumbs/`. Hover a
+  profile to see its picture in a larger (320 px) preview card. **⭳ Back up…** saves every profile,
+  pictures included, to one file you can keep or move to another PC, and **⭱ Restore…** reads one back;
+  a profile that already exists is only overwritten if you say so.
 - **Exact cut (optional)** — a bulk cut normally snaps to the nearest keyframe like everything else in
   the app. Tick **Exact cut** and each cut lands exactly where you set it instead: only the short
   fragment between your cut point and the next keyframe is re-encoded (roughly a second of video), and
   the rest of the file is still copied untouched. A source whose codecs cannot be reproduced falls back
-  to the ordinary lossless cut and says so on the row rather than guessing. **Treat this one as new:**
-  it is covered by unit tests only and has not yet been proven against real media, so check the first
-  result before trusting it with a large batch. Lossless stream copy remains the default and the point
-  of the app.
+  to the ordinary lossless cut and says so on the row rather than guessing. It is verified by integration
+  tests that run the real ffmpeg on a generated H.264/AAC clip, not only by unit tests. Lossless stream copy remains the default and the
+  point of the app.
 - **Replace originals (optional, destructive)** — off by default. Turn it on and each trimmed result is
   written over its source file instead of beside it, with the replaced original sent to the **Recycle
   Bin** so it stays recoverable. The path there is deliberately careful: the trim is produced to a
@@ -108,9 +116,24 @@ never a silent window.
   swap keeps a backup throughout so your video never exists nowhere. You are asked to confirm with the
   exact number of files at stake, and that prompt defaults to No. A run that fails or is cancelled
   leaves every original exactly as it was.
+- **Delete originals to reclaim space (optional)** — after a split, **✕ Delete original** sends the
+  source to the **Recycle Bin**, offered only once every part the split produced is on disk and
+  non-empty. On Bulk Cut, **✕ Delete originals** does the same for every video that trimmed
+  successfully and whose trimmed file is still on disk and non-empty (never under Replace originals,
+  where the original already went to the Recycle Bin). Both show the space they free and ask first
+  (defaulting to No). **Auto-delete source** (Split) and **Auto-delete originals** (Bulk Cut) do this
+  automatically after a successful split or a batch with no failures; both are off by default and are
+  set separately per screen.
+- **⚠ and empty bin (optional, permanent)** — beside each auto-delete box, this also empties the
+  Recycle Bin afterwards so the space is actually freed. That makes the deletion **permanent and
+  unrecoverable**, and it empties the **whole** Recycle Bin, including files other programs put there.
+  It can only be turned on while auto-delete is on, and turning it on asks you to confirm first.
 - **Drag and drop** — drag video files from Explorer onto the **Split** screen to load (the first
-  file) or onto the **Join** screen to add them all in drop order, and **drag Join clips to reorder**
-  them (same effect as the Up/Down buttons). Non-video files are ignored.
+  file), onto the **Join** screen to add them all in drop order, or onto **Bulk Cut** to add them to
+  the batch, and **drag Join clips to reorder** them (same effect as the Up/Down buttons). Anything a
+  drop could not take — non-video files, folders, the same file twice in one drop, a file already in the
+  Bulk Cut list, or the extra videos on Split (which opens one file at a time) — is named in a one-line note on
+  that screen. A drag with no video in it at all shows a no-entry cursor.
 - Live **progress** with a **stage label** (Preparing → Splitting → Finalizing → Done for a split;
   Checking compatibility → Joining → Finalizing → Done for a join) and an **estimated time remaining**
   ("~1m 20s left") — the bar animates as a busy indicator until real progress arrives, so a run never
@@ -143,9 +166,18 @@ never a silent window.
   default. It stays fully editable for the one-off case; a manual change is discarded the next time you
   load a file.
 - **Remembers your last input folder** — the input file picker reopens at your last-used input folder,
-  persisted to `%APPDATA%/VideoSplitJoiner/settings.json`.
+  persisted to `%APPDATA%/VideoSplitJoiner/settings.json`. The app also reopens on the screen (Split,
+  Join or Bulk Cut) you last used.
 
 ## Install & run (packaged release)
+
+Each release, published on the [installer repo's Releases](https://github.com/MrParkerZ7/installer-video-spliter-joiner/releases), ships an installer and a portable zip.
+
+**Installer:** download `VideoSplitJoiner-v<version>-setup.exe` from a release and run it. It installs
+per-user (no admin rights needed), and uninstalling leaves your settings and profiles under
+`%APPDATA%` / `%LOCALAPPDATA%` in place.
+
+**Portable zip:**
 
 1. Download `VideoSplitJoiner-v<version>-win-x64.zip` from a release.
 2. Unzip it anywhere.

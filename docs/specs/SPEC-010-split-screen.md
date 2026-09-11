@@ -8,8 +8,14 @@ sources:
   - src/App/ViewModels/SplitViewModel.cs
   - src/App/ViewModels/CutMarkerViewModel.cs
   - src/App/ViewModels/SplitSegmentViewModel.cs
-serves-goal: [G-020, G-022, G-026]
-updated: 2026-08-22
+  - src/App/DropRefusal.cs
+  - src/App/VideoFileFilter.cs
+  - src/App/DropDiagnostics.cs
+  - src/App/Io/FileFacts.cs
+  - src/App/Io/ShellRecycleBin.cs
+  - src/App/Io/FileLockOwner.cs
+serves-goal: [G-020, G-022, G-026, G-052]
+updated: 2026-09-12
 ---
 
 ## What
@@ -40,7 +46,11 @@ time-ordering, and dedupe; the selectable segment projection and its selection s
 defaulting/re-anchoring and folder memory; `CanRunSplit`/`RunSplitAsync` request-building and the
 `OperationViewModel` hand-off; `SetCutAtPlayhead`/`SeekToMarker`/`NewMarkerPosition` playhead wiring;
 `Clear` reset and safe reload. `CutMarkerViewModel` snap/delta/display and `SplitSegmentViewModel`
-projection/selection are covered as the marker/segment contracts this screen depends on.
+projection/selection are covered as the marker/segment contracts this screen depends on. Also in:
+dropped-file accounting (`AddDroppedFilesAsync`, `DropSummary` via `DropRefusal`, I41–I48); the picker
+filter derived from `VideoFileFilter` (I68–I70); the `DropDiagnostics` drop trace (I71–I72); run
+re-entrancy — a load or second Run refused while a split is in flight (I49–I51); and reclaiming the source
+after a split, by hand (`DeleteOriginal`, I52–I60) or automatically (`AutoDeleteSource`, I61–I67).
 
 **Out:** The actual ffmpeg split (`ISplitEngine` implementation, args, segment-muxer vs per-segment
 copy) — a Core concern. `OperationViewModel` progress/ETA/cancel/error-mapping mechanics — its own
@@ -299,8 +309,9 @@ separately. The Join screen. Keyframe-snap math and `MediaProbe` internals (Core
   gestures) · G-026 (markers ordered by time). Related tasks: T-030 (non-blocking load), T-041
   (optimistic pending markers), T-047 (Clear), T-049 (selectable segments), T-061 (output-dir
   re-anchor), T-064 (playhead-follow field), T-071 (time-ordered markers), T-080 (reload-after-clear).
-- Related specs: keyframe-snap / `MediaProbe` (Core) · `OperationViewModel` progress/cancel/error ·
-  waveform band (T-084) — all adjacent, not covered here.
+- Related specs: SPEC-004 (keyframe-snap / `MediaProbe`, Core) · SPEC-008 (`OperationViewModel`
+  progress/cancel/error) · SPEC-014 (waveform band, T-084) — all adjacent, not covered here. SPEC-011 I151
+  guards that `MainViewModel` passes this screen its `IOriginalDisposer` (without it I57 leaves delete inert).
 - Key code: `src/App/ViewModels/SplitViewModel.cs` · `src/App/ViewModels/CutMarkerViewModel.cs` ·
   `src/App/ViewModels/SplitSegmentViewModel.cs` · `src/App/ViewModels/OperationViewModel.cs` ·
   `src/App/ViewModels/PlayerViewModel.cs` · `src/Core/Split/SplitRequest.cs` + `ISplitEngine`.

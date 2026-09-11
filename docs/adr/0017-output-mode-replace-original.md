@@ -2,7 +2,8 @@
 
 ## Status
 
-Accepted.
+Accepted. Amended by [ADR 0022](0022-silent-shell-recycle-over-vb-fileio.md) (the Recycle-Bin call in (d))
+and updated 2026-09-11 for T-130 (the `Exact` route now shares the replace machinery) — see § Update.
 
 ## Context
 
@@ -172,3 +173,30 @@ the safe answer has to be the default, at both the seam and the dialog.
 - **The mode's wording must keep telling the truth.** `OutputNote`, `CollisionIsInert` and the counted dialog
   are the only places the user learns the blast radius; a change to the destination rules has to change them
   too.
+
+## Update — 2026-09-11
+
+**The `Exact` + "Replace originals" gap is closed (T-130).** The last Negative above (*"nothing currently
+blocks the pair"*) and the first forced follow-on (*"`SmartCutEngine` is the open instance today"*) are
+satisfied:
+
+- The replace-in-place logic of (c) was lifted out of `SplitEngine` into `Core/Io/OriginalReplacer`
+  (`src/Core/Io/OriginalReplacer.cs:10-14,24`). `SplitEngine.ReplaceOriginalInPlace` now delegates to it
+  (`src/Core/Split/SplitEngine.cs:529-530`), so both routes share one backup + restore-on-failure +
+  disposer implementation.
+- Under `ReplaceOriginal`, `BulkTrimEngine` no longer hands `SmartCutEngine` the source as its
+  destination. It cuts to a `<original>.vsj-exact<ext>` sibling, then swaps it in with
+  `new OriginalReplacer(_originalDisposer!).Replace(...)`, deleting the sibling if the swap throws
+  (`src/Core/Bulk/BulkTrimEngine.cs:250-277`). A fell-back row deletes the sibling and takes the lossless
+  route (`:281-300`).
+- When no `IOriginalDisposer` is wired there is no safe swap, so an `Exact` row under `ReplaceOriginal`
+  is not exact-cut at all: it takes the lossless route with the row warning
+  `exact cut unavailable (replacing originals) - cut snapped to the nearest keyframe`
+  (`BulkTrimEngine.cs:240-247`). The app's default `BulkTrimEngine` is built with a
+  `RecycleBinOriginalDisposer` (`src/App/ViewModels/BulkCutViewModel.cs:229-233`).
+
+**The Recycle-Bin mechanism in (d) changed (ADR 0022, T-155).** `RecycleBinOriginalDisposer` no longer
+calls `Microsoft.VisualBasic.FileIO.FileSystem.DeleteFile`; it goes through `ShellRecycleBin.TryRecycle`
+(`SHFileOperation` with `FOF_ALLOWUNDO` and the no-UI flags — `src/App/Io/ShellRecycleBin.cs:26-30,138`,
+called from `src/App/Io/RecycleBinOriginalDisposer.cs:33`).
+The seam, its placement in the app rather than Core, and its best-effort contract are unchanged.

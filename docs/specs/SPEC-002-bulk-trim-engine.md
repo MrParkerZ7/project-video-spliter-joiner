@@ -17,7 +17,7 @@ sources:
   - src/Core/Bulk/BulkTrimOptions.cs
   - src/Core/Bulk/BulkTrimProgress.cs
   - src/Core/Bulk/NoOpTrimException.cs
-  - src/Core/Bulk/IDiskSpaceProbe.cs
+  - src/Core/Io/IDiskSpaceProbe.cs
   - src/Core/Bulk/IBulkTrimEngine.cs
   - src/Core/Bulk/IBulkTrimRequestBuilder.cs
   - src/Core/Bulk/OutputMode.cs
@@ -27,7 +27,7 @@ sources:
   - src/Core/Split/SplitEngine.cs
   - src/Core/Split/SmartCutEngine.cs
 serves-goal: [G-036, G-041, G-042]
-updated: 2026-08-30
+updated: 2026-09-12
 ---
 
 ## What
@@ -311,13 +311,14 @@ the lossless route uses.
   owns the destination, reaching the original through `SplitEngine`'s replace (I40–I44). In practice there is
   nothing to sweep: both of `SmartCutEngine`'s fallback returns (`PureCopy`, and an unresolvable encoder)
   happen before it writes anything, so the sweep is a guard against a temp stranded by an earlier interrupted
-  run. **⚠ Known gap (T-130):** this branch is taken *ahead* of I51's warning branch, so a fallback on this
-  one route is currently **silent** — the row runs lossless with no `"exact cut unavailable (<reason>) …"`
-  note, unlike every other `Exact` row. Behavior as shipped; the warning is the follow-up.
+  run. The sweep does not skip I51: the fallback is **announced on this route too**, with the same
+  `"exact cut unavailable (<reason>) …"` row warning (and the same `PureCopy` exemption) as every other
+  `Exact` row — the substitution is never silent where the original is being written over.
 - **I59** — A **failed swap** leaves the original intact. `Replace` throws only after I42/I43 have restored the
   original under its own name (or, in the pathological restore-failure case, left it under `.vsj-original`);
-  no disposer is called; the exception escapes to the row's own catch and the row is recorded **Failed**, with
-  the produced sibling temp left on disk rather than a half-written master. The failure is isolated to that
+  no disposer is called; the produced sibling temp is swept best-effort (`TryDeleteTempFile`) so it is not left
+  beside the user's video, then the exception is rethrown to the row's own catch and the row is recorded
+  **Failed**. The failure is isolated to that
   row (I16) and does **not** silently re-run it on the lossless path.
 - **I60** — Cancellation cannot half-replace the master. Cancel is observed inside `CutAsync`, before its
   `MoveIntoPlace`, so the sibling temp is never produced, `SmartCutEngine` sweeps its own
@@ -338,7 +339,7 @@ the lossless route uses.
   app layer: the preview player, cut profiles, the Replace-originals + Exact-cut surfaces and the counted
   confirmation dialog)
 - Key code: `src/Core/Split/KeptSegmentSelector.cs`, `src/Core/Bulk/BulkTrimEngine.cs`,
-  `src/Core/Bulk/KeptMiddleRequestBuilder.cs`, `src/Core/Bulk/{BulkTrimItem,BulkTrimItemResult,BatchResult,BatchOutcome,ItemOutcome,CollisionPolicy,BulkTrimOptions,BulkTrimProgress,NoOpTrimException,IDiskSpaceProbe,OutputMode,CutPrecision}.cs`,
-  `src/Core/Io/IOriginalDisposer.cs`, `src/Core/Io/OriginalReplacer.cs` (the swap itself — I42–I44),
+  `src/Core/Bulk/KeptMiddleRequestBuilder.cs`, `src/Core/Bulk/{BulkTrimItem,BulkTrimItemResult,BatchResult,BatchOutcome,ItemOutcome,CollisionPolicy,BulkTrimOptions,BulkTrimProgress,NoOpTrimException,OutputMode,CutPrecision}.cs`,
+  `src/Core/Io/IDiskSpaceProbe.cs`, `src/Core/Io/IOriginalDisposer.cs`, `src/Core/Io/OriginalReplacer.cs` (the swap itself — I42–I44),
   `src/Core/Split/SplitEngine.cs` (`MoveTempSegmentsIntoPlace` / `ReplaceOriginalInPlace`, which delegates to
   it), `src/Core/Split/SmartCutEngine.cs`, `src/App/Io/RecycleBinOriginalDisposer.cs`

@@ -16,25 +16,33 @@ never degrade quality. This guide walks through each feature.
 ## Getting started
 
 Launch `VideoSplitJoiner.App.exe`. FFmpeg ships bundled in the `ffmpeg/` folder next to the app, so
-there is nothing to install. The window opens on the **Split** tab; switch to **Join** with the tab
-header. The app wears a dark **IBM Plex** theme with a gold accent, its own dark title bar, and a
-header carrying the "lossless · no re-encode" tagline.
+there is nothing to install. The window opens on the tab you used last (the **Split** tab the first
+time), in the layout you last chose; switch screens with the tab headers. The app wears a dark
+**IBM Plex** theme with a gold accent, its own dark title bar, and a header carrying the "lossless · no re-encode" tagline.
 
 ## Screen layout
 
-Both screens use a **two-column layout** behind a **draggable column splitter** — drag the divider
-between the columns to trade space between them:
+The **Split** and **Join** screens use a **two-part layout** behind a **draggable splitter** — drag the
+divider between the parts to trade space between them (Bulk Cut's preview and list work the same way;
+see [Bulk Cut](#bulk-cut)):
 
-- **Left column — the visual pane.** On **Split**, this is the preview player and the timeline /
-  scrubber beneath it. On **Join**, it is the ordered clip list. It flexes to fill the window.
-- **Right column — the tool panel.** Everything else lives here: **Load…** / **Clear** at the top,
-  then (on Split) the **file-info card** (`container · duration · size`), a gold **format badge**
-  (e.g. `HEVC · MATROSKA`), the **Cut markers** and **Parts to export** sections, the mono
-  **DIR / NAME** output fields, and the **Run** button. On Join the right panel holds the
-  compatibility verdict, the **Estimated result** panel, output fields, and Run.
+- **The visual pane.** On **Split**, this is the preview player and the timeline / scrubber beneath it.
+  On **Join**, it is the ordered clip list.
+- **The tool panel.** Everything else lives here: on Split, the **file-info card**
+  (`container · duration · size`), a gold **format badge** (e.g. `HEVC · MATROSKA`), the **Cut markers**
+  and **Parts to export** sections, the mono **DIR / NAME** output fields, and the **Run** button. On
+  Join the tool panel holds the compatibility verdict, the **Estimated result** panel, output fields,
+  and Run.
 
-The right panel defaults to 360px wide and can be dragged within a 300–520px range. On the Split
-screen the video area also has its own horizontal splitter (see
+**Load… / Clear** sit at the right end of the tab strip rather than inside a screen, and act on
+whichever tab is active — their labels follow it: **Load…** / **Clear** on Split, **Add files…** /
+**Clear all** on Join, **Add videos…** / **Clear all** on Bulk Cut.
+
+**The layout toggle** — the button in the title bar, beside the minimise / maximise / close buttons —
+switches between the **horizontal** layout (visual pane on the left, tool panel on the right) and the
+**vertical** (stacked) layout (visual pane on top, tool panel below). Its tooltip names the layout it will
+switch to. The choice is remembered across launches, and each layout remembers its own splitter
+position. On the Split screen the video area also has its own splitter (see
 [Resizing the video pane](#resizing-the-video-pane)).
 
 ## Drag and drop
@@ -55,14 +63,18 @@ A drop zone highlights while you drag a valid file over a screen.
 **Recognised video files** — `.mp4` `.m4v` `.mkv` `.mov` `.avi` `.webm` `.wmv` `.flv` · `.ts` `.m2ts`
 `.mts` `.mpg` `.mpeg` `.mpe` `.m2v` `.m1v` `.vob` · `.3gp` `.3g2` · `.ogv` `.asf` `.divx` `.f4v` `.mxf`
 `.rm` `.rmvb`. That covers camcorder and Blu-ray footage (`.m2ts`/`.mts`) and phone video (`.3gp`), which
-earlier versions refused.
+earlier versions refused. The **Load…** / **Add files…** / **Add videos…** pickers offer exactly this list
+under *Video files*, and a file chosen under *All files* that is not on it is refused with the same kind
+of message a drop gets (below).
 
 **Anything that is not added now says so — on all three screens.** A short line appears near the top of
 the screen you dropped onto, for example *"3 files were not added: 2 are not video files, 1 is already in
 the list"*. It is only there when something actually was refused. Each screen reports its own rules:
 
 - **Split** also tells you when it ignored the extras — *"2 other videos were skipped — Split opens one
-  file at a time"* — so a five-video drop that loads one no longer looks like a malfunction.
+  file at a time"* — so a five-video drop that loads one no longer looks like a malfunction. While a
+  split is running it loads nothing and says so — *"Nothing was loaded — a split is still running. Wait
+  for it to finish, or cancel it first."*
 - **Join** never says "already in the list", because it lets you add the same clip twice on purpose. It
   does tell you if you dropped the identical file twice in one go, since only one copy is kept.
 - **Bulk Cut** keeps one row per source, so re-dropping something already listed is reported.
@@ -92,7 +104,8 @@ The Split screen cuts one video into several contiguous segments at the cut poin
    runs, an **"indexing…"** hint shows. You can place cuts right away even while it runs — a cut
    dropped mid-index appears immediately (see step 2) and snaps as soon as the scan completes, never to
    an empty list. If the file cannot be read, you get a friendly error and the screen stays unloaded.
-2. **Add cut markers.** Add a marker at a time position, or use the
+2. **Add cut markers.** Add a marker at a time position (type it in the **POSITION** field and click
+   **Add at time**), or use the
    [preview player](#preview--pick-cuts-from-the-player) to find the exact frame and drop a cut
    there. **The marker appears instantly** — even if the background keyframe index is still building,
    the cut drops right away showing a transient **"snapping…"** hint, then resolves in place to its
@@ -110,16 +123,17 @@ The Split screen cuts one video into several contiguous segments at the cut poin
    stays `…_part02`), and the export is still lossless either way. The Run button reflects your choice
    — e.g. "Split 3 parts" when all are checked, "Split 2 of 3 parts" for a subset.
 4. **Choose output.** Set the output directory and, optionally, the segment **naming pattern**. The
-   app **remembers your last folders**: the output directory defaults to the folder you last output
-   to (and, until you've set one, to the input file's folder), and the **Load…** file picker reopens
-   at your last-used input folder. These preferences persist across runs (stored in
+   output directory defaults to the **folder of the file you loaded**, and is reset to the new file's
+   folder on every load — so a folder you type applies to that file only. The **Load…** file picker
+   reopens at your last-used input folder, and that preference persists across runs (stored in
    `%APPDATA%/VideoSplitJoiner/settings.json`). The default pattern is `{name}_part{index:00}{ext}`
    (e.g. `holiday_part01.mp4`, `holiday_part02.mp4`, …). Tokens: `{name}` = input name without
    extension, `{ext}` = input extension (with dot), `{index}` = 1-based segment number (supports a
    zero-pad form like `{index:00}`). Tick **Overwrite** to replace existing files; otherwise a run
    that would clobber an output is rejected before anything happens.
 5. **Run.** The split writes your selected parts (a full selection runs as a single stream-copy pass;
-   a subset extracts only the chosen parts). While it runs you always see a **progress bar** (an
+   a subset extracts only the chosen parts). Run stays disabled while a split is already running.
+   While it runs you always see a **progress bar** (an
    animated busy bar until granular progress arrives, so it never looks stuck), a **stage** label
    (Preparing → Splitting → Finalizing → Done), and an **estimated time remaining** beside it. On top
    of the overall bar, **each row in "Parts to export" shows its own progress** — every part advances
@@ -211,12 +225,18 @@ can watch the video and pick cut points visually instead of typing times by hand
      unmute restores it).
    - **Playback speed** — pick a speed from **0.25× to 2×** to scan quickly or inspect slowly.
 4. **Set a cut at the playhead.** With the video parked where you want to cut, click
-   **"Set cut point at playhead"** to drop a cut marker at the current position. That cut
+   **"Add cut at playhead"** to drop a cut marker at the current position. That cut
    **keyframe-snaps exactly like any other marker** — the new marker shows its `requested → snapped
    (±delta)` just like a hand-placed one. Dropping a second cut that snaps to the same keyframe is a
-   no-op (it de-dupes), so double-tapping the button won't create duplicate cuts.
+   no-op (it de-dupes), so double-tapping the button won't create duplicate cuts. Below it, the
+   **POSITION** field follows the playhead; type over it and click **Add at time** to place a cut at
+   an exact time instead. Each row in the marker list has a **▶ seek** button that moves the player to
+   that cut's snapped time.
 5. **Read the timeline strip.** Under the player is a **timeline strip** spanning the whole clip. It
-   shows the **playhead** (moves as the video plays / scrubs) and a **tick per cut marker**.
+   shows the **playhead** (moves as the video plays / scrubs) and a **tick per cut marker**. Directly
+   above it, an **audio waveform** band is drawn on the same time scale, with the playhead and marker
+   ticks running through both, so you can see speech and silence when placing a cut. The band is hidden
+   when the file has no audio, and clicking it behaves exactly like clicking the strip (step 6).
 6. **Click the strip to cut; click a tick to seek.**
    - **Click anywhere on the strip** to drop a cut at that position — it routes through the same
      snap-and-dedupe path as every other cut.
@@ -226,8 +246,8 @@ can watch the video and pick cut points visually instead of typing times by hand
 ### Resizing the video pane
 
 The preview video area is **drag-resizable**. Grab the splitter bar directly beneath the player and
-drag it up or down to shrink or grow the video against the markers / output panel below — handy for
-giving the picture more room while lining up a cut, or reclaiming space for a long marker list.
+drag it up or down to trade height between the video and the timeline / waveform beneath it — handy for
+giving the picture more room while lining up a cut.
 
 ### When the preview can't play (but the cut still works)
 
@@ -297,9 +317,16 @@ The Bulk tab **remembers its own split position per layout**, independent of the
    5m / 10m / 20m**), **frame-step** (`⏴` / `⏵`, ±1 frame), **jump to start / end**, and volume /
    playback-speed controls (see [Preview & pick cuts from the player](#preview--pick-cuts-from-the-player)
    for the full control tour). Park the playhead on the exact frame where the intro ends — or where the
-   outro starts — then click **Set intro-end here** or **Set outro-start here** to drop that cut on the
-   **selected row** at the playhead. It **keyframe-snaps** exactly like any other cut, and *Set
-   outro-start here* **adds** an outro to the row if it didn't have one. The selected row wears a **gold
+   outro starts — then click **Set intro-end here** or **Set outro-start here** to drop that cut at the
+   playhead. It **keyframe-snaps** exactly like any other cut, and *Set outro-start here* **adds** an
+   outro to the row if it didn't have one. **Which rows it writes to is set by the "Apply to all ticked
+   videos" checkbox under the two buttons, which is on by default:** with it on, the previewed row's cut
+   points — its intro-end **and** its outro (or its lack of one) — are **copied to every ticked row**,
+   exactly as the row's **⧉ "all"** button does (step 5), with the outro measured from the end of each
+   file. So *Set intro-end here* also gives every ticked row the previewed row's outro, and removes theirs
+   if the previewed row has none. Untick it to set only the video you are previewing. A
+   note under the checkbox always says which it will be — *"applies to every ticked video"* or
+   *"applies to the previewed video only"* — and the choice is remembered. The selected row wears a **gold
    ring** in the list. **Only one video decodes at a time** — selecting another row hands the single
    player to it. Selecting is **instant** — the row highlights right away and the preview settles a beat
    later on whatever row you land on, so scrolling or arrowing through the list doesn't load every row you
@@ -308,6 +335,10 @@ The Bulk tab **remembers its own split position per layout**, independent of the
    - the **gold intro-end handle (`▸`)** marks where the intro ends — everything before it is dropped;
    - the optional **blue outro-start handle (`◂`)** marks where the outro begins — everything after it
      is dropped. Leave it off to **keep to the end of the file**.
+   - the row's **IN / OUT** fields show the same two cuts as times you can type over — press
+     <kbd>Enter</kbd> or click away to commit, and the time snaps like a dragged handle. With no outro,
+     OUT reads *— end —* with a **+ outro** button that adds the outro handle near the tail; with one,
+     a **✕** beside it removes the outro so the row keeps to the end again.
 
    The **kept middle glows gold** between the two handles, and hovering the bar shows a frame preview so
    you can find the exact spot by sight. Both handles **keyframe-snap** on commit, and each shows its
@@ -323,9 +354,10 @@ The Bulk tab **remembers its own split position per layout**, independent of the
    untick the whole list in one click, with the same running total the Run button shows
    (`Run bulk cut (3)`) sitting beside them. Ticking is a statement of *intent* and it sticks: tick a row
    before you have marked any cut on it and it stays ticked, joining the batch the moment it has a real
-   cut to make. Unticked rows are simply skipped by the run. **Ticked rows are also what the two "apply"
-   gestures write to** — the per-row **⧉ "all"** button (step 5) and the profile **Apply → all** (step 6)
-   both target every ticked row. Worth knowing before you reach for it: **Select all** therefore also
+   cut to make. Unticked rows are simply skipped by the run. **Ticked rows are also what the "apply"
+   gestures write to** — the per-row **⧉ "all"** button (step 5), the profile **⧉ Apply to all** (step 6),
+   and *Set intro-end here* / *Set outro-start here* while **Apply to all ticked videos** is on (step 2)
+   all target every ticked row. Worth knowing before you reach for it: **Select all** therefore also
    widens what those gestures overwrite, so if you only mean to re-cut a few rows, untick the rest first.
    (The two buttons and the row checkboxes are unavailable while a batch is running.)
 5. **Apply cut points to all (optional).** Set one row the way you want, then click the **⧉ "all"** button
@@ -338,27 +370,48 @@ The Bulk tab **remembers its own split position per layout**, independent of the
 6. **Save a cut once and reuse it — cut profiles (optional).** Once a row's intro (and optional outro)
    are set the way you want, save them as a **named profile** and reuse them on any list later — handy
    when a series always has the same-length opening titles and end card. The profile controls are grouped
-   into a bordered **"Profiles" card** — a thumbnail picker, a **Save current as…** button, a paired
-   **Apply → selected / → all** control, and **Delete**:
+   into a full-width, bordered **"Profiles" card**. Your saved profiles appear as **chips** — a small
+   picture and the name — that wrap across the width of the card; past about two rows of chips the list
+   scrolls downward. A long name is shortened on its chip. **Clicking a chip only selects it** (it gets a
+   gold border and a gold bar under the name) — nothing is applied until you press an Apply button. The
+   actions sit on their own row below the chips: **Save current as…**, the paired **⧉ Apply to selected /
+   ⧉ Apply to all** control, **📷 Use current frame**, **🖼 Thumbnail…**, **✕ Picture**, **⭳ Back up…**,
+   **⭱ Restore…**, and, last, a **✕** that deletes the selected profile:
    - **Save current as…** — with a row selected, click it, type a name, and **Save**. The profile is
      **stored in your settings and survives a restart**. Saving under a name that already exists
      **replaces** it, so you can refine a profile in place.
+   - **Hover a chip to see it properly.** Hold the cursor on a chip and, after about half a second, a
+     card opens above it with a **larger picture** (320px wide), the **full name**, and the **intro /
+     outro** the profile would apply (the outro reads *to end* when the profile has none). It stays open
+     for up to two minutes while you keep the cursor there. A profile with no picture shows the name and values only.
    - **Each profile carries a thumbnail.** When you **Save**, the app automatically uses the **frame at
-     the row's intro-end** as the profile's thumbnail, shown **beside its name in the picker** so you can
-     tell profiles apart at a glance. In the same Save box you can **Upload image…** to use your own
-     picture instead, or **Clear** to remove it (the profile then shows a plain placeholder). The
-     thumbnail is kept with your settings and **survives a restart**, and **deleting a profile removes its
-     thumbnail too**. Setting a thumbnail is best-effort — if a frame can't be captured, the profile
-     still saves, just with the placeholder.
-   - **Pick a profile** from the drop-down, then **Apply → selected** to apply it to the selected row, or
-     **Apply → all** to apply it to **every checked row at once**. The intro is applied as an absolute
+     the row's intro-end** as the profile's thumbnail, shown **on its chip** so you can tell profiles
+     apart at a glance. To change it later, select the profile's chip and use **📷 Use current frame** (the
+     frame showing in the preview becomes the picture — it needs a video in the preview, and its tooltip
+     says what is missing), **🖼 Thumbnail…** (choose an image file), or **✕ Picture** (remove it; the chip
+     then shows a plain placeholder). The thumbnail is kept with your settings and **survives a restart**,
+     and **deleting a profile removes its thumbnail too**. The automatic picture on Save is best-effort —
+     if a frame can't be captured, the profile still saves, just with the placeholder.
+   - **Thumbnail… only takes images** — PNG, JPEG, BMP, GIF, WEBP or TIFF. The app checks the file's
+     contents rather than its name, so anything that is not one of those formats (including a file picked through the dialog's *All
+     files* option) is refused in the screen's error block — *"That file is not an image, so the profile
+     thumbnail was not changed."* — and the profile keeps the picture it had. A file that was moved or
+     deleted gets *"That image could not be read…"* instead.
+   - **⭳ Back up… / ⭱ Restore…** — *Back up…* saves every profile, pictures included, to one `.json`
+     file you can keep or move to another PC (*"Exported N profile(s), M with pictures"*). *Restore…* adds
+     the profiles from such a file. If the backup holds a profile with the same name as one you already
+     have, you are asked first, and the answer defaults to **keeping yours** — only the new ones are
+     imported. A file that is not a readable backup is refused and nothing changes. The result reads
+     *"Imported N profile(s), M with pictures"*, plus *", kept K existing"* when yours were kept.
+   - **Select a profile's chip**, then **⧉ Apply to selected** to apply it to the selected row, or
+     **⧉ Apply to all** to apply it to **every checked row at once**. The intro is applied as an absolute
      time from the start, but — exactly like *apply cut points to all* — **the outro is measured from the
      end of each file**, so a set of episodes of *different lengths* still line up. Every target
      **re-snaps to its own keyframes and re-validates**; any row the profile doesn't fit (its intro
      overshoots, or its tail is longer than the whole file) is **flagged red** and counted in the note
      under the card — e.g. *"Applied to 8 row(s) · 1 now invalid (see the red rows)"* — never silently
      dropped.
-   - **Delete** removes the selected profile.
+   - The **✕** at the end of the action row removes the selected profile.
 7. **Run.** Click **Run bulk cut** (the button shows how many rows will run; if it counts fewer than you
    ticked, see [Why a ticked video isn't counted](#why-a-ticked-video-isnt-counted)). The videos are trimmed
    **one after another**, with each row's progress plus an overall bar on the **Windows taskbar and the
@@ -396,6 +449,11 @@ its name says why:
 
 A row still running its background keyframe scan is **not** excluded and shows no explanation — it is
 simply not ready yet. The Run button stays greyed until every ticked row has finished scanning.
+
+Beside the Run button, a one-line summary adds it all up before you press it — for example *"Will cut 3
+of 12 — 8 × nothing to trim yet — set an intro or outro · 1 not ticked"*, with *"N still scanning"*
+added while scans are running. It is hidden when every row will run, and turns **gold and bold** only
+when rows you ticked are being left out — rows you unticked yourself don't count as a warning.
 
 ### Replacing the originals
 

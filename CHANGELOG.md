@@ -79,24 +79,21 @@ goal; `0.1.0` is the first end-to-end, shippable cut.
   "permanent" while it is still recoverable.
 
 ### Changed
-- **The profiles bar shows your profiles instead of hiding them.** The bar was capped at a fixed width and
-  scrolled sideways, so with more than a handful of profiles most of them sat off the edge behind a
-  scrollbar — which defeats the point of showing pictures at all. The card now takes the **full width** of
-  its row and the profile chips **wrap onto new lines**. The buttons that act on a profile moved to their
-  **own row underneath**, where they get the full width too and wrap in turn instead of being squeezed by
-  whatever the bar left them.
-- **…and a long profile list still cannot push Run off the screen.** The old width cap was doing a real
-  job: keeping the header from growing. Removing it outright grows the header by 154px on a small window
-  and pushes **Run 74px off-screen**. So the cap moved rather than vanished — the chip list is bounded at
-  two rows and scrolls **downward** past that, so "too many profiles" still degrades into scrolling, just
-  on the axis where it costs nothing. A single 300-character profile name can no longer take a whole row
-  to itself either.
 - **Cut profiles are a bar you click, not a dropdown you open.** Profiles can carry a picture, and the
   old picker hid every one of them behind a closed list — so you chose by name and only saw the picture
-  afterwards. They now sit in a row you can see at a glance; click one to select it, and the
-  *Apply to selected* / *Apply to all* buttons work exactly as before. With more profiles than fit, the
-  row scrolls instead of pushing the buttons off the screen. Clicking a profile only selects it — it
-  never applies anything on its own, because applying rewrites the cut points of every ticked row.
+  afterwards. They now sit in a bar you can see at a glance; click one to select it, and the
+  *Apply to selected* / *Apply to all* buttons work exactly as before. Clicking a profile only selects
+  it — it never applies anything on its own, because applying rewrites cut points — *Apply to all* rewrites every ticked row.
+- **The profiles bar shows your profiles instead of hiding them.** The bar takes the **full width** of
+  its row and the profile chips **wrap onto new lines** instead of running off its edge — hiding them
+  would defeat the point of showing pictures at all. The buttons that act on a profile sit on their
+  **own row underneath**, where they get the full width too and wrap in turn instead of being squeezed by
+  whatever the bar left them.
+- **…and a long profile list still cannot push Run off the screen.** The bar lives in the header, and a
+  wrap with no limit grows the header by 154px on a small window and pushes **Run 74px off-screen**. So
+  the chip list is bounded at two rows and scrolls **downward** past that — "too many profiles" degrades
+  into scrolling, on the axis where it costs nothing. A single 300-character profile name can no longer
+  take a whole row to itself either.
 - **The Bulk Cut footer has room to breathe.** Eight controls and three status notes had ended up on one
   line, added a feature at a time, so the row you use to arm the irreversible options was the most
   crowded thing on the screen. The output options now get their own full-width row above the buttons,

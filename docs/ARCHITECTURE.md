@@ -21,8 +21,10 @@ exception is the **opt-in** frame-exact cut (G-042), which re-encodes roughly on
  │                                                               │
  │  MainWindow (WindowChrome dark caption + taskbar progress)     │
  │    └─ TabControl                                              │
- │        ├─ Split tab → SplitView  ⇄ SplitViewModel  (2-column) │
- │        └─ Join  tab → JoinView   ⇄ JoinViewModel   (2-column) │
+ │        ├─ Split    tab → SplitView   ⇄ SplitViewModel         │
+ │        ├─ Join     tab → JoinView    ⇄ JoinViewModel          │
+ │        └─ Bulk Cut tab → BulkCutView ⇄ BulkCutViewModel       │
+ │        (each body: OrientedSplitPanel, horizontal ⇄ vertical) │
  │                                                               │
  │  MainViewModel = composition root (wires the Core graph)       │
  │  OperationViewModel = 4-surface progress / cancel / error      │
@@ -33,8 +35,9 @@ exception is the **opt-in** frame-exact cut (G-042), which re-encodes roughly on
  └───────────────┬───────────────────────────────────────────────┘
                  │  interfaces (ISplitEngine, ISmartCutEngine,
                  │  IJoinEngine, IBulkTrimEngine, IMediaProbe,
-                 │  IThumbnailService) — and, the other way, App/Io/
-                 │  implementing Core's IOriginalDisposer seam
+                 │  IThumbnailService, IWaveformService) — and,
+                 │  the other way, App/Io/ implementing Core's
+                 │  IOriginalDisposer seam
  ┌───────────────▼───────────────────────────────────────────────┐
  │  VideoSplitJoiner.Core  (UI-free)                             │
  │                                                               │
@@ -49,6 +52,8 @@ exception is the **opt-in** frame-exact cut (G-042), which re-encodes roughly on
  │   Bulk/  BulkTrimEngine (batch loop over SplitEngine)         │
  │          BulkTrimOptions = CollisionPolicy · OutputMode       │
  │                            · CutPrecision (3 orthogonal axes) │
+ │   Waveform/  FfmpegWaveformService (timeline audio peaks)     │
+ │   Profiles/  CutProfile (plain cut-profile record)            │
  │        │          │            │              │               │
  │        └──────────┴─────────┬──┴──────────────┘               │
  │                             ▼                                 │
@@ -268,11 +273,26 @@ where the real implementation is OS-specific, implementable *outside* Core:
 
   **`MainViewModel` wires the Recycle-Bin implementation into BOTH screens** — Bulk Cut (T-144) and
   Split (T-162) — which is what keeps every "the original is gone" gesture undoable after the run ends
-  and even after the app exits. It is passed at the composition root rather than defaulted inside the
-  view models on purpose: `null` means the feature is simply unavailable, so a test that forgets to
+  and even after the app exits, unless the user has armed the auto-empty option below. It is passed at
+  the composition root rather than defaulted inside the view models on purpose: `null` means the
+  feature is simply unavailable, so a test that forgets to
   inject one can never bin real files. The cost of that choice is the mirror-image failure — forgetting
   it at the composition root leaves the feature inert in the shipped app while every test still passes,
-  which happened on T-162's first pass and is now guarded by a test that reads this file.
+  which happened on T-162's first pass and is now guarded by tests that read `MainViewModel.cs`
+  (`SplitDeleteOriginalTests`, `DeleteOriginalsTests`).
+
+  **Opt-in auto-delete, and the one gesture that is NOT undoable.** Each screen also has its own
+  persisted, default-off auto-delete — Bulk Cut's `AutoDeleteOriginals` (T-156) and Split's
+  `AutoDeleteSource` (T-163), deliberately separate settings so arming one never arms the other. Both
+  route through the same manual delete path (`DeleteOriginals` / `DeleteOriginal`) with the confirmation
+  skipped — the ticked box is the consent — so the eligibility rules below still decide what is binned;
+  Bulk runs it only after a batch in which every row finished Done (no failed or skipped rows, not
+  cancelled). Beside each sits an `AutoEmptyRecycleBin` option,
+  because binning alone frees no space. It can only be armed while auto-delete is on and after a
+  `ConfirmPermanentDeletion` prompt (the seam defaults to refusing; unticking auto-delete disarms it),
+  and it calls `ShellRecycleBin.EmptyBin` — `SHEmptyRecycleBin`, which is **not scoped to this app's
+  files**: it empties the whole bin, including files other programs put there. With it on, deletion is
+  permanent. Split only empties the bin when its source actually went into it.
 
 - **Deleting an original is asked in two different ways, on purpose.** Bulk Cut deletes one original
   per row, each against its own single output: "is this row's output on disk?". Split deletes one source
@@ -379,7 +399,9 @@ translating the planner's both-collapse `SplitException` into the distinct `NoOp
 
 ### The two view models — `BulkCutViewModel` / `BulkItemViewModel` (`App/ViewModels/`)
 
-Both are **WPF-free** (`ObservableObject` + Core/BCL types), mirroring `JoinViewModel` / `JoinItemViewModel`:
+Both are **WPF-free** (`ObservableObject` + Core/BCL types), mirroring `JoinViewModel` / `JoinItemViewModel`
+— they hold no WPF types, though `BulkCutViewModel`'s profile-thumbnail normalization reaches WPF imaging
+through `App/Io/ImageNormalizer` (T-169, *Profile thumbnails*, below):
 
 - **`BulkCutViewModel`** — the tab VM: an `ObservableCollection<BulkItemViewModel>` in add order, the
   apply-to-all gesture, **Select all / Select none** (`SetAllItemsChecked`, which writes every row's
@@ -549,6 +571,22 @@ ffmpeg/frame path:
   `IThumbnailService.GetThumbnailAsync` as the default, with `UploadThumbnail`/`ClearThumbnail` overrides —
   all **best-effort and off the save path**: the profile persists first, so a slow/failed grab or a store
   failure just leaves the placeholder and never blocks the save.
+- **Every source converges on one width; uploads are checked first (T-169 / T-170).** The auto-capture
+  and the on-screen snapshot (`SnapshotProfileThumbnailAsync`) grab at `ProfileThumbnailWidth` (320), and
+  the shared store-and-attach step passes every picture through `App/Io/ImageNormalizer.ShrinkToWidth`
+  before the store copies it — a WPF-imaging JPEG re-encode that **only shrinks** (a picture no wider than
+  that is stored as it is) and is best-effort (a failure stores the original). An upload is a file off the
+  user's disk, so `UploadThumbnail` first checks it at that trust boundary with `ImageSignature.IsImage` — a
+  leading-bytes test for PNG / JPEG / BMP / GIF / TIFF / WEBP — and refuses a non-image with a message
+  rather than storing it; frames the app itself asked ffmpeg to write are not re-checked. Each profile chip
+  carries a `ProfilePreviewCard` ToolTip that previews the picture at 320px.
+- **Profile backup — one file, pictures inline ([ADR 0021](adr/0021-profiles-survive-reinstall-via-backup-file.md)).**
+  A profile lives in Roaming `settings.json` but its picture in Local `profile-thumbs/`, so copying
+  "the settings" loses the images. `ProfileBackup` (`App/Settings/`, T-147) exports every profile to one
+  JSON file with its picture embedded as base64 (a profile whose picture cannot be read is exported without
+  it, not dropped). Import plans first — a corrupt, empty or newer-version file changes nothing — and is an
+  **upsert, never a wipe**: profiles whose names already exist are overwritten only if the user confirms
+  (`ConfirmProfileOverwrite`, which defaults to keeping them).
 - **Per-row cut-point frames reuse `IThumbnailService` behind a dedicated concurrency gate.** Each
   `BulkItemViewModel` grabs a small frame at its keyframe-**snapped** intro-end (and outro-start, when
   `HasOutro`) through the **same** shared `IThumbnailService` the hover-preview uses — no new frame path —
@@ -584,8 +622,15 @@ implementations:
   routed to `Failed`; FFME raises `PositionChanged` natively, so there is **no `DispatcherTimer`** (a
   change from the retired WPF `MediaElementPlayer`). The element's `MediaOpened` / `MediaEnded` /
   `MediaFailed` map to `DurationAvailable` / `Ended` / `Failed`. `Volume` / `IsMuted` / `SpeedRatio`
-  map straight to the FFME control's properties. It is thin WPF plumbing — **not unit-tested, only
-  compiled** — and verified live via `app-run`.
+  map straight to the FFME control's properties. **It has two open routes (T-131 / T-132):**
+  `MediaSourceUri.TryCreate` decides whether the path can be a `Uri`, and if so the element opens it as
+  one. A path that cannot (a UNC share whose server name holds a space) is opened instead through
+  `FileMediaInputStream`, an `IMediaInputStream` over a share-`ReadWrite` `FileStream` that the player
+  holds until `Unload` releases the handle; only when that stream cannot be opened either is the refusal
+  logged (`preview-open-refused`) and explained via `MediaSourceUri.ExplainRefusal`. The stream's ffmpeg
+  AVIO callbacks take raw pointers, which is why the App project sets `AllowUnsafeBlocks` — confined to
+  that one class ([ADR 0020](adr/0020-unsafe-for-ffme-input-stream.md)). It is thin WPF plumbing —
+  **not unit-tested, only compiled** — and verified live via `app-run`.
 - **`NullMediaPlayer`** — a no-op null object (shared singleton). It is the **default** player when a
   `SplitViewModel` is constructed without one, so pre-player constructions and tests keep working; it
   records nothing, plays nothing, and raises no events.
@@ -730,6 +775,9 @@ routes drop and drag events to the view-model commands that already existed.
   case-insensitive; see `VideoFileFilter.VideoExtensions` for the list, and the User Guide for the
   user-facing version), dedupe on the full path, preserve first-seen order — and `HasAnyVideo(paths)`,
   used by the `DragOver` accept check to decide whether to show the copy effect + drop highlight.
+  The three video-file pickers (one per screen) take their `OpenFileDialog` filter from
+  `VideoFileFilter.DialogFilter` (T-158), which is built from the same extension set, so the picker's
+  "Video files" filter and the drop path accept the same files.
 - **The refusal vocabulary is a second pure helper.** `DropRefusal` (T-154) partitions a raw drop into
   videos / folders / non-videos / within-drop duplicates (`Classify`) and renders one plain-language line
   from per-screen clauses (`Describe`). All three screens share it so the same event reads the same way,
@@ -830,6 +878,32 @@ captured sync context via `Progress<T>`, exactly like `OperationViewModel`'s pro
 (new load) and `Clear` (unload) sweep the previous file's cache; `MouseLeave` hides without sweeping so
 cached frames are reused on the next hover.
 
+## Timeline audio waveform (`Core/Waveform/`, `App/ViewModels/`)
+
+The Split screen draws an audio waveform band above the timeline track (T-084 / D-002). Like the hover
+thumbnails it is a **separate ffmpeg CLI pass** over the same `IFfmpegRunner` choke-point, split into a
+UI-free Core service and a WPF-free App view model.
+
+- **The source — `IWaveformService` / `FfmpegWaveformService` (`Core/Waveform/`).**
+  `GetPeaksAsync(inputPath, buckets, ct)` returns a normalized 0..1 `float[]` peak array — never a visual
+  type — or `null` on **any** failure, cancellation, or a source with no audio; it never throws. The
+  production impl extracts a mono, low-rate (default 4000 Hz) `s16le` PCM stream
+  (`-vn -ac 1 -ar … -f s16le`) to a **temp file**, not a pipe (the runner reads stdout as UTF-8 text), then takes the
+  **max-abs** sample of each contiguous bucket window. Results are cached by (path, mtime, length,
+  bucket count) in a small LRU (default 16 entries); the temp PCM lives under
+  `%LOCALAPPDATA%/VideoSplitJoiner/waveform-cache/<hash-of-input>/audio.pcm` (root injectable for tests),
+  and `Clear(inputPath)` / `ClearAll()` sweep it best-effort. `NullWaveformService` (`App/ViewModels/`)
+  is the inert default — every extraction resolves to `null` — for constructions that wire no service.
+- **The load wiring — `SplitViewModel.StartWaveformExtraction`.** `LoadAsync` starts the extraction in the
+  background beside the keyframe index, never blocking the load or the preview, requesting a fixed 1800
+  buckets that the view re-buckets to its pixel width. Each load cancels the previous extraction's CTS,
+  sweeps the outgoing file's cache, and drops any result whose CTS is no longer current, so a slow
+  extraction of an old file can never paint over the new one; `Clear` cancels it, sweeps, and resets.
+- **The state — `WaveformViewModel`.** It holds only `Peaks` plus `IsLoading` (`BeginLoad` sets it and
+  drops the prior file's peaks; the band stays collapsed until a result arrives) and `HasAudio` (`ApplyPeaks`: a non-null array draws the
+  band, `null` hides it). `TimelineView`'s code-behind draws the band on the track's
+  `time/duration · width` axis, downsampling through `TimelineMath.PeakForColumn` (*The timeline strip*, above).
+
 ## Errors (`Core/Errors/`)
 
 `FfmpegErrorMapper` turns a raw stderr tail + exit code into a `UserFacingError` (friendly category
@@ -858,15 +932,20 @@ so the UI's "Details" surface can show real FFmpeg output — a bare stderr stri
 
 ## Settings store (`App/Settings/`)
 
-`AppSettings` (behind `IAppSettings`) persists the two "remember where I was" folders —
-`LastInputDir` / `LastOutputDir` — to `%APPDATA%/VideoSplitJoiner/settings.json` via
+`AppSettings` (behind `IAppSettings`, which is the authoritative list of keys) persists the app's UI
+state — the two "remember where I was" folders (`LastInputDir` / `LastOutputDir`), the layout mode and
+the per-axis split ratios (Split/Join and Bulk Cut), the last tab, Bulk Cut's apply-cut-to-all-rows toggle,
+each screen's auto-delete and auto-empty-Recycle-Bin flags, and the cut profiles — to
+`%APPDATA%/VideoSplitJoiner/settings.json` via
 `System.Text.Json` (file path injectable for tests, mirroring `ErrorLogWriter`'s convention). Setting a
 property saves immediately via a **temp-then-rename** write so a crash mid-write can't replace a good
 file with a half-written one. It is **robust by design** — a missing file, corrupt JSON, or an
-unwritable dir all fall back to in-memory defaults and never throw. The file picker seeds its
-`InitialDirectory` from `LastInputDir`, `SplitViewModel` defaults its output directory to
-`LastOutputDir` (on construction and after a load), and both are written back when a run's input/output
-folders are chosen — so the app reopens where you left off.
+unwritable dir all fall back to in-memory defaults and never throw. The file pickers seed their
+`InitialDirectory` from `LastInputDir`, which is written back when a file is loaded or added — so the
+picker reopens where you left off. `SplitViewModel` does **not** default its output directory from
+`LastOutputDir` (T-061 / G-020): `OutputDir` stays empty until a load and is then re-anchored to the
+loaded file's folder on every load. `LastOutputDir` is still written when a Split or Join run completes,
+but nothing reads it back as a default.
 
 ## MVVM / composition-root shape
 
@@ -899,16 +978,18 @@ disagreement **visible** rather than silent — `IsExcludedDespiteBeingChecked` 
 - **`MainViewModel`** is the **composition root**. Its parameterless ctor builds the real Core graph
   once — `FfmpegBinaryLocator` → `FfprobeRunner`/`FfmpegRunner` → `MediaProbe` → `SplitEngine`
   (constructed with the app's `RecycleBinOriginalDisposer`, so a replaced original stays recoverable),
-  `JoinEngine`, plus the `FfmpegThumbnailService` (hover-frame source) and the shared `AppSettings` — and
-  shares the probe across both screens. The Bulk Cut screen is additionally handed a
+  `JoinEngine`, plus the `FfmpegThumbnailService` (hover-frame source), the `FfmpegWaveformService`
+  (audio-waveform source, handed to the Split screen) and the shared `AppSettings` — and shares the probe
+  across all three screens. The Bulk Cut screen is additionally handed a
   `new SmartCutEngine(ffmpegRunner, probe)`, which is what gives its "Exact cut" mode an engine to route
   to — without it the mode silently stays lossless. A second, DI-style ctor lets tests inject
   already-composed screen view models with fakes. It also owns the active-tab `CurrentOperation` /
   `WindowTitle` binding that drives the taskbar + title progress (G-025, above).
-- **`SplitViewModel`** / **`JoinViewModel`** are the two screens, each constructor-injected with Core
-  interfaces (so they are fully unit-testable without FFmpeg).
-- **`OperationViewModel`** is composed into both screens to give split/join a shared
-  progress + cancel + friendly-error lifecycle. It is WPF-free (marshals via `Progress<T>`), so it
+- **`SplitViewModel`** / **`JoinViewModel`** / **`BulkCutViewModel`** are the three screens (Split, Join,
+  Bulk Cut), each constructor-injected with Core interfaces (so they are fully unit-testable without FFmpeg).
+- **`OperationViewModel`** is composed into every screen to give split/join/bulk a shared
+  progress + cancel + friendly-error lifecycle (Bulk Cut holds an aggregate one plus one per row — see
+  *Aggregate-vs-per-row operation pattern*, above). It holds no dispatcher dependency (marshals via `Progress<T>`), so it
   runs off the UI thread under test. It maps engine failures (typed results *and* exceptions) into
   `UserFacingError`s. **Four mutually-exclusive lifecycle surfaces (`OperationState`, G-027).** The
   operation used to vanish silently on completion; now exactly one of four surfaces shows at a time,
@@ -960,8 +1041,11 @@ disagreement **visible** rather than silent — `IsExcludedDespiteBeingChecked` 
   both ends) — so no extra ffmpeg passes are needed. `SplitViewModel.ApplyPartProgress` marks every
   selected part before the active one Done, the active one Writing at its throttled fraction, and leaves
   later/unselected parts Pending; the active row shows a gold live-fill, completed rows a green ✓.
-- The view models themselves are **WPF-free and constructor-injected** — the WPF dependency lives
-  only in the `App` assembly's views and `App.xaml`, never in Core.
+- The view models themselves are **constructor-injected and almost WPF-free** — the WPF dependency lives
+  in the `App` assembly's views and `App.xaml`, in App-side helpers the view models call (such as
+  `App/Io/ImageNormalizer`, the WPF-imaging re-encode `BulkCutViewModel` uses for profile thumbnails),
+  and in `OperationViewModel`'s `TaskbarProgressState` (a `System.Windows.Shell.TaskbarItemProgressState`
+  for the taskbar binding), never in Core.
 - **`MainViewModel` composes the real player** by passing a `new FfmeMediaPlayer()` into
   `SplitViewModel`. The player starts unattached; `PlayerView`'s code-behind calls `Attach(Media)` on
   load to bind it to the view's FFME `MediaElement` (the one place WPF and the player meet). A
@@ -1006,14 +1090,23 @@ readable on dark; compat green/red and error affordances are preserved, dark-tun
   surface tier, a rounded `BorderStrong` thumb that turns **gold on hover/drag**) replaces the default
   light Windows scrollbar chrome app-wide.
 
-### Two-column screen layout (G-019)
+### Two-region screen layout + horizontal ⇄ vertical toggle (G-019 / G-032 / D-001)
 
-Both screens split into a **left visual column** (the preview player + timeline/scrubber) and a **right
-tool panel** (Load / Clear and everything below — file-info, cut markers, parts-to-export, output, Run),
-separated by a **draggable `GridSplitter`**. The columns are a three-column `Grid` — `* (MinWidth 320)` /
-`6` (the splitter) / `360 (MinWidth 300, MaxWidth 520)` — so the right panel defaults to 360px and drags
-within 300–520. (Inside the left column a second `GridSplitter` keeps the earlier drag-resizable video
-pane, G-006.) The sample structure — app header with the "lossless · no re-encode" tagline, a gold
+Split and Join each split into a **visual region** (Split: the preview player + timeline/scrubber; Join: the
+clip list) and a **tool panel** (Split: file-info, cut markers, parts-to-export, output, Run; Join: compat
+banner, estimated result, output, Run — the Load / Clear buttons live on the tab-header band since T-088),
+hosted as the `FirstChild` / `SecondChild` of a **`Views/OrientedSplitPanel`** — a `Grid`
+subclass that owns a themed 6px splitter between them. Its axis follows **`MainViewModel.IsVertical`**, the
+caption toggle (`ToggleLayoutCommand`) persisted as `AppSettings.LayoutMode`: horizontal puts the regions
+side by side, vertical stacks them, and the flip only rebuilds the row/column definitions and re-places the
+**same** two region instances — no duplicated markup. The split position is remembered **per axis**
+(`HorizontalSplitRatio` / `VerticalSplitRatio` on `MainViewModel`, defaults 0.7 / 0.62, shared by Split and
+Join, write-through to settings; Bulk Cut keeps its own pair, *Layout-mode-aware body*, above), clamped to
+0.05–0.95, and neither region shrinks below 80px. Inside Split's tool panel the Cut-markers and
+Parts-to-export blocks are a **nested** `OrientedSplitPanel` that starts at 50/50 (session-only ratios, not persisted; still
+draggable) on the **inverse** axis
+(stacked in horizontal mode, side by side in vertical mode; T-091). (Inside Split's visual region a second
+`GridSplitter` keeps the earlier drag-resizable video pane, G-006.) The sample structure — app header with the "lossless · no re-encode" tagline, a gold
 format badge (`HEVC · MATROSKA`), the Split file-info card (`container · duration · size`), the
 "Cut markers" / "Parts to export" headers, mono DIR / NAME output fields, and the Join "Estimated result"
 panel — is a **relayout + restyle, not a rewire**: all existing bindings/commands are preserved, and the

@@ -1,7 +1,8 @@
 # D-003 · Split Tool-Panel — Position on the Add-cut line; Cut markers + Parts 50/50 vertical
 
-> Design record (draft) — a further refinement of the Split tool-panel layout (after reviewing T-089).
-> Status: **draft** (sealed by `todo-design-done`). Board artifact: `docs/todo/D-003.md`.
+> Design record — a further refinement of the Split tool-panel layout (after reviewing T-089).
+> Status: **confirmed** (sealed 2026-07-19 via `todo-design-done`). Board artifact: `docs/todo/D-003.md`.
+> → spec: [SPEC-015](../specs/SPEC-015-app-shell-theming.md) (the 50/50 tool panel)
 
 ## 1. What changes (from the current T-089 layout)
 Two moves:

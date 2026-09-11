@@ -91,3 +91,14 @@ supported way to move or keep profiles.**
   bytes; the live store is not.
 - **Do nothing, and answer "it already survives reinstall".** True, and beside the point — it was true by
   accident, untested, and did not cover a new PC.
+
+## Update — 2026-09-11: stored pictures are not ~96px
+
+Decision 2's premise *"Thumbnails are ~96px"* no longer describes the store. T-169 raised
+`ProfileThumbnailWidth` above 96 (`src/App/ViewModels/BulkCutViewModel.cs:119-127`) and made uploads shrink to
+that width through `ImageNormalizer.ShrinkToWidth`, which never upscales and, on any failure, leaves the
+caller to store the original (`src/App/Io/ImageNormalizer.cs:18-25,34-54`). Before T-169 an upload was
+copied into the store byte-for-byte (`ImageNormalizer.cs:10-15`), so its width was never bounded at 96, and
+existing pictures keep whatever width they were saved at — nothing is migrated
+(`BulkCutViewModel.cs:124-125`, which also records a measured store size and calls the cost negligible
+either way). The inline-base64 decision itself is not revisited here; only its stated premise is corrected.

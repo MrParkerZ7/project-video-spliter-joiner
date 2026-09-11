@@ -9,8 +9,10 @@ sources:
   - src/App/Media/FfmeMediaPlayer.cs
   - src/App/Media/MediaReopenGuard.cs
   - src/App/Media/IMediaPlayer.cs
-serves-goal: [G-009, G-016, G-028, G-030, G-031]
-updated: 2026-08-22
+  - src/App/Media/MediaSourceUri.cs
+  - src/App/Media/FileMediaInputStream.cs
+serves-goal: [G-009, G-016, G-028, G-030, G-031, G-045]
+updated: 2026-09-12
 ---
 
 ## What
@@ -42,10 +44,11 @@ this transport/guard logic is unit-testable headlessly; only the thin FFME plumb
 seek-target hold (T-033); live-scrub coalesce + throttle + dead-band (T-051); click-to-point seek
 dedupe (T-075); Open/Unload state reset; volume/mute/speed; hover-thumbnail *wiring* from the player
 VM (T-078); and the `FfmeMediaPlayer`/`MediaReopenGuard` Close→Open reopen safety + supersede/timeout
-lifecycle (T-080), read through `IReopenTarget`.
-**Out:** the thumbnail *rendering/debounce/latest-wins* internals (`ThumbnailPreviewViewModel` +
-`IThumbnailService` — its own spec); the preview downscale filter + hardware-decode setup
-(`PreviewScale` / `OnMediaOpening`, T-024 — its own spec); waveform, timeline markers, split-point
+lifecycle (T-080), read through `IReopenTarget`; and how a path becomes something the player can open —
+`MediaSourceUri` and the `FileMediaInputStream` fallback (T-131/T-132, I49–I52).
+**Out:** the thumbnail *rendering/debounce/latest-wins* internals (`ThumbnailPreviewViewModel` — no
+spec yet; `IThumbnailService` — SPEC-005); the preview downscale filter + hardware-decode setup
+(`PreviewScale` / `OnMediaOpening`, T-024 — no spec yet); waveform, timeline markers, split-point
 capture, and the Split/BulkCut screens that host the player; media probing/duration derivation
 (`Core` MediaProbe specs).
 
@@ -210,25 +213,35 @@ capture, and the Split/BulkCut screens that host the player; media probing/durat
   underscored, or an IP) — and false, with no exception, for a UNC path whose server name cannot be a URI
   authority. The realistic case is a **space in the server name** (`\\Seagate NAS\...`), common on
   consumer NAS boxes; `\\host:port\...` and `\\host[1]\...` fail the same way. A blank path answers false.
-- **I50** — a refused path yields `MediaSourceUri.ExplainRefusal`, never .NET's wording. The message
+- **I50** — a refused path is **opened as a stream instead** (T-132): `FfmeMediaPlayer.TryOpenAsStream` hands
+  FFME a `FileMediaInputStream` (FFME's `Open(IMediaInputStream)` entry point, so the path never has to be a
+  `Uri`), opened share-`ReadWrite` so a preview is never the reason a cut is refused, and held so `Unload`
+  releases the file handle. Only when the `FileStream` itself cannot be opened (missing, locked, unreachable)
+  is the refusal logged and explained as `MediaSourceUri.ExplainRefusal`, never in .NET's wording. A stream
+  that opens but that FFME then cannot play fails through the ordinary `MediaFailed` path, like any other
+  file. The refusal message
   **names the share**, states that **cutting still works** (type the times into IN/OUT — the engine passes
   raw paths to ffmpeg as process arguments and never builds a `Uri`), and names the **mapped-drive-letter**
   workaround, which genuinely restores the preview. It never contains "Invalid URI" or "hostname could not
   be parsed" — replacing exactly that string is the point.
-- **I51** — the refusal is recorded: `FfmeMediaPlayer` best-effort writes the offending path through
+- **I51** — a refusal the stream fallback could not rescue is recorded: `FfmeMediaPlayer` best-effort writes the offending path through
   `ErrorLogWriter` (`preview-open-refused`) before raising the failure, and a logging failure never turns
   a handled refusal into a crash. The original defect logged nothing, which is why diagnosing it required
   reproducing the path shape from scratch.
 - **I52** — the refusal does NOT widen `CanSetCutAtPlayhead`. With no video loaded there is no playhead,
   so the set-at-playhead gestures stay correctly disabled; the fix is to explain the failure, not to
-  pretend the player is ready. *(Consequence: on such a share, cuts are placed by typing times.)*
+  pretend the player is ready. *(Consequence: when the stream fallback of I50 also fails, cuts are placed by
+  typing times.)*
 
 ## Links
 - Design: — (no D-NNN; grounded directly in the cited src, tasks T-012/T-024/T-028/T-029/T-033/T-047/T-051/T-075/T-078/T-080)
 - Goals: G-009, G-016 (scrub pop-back), G-028 (click-to-point seek), G-030 (hover thumbnail), G-031 (crash-safe reopen),
   G-045 (network shares whose name has a space; tasks T-131/T-132)
-- Related specs: SPEC (thumbnail preview — `ThumbnailPreviewViewModel`), SPEC (preview downscale/hw-decode — `PreviewScale`/T-024)
+- Related specs: SPEC-005 (the `IThumbnailService` the hover preview calls — `ThumbnailPreviewViewModel` itself has no spec yet); preview downscale/hw-decode (`PreviewScale`/T-024 — no spec yet)
 - Key code: `src/App/ViewModels/PlayerViewModel.cs`, `src/App/Media/FfmeMediaPlayer.cs`,
-  `src/App/Media/MediaReopenGuard.cs`, `src/App/Media/IMediaPlayer.cs`
+  `src/App/Media/MediaReopenGuard.cs`, `src/App/Media/IMediaPlayer.cs`, `src/App/Media/MediaSourceUri.cs`,
+  `src/App/Media/FileMediaInputStream.cs`
 - Tests: `tests/App.Tests/PlayerViewModelTests.cs`, `tests/App.Tests/MediaReopenGuardTests.cs`,
-  `tests/App.Tests/MediaSourceUriTests.cs` (I49-I52)
+  `tests/App.Tests/MediaSourceUriTests.cs` (I49, and the `ExplainRefusal` wording of I50),
+  `tests/App.Tests/FileMediaInputStreamTests.cs` (the stream adapter behind I50 — share-ReadWrite, EOF,
+  synthetic `StreamUri`)

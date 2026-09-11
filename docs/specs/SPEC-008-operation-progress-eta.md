@@ -10,7 +10,7 @@ sources:
   - src/App/ViewModels/OperationState.cs
   - src/Core/Ffmpeg/OperationStatus.cs
 serves-goal: [G-013, G-044]
-updated: 2026-08-30
+updated: 2026-09-12
 ---
 
 ## What
@@ -47,7 +47,7 @@ fallback, `Reset`, `FormatEta`).
 **Out:** the concrete per-engine stage sequences and per-part progress emitted by `SplitEngine` /
 `JoinEngine` (their own specs); `PartProgress` per-part reporting (the T-069 channel is only noted
 here as additive, not specified); `UserFacingError` mapping content and the error-log affordance
-(the error/diagnostics spec); the callers of `ReportFailure` and the wording they compose (SPEC-007 —
+(error/diagnostics — no spec yet); the callers of `ReportFailure` and the wording they compose (SPEC-007 —
 the Bulk Cut profile-thumbnail upload); the XAML bindings and converters that render these properties.
 
 ## Current behavior & invariants

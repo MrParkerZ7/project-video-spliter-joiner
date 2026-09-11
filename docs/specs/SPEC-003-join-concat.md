@@ -13,7 +13,7 @@ sources:
   - src/Core/Join/JoinArgsBuilder.cs
   - src/Core/Join/Mismatch.cs
 serves-goal: [G-001]
-updated: 2026-08-22
+updated: 2026-09-12
 ---
 
 ## What
@@ -135,6 +135,6 @@ Grounded in `JoinEngine`, `CompatChecker`, `JoinArgsBuilder`, `JoinRequest`, `Jo
 ## Links
 - Design: — (T-005 in `docs/todo/_history.md`; join UI is T-008)
 - Goals: G-001 (ship v1.0 — stream-copy, no re-render)
-- Related specs: SPEC-001/002 (split engine — sibling `-c copy` guard) · Join UI / `JoinViewModel` spec (App layer)
+- Related specs: SPEC-001/002 (split engine — sibling `-c copy` guard) · SPEC-012 (Join screen — `JoinViewModel`, App layer)
 - Key code: `src/Core/Join/JoinEngine.cs` · `CompatChecker.cs` · `JoinArgsBuilder.cs` · `JoinRequest.cs` · `JoinResult.cs` · `CompatReport.cs` · `Mismatch.cs`
 - Tests: `tests/Core.Tests/JoinEngineUnitTests.cs` · `JoinEngineIntegrationTests.cs` · `CompatCheckerUnitTests.cs` · `JoinArgsInvariantTests.cs` · `StagedStatusIntegrationTests.cs` (Join) · `tests/App.Tests/StagedStatusWiringTests.cs` (Join wiring)

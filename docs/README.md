@@ -19,11 +19,17 @@ video **losslessly** (ffmpeg stream-copy, keyframe-snapped, no re-encode). Start
 - **[specs/_index.md](specs/_index.md)** — the living-spec layer: one `SPEC-NNN` per feature, numbered invariants,
   `serves-spec:` test traceability (15 specs; the invariant count and what is measured live in
   [specs/_index.md](specs/_index.md) — a figure restated here is a figure that drifts). The source `todo-automate` derives test cases from.
+- **[specs/_GAPS.md](specs/_GAPS.md)** — the ledger of deferred spec-coverage gaps.
 - **[standards/_index.md](standards/_index.md)** — project standards (e.g. the Feature-Spec Structure standard).
 
 ## Contributing / development
 - **[DEV.md](DEV.md)** — build, run, test, and the codebase conventions (hand-rolled MVVM, TDD + Case-Coverage, ADRs).
 - **[ROADMAP.md](ROADMAP.md)** — shipped features + deferred/future work.
+
+## Licensing
+- **[../LICENSE](../LICENSE)** — the project license (MIT).
+- **[../THIRD-PARTY-NOTICES.md](../THIRD-PARTY-NOTICES.md)** — attribution and license obligations for the bundled
+  third-party components (FFmpeg, FFME, …).
 
 ## Map of the doc set
 ```
@@ -33,9 +39,9 @@ ARCHITECTURE.md      ← as-built architecture
 DEV.md               ← build / test / conventions
 GLOSSARY.md          ← domain terms
 ROADMAP.md           ← status matrix (shipped + future)
-adr/                 <- 24 ADRs + index (design decisions)
-design/              ← D-001..D-004 sealed feature designs
-specs/               ← 15 SPEC-NNN living specs + standard-conformance + _index
+adr/                 ← ADRs + index (design decisions)
+design/              ← D-001..D-004 sealed feature designs + references/
+specs/               ← SPEC-NNN living specs + _index + _GAPS (deferred gaps) + _TEMPLATE
 standards/           ← project standards + index
 ```
 
