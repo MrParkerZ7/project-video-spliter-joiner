@@ -23,8 +23,15 @@ namespace VideoSplitJoiner.App.Tests;
 /// </summary>
 public sealed class SpecIndexFreshnessTests
 {
-    /// <summary>An invariant definition line: <c>- **I42** — …</c>.</summary>
-    private static readonly Regex InvariantLine = new(@"^\s*-\s+\*\*I(\d+)\*\*", RegexOptions.Compiled);
+    /// <summary>
+    /// An invariant definition line: <c>- **I42** — …</c>, and also <c>- **I31 (view-only)** — …</c>.
+    ///
+    /// <para>The qualifier form was invisible to the original pattern, which required <c>**</c> to follow the
+    /// digits immediately. SPEC-014 writes five invariants that way, so both this guard AND the index counted
+    /// 30 against a real 35 — two wrong numbers agreeing with each other, which is exactly the failure T-166
+    /// was built to catch, one layer down where it could not see. Found by a todo-docs audit, 2026-09-11.</para>
+    /// </summary>
+    private static readonly Regex InvariantLine = new(@"^\s*-\s+\*\*I(\d+)(?:\s[^*]*)?\*\*", RegexOptions.Compiled);
 
     /// <summary>A spec row in the index table.</summary>
     private static readonly Regex IndexRow = new(

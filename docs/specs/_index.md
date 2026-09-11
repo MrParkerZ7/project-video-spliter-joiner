@@ -25,9 +25,9 @@ One spec per feature; numbered invariants are the source `todo-automate` derives
 | [SPEC-011](SPEC-011-bulk-cut-screen.md) | bulk-cut-screen | app | 155 | ? | ? |
 | [SPEC-012](SPEC-012-join-screen.md) | join-screen | app | 40 | ? | ? |
 | [SPEC-013](SPEC-013-preview-player.md) | preview-player | app | 52 | ? | ? |
-| [SPEC-014](SPEC-014-timeline.md) | timeline | app | 30 | ? | ? |
+| [SPEC-014](SPEC-014-timeline.md) | timeline | app | 35 | ? | ? |
 | [SPEC-015](SPEC-015-app-shell-theming.md) | app-shell-theming | ui | 28 | 24 | 4 |
-| **TOTAL** | | | **775** | **see note** | **see note** |
+| **TOTAL** | | | **780** | **see note** | **see note** |
 
 **Invariant counts recounted mechanically 2026-09-02** (T-153) — they had drifted **in both
 directions** and are now generated from the spec files rather than hand-incremented:
@@ -38,7 +38,7 @@ directions** and are now generated from the spec files rather than hand-incremen
   - SPEC-013: listed 48, actually 52 (+4)
   - SPEC-014: listed 35, actually 30 (-5)
 
-Total documented invariants: **775** (633 before the 09-02 recount, 680 at that recount, +21 from
+Total documented invariants: **780** (633 before the 09-02 recount, 680 at that recount, +21 from
 T-154/T-155/T-156 documented the same day, +22 on 09-04 from T-154's Split/Join half — SPEC-010 +8,
 SPEC-012 +9, SPEC-011 +5; +4 more from T-157 — SPEC-010 +3, SPEC-008 +1; +3 on 09-05 from T-160 —
 SPEC-011 I145-I147, the two-row footer; +5 from T-161 — SPEC-007 I95-I99, the scrollable profile bar; +9 from T-162 — SPEC-010 I52-I60, delete-original on Split; +7 from T-163 — SPEC-010 I61-I67, the auto layer;
@@ -49,7 +49,10 @@ SPEC-012 I38-I40, added late because T-164 closed for G-052 hours before T-158 l
 +4 from T-168 — SPEC-011 I152-I155, the full-width wrapping profiles card; SPEC-007 I95/I97/I98 and
 their heading were reworded in place, so SPEC-007 did not move for that one;
 +1 from T-170 — SPEC-007 I100, the upload refuses a file that is not an image;
-+7 from T-169 — SPEC-007 I101-I107, the hover preview card and one stored width for every source).
++7 from T-169 — SPEC-007 I101-I107, the hover preview card and one stored width for every source;
++5 found, not added, on 2026-09-11 — SPEC-014 I31-I35 had always existed but are labelled
+`**I31 (view-only)**`, a form the freshness guard's pattern could not see, so the guard and this row
+agreed on 30 while the file held 35. The pattern now accepts a qualifier inside the bold).
 
 **The headline and the TOTAL row are enforced, not maintained (T-166).**
 `TheTotalRowEqualsTheSumOfTheSpecRows` and `ThePlainEnglishHeadlineEqualsTheSameSum` check both against
