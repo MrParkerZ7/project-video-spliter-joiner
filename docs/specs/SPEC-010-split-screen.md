@@ -49,8 +49,10 @@ defaulting/re-anchoring and folder memory; `CanRunSplit`/`RunSplitAsync` request
 projection/selection are covered as the marker/segment contracts this screen depends on. Also in:
 dropped-file accounting (`AddDroppedFilesAsync`, `DropSummary` via `DropRefusal`, I41–I48); the picker
 filter derived from `VideoFileFilter` (I68–I70); the `DropDiagnostics` drop trace (I71–I72); run
-re-entrancy — a load or second Run refused while a split is in flight (I49–I51); and reclaiming the source
-after a split, by hand (`DeleteOriginal`, I52–I60) or automatically (`AutoDeleteSource`, I61–I67).
+re-entrancy — a load or second Run refused while a split is in flight (I49–I51); reclaiming the source
+after a split, by hand (`DeleteOriginal`, I52–I60) or automatically (`AutoDeleteSource`, I61–I67); and the
+per-part write state the engine's progress channel drives onto the part rows (`ApplyPartProgress` /
+`SplitSegmentViewModel.WriteState`, T-069, I73–I86).
 
 **Out:** The actual ffmpeg split (`ISplitEngine` implementation, args, segment-muxer vs per-segment
 copy) — a Core concern. `OperationViewModel` progress/ETA/cancel/error-mapping mechanics — its own
@@ -303,6 +305,67 @@ separately. The Join screen. Keyframe-snap math and `MediaProbe` internals (Core
   shows a no-entry cursor and **no drop event is delivered** — the cursor is that case's feedback. Every
   invariant above describes a drop that WAS accepted and still could not take everything in it.
 
+### The part rows show which part is being written (`ApplyPartProgress` — T-069)
+
+The engine's per-part channel (SPEC-001 I49–I64) reports the active part's ORIGINAL 1-based index and its
+local 0..1 fraction. `SplitViewModel.ApplyPartProgress` maps each sample onto the "Parts to export" rows:
+the reported row animates, the rows behind it settle, the rows ahead of it stay untouched. The row state
+lives on `SplitSegmentViewModel` as a three-value `WriteState` plus a `PartFraction`, so the list itself
+is the progress affordance rather than a second bar.
+
+- **I73** — each row carries a three-state `WriteState` (`Pending` → `Writing` → `Done`) and a 0..1
+  `PartFraction`, and **starts `Pending` at fraction 0** before any run (`SplitSegmentViewModel`
+  `_writeState` initializer; `PartRowState`).
+- **I74** — `RunSplitAsync` **resets every row to `Pending`/0 before invoking the engine**, and resets the
+  active-part and last-fraction trackers with it, so a re-run never begins with a stale `Done` or
+  half-filled `Writing` row from the previous one (`RunSplitAsync`, the pre-run `ResetProgress` loop +
+  `_activePartIndex = 0` / `_lastPartFraction = -1`). *Only the `WriteState` reset is asserted — the
+  probe engine reads `WriteState` alone; the `PartFraction` reset and the two private trackers are not.*
+- **I75** — samples reach the rows through `OperationViewModel.RunWithResultAsync`'s `onPartProgress`
+  hook, wrapped in a `System.Progress<PartProgress>` and therefore **marshalled onto the captured
+  synchronization context** — Core reports inline on the ffmpeg reader thread (SPEC-001 I64), and this is
+  the seam that puts the row mutation back on the dispatch thread. *Not asserted directly — the suite's
+  `OrderedSyncContext`/`Drain()` harness exists because the samples are posted, but no assertion observes
+  the marshalling; synchronous delivery would pass every test.*
+- **I76** — a sample is matched to its row by the part's **ORIGINAL 1-based `Index`**, never by list
+  position (`FindSegmentByIndex`), which is what makes a subset export drive the right rows — the engine
+  reports parts 1 and 3 of 3, not 1 and 2.
+- **I77** — a sample naming an index no row carries is a **silent no-op**, not a crash
+  (`ApplyPartProgress`, the `row is null` early return). *Not asserted.*
+- **I78** — the reported part becomes **`Writing` at its local fraction**, which flips `IsWriting` and
+  drives the row's live fill (`ApplyPartProgress` → `SplitSegmentViewModel.MarkWriting`). *The `Writing`
+  transition is asserted; the fraction it carries is recorded by the mid-run test but read by no
+  assertion.*
+- **I79** — advancing to a new part index **promotes every SELECTED row with a LOWER index to `Done`**.
+  ffmpeg's `time=` samples can jump clean past a short part's final boundary, so without this sweep a part
+  that finished would sit at 60% forever (`ApplyPartProgress`, the forward-transition loop).
+- **I80** — a sample at `PartFraction >= 1.0` promotes its row **straight to `Done`** with the fraction
+  pinned to 1, bypassing the throttle. This is the branch the muxer's terminal `(N, N, 1.0)` sample
+  (SPEC-001 I60) and each subset part's completion sample (I62) land on.
+- **I81** — rows **after** the active part are never touched — the sweep is bounded to `seg.Index <
+  p.PartIndex`, so a later part stays `Pending` until its own sample arrives. *Grounded in the bound
+  itself; the mid-run test asserts the earlier and active rows, not the later ones — not directly asserted.*
+- **I82** — an **unselected part stays `Pending` for the whole run**: the forward sweep skips it
+  (`seg.IsSelected` guard), the engine never reports it (SPEC-001 I61), and the post-success sweep skips
+  it too. A part that was never written must never read as written.
+- **I83** — on a **COMPLETED** run every SELECTED row is swept to `Done`, so no exported row is left
+  mid-`Writing` because the last sample undershot its part's boundary (`RunSplitAsync`, the post-run
+  success block). The engine's own terminal samples usually get there first; this is the backstop that
+  does not depend on them. *Not asserted — every test's script ends in the engine's own terminal 1.0
+  samples, and the harness drains the posted callbacks only after the run returns, so the sweep could be
+  deleted and all three run tests would still end green.*
+- **I84** — mid-write fraction updates are **throttled**: a fraction is pushed only when the row is not yet
+  `Writing` — so the first sample of a part always lands and the row starts animating at once — or when it
+  has moved at least `PartFractionEpsilon` (0.01) from the last pushed value; the tracker is reset to `-1`
+  on every part transition so a new part's first sample cannot be swallowed (`ApplyPartProgress`,
+  `PartFractionEpsilon`). *Not asserted — no test drives sub-epsilon churn.*
+- **I85** — `PartFraction` is **clamped to [0,1] on write** (`SplitSegmentViewModel.PartFraction` setter,
+  `Math.Clamp`), so an out-of-range sample cannot render an over-wide fill. *Not asserted.*
+- **I86** — changing `WriteState` also raises change notification for the derived **`IsWriting` / `IsDone`**
+  flags the row's affordance binds to (`WriteState` setter's cascading `OnPropertyChanged`) — a computed
+  property with no notification of its own is a row that silently stops updating. *The tests read the
+  flags rather than observing their notifications, so the cascade itself is not asserted.*
+
 ## Links
 - Design: — (goal-driven; see G-020 / G-022 / G-026 task threads under `docs/todo/`)
 - Goals: G-020 (output-dir defaults to file folder + resets per load) · G-022 (add-cut parity across
@@ -312,6 +375,10 @@ separately. The Join screen. Keyframe-snap math and `MediaProbe` internals (Core
 - Related specs: SPEC-004 (keyframe-snap / `MediaProbe`, Core) · SPEC-008 (`OperationViewModel`
   progress/cancel/error) · SPEC-014 (waveform band, T-084) — all adjacent, not covered here. SPEC-011 I151
   guards that `MainViewModel` passes this screen its `IOriginalDisposer` (without it I57 leaves delete inert).
+  SPEC-001 I49–I64 is the engine side of the per-part channel I73–I86 consume.
 - Key code: `src/App/ViewModels/SplitViewModel.cs` · `src/App/ViewModels/CutMarkerViewModel.cs` ·
   `src/App/ViewModels/SplitSegmentViewModel.cs` · `src/App/ViewModels/OperationViewModel.cs` ·
-  `src/App/ViewModels/PlayerViewModel.cs` · `src/Core/Split/SplitRequest.cs` + `ISplitEngine`.
+  `src/App/ViewModels/PlayerViewModel.cs` · `src/Core/Split/SplitRequest.cs` + `ISplitEngine` ·
+  `src/Core/Split/PartProgress.cs` (the `PartProgress` sample the rows are driven from).
+- Tests: per-part row state (I73–I86) — `tests/App.Tests/SplitViewModelPartProgressTests.cs`
+  (I73 · I74 · I76 · I78 · I79 · I80 · I82).

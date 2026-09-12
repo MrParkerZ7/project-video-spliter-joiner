@@ -6,12 +6,15 @@ title: Preview player (transport, seek, reopen safety)
 status: current
 sources:
   - src/App/ViewModels/PlayerViewModel.cs
+  - src/App/ViewModels/ThumbnailPreviewViewModel.cs
+  - src/App/ViewModels/NullThumbnailService.cs
   - src/App/Media/FfmeMediaPlayer.cs
   - src/App/Media/MediaReopenGuard.cs
   - src/App/Media/IMediaPlayer.cs
   - src/App/Media/MediaSourceUri.cs
   - src/App/Media/FileMediaInputStream.cs
-serves-goal: [G-009, G-016, G-028, G-030, G-031, G-045]
+  - src/App/Media/PreviewScale.cs
+serves-goal: [G-005, G-009, G-016, G-028, G-030, G-031, G-045]
 updated: 2026-09-12
 ---
 
@@ -43,12 +46,17 @@ this transport/guard logic is unit-testable headlessly; only the thin FFME plumb
 **In:** `PlayerViewModel` transport + observable state + command guards; the scrub pop-back /
 seek-target hold (T-033); live-scrub coalesce + throttle + dead-band (T-051); click-to-point seek
 dedupe (T-075); Open/Unload state reset; volume/mute/speed; hover-thumbnail *wiring* from the player
-VM (T-078); and the `FfmeMediaPlayer`/`MediaReopenGuard` Close→Open reopen safety + supersede/timeout
+VM **and the hover-preview VM itself** — debounce, latest-wins coalesce, capture width, result marshal,
+visibility, and cache sweep (`ThumbnailPreviewViewModel`, T-078, I71–I101); and the
+`FfmeMediaPlayer`/`MediaReopenGuard` Close→Open reopen safety + supersede/timeout
 lifecycle (T-080), read through `IReopenTarget`; and how a path becomes something the player can open —
-`MediaSourceUri` and the `FileMediaInputStream` fallback (T-131/T-132, I49–I52).
-**Out:** the thumbnail *rendering/debounce/latest-wins* internals (`ThumbnailPreviewViewModel` — no
-spec yet; `IThumbnailService` — SPEC-005); the preview downscale filter + hardware-decode setup
-(`PreviewScale` / `OnMediaOpening`, T-024 — no spec yet); waveform, timeline markers, split-point
+`MediaSourceUri` and the `FileMediaInputStream` fallback (T-131/T-132, I49–I52); and the preview
+**downscale + hardware-decode setup** applied at open time — the pure size math and the FFME
+`MediaOptions` hook that installs it (`PreviewScale` / `FfmeMediaPlayer.OnMediaOpening`, T-024, I53–I70).
+**Out:** the Core frame extraction the hover preview calls (`IThumbnailService` /
+`FfmpegThumbnailService` — SPEC-005); the WPF plumbing that feeds the preview VM (`PlayerView.xaml.cs`
+cursor-X→time mapping + popup placement; `BulkRowScrubView`'s own preview instance); FFME's own
+rendering/stretch behavior and the ffmpeg `scale` filter's internals; waveform, timeline markers, split-point
 capture, and the Split/BulkCut screens that host the player; media probing/duration derivation
 (`Core` MediaProbe specs).
 
@@ -233,15 +241,232 @@ capture, and the Split/BulkCut screens that host the player; media probing/durat
   pretend the player is ready. *(Consequence: when the stream fallback of I50 also fails, cuts are placed by
   typing times.)*
 
+### Preview downscale + hardware decode (T-024 — G-005; `PreviewScale` + `FfmeMediaPlayer.OnMediaOpening`)
+The preview's decode/render resolution is capped so a 4K source cannot saturate the WPF UI thread.
+`PreviewScale` is pure geometry (no I/O, no FFME types) and is unit-tested headlessly; its call site
+`FfmeMediaPlayer.OnMediaOpening` is WPF/FFME-bound and — like the rest of that class — is **not**
+unit-tested (it only has to compile; behavior verified live via `app-run`), so every call-site
+invariant below is marked *(not asserted)*.
+
+- **I53** — the preview target height never exceeds the cap: for a source taller than
+  `maxPreviewHeight`, `ComputeTarget` returns exactly `maxPreviewHeight` (even-rounded) as the height —
+  except the ≥2 floor of I59 at a cap below 2 — 3840×2160 @1080 → 1920×1080, @720 → 1280×720
+  (`PreviewScale.ComputeTarget`, downscale branch).
+- **I54** — the production cap is 1080: `FfmeMediaPlayer` passes its private const
+  `MaxPreviewHeight = 1080` on every open, so a 4K source is previewed at ~1080p
+  (`FfmeMediaPlayer.MaxPreviewHeight`, `OnMediaOpening`). *(not asserted — no test constructs `FfmeMediaPlayer`.)*
+- **I55** — aspect ratio is preserved on downscale: width = `Round(sourceWidth × maxPreviewHeight /
+  sourceHeight)`, then even-rounded — 4096×2160 @1080 → 2048×1080 (DCI 4K), 2560×1440 @1080 → 1920×1080
+  (`ComputeTarget` scale factor).
+- **I56** — never upscale: a source whose height is at or below the cap is previewed at its own
+  resolution, even-rounded down (I57), and is never enlarged — 1280×720 @1080 → 1280×720; exactly at the
+  cap, 1920×1080 @1080 → unchanged (`ComputeTarget` `sourceHeight <= maxPreviewHeight` branch).
+- **I57** — both returned dimensions are even, rounded **down** on an odd value
+  (`MakeEven(v) => v - v % 2`), because the yuv420p pixel format most H.264/HEVC sources use requires an
+  even width and height (an odd dimension makes the ffmpeg `scale` filter fail). This holds on both
+  **scaling** branches (the non-positive guard of I60 returns verbatim), and applies to the cap itself
+  (a cap of 1081 yields height 1080) — 1921×1081 @1080 → both even; 1281×721 @1080 → 1280×720
+  (`ComputeTarget` + `MakeEven`). *(the odd-cap clause is not asserted — every cap in the suite is even.)*
+- **I58** — even-rounding alone can trigger a filter: an **under-cap** odd source computes to a strictly
+  smaller even target, so `ShouldDownscale` is true and `BuildScaleFilter` emits a 1-px scale
+  (1281×721 @1080 → `scale=1280:720`). "Never upscale" bounds the target; it does not promise "no filter"
+  (`ShouldDownscale` compares the even target against the raw source). *(not asserted — the tests cover
+  `ComputeTarget(1281, 721, 1080)` but not `ShouldDownscale`/`BuildScaleFilter` on that input.)*
+- **I59** — the downscale branch floors each dimension at 2, so rounding can never yield a 0-sized
+  target (`ComputeTarget` `if (targetWidth < 2) targetWidth = 2;`, same for height). *(not asserted; the
+  floor exists only on the downscale branch — an under-cap source with a 1-px dimension even-rounds to 0,
+  a shape no real video has.)*
+- **I60** — unknown/garbage dimensions are returned verbatim and never scaled: if `sourceWidth`,
+  `sourceHeight` **or** `maxPreviewHeight` is non-positive, `ComputeTarget` returns
+  `(sourceWidth, sourceHeight)` unchanged — no even-rounding, no clamp, no throw (`ComputeTarget` guard).
+- **I61** — `ShouldDownscale` is true iff the computed target is strictly smaller than the source in
+  either dimension: true for 3840×2160 @1080, false for 1280×720 @1080 (under cap) and 1920×1080 @1080
+  (at cap) (`PreviewScale.ShouldDownscale`).
+- **I62** — `ShouldDownscale` is false for any non-positive input (e.g. 0×0 @1080) (`ShouldDownscale`
+  guard — it returns before consulting `ComputeTarget`, but that short-circuit is behaviourally
+  indistinguishable: `ComputeTarget` returns the source verbatim on the same inputs, so no test can
+  separate the two).
+- **I63** — `BuildScaleFilter` emits exactly `scale=<width>:<height>` from the `ComputeTarget`
+  dimensions — `scale=1920:1080` at a 1080 cap, `scale=1280:720` at a 720 cap
+  (`PreviewScale.BuildScaleFilter`).
+- **I64** — `BuildScaleFilter` returns `null` whenever `ShouldDownscale` is false (source under the cap
+  **with even dimensions**, at the cap, or dimensions unknown — an odd under-cap source is the I58
+  exception), and the caller then installs **no** filter at all, letting FFME decode natively
+  (`BuildScaleFilter` early return; `OnMediaOpening` `if (filter is not null)`). *(the `null` return is
+  asserted; the caller-side half is not.)*
+- **I65** — the filter is installed only when a video stream was probed **and** `e.Options.VideoFilter`
+  is still blank, so the hook never overwrites a filter already set; the dimensions fed to
+  `BuildScaleFilter` are the probed stream's `PixelWidth`/`PixelHeight`
+  (`FfmeMediaPlayer.OnMediaOpening`, step 2). *(not asserted.)*
+- **I66** — the video stream is the first probed stream whose `CodecTypeName` equals `"video"`
+  (ordinal, case-insensitive), or `null` when there is none; an audio-only input therefore gets neither
+  hardware-decode setup nor a scale filter, since both steps are conditioned on it
+  (`FfmeMediaPlayer.FindVideoStream`). *(not asserted.)*
+- **I67** — hardware decoding is opt-in from the probe: `e.Options.VideoHardwareDevices` is set to the
+  probed stream's `HardwareDevices` array only when that list is non-empty; an absent or empty list is
+  left untouched, i.e. software decode (`FfmeMediaPlayer.OnMediaOpening`, step 1). *(not asserted.)*
+- **I68** — the two steps are independently best-effort: hardware setup and filter build sit in separate
+  `try`/`catch (Exception)` blocks that write to `Debug` and swallow, so a HW-init failure still lets the
+  downscale filter apply (and vice versa) and neither can fail the open
+  (`FfmeMediaPlayer.OnMediaOpening`). *(not asserted — T-024's "HW unavailable → SW + downscale fallback"
+  criterion was verified live via `app-run`.)*
+- **I69** — the hook is bound to exactly the attached element: `Attach` subscribes
+  `MediaOpening += OnMediaOpening` and `Detach` unsubscribes it before a swap, so a replaced element is
+  never configured twice (`FfmeMediaPlayer.Attach`/`Detach`). *(not asserted.)*
+- **I70** — the downscale is preview-only and can never change a produced file: `PreviewScale`'s output
+  reaches nothing but FFME's `MediaOptions.VideoFilter` (`OnMediaOpening` is its only call site in
+  `src/`), and the split/join command lines are pure stream-copy — `-vf` is in
+  `SplitArgsBuilder.ForbiddenEncoderTokens` / `JoinArgsBuilder.ForbiddenEncoderTokens` and the engine
+  asserts `SatisfiesCopyInvariant` on every command before launching, so the cut always runs at the
+  source's full resolution. *(the only-call-site half is a static fact, not asserted; the copy-invariant
+  half is SPEC-001 I20/I22 + SPEC-003 I21/I23, asserted by
+  `tests/Core.Tests/SplitArgsInvariantTests.cs:34-39,54-59,74-79` and `JoinArgsInvariantTests.cs:28-33`.)*
+
+### Hover-thumbnail preview VM (T-078 — G-030; `ThumbnailPreviewViewModel`)
+The internals behind I39's wiring. `ThumbnailPreviewViewModel` is WPF-free: the view feeds it hover
+samples (`PlayerView.xaml.cs` `OnScrubMouseMove`; `BulkRowScrubView` builds its own instance) and it
+debounces + coalesces them, calls the Core `IThumbnailService` (SPEC-005) off the UI thread, and exposes
+only primitives the popup binds — `HoverThumbnailPath` (a temp **jpg path**, never an image object),
+`HoverTimeText`, `HasThumbnail`, `IsThumbnailVisible`, `HoverOffsetX`. `InFlightGrab` is an internal
+await-seam for tests (T-137); no production code reads it.
+
+- **I71** — `UpdateHover(time, offsetX)` sets `HoverTime` (re-raising `HoverTimeText`) and `HoverOffsetX`
+  **before** any file/grab check, so the label and popup placement follow the cursor with no file loaded
+  and before any frame resolves (`UpdateHover`, first two statements). *(the values are asserted, with and
+  without a loaded file; the `HoverTimeText` re-raise is not — no test subscribes to `PropertyChanged`.)*
+- **I72** — with no input path set, `UpdateHover` returns after updating the label and never calls the
+  service (`UpdateHover` `if (_inputPath is null) return;`).
+- **I73** — `HoverTimeText` is zero-padded `mm:ss` in invariant culture under one hour — 65 s → `01:05`
+  (`FormatClock`). *(the `mm:ss` shape is asserted; the invariant-culture pinning is not — the suite runs
+  in one culture.)*
+- **I74** — at or past one hour `HoverTimeText` is `h:mm:ss` (unpadded hours), and a negative time is
+  formatted as its magnitude (`FormatClock`, `t.Negate()`). *(not asserted.)*
+- **I75** — every request waits the debounce window **before** touching the service: `GrabAsync` awaits
+  `_delay(_debounce, ct)` and only then calls `IThumbnailService.GetThumbnailAsync`, so a hover superseded
+  inside the window never reaches ffmpeg — three hovers inside one window produce exactly **one** service
+  call (`GrabAsync`).
+- **I76** — the production debounce is `DefaultDebounce` = **60 ms** and the production wait is
+  `Task.Delay`; the testable ctor's `debounce` + `delay` parameters are the only seam that changes either
+  (`ThumbnailPreviewViewModel(IThumbnailService)` → `: this(thumbnails, DefaultDebounce, (d, ct) =>
+  Task.Delay(d, ct))`). *(the 60 ms value itself is not asserted — the suite constructs with its own 60 ms
+  and a gated delay.)*
+- **I77** — a non-positive `debounce` argument falls back to `DefaultDebounce`
+  (`_debounce = debounce > TimeSpan.Zero ? debounce : DefaultDebounce`). *(not asserted.)*
+- **I78** — the constructor rejects a null `thumbnails` or a null `delay` with `ArgumentNullException`
+  (ctor guards). *(not asserted.)*
+- **I79** — the grab is fire-and-forget: `UpdateHover` starts `GrabAsync` without awaiting it
+  (`_inFlight = GrabAsync(...)`), so a hover sample never blocks its caller and a second hover can arrive
+  while the first is still parked in the debounce window (`UpdateHover`).
+- **I80** — cancel-prior: each `UpdateHover` on a loaded file cancels the previous request's
+  `CancellationTokenSource` before creating its own, so at most one request is live and the superseded
+  one's debounce wait faults instead of proceeding to a grab (`UpdateHover` → `CancelInFlight`; the new
+  CTS stored in `_requestCts`).
+- **I81** — latest-wins by request id: every request is stamped `id = ++_requestId` and `ApplyResult`
+  commits only when `result.Id == _requestId`, so a superseded grab that completed anyway can never
+  clobber a newer result (`UpdateHover`; `ApplyResult` `result.Id != _requestId`). *(the id check is the
+  belt to I80's braces and is not directly asserted — the suite's superseded requests are cancelled inside
+  the debounce window, so they never produce a result to drop.)*
+- **I82** — after N rapid hovers the committed frame is the **last** hovered time's (10 s / 40 s / 80 s →
+  `frame-80.jpg`) (`ApplyResult` under I80 + I81).
+- **I83** — every grab requests a capture width of `ThumbnailWidth` = **160** px (`GrabAsync` →
+  `GetThumbnailAsync(inputPath, time, ThumbnailWidth, ct)`), the same 160 the popup box is fixed at
+  (`PlayerView.xaml` `StackPanel Width="160"`, `PlayerView.xaml.cs` `HoverPopupWidth`). *(not asserted —
+  the fake service records the requested time and token, not the width.)*
+- **I84** — the hovered time is handed to the service **unrounded**; a settled hover at t commits the path
+  the service returned for exactly that t, and any bucketing is the Core service's (SPEC-005 I3)
+  (`GrabAsync` passes `time` through). *(the pass-through is asserted; the **unrounded** clause is not —
+  every hover time in the suite is a whole second, so a 1 s floor inside the VM would pass too.)*
+- **I85** — the resolved path is committed through `IProgress<PathResult>` — a `Progress<PathResult>`
+  built in the ctor, so it posts to the `SynchronizationContext` captured **at construction** (the WPF
+  dispatcher in the app), never on the grab's continuation thread (`_postResult`; both awaits are
+  `ConfigureAwait(false)`). *(not asserted — the `PumpContext` harness accommodates the post but asserts
+  nothing about it: `Settle` awaits `InFlightGrab` before draining and `PumpSettled` discards the drained
+  count, so committing the path directly from `GrabAsync` would pass every test.)*
+- **I86** — a request whose token was cancelled while the service call was in flight returns **without
+  reporting**, so it cannot even reach `ApplyResult` (`GrabAsync`
+  `if (cts.Token.IsCancellationRequested) return;`). *(not asserted — the suite's cancellations trip the
+  debounce wait first.)*
+- **I87** — a result arriving after the cursor left is dropped: `ApplyResult` returns without committing
+  when `_isHovering` is false, so a late frame can never re-show the popup (`ApplyResult` `|| !_isHovering`).
+  *(not asserted — `ResultAfterLeave_IsDropped` leaves BEFORE releasing the debounce gate, so
+  `MouseLeave`'s `CancelInFlight` faults the wait and no result is ever produced to drop; the
+  `!_isHovering` branch is unreached, exactly like I81/I86. It is the belt to I95's cancel: removing
+  both would break that test, removing either alone breaks nothing.)*
+- **I88** — a failed or absent frame shows nothing: a `null`/empty path from the service leaves
+  `HoverThumbnailPath` null rather than a stale image (`ApplyResult`
+  `string.IsNullOrEmpty(result.Path) ? null : result.Path`). *(the `null` case is asserted; the
+  empty-string case is not — the fake only ever returns `null`.)*
+- **I89** — `HasThumbnail` is derived from the path (`!string.IsNullOrEmpty(HoverThumbnailPath)`) and is
+  re-raised on every path change, so the popup's image box appears only when a frame exists
+  (`HoverThumbnailPath` setter → `OnPropertyChanged(nameof(HasThumbnail))`). *(the derived value is
+  asserted; the re-raise is not — no test subscribes to `PropertyChanged`.)*
+- **I90** — best-effort: `GrabAsync` swallows `OperationCanceledException` **and** every other exception,
+  so a throwing service never faults the fire-and-forget task and never leaves a stuck popup — the
+  displayed frame simply does not change (`GrabAsync` catch + catch-all). *(not asserted — the fake
+  service never throws.)*
+- **I91** — CTS bookkeeping never crosses requests: `GrabAsync`'s `finally` retires `_requestCts` only
+  when it is still reference-equal to its own CTS (an older grab's teardown never drops a newer hover's
+  CTS), and `CancelInFlight` swallows `ObjectDisposedException` from an already-retired one
+  (`GrabAsync` finally `ReferenceEquals`; `CancelInFlight` catch). *(not asserted.)*
+- **I92** — `IsThumbnailVisible` (the popup's `IsOpen`) is computed: true iff the cursor is over the bar
+  **and** an input path is set **and** a duration greater than `TimeSpan.Zero` is known
+  (`IsThumbnailVisible` getter). *(the duration-must-exceed-zero clause is not asserted; the
+  null-duration clause is.)*
+- **I93** — `SetDuration(d)` records the now-known duration and re-raises `IsThumbnailVisible` without
+  touching the input path, the hover state, or any in-flight grab, so a popup suppressed only for want of
+  a duration becomes showable when the player learns it (`SetDuration`). *(the recorded duration is
+  asserted — `IsThumbnailVisible` flips true afterwards, which also shows the input path survived; the
+  `PropertyChanged` re-raise and the untouched hover state / in-flight grab are not.)*
+- **I94** — a hover sample on a loaded file also shows the popup (`UpdateHover` sets
+  `IsThumbnailVisible = true`), so `MouseEnter` is not a precondition for the preview appearing.
+  *(not asserted.)*
+- **I95** — `MouseLeave()` hides the popup, cancels any in-flight grab, and clears `HoverThumbnailPath`
+  (`MouseLeave`). *(the hide + frame-drop are asserted; the in-flight cancel is not —
+  `MouseLeave_HidesPopupAndDropsFrame` settles the grab before leaving, and `ResultAfterLeave_IsDropped`
+  passes on either this cancel or I87's `_isHovering` check.)*
+- **I96** — `MouseLeave()` does **not** sweep the service cache — it makes no `IThumbnailService.Clear`
+  call — so frames already extracted for the still-loaded file are reused on the next hover (`MouseLeave`
+  has no `SweepPrevious`). *(not asserted.)*
+- **I97** — `SetInput(path, duration)` sweeps the **outgoing** file's temp frames first and only then
+  adopts the new input (`SetInput` → `SweepPrevious()` → `IThumbnailService.Clear(previous)`, before
+  `_inputPath` is reassigned), so a new load never leaks the previous file's cache; a first `SetInput`
+  (no previous input) sweeps nothing. *(the sweep of the outgoing file is asserted; the first-`SetInput`
+  clause is not — the test asserts `Contain`, never a sweep count.)*
+- **I98** — `SetInput` also resets the hover surface: any in-flight grab is cancelled,
+  `HoverThumbnailPath` is cleared, and the popup is hidden (`SetInput` → `CancelInFlight`,
+  `HoverThumbnailPath = null`, `IsThumbnailVisible = false`). *(not asserted — only the I97 sweep is.)*
+- **I99** — a null/whitespace `inputPath` given to `SetInput` stores **no** input
+  (`string.IsNullOrWhiteSpace(inputPath) ? null : inputPath`), so later hovers fall into I72's no-grab
+  path. *(not asserted.)*
+- **I100** — `Clear()` sweeps the **current** input's temp frames, drops the input and duration, cancels
+  any in-flight grab, clears the frame, and hides the popup (`Clear`). *(the sweep, the frame-clear and
+  the hide are asserted; dropping the input/duration and cancelling an in-flight grab are not. Reached
+  from the player by `Unload` — I39.)*
+- **I101** — with no `IThumbnailService` supplied, `PlayerViewModel` gives its `Thumbnail` the inert
+  `NullThumbnailService.Instance`, whose grabs resolve to `null` and whose clears do nothing — the hover
+  machinery stays live-but-empty instead of needing null checks inside the preview VM (`PlayerViewModel`
+  ctor `thumbnails ?? NullThumbnailService.Instance`; `NullThumbnailService`). *(not asserted.)*
+
 ## Links
 - Design: — (no D-NNN; grounded directly in the cited src, tasks T-012/T-024/T-028/T-029/T-033/T-047/T-051/T-075/T-078/T-080)
-- Goals: G-009, G-016 (scrub pop-back), G-028 (click-to-point seek), G-030 (hover thumbnail), G-031 (crash-safe reopen),
+- Goals: G-005 (smooth 4K preview — the downscale/HW-decode of I53–I70), G-009, G-016 (scrub pop-back),
+  G-028 (click-to-point seek), G-030 (hover thumbnail), G-031 (crash-safe reopen),
   G-045 (network shares whose name has a space; tasks T-131/T-132)
-- Related specs: SPEC-005 (the `IThumbnailService` the hover preview calls — `ThumbnailPreviewViewModel` itself has no spec yet); preview downscale/hw-decode (`PreviewScale`/T-024 — no spec yet)
-- Key code: `src/App/ViewModels/PlayerViewModel.cs`, `src/App/Media/FfmeMediaPlayer.cs`,
+- Related specs: SPEC-005 (the `IThumbnailService` the hover preview calls — the calling
+  `ThumbnailPreviewViewModel` is specified here, I71–I101); the preview downscale/hw-decode
+  (`PreviewScale` / `OnMediaOpening`, T-024) is specified **here**, I53–I70; SPEC-001 (I20/I22) and
+  SPEC-003 (I21/I23) own the stream-copy invariant I70 leans on — the copy rule lives there, not here
+- Key code: `src/App/ViewModels/PlayerViewModel.cs`, `src/App/ViewModels/ThumbnailPreviewViewModel.cs`,
+  `src/App/ViewModels/NullThumbnailService.cs`, `src/App/Media/FfmeMediaPlayer.cs`,
   `src/App/Media/MediaReopenGuard.cs`, `src/App/Media/IMediaPlayer.cs`, `src/App/Media/MediaSourceUri.cs`,
-  `src/App/Media/FileMediaInputStream.cs`
+  `src/App/Media/FileMediaInputStream.cs`, `src/App/Media/PreviewScale.cs`
 - Tests: `tests/App.Tests/PlayerViewModelTests.cs`, `tests/App.Tests/MediaReopenGuardTests.cs`,
   `tests/App.Tests/MediaSourceUriTests.cs` (I49, and the `ExplainRefusal` wording of I50),
   `tests/App.Tests/FileMediaInputStreamTests.cs` (the stream adapter behind I50 — share-ReadWrite, EOF,
-  synthetic `StreamUri`)
+  synthetic `StreamUri`),
+  `tests/App.Tests/ThumbnailPreviewViewModelTests.cs` (the hover preview VM — I71–I73, I75, I79–I82, I84,
+  I88, I89, I92, I93, I95, I97, I100, several of them partially — see each row's inline marker; over a
+  fake `IThumbnailService`, a gated debounce seam and a pumpable `SynchronizationContext`),
+  `tests/App.Tests/PreviewScaleTests.cs` (the pure downscale geometry — I53, I55–I57, I60–I64; the
+  call-site invariants I54, I65–I69 are WPF/FFME-bound and have no test, and I58/I59 are documented
+  edges the suite does not reach)

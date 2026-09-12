@@ -15,6 +15,7 @@ sources:
   - src/Core/Split/SmartCutEngine.cs
   - src/Core/Split/SmartCutPlanner.cs
   - src/Core/Split/SmartCutArgsBuilder.cs
+  - src/Core/Split/PartProgress.cs
 serves-goal: [G-001, G-005, G-042]
 updated: 2026-09-12
 ---
@@ -43,11 +44,15 @@ snap rules), the segment-muxer vs per-segment extraction routing, `SplitArgsBuil
 and the copy invariant (`SatisfiesCopyInvariant` / `ForbiddenEncoderTokens`), segment selection
 (`SelectedSegmentIndices`), overwrite refusal, disk pre-flight, temp-then-move cancel-safety, request-shape
 validation, ffmpeg-failure mapping, output naming, and the `SplitResult` / `SplitSegment` contract; and the
-separate frame-exact engine (`SmartCutPlanner` / `SmartCutArgsBuilder` / `SmartCutEngine`, T-124, I40–I48).
+separate frame-exact engine (`SmartCutPlanner` / `SmartCutArgsBuilder` / `SmartCutEngine`, T-124, I40–I48);
+and the per-part export-progress channel — the pure `PartMapping.PartAt` time→part function and both
+extraction paths' `PartProgress` emission (T-069, I49–I64).
 **Out:** Keyframe probing / snapping internals (`IMediaProbe.SnapToNearestKeyframe`, `GetKeyframesAsync`,
 `AverageGop` — cited but owned by the probe spec); the ffmpeg runner and error-mapper internals
-(`IFfmpegRunner`, `FfmpegErrorMapper`); per-part / staged progress reporting (T-044 / T-069) except where it
-gates extraction routing; the bulk-trim orchestrator and `KeptSegmentSelector` (D-004, its own spec — it
+(`IFfmpegRunner`, `FfmpegErrorMapper`); staged `OperationStatus` progress reporting (T-044) except where it
+gates extraction routing; the App-side mapping of per-part samples onto the "Parts to export" rows
+(`SplitViewModel.ApplyPartProgress` / `SplitSegmentViewModel.WriteState` — SPEC-010); the bulk-trim
+orchestrator and `KeptSegmentSelector` (D-004, its own spec — it
 merely reuses this engine); the join engine. Also out: the **replace-the-original swap**
 `MoveTempSegmentsIntoPlace` performs when a planned destination IS the input. That guarantee — replace
 atomically behind a `.vsj-original` backup, rename-aside with restore-on-failure where the volume cannot,
@@ -153,13 +158,79 @@ It is specified in SPEC-002 I40–I44, with the frame-exact caller at I56–I60 
   `{index:000}` (pad width = zero-count); a blank/whitespace pattern falls back to
   `DefaultNamingPattern` (`{name}_part{index:00}{ext}`).
 
+### Per-part export progress — `PartProgress` / `PartMapping` / `SplitEngine` (T-069)
+
+Alongside the overall `IProgress<double>` bar and the staged `IProgress<OperationStatus>` channel, the
+engine reports *which part is being written and how far into it* through an optional
+`IProgress<PartProgress>`. `PartProgress(PartIndex, PartCount, PartFraction)` is a readonly record
+struct. Both extraction paths feed it, from different sources: the per-segment subset path reports it
+naturally (one ffmpeg run == one part), while the single-pass segment muxer **derives** it from the one
+monotonic overall fraction it already parses, via the pure `PartMapping.PartAt` — so the fast path stays
+one ffmpeg pass.
+
+- **I49** — `partProgress` is optional (parameter default `null`) and purely additive: omitting it leaves
+  the overall `progress` and staged `status` channels' behaviour unchanged, and the split itself
+  identical (`ISplitEngine.SplitAsync` / `SplitEngine.SplitAsync` signature; every non-T-069 engine test
+  calls the method without it).
+- **I50** — Every emitted sample identifies its part by its **ORIGINAL 1-based index in the full plan**
+  and reports `PartCount` as the **full plan's** part count (`plan.Segments.Count`) — on BOTH paths. A
+  subset export is never renumbered to `1..M` (`SplitEngine.SplitAsync` passes `plan.Segments.Count` as
+  `planPartCount`; `ExtractSelectedPerSegment` uses `sel.OneBasedIndex`).
+- **I51** — `PartMapping.PartAt(time, boundaries, duration)` maps an absolute time onto the **half-open**
+  parts `[0,c1), [c1,c2), …, [cN,duration)` — `boundaries.Count + 1` of them — returning the containing
+  part's 1-based index and the fraction **local to that part's own span**, not a whole-file fraction
+  (`PartAt` walk + `Fraction`).
+- **I52** — A time exactly ON a boundary belongs to the **LATER** part, at fraction `0` (the boundary is
+  the next part's start; `time < end` comparison in the walk).
+- **I53** — With zero boundaries there is exactly one part `[0,duration)` and every in-range time maps to
+  index `1` (`partCount = boundaries.Count + 1`).
+- **I54** — A time at or below zero clamps to `(1, 0.0)` — the first part, not yet started
+  (`time <= TimeSpan.Zero` guard).
+- **I55** — A time at or beyond `duration` (when `duration > 0`) clamps to `(partCount, 1.0)` — the last
+  part, fully done (`time >= duration` guard).
+- **I56** — `PartFraction` is always finite and within `[0,1]`: `Fraction` clamps both ends and returns
+  `1.0` for a non-positive span rather than dividing by zero, so coincident boundaries (a zero-length
+  part, which `SplitPlanner` I4/I6 already prevent) cannot produce `NaN`/`Infinity` (`PartMapping.Fraction`).
+  *The non-positive-span branch itself is only reachable through a `duration <= 0`, which `SplitPlanner`
+  I12 rejects upstream — not asserted.*
+- **I57** — `PartAt` rejects a null `boundaries` list with `ArgumentNullException`
+  (`ArgumentNullException.ThrowIfNull`). *Not asserted.*
+- **I58** — Turning per-part progress on does **not** cost an extra pass: the muxer path stays a **single**
+  ffmpeg run and derives each sample from the overall fraction it already receives —
+  `time = fraction × duration`, then `PartMapping.PartAt` (`ExtractAllViaSegmentMuxer`, the
+  `SyncProgress<double>` wrapper). Nothing is re-extracted or re-probed.
+- **I59** — That wrapper forwards each fraction **verbatim** to the overall `progress` channel before
+  deriving the part sample, so the overall bar reads the same with per-part reporting on or off
+  (`progress?.Report(fraction)` precedes the derivation). *Not asserted — the T-069 engine test passes
+  `progress: null`.*
+- **I60** — After the muxer run succeeds the engine emits a final `PartProgress(partCount, partCount, 1.0)`,
+  so the last part is marked done even when ffmpeg's last `time=` sample stopped short of the final
+  boundary (`ExtractAllViaSegmentMuxer`, the post-`ThrowIfFailed` report).
+- **I61** — On the per-segment subset path there is exactly **one ffmpeg run per SELECTED part**, each
+  run's local fraction is reported as that part's `PartFraction`, and an **unselected part never appears
+  in the sample stream at all** (`ExtractSelectedPerSegment` loop; unselected parts are not in `selected`).
+- **I62** — Each selected part is followed by an explicit `PartProgress(index, planPartCount, 1.0)` once its
+  run succeeds, so a part reads as done even if its runner never reported a fraction reaching 1
+  (`ExtractSelectedPerSegment`, the post-`ThrowIfFailed` report).
+- **I63** — When BOTH `progress` and `partProgress` are null the engine hands the runner a **null**
+  reporter rather than allocating a wrapper, so a progressless run pays no per-line derivation cost (the
+  `progress is null && partProgress is null` ternary on both paths). *Not asserted.*
+- **I64** — Core reports per-part samples **synchronously and in order**, inline on the thread that parsed
+  the ffmpeg `time=` line (`SyncProgress<T>`, deliberately not `System.Progress<T>` — Core has no
+  synchronization context to marshal to; UI-thread affinity is the App's job, SPEC-010 I75). *Not asserted
+  directly, but the muxer test's `samples[^1]` assertion depends on the ordering.*
+
 ## Links
 - Design: — (no D-NNN for the v1.0 core; goal G-001) · related D-004 (bulk cut reuses this engine via `KeptSegmentSelector`)
 - Goals: G-001 (ship v1.0 stream-copy splitter) · G-005 (fast 4K split — copy is resolution-independent)
 - Related specs: SPEC-002 (bulk-trim-engine) — reuses this engine's per-segment path; SPEC-003 (join-concat) — sibling copy operation
 - Key code: `src/Core/Split/SplitEngine.cs` · `SplitArgsBuilder.cs` · `SplitPlan.cs` (`SplitPlanner`) ·
-  `SplitRequest.cs` · `SplitResult.cs` · `SplitSegment.cs` · `SplitException.cs` · frame-exact:
+  `SplitRequest.cs` · `SplitResult.cs` · `SplitSegment.cs` · `SplitException.cs` · per-part progress:
+  `PartProgress.cs` (`PartProgress`, `PartMapping`) · frame-exact:
   `SmartCutEngine.cs` · `SmartCutPlanner.cs` · `SmartCutArgsBuilder.cs`
+- Tests: per-part progress (I49–I64) — `tests/Core.Tests/PartMappingTests.cs` (the pure mapping,
+  I51–I56) · `tests/Core.Tests/SplitEnginePartProgressTests.cs` (both paths' emission, I50 · I58 · I60 ·
+  I61 · I62)
 
 ## Frame-exact ("smart") cutting — SmartCutEngine (T-124, epic G-042)
 

@@ -23,7 +23,7 @@ Every split is a lossless `-c copy` cut, so a cut can only land cleanly on a **k
 
 ## Scope
 **In:** `MediaProbe.ProbeAsync` (duration/streams/container parsing + failure typing); `GetKeyframesAsync` (two-path scan, cache keyed by path+mtime+length, T-093 in-flight dedup + cancellation-safety + success-only caching); `IsKeyframeFlag` parsing; `SnapToNearestKeyframe` → `KeyframeSnap`; `AverageGop`; the `ProbeResult` / `MediaInfo` / `StreamInfo` / `KeyframeSnap` shapes these produce.
-**Out:** the `IFfprobeRunner` process execution + `FfprobeException` mapping itself (T-002 — no spec yet); how `SplitEngine` / view-models consume snapped times (Split spec); the JOIN-compatibility stream comparison that reuses `StreamInfo`; waveform extraction (its own service); ffmpeg binary location.
+**Out:** the `IFfprobeRunner` process execution + `FfprobeException` mapping itself (T-002 — SPEC-017); how `SplitEngine` / view-models consume snapped times (Split spec); the JOIN-compatibility stream comparison that reuses `StreamInfo`; waveform extraction (its own service); ffmpeg binary location.
 
 ## Current behavior & invariants
 
@@ -70,6 +70,6 @@ Every split is a lossless `-c copy` cut, so a cut can only land cleanly on a **k
 ## Links
 - Design: ADR-0009 (two-path keyframe scan — packets primary, decode fallback, cache); ADR-0002 (typed error model)
 - Goals: G-008 (fast video load — non-blocking + faster keyframe indexing); T-031 (packet-flag scan); T-093 (in-flight dedup + reuse load-time keyframes)
-- Related specs: SPEC-001 (SplitEngine keyframe-snapped `-c copy` cuts) · Ffprobe runner (T-002, `IFfprobeRunner`/`FfprobeException` — no spec yet)
+- Related specs: SPEC-001 (SplitEngine keyframe-snapped `-c copy` cuts) · Ffprobe runner ([SPEC-017](SPEC-017-ffmpeg-process.md), `IFfprobeRunner`/`FfprobeException`)
 - Key code: `src/Core/Media/MediaProbe.cs` · `KeyframeSnap.cs` · `ProbeResult.cs` · `MediaInfo.cs` · `StreamInfo.cs` · `FfprobeJson.cs`
 - Tests: `tests/Core.Tests/MediaProbeSnapTests.cs` · `MediaProbeKeyframePacketTests.cs` · `MediaProbeInFlightDedupTests.cs` · `MediaProbeIntegrationTests.cs`

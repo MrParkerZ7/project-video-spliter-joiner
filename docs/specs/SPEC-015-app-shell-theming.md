@@ -59,8 +59,9 @@ tooltip, splitter, caption buttons, HeroButton); the global crash handlers in `A
 specs); `OperationViewModel` progress/ETA/taskbar-state semantics (its own spec — this spec only covers
 that the shell *routes* `CurrentOperation` to it); `AppSettings` file persistence mechanics (its own
 spec — this spec covers only the VM-side write-through/seed of layout state); ffmpeg preview init
-(`InitializeFfmpegForPreview` — no spec yet); `ErrorLogWriter`'s ffmpeg-failure
-`TryWrite`/`BuildLogBody` path (error reporting — no spec yet; this spec covers only the crash path).
+(`InitializeFfmpegForPreview` — no spec yet; the ffmpeg process layer it initialises is SPEC-017); `ErrorLogWriter`'s ffmpeg-failure
+`TryWrite`/`BuildLogBody` path (error reporting — [SPEC-016](SPEC-016-error-reporting.md) I32-I45; this
+spec covers only the crash path).
 
 ## Current behavior & invariants
 
@@ -169,5 +170,5 @@ spec — this spec covers only the VM-side write-through/seed of layout state); 
 ## Links
 - Design: D-001 (layout axis) · D-003 / D-004 (50/50 tool panel + Bulk tab)
 - Goals: G-023 (themed border) · G-027 (themed scrollbar) · G-029 (vector caption icons) · G-031 (global crash handlers) · G-032 (vertical layout) · G-035 (50/50 tool panel)
-- Related specs: SPEC-010 (Split screen) · SPEC-012 (Join screen) · SPEC-011 (Bulk Cut screen — its I151 guards the `IOriginalDisposer` wiring in `MainViewModel`) · SPEC-008 (OperationViewModel progress/ETA/taskbar) · SPEC-009 (AppSettings persistence) · error reporting / `ErrorLogWriter` ffmpeg path (no spec yet)
+- Related specs: SPEC-010 (Split screen) · SPEC-012 (Join screen) · SPEC-011 (Bulk Cut screen — its I151 guards the `IOriginalDisposer` wiring in `MainViewModel`) · SPEC-008 (OperationViewModel progress/ETA/taskbar) · SPEC-009 (AppSettings persistence) · [SPEC-016](SPEC-016-error-reporting.md) (error reporting / the `ErrorLogWriter` ffmpeg path)
 - Key code: `src/App/ViewModels/MainViewModel.cs` · `src/App/Views/MainWindow.xaml(.cs)` · `src/App/ViewModels/WindowChromeMath.cs` · `src/App/ViewModels/CrashReport.cs` · `src/App/Views/OrientedSplitPanel.cs` · `src/App/Views/Converters.cs` · `src/App/Views/WindowStateConverters.cs` · `src/App/Themes/Tokens.xaml` · `src/App/Themes/Controls.xaml` · `src/App/App.xaml.cs` · `src/Core/Errors/ErrorLogWriter.cs`
