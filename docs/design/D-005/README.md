@@ -1,6 +1,9 @@
 # D-005 — Apply a cut before the snap
 
-> Status: **draft** (opened 2026-09-13 via `todo-design`; stays draft until `todo-design-done`) · refines
+> → spec: [SPEC-007](../../specs/SPEC-007-cut-profiles.md) · [SPEC-011](../../specs/SPEC-011-bulk-cut-screen.md)
+> (amended at build — this folder stays historical intent; the specs are the maintained contract)
+>
+> Status: **confirmed** (opened 2026-09-13 via `todo-design`; sealed the same day via `todo-design-done`) · refines
 > [D-004](../D-004/README.md) · amends [SPEC-007](../../specs/SPEC-007-cut-profiles.md) ·
 > [SPEC-011](../../specs/SPEC-011-bulk-cut-screen.md) · sequence:
 > [`./apply-before-snap-sequence.drawio`](./apply-before-snap-sequence.drawio)
@@ -281,9 +284,12 @@ The fake probe already parks scans — `probe.GatedPaths.Add(path)` … `probe.R
 | `PendingHandle_GrabsNoFrame_ScanLandingGrabsOnce` | drop the `IsSnapPending` gate in `OnHandleChanged` |
 | the existing `IsValidCut` suite, unchanged | a `CutBoundsHold` extract that drifts from the old formula |
 
-## Open decisions (draft — resolve or carry at `todo-design-done`)
+## Open decisions — none (resolved at seal, 2026-09-13)
 
-| # | Fork | Recommended | Alternative |
+All three were resolved to their recommended defaults when the user ran `todo-design-done`, having been told the
+defaults would apply unless they said otherwise.
+
+| # | Fork | Resolved | Rejected alternative |
 |---|---|---|---|
 | OQ1 | Report scanning and not-loaded rows in the apply line | **Yes — the R4 wording** | keep `Applied to N row(s).` and let the row chips speak |
 | OQ2 | Frame grabs while a handle is pending | **Defer to the one grab at scan end (R5)** | keep grabbing twice (today's drag behaviour) |

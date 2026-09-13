@@ -783,7 +783,7 @@ SPEC-007); the shared `IThumbnailService`/`FfmpegThumbnailService` frame source 
   vocabulary and the pluralisation, not one fixed sentence.
 
 ## Links
-- Design: D-004 (Bulk Cut screen)
+- Design: D-004 (Bulk Cut screen) · D-005 (apply a cut before the snap — apply-to-all and the set-at-playhead fan-out reach rows still scanning; amends I21/I22/I76 at build)
 - Goals: G-036 (batch trim), G-037 (shared preview + set-at-playhead + reusable cut profiles), G-038 (profile
   thumbnails + per-row cut-point frame previews — feature task T-108 for the per-row thumbnails here), G-039
   (Bulk Cut polish — layout-mode-aware body T-112, profiles-card regroup T-113, apply-to-all re-activation T-111),
