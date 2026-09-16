@@ -15,8 +15,8 @@ sources:
   - src/App/ImageSignature.cs
   - src/App/Io/ImageNormalizer.cs
   - src/App/Views/BulkCutView.xaml
-serves-goal: [G-037, G-038, G-044, G-051, G-053, G-054]
-updated: 2026-09-12
+serves-goal: [G-037, G-038, G-044, G-051, G-053, G-054, G-057]
+updated: 2026-09-16
 ---
 
 ## What
@@ -72,14 +72,14 @@ Also in (T-161/T-168/T-169/T-170): the `ProfileBar` chip picker in `BulkCutView.
 - **I19** — when there are no saved profiles, the `cutProfiles` key is **omitted entirely** from the written JSON (the DTO field is set to `null`, not an empty array, so `JsonIgnoreCondition.WhenWritingNull` drops it) — an older/empty file stays byte-clean.
 
 ### Apply / build (`src/App/ViewModels/CutProfileApplier.cs`)
-- **I20** — `ApplyProfile` sets each ready target's intro-end to `profile.IntroFromStart` **clamped to `[0, Duration]`** (absolute time-from-start), assigned through the `Requested` setter so the row re-snaps to its own keyframes.
+- **I20** — `ApplyProfile` sets the intro-end of each target with a probed `Duration` (`CanTakeCut` — a target whose keyframe scan is still running included, T-173) to `profile.IntroFromStart` **clamped to `[0, Duration]`** (absolute time-from-start), assigned through the `Requested` setter so the row re-snaps to its own keyframes — at once, or when its scan lands.
 - **I21** — when the profile carries an `OutroFromEnd` tail, `ApplyProfile` sets the outro at `Duration − tail` (clamped, measured **FROM END**), so a fixed tail lands at the correct absolute position on episodes of different lengths (e.g. tail 10 → 50 on a 60s file, → 90 on a 100s file).
 - **I22** — applying an outro-bearing profile to a row that currently has no outro **adds** an outro at the from-end position (`AddOutro` path).
 - **I23** — applying a profile whose `OutroFromEnd` is `null` **clears** the target's existing outro (`ClearOutro`), so the kept span runs to EOF, mirroring the profile's no-outro shape.
-- **I24** — a row the applied cut invalidates (intro overshoots, tail longer than the file) is still **counted as applied** (`AppliedCount`) and collected into `ApplyToAllReport.InvalidatedRows` — applied-to and flagged, **never silently dropped**.
-- **I25** — rows that are not keyframes-ready or have no probed `Duration` are **skipped** and not counted as applied (the `continue` guard); ready rows in the same batch are still applied.
+- **I24** — a row the applied cut invalidates (intro overshoots, tail longer than the file) is still **counted as applied** (`AppliedCount`) and collected into `ApplyToAllReport.InvalidatedRows` — applied-to and flagged, **never silently dropped**. For a target still scanning keyframes that verdict is given only when no snap can rescue the cut (I108), and the row is also counted in `InvalidStillScanningCount`; any other scanning target is not invalid and goes to `PendingSnapRows`.
+- **I25** — rows with no probed `Duration` (not probed yet, or the probe failed) are **skipped**: untouched, not counted as applied, and counted in `ApplyToAllReport.SkippedNotLoadedCount` (the `!CanTakeCut` guard). A row still scanning keyframes is **not** skipped (T-173): it is applied, and its handles stay snap-pending until the scan lands.
 - **I26** — `ApplyProfile(null profile, …)` and `ApplyProfile(profile, null targets)` each throw `ArgumentNullException`.
-- **I27** — `ApplyProfile` returns an `ApplyToAllReport` whose `AppliedCount` equals the number of ready rows applied and whose `InvalidatedRows` lists exactly those applied rows left invalid (empty when all cuts stay valid).
+- **I27** — `ApplyProfile` returns an `ApplyToAllReport` whose `AppliedCount` equals the number of targets with a probed `Duration` applied; whose `InvalidatedRows` lists exactly the applied rows classified invalid by I108 (empty when every cut stays valid), `InvalidStillScanningCount` of them still scanning; whose `PendingSnapRows` lists the applied rows waiting for their scan, disjoint from `InvalidatedRows`; and whose `SkippedNotLoadedCount` counts the targets without a `Duration`.
 - **I28** — `BuildProfileFromRow(name, row)` captures the inverse of apply: `IntroFromStart` = the row's requested intro-end, and `OutroFromEnd` = `Duration − requested outro-start` when the row has an outro (and a known duration).
 - **I29** — `BuildProfileFromRow` on a row **without an outro** produces a profile whose `OutroFromEnd` is `null` (a keep-to-EOF profile).
 - **I30** — `BuildProfileFromRow(name, null)` throws `ArgumentNullException`.
@@ -301,9 +301,21 @@ Also in (T-161/T-168/T-169/T-170): the `ProfileBar` chip picker in `BulkCutView.
   `Visibility="Hidden"` at rest and the border thickness is constant, so moving the selection changes no
   measurement and the row cannot twitch.
 
+### Applying to rows still scanning keyframes (T-173, 2026-09-16)
+- **I108** — **one classification, shared by every copy path.** `ApplyOutcome` classifies each applied target for
+  both `ApplyProfile` and `BulkCutViewModel.ApplyToAll` (and through it the set-at-playhead fan-out). A target whose
+  keyframe scan has landed is invalid iff `!IsValidCut`, exactly as before. A target **still scanning** is invalid
+  only when `IsCutHopelessBeforeSnap`: both ends are handles and the requested outro is at or before the intro — a
+  verdict no nearest-keyframe snap (exact ties go to the earlier keyframe), no failed-scan identity snap and no
+  precision flip can reverse — and it is then also counted in `InvalidStillScanningCount`. Every other scanning
+  target goes to `PendingSnapRows`, including a sub-second span a snap may still widen and a no-outro intro at or
+  past `Duration`, whose upper bound does not snap while the intro does. Judging a scanning row against the 1 s
+  `MinKeptSpan` floor instead (the D-005 draft) would call rescuable rows invalid (`ApplyOutcome.Applied`,
+  `BulkItemViewModel.IsCutHopelessBeforeSnap`).
+
 ## Links
-- Design: D-005 (apply a cut before the snap — a row still scanning keyframes takes a profile cut; amends I25/I27 and adds an outcome-classification invariant at build) · ADR-0021 (profiles survive reinstall by not being touched; portability via a backup file rather than a two-root migration) - (feature tasks T-096 apply-to-all convention · T-102 model/persistence/apply · T-103 VM command glue · T-106 thumbnail model/store · T-107 thumbnail UI glue · T-129 upload-failure reporting - T-147 backup/restore + installer guarantee)
-- Goals: G-037, G-038 (profile thumbnails), G-051 (profiles you can keep), G-044 (thumbnail change works — and says so when it does not)
+- Design: D-005 (apply a cut before the snap — built by T-173: I20/I24/I25/I27 amended, I108 added) · ADR-0021 (profiles survive reinstall by not being touched; portability via a backup file rather than a two-root migration) - (feature tasks T-096 apply-to-all convention · T-102 model/persistence/apply · T-103 VM command glue · T-106 thumbnail model/store · T-107 thumbnail UI glue · T-129 upload-failure reporting - T-147 backup/restore + installer guarantee)
+- Goals: G-037, G-038 (profile thumbnails), G-051 (profiles you can keep), G-044 (thumbnail change works — and says so when it does not), G-057 (apply a cut to rows still scanning — T-173)
 - Related specs: SPEC-008 (operation-progress-eta — owns `OperationViewModel`, incl. the additive `ReportFailure` this spec's upload path calls); SPEC-011 (bulk-cut-screen — the T-103 non-thumbnail profile commands + the T-108 per-row cut-point thumbnails); the keyframe-snap / cut-validity spec — both adjacent, out of scope here
 - Key code: `src/Core/Profiles/CutProfile.cs` (`ThumbnailPath`) · `src/App/Settings/AppSettings.cs` (`CutProfiles`/`SaveProfile`/`DeleteProfile` cascade + `SettingsDto`/`CutProfileDto`) · `src/App/Settings/ProfileThumbnailStore.cs` (`Save`/`RenameExistingAside`/`RestoreAsides`/`Delete`/`DeleteByPath`/`DefaultRoot`/`SafeFileName`) · `src/App/ViewModels/CutProfileApplier.cs` · `src/App/ViewModels/BulkCutViewModel.cs` (`SaveProfileWithAutoThumbnailAsync`/`UploadThumbnail`/`ClearThumbnail`/`AttachThumbnail`/`TryAttachThumbnail`/`ReportThumbnailUploadFailure`/`ClearThumbnailUploadError`/`ThumbnailAttachOutcome`) · `src/App/ViewModels/OperationViewModel.cs` (`ReportFailure` — the reporting seam) · `src/App/Views/BulkCutView.xaml.cs` (`OnUploadThumbnailClicked`, `ChooseProfileExportPath`/`ChooseProfileImportPath`/`ConfirmProfileOverwrite`) - `src/App/Settings/ProfileBackup.cs` (`Export`/`Plan`/`Apply`/`ImportPlan`) - `packaging/VideoSplitJoiner.iss` (the absence asserted by I79)
-- Tests: `tests/Core.Tests/CutProfileTests.cs` · `tests/App.Tests/CutProfilePersistenceTests.cs` · `tests/App.Tests/CutProfileApplierTests.cs` · `tests/App.Tests/ProfileThumbnailStoreTests.cs` (store + `DeleteProfile` cascade, T-106; the copy-then-swap durability guarantee — I73) · `tests/App.Tests/BulkCutProfileThumbnailTests.cs` (auto-default/upload/clear, T-107; upload-failure reporting, T-129) (and app-layer `tests/App.Tests/BulkCutProfileCommandsTests.cs`) - `tests/App.Tests/ProfileBackupTests.cs` (the file format + the destructive cases, T-147) - `tests/App.Tests/BulkCutProfileBackupCommandsTests.cs` (the VM gestures + the default-keep collision contract) - `tests/App.Tests/InstallerLeavesUserDataTests.cs` (I79)
+- Tests: `tests/App.Tests/ApplyDuringScanTests.cs` (T-173 — applying while a row still scans: I20, I24, I25, I27, I108) · `tests/Core.Tests/CutProfileTests.cs` · `tests/App.Tests/CutProfilePersistenceTests.cs` · `tests/App.Tests/CutProfileApplierTests.cs` · `tests/App.Tests/ProfileThumbnailStoreTests.cs` (store + `DeleteProfile` cascade, T-106; the copy-then-swap durability guarantee — I73) · `tests/App.Tests/BulkCutProfileThumbnailTests.cs` (auto-default/upload/clear, T-107; upload-failure reporting, T-129) (and app-layer `tests/App.Tests/BulkCutProfileCommandsTests.cs`) - `tests/App.Tests/ProfileBackupTests.cs` (the file format + the destructive cases, T-147) - `tests/App.Tests/BulkCutProfileBackupCommandsTests.cs` (the VM gestures + the default-keep collision contract) - `tests/App.Tests/InstallerLeavesUserDataTests.cs` (I79)

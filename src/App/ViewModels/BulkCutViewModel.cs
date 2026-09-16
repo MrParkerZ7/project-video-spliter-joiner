@@ -50,12 +50,27 @@ public enum BulkBatchState
 }
 
 /// <summary>
-/// The outcome of an <c>Apply cut points → all</c> gesture (D-004 matrix #17): how many rows the copy
-/// was applied to and which of those it <b>invalidated</b> (reported, never silently dropped).
+/// The outcome of one apply gesture — ⧉ apply-to-all, a profile apply, or the set-at-playhead fan-out (D-004
+/// matrix #17, T-173): how many rows the cut was written to, which of those it <b>invalidated</b> (reported, never
+/// silently dropped), which are still waiting for their keyframe scan, and how many in-scope targets were skipped
+/// because they have no duration yet. A snapshot of the click (D-005 OQ3) — never re-read from the rows later.
+/// Built only by <see cref="ApplyOutcome"/>.
 /// </summary>
-/// <param name="AppliedCount">Number of target rows the source's cut points were copied to.</param>
-/// <param name="InvalidatedRows">The subset whose copied cut no longer produces a valid trim.</param>
-public sealed record ApplyToAllReport(int AppliedCount, IReadOnlyList<BulkItemViewModel> InvalidatedRows);
+/// <param name="AppliedCount">Number of target rows the cut was written to.</param>
+/// <param name="InvalidatedRows">The applied rows whose cut cannot produce a valid trim: a ready row judged by
+/// <see cref="BulkItemViewModel.IsValidCut"/>, a row still scanning only when no snap can rescue it
+/// (<see cref="BulkItemViewModel.IsCutHopelessBeforeSnap"/>).</param>
+/// <param name="InvalidStillScanningCount">How many of <paramref name="InvalidatedRows"/> were still scanning at the
+/// click, so are not red yet.</param>
+/// <param name="PendingSnapRows">Applied rows still scanning whose verdict waits for the scan.</param>
+/// <param name="SkippedNotLoadedCount">In-scope targets with no duration yet (not probed, or the probe failed), left
+/// untouched. Unticked rows are out of scope, never counted here.</param>
+public sealed record ApplyToAllReport(
+    int AppliedCount,
+    IReadOnlyList<BulkItemViewModel> InvalidatedRows,
+    int InvalidStillScanningCount,
+    IReadOnlyList<BulkItemViewModel> PendingSnapRows,
+    int SkippedNotLoadedCount);
 
 /// <summary>
 /// Why a profile-thumbnail attach attempt ended the way it did (T-107 store-and-attach, T-129 reporting).
@@ -529,24 +544,49 @@ public sealed class BulkCutViewModel : ObservableObject
     }
 
     /// <summary>
-    /// A compact, human note for the most recent apply (T-097's apply-to-all + T-103's profile apply): how
-    /// many rows the cut was applied to and how many that left invalid (the invalidated rows ALSO keep their
-    /// own per-row red <c>invalid</c> state chip — this is the aggregate line). Null ⇒ nothing to show.
+    /// A compact, human note for the most recent apply (T-097's apply-to-all, T-103's profile apply, T-133's
+    /// set-at-playhead fan-out): how many rows the cut was written to, then — each only when non-zero, in this
+    /// order — how many it left invalid and red, how many are certain to be invalid but still scanning, how many are
+    /// waiting for their scan, and how many in-scope targets were skipped because they have not loaded (T-173).
+    /// The counts are the report's snapshot of the click (D-005 OQ3), never re-read from the rows, which keep their
+    /// own state chips. Null ⇒ nothing to show.
     /// </summary>
-    public string? ApplyReportSummary
-    {
-        get
-        {
-            if (_applyToAllReport is not { } r)
-            {
-                return null;
-            }
+    public string? ApplyReportSummary => _applyToAllReport is { } r ? FormatApplySummary(r) : null;
 
-            var invalid = r.InvalidatedRows.Count;
-            return invalid == 0
-                ? string.Create(CultureInfo.InvariantCulture, $"Applied to {r.AppliedCount} row(s).")
-                : string.Create(CultureInfo.InvariantCulture, $"Applied to {r.AppliedCount} row(s) · {invalid} now invalid (see the red rows).");
+    /// <summary>The apply line for <paramref name="report"/> — see <see cref="ApplyReportSummary"/> (T-173).</summary>
+    internal static string FormatApplySummary(ApplyToAllReport report)
+    {
+        var parts = new List<string>
+        {
+            string.Create(CultureInfo.InvariantCulture, $"Applied to {report.AppliedCount} row(s)"),
+        };
+
+        // Only a row that was ready at the click is red. A row still scanning reads `loading…` until its scan
+        // lands, so "(see the red rows)" would send the user looking for rows that are not red yet.
+        var stillScanning = report.InvalidStillScanningCount;
+        var red = report.InvalidatedRows.Count - stillScanning;
+        if (red > 0)
+        {
+            parts.Add(string.Create(CultureInfo.InvariantCulture, $"{red} now invalid (see the red rows)"));
         }
+
+        if (stillScanning > 0)
+        {
+            parts.Add(string.Create(CultureInfo.InvariantCulture, $"{stillScanning} invalid (red when their scan finishes)"));
+        }
+
+        // "waiting", not "will snap": under Exact cut nothing snaps, but the run waits for the scan in both precisions.
+        if (report.PendingSnapRows.Count > 0)
+        {
+            parts.Add(string.Create(CultureInfo.InvariantCulture, $"{report.PendingSnapRows.Count} waiting for their scan"));
+        }
+
+        if (report.SkippedNotLoadedCount > 0)
+        {
+            parts.Add(string.Create(CultureInfo.InvariantCulture, $"{report.SkippedNotLoadedCount} not loaded, skipped"));
+        }
+
+        return string.Join(" · ", parts) + ".";
     }
 
     /// <summary>The failed rows from the last run — the subset the UI offers to retry (T-097 renders "Retry failed (N)").</summary>
@@ -1478,32 +1518,42 @@ public sealed class BulkCutViewModel : ObservableObject
     }
 
     /// <summary>
-    /// Copy <paramref name="source"/>'s <b>requested</b> cut points to every other checked, keyframes-ready
-    /// row: the intro-end absolute (time-from-start), the outro <b>from END</b> (<c>Duration − outroStart</c>)
-    /// so uneven-length episodes align (D-004 open-decision 1). Each target re-snaps (setting
-    /// <c>Requested</c>) and re-validates against ITS OWN keyframes/duration; rows the copy invalidated are
-    /// <b>reported</b> in <see cref="ApplyToAllReport"/> — never silently dropped (matrix #17). No-op if the
-    /// source itself is not ready.
+    /// Copy <paramref name="source"/>'s <b>requested</b> cut points to every other checked row whose duration is
+    /// known (<see cref="BulkItemViewModel.CanTakeCut"/> — its keyframe scan may still be running, T-173): the
+    /// intro-end absolute (time-from-start), the outro <b>from END</b> (<c>Duration − outroStart</c>) so
+    /// uneven-length episodes align (D-004 open-decision 1). Each target re-snaps (setting <c>Requested</c>) against
+    /// its own keyframes — at once, or when its scan lands — and is classified by <see cref="ApplyOutcome"/>: invalid
+    /// rows are <b>reported</b>, never silently dropped (matrix #17); rows still scanning are reported as waiting;
+    /// checked rows with no duration are counted as skipped. No-op (null, no report) if the source itself has no
+    /// duration yet.
     /// </summary>
     public ApplyToAllReport? ApplyToAll(BulkItemViewModel? source)
     {
-        if (source is null || !source.KeyframesReady || source.Duration is not { } sourceDuration)
+        if (source is null || !source.CanTakeCut)
         {
             return null;
         }
 
+        var sourceDuration = source.Duration.GetValueOrDefault(); // CanTakeCut guarantees a value
         var introReq = source.IntroEnd.Requested;
         TimeSpan? tail = source.HasOutro ? sourceDuration - source.OutroStart!.Requested : (TimeSpan?)null;
 
-        var applied = 0;
-        var invalidated = new List<BulkItemViewModel>();
+        var outcome = new ApplyOutcome();
 
         foreach (var target in Items)
         {
-            if (ReferenceEquals(target, source) || !target.IsCheckedByUser || !target.KeyframesReady || target.Duration is not { } targetDuration)
+            if (ReferenceEquals(target, source) || !target.IsCheckedByUser)
             {
+                continue; // the source itself, and rows the user has not ticked, are out of scope — never "skipped"
+            }
+
+            if (!target.CanTakeCut)
+            {
+                outcome.SkipNotLoaded(); // no duration to measure the cut against yet (not probed, or the probe failed)
                 continue;
             }
+
+            var targetDuration = target.Duration.GetValueOrDefault();
 
             target.IntroEnd.Requested = introReq; // re-snaps against the target's own keyframes
 
@@ -1524,15 +1574,10 @@ public sealed class BulkCutViewModel : ObservableObject
                 target.ClearOutro(); // mirror the source's no-outro shape
             }
 
-            applied++;
-
-            if (!target.IsValidCut)
-            {
-                invalidated.Add(target);
-            }
+            outcome.Applied(target);
         }
 
-        var report = new ApplyToAllReport(applied, invalidated);
+        var report = outcome.ToReport();
         ApplyToAllReport = report;
         RaiseRunState();
         return report;

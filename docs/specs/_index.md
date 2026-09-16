@@ -18,18 +18,18 @@ One spec per feature; numbered invariants are the source `todo-automate` derives
 | [SPEC-004](SPEC-004-media-probe.md) | media-probe | core | 32 | 32 | 0 | Media probe — duration, keyframes, snapping |
 | [SPEC-005](SPEC-005-thumbnail-service.md) | thumbnail-service | core | 25 | 25 | 0 | Thumbnail service |
 | [SPEC-006](SPEC-006-waveform-service.md) | waveform-service | core | 23 | 23 | 0 | Audio waveform service |
-| [SPEC-007](SPEC-007-cut-profiles.md) | cut-profiles | core | 107 | ? | ? | Cut profiles — model, persistence, apply |
+| [SPEC-007](SPEC-007-cut-profiles.md) | cut-profiles | core | 108 | ? | ? | Cut profiles — model, persistence, apply |
 | [SPEC-008](SPEC-008-operation-progress-eta.md) | operation-progress-eta | app | 45 | ? | ? | Operation progress, status & ETA |
 | [SPEC-009](SPEC-009-app-settings.md) | app-settings | app | 28 | ? | ? | App settings persistence |
 | [SPEC-010](SPEC-010-split-screen.md) | split-screen | app | 86 | ? | ? | Split screen (markers, segments, output) |
-| [SPEC-011](SPEC-011-bulk-cut-screen.md) | bulk-cut-screen | app | 155 | ? | ? | Bulk Cut screen (batch trim UI) |
+| [SPEC-011](SPEC-011-bulk-cut-screen.md) | bulk-cut-screen | app | 157 | ? | ? | Bulk Cut screen (batch trim UI) |
 | [SPEC-012](SPEC-012-join-screen.md) | join-screen | app | 40 | ? | ? | Join screen |
 | [SPEC-013](SPEC-013-preview-player.md) | preview-player | app | 101 | ? | ? | Preview player (transport, seek, reopen safety) |
 | [SPEC-014](SPEC-014-timeline.md) | timeline | app | 53 | ? | ? | Timeline strip (playhead, markers, waveform) |
 | [SPEC-015](SPEC-015-app-shell-theming.md) | app-shell-theming | ui | 28 | 24 | 4 | App shell — window chrome, layout modes, theming, crash safety |
 | [SPEC-016](SPEC-016-error-reporting.md) | error-reporting | core | 53 | ? | ? | Error reporting — classification, copyable text, per-run log |
 | [SPEC-017](SPEC-017-ffmpeg-process.md) | ffmpeg-process | core | 54 | ? | ? | ffmpeg / ffprobe process layer |
-| **TOTAL** | | | **984** | **see note** | **see note** | |
+| **TOTAL** | | | **987** | **see note** | **see note** | |
 
 **Invariant counts recounted mechanically 2026-09-02** (T-153) — they had drifted **in both
 directions** and are now generated from the spec files rather than hand-incremented:
@@ -41,7 +41,7 @@ directions** and are now generated from the spec files rather than hand-incremen
   - SPEC-014: listed 35, actually 30 (-5) — **this one was wrong**: 35 was right; the recount could not see
     five qualified labels (see the 2026-09-11 entry below)
 
-Total documented invariants: **984** (633 before the 09-02 recount, 680 at that recount, +21 from
+Total documented invariants: **987** (633 before the 09-02 recount, 680 at that recount, +21 from
 T-154/T-155/T-156 documented the same day, +22 on 09-04 from T-154's Split/Join half — SPEC-010 +8,
 SPEC-012 +9, SPEC-011 +5; +4 more from T-157 — SPEC-010 +3, SPEC-008 +1; +3 on 09-05 from T-160 —
 SPEC-011 I145-I147, the two-row footer; +5 from T-161 — SPEC-007 I95-I99, the scrollable profile bar; +9 from T-162 — SPEC-010 I52-I60, delete-original on Split; +7 from T-163 — SPEC-010 I61-I67, the auto layer;
@@ -55,7 +55,9 @@ their heading were reworded in place, so SPEC-007 did not move for that one;
 +7 from T-169 — SPEC-007 I101-I107, the hover preview card and one stored width for every source;
 +5 found, not added, on 2026-09-11 — SPEC-014 I31-I35 had always existed but were labelled
 `**I31 (view-only)**` (I34 still is), a form the freshness guard's pattern could not see, so the guard and this row
-agreed on 30 while the file held 35. The pattern now accepts a qualifier inside the bold).
+agreed on 30 while the file held 35. The pattern now accepts a qualifier inside the bold;
++3 on 2026-09-16 from T-173 — SPEC-007 I108 · SPEC-011 I156-I157, applying a cut while rows still scan (SPEC-007
+I20/I24/I25/I27 and SPEC-011 I21/I22/I24/I26/I57/I76/I104 were amended in place, so they did not move the count)).
 
 **The headline and the TOTAL row are enforced, not maintained (T-166).**
 `TheTotalRowEqualsTheSumOfTheSpecRows` and `ThePlainEnglishHeadlineEqualsTheSameSum` check both against

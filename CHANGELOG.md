@@ -8,6 +8,14 @@ goal; `0.1.0` is the first end-to-end, shippable cut.
 ## [Unreleased]
 
 ### Fixed
+- **Applying a cut no longer skips the rows that are still scanning.** On Bulk Cut, a profile apply, a row's ⧉
+  copy and setting a cut at the playhead for every ticked row all quietly passed over any file whose
+  keyframe scan had not finished — with the buttons enabled. Drop 20 files, apply a profile while 17 still
+  scan, and the app said `Applied to 3 row(s).`: the other 17 were untouched, and nothing said why. A row now
+  takes the cut as soon as its length is known. Its cut reads `→ snapping…` until the scan lands, and **Run
+  still waits** for that, so nothing is ever cut at a provisional time. The apply line now says what happened
+  to each row: `Applied to 20 row(s) · 19 waiting for their scan`, `… invalid (red when their scan
+  finishes)` for a cut no snap can rescue, and `… not loaded, skipped` for a file that has not been read yet.
 - **A file that is not a picture can no longer become a profile's picture.** The *Thumbnail…* chooser has
   an *All files* option, and whatever you picked through it was copied in and reported as success — no
   layer ever asked whether the file was an image. A real profile store on this machine ended up with a

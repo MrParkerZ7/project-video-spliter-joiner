@@ -351,6 +351,22 @@ public sealed class BulkItemViewModel : ObservableObject
     /// <summary>True once the file is probed AND its background keyframe scan has finished.</summary>
     public bool KeyframesReady => Duration is not null && !IsIndexingKeyframes;
 
+    /// <summary>
+    /// A row can take a cut once its duration is known; its keyframe snap may follow later (D-005 / T-173). The one
+    /// eligibility rule the three copy paths share — profile apply, ⧉ apply-to-all and the set-at-playhead fan-out.
+    /// A load-failed row never gets a duration, so it never qualifies.
+    /// </summary>
+    internal bool CanTakeCut => Duration is not null;
+
+    /// <summary>
+    /// No keyframe snap and no precision can make the requested cut valid: both ends are handles and the requested
+    /// outro sits at or before the intro (T-173). Nearest-keyframe snapping never reorders two times (exact ties go
+    /// to the earlier keyframe), an identity snap moves nothing, and under Exact cut the cut is the request — so this
+    /// verdict survives the scan, a failed scan and a precision flip. A no-outro row is never hopeless: its upper
+    /// bound, <see cref="Duration"/>, does not snap while its intro does.
+    /// </summary>
+    internal bool IsCutHopelessBeforeSnap => OutroStart is { } outro && outro.Requested <= IntroEnd.Requested;
+
     // ---- Computed cut state -----------------------------------------------------------------
 
     private TimeSpan IntroEndSnapped => IntroEnd.Snapped;

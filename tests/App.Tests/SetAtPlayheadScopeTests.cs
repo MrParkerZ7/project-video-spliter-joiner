@@ -315,4 +315,56 @@ public sealed class SetAtPlayheadScopeTests
             grabsBefore, "cut-point frames may be re-grabbed as handles move — but never a keyframe re-scan");
         runLabelRaises.Should().BeGreaterThan(0, "the button's count must not be left stale after the fan-out");
     }
+
+    // ---- T-173: the fan-out reaches rows whose keyframe scan is still running --------------------
+
+    /// <summary>Add a probed row whose keyframe scan is held open at the fake probe's gate.</summary>
+    private static async Task<BulkItemViewModel> AddScanningAsync(
+        BulkCutViewModel vm, BulkFakeProbe probe, string path, double seconds)
+    {
+        probe.SetUniform(path, TimeSpan.FromSeconds(seconds), 1);
+        probe.GatedPaths.Add(path);
+        await vm.AddFilesAsync(new[] { path });
+        var row = vm.Items.Single(i => i.Path == path);
+        row.KeyframesReady.Should().BeFalse("precondition: probed, but the keyframe scan is held open");
+        return row;
+    }
+
+    [Trait("serves-spec", "SPEC-011")]
+    [Fact]
+    public async Task TheFanOut_ReachesACheckedRowWhoseScanIsStillRunning()
+    {
+        var (vm, probe, _, _, player) = Build();
+        var a = await AddAsync(vm, probe, PathA, 600);
+        var b = await AddScanningAsync(vm, probe, PathB, 600);
+
+        Preview(vm, player, a, atSeconds: 30);
+        vm.SetIntroAtPlayhead();
+
+        b.IntroEnd.Requested.Should().Be(TimeSpan.FromSeconds(30), "one gesture sets every ticked row, scanning or not");
+        b.IntroEnd.IsSnapPending.Should().BeTrue("its snap waits for its scan");
+        vm.ApplyReportSummary.Should().Be("Applied to 1 row(s) · 1 waiting for their scan.");
+
+        probe.ReleaseScans();
+        await b.CurrentScanTask;
+    }
+
+    [Trait("serves-spec", "SPEC-011")]
+    [Fact]
+    public async Task TheFanOut_FromASelectedRowWhoseScanIsStillRunning_StillReachesTheOthers()
+    {
+        var (vm, probe, _, _, player) = Build();
+        var a = await AddScanningAsync(vm, probe, PathA, 600);
+        var b = await AddAsync(vm, probe, PathB, 600);
+
+        Preview(vm, player, a, atSeconds: 30);
+        vm.CanSetCutAtPlayhead.Should().BeTrue("precondition: a selection and a ready player are all the gesture needs");
+        vm.SetIntroAtPlayhead();
+
+        b.IntroEnd.Requested.Should().Be(
+            TimeSpan.FromSeconds(30), "the selected row's duration is known, so its cut fans out (T-173)");
+
+        probe.ReleaseScans();
+        await a.CurrentScanTask;
+    }
 }

@@ -84,17 +84,19 @@ public sealed class CutProfileApplierTests
     }
 
     [Fact]
-    public async Task ApplyProfile_SkipsNotReadyRows_NotCountedAsApplied()
+    public async Task ApplyProfile_SkipsNotLoadedRows_CountsThemAsSkipped_NotApplied()
     {
         var profile = new CutProfile("P", TimeSpan.FromSeconds(10), null);
         var ready = await MakeRowAsync(@"C:\v\ready.mp4", 100, 2, introSeconds: 4);
-        var notReady = new BulkItemViewModel(@"C:\v\pending.mp4", _probe, _gate); // no Duration / never scanned
+        var notLoaded = new BulkItemViewModel(@"C:\v\pending.mp4", _probe, _gate); // no Duration / never probed
 
-        notReady.KeyframesReady.Should().BeFalse("precondition: an unprobed row is not ready");
+        notLoaded.Duration.Should().BeNull("precondition: an unprobed row has no duration to measure a cut against");
 
-        var report = CutProfileApplier.ApplyProfile(profile, new[] { ready, notReady });
+        var report = CutProfileApplier.ApplyProfile(profile, new[] { ready, notLoaded });
 
-        report.AppliedCount.Should().Be(1, "the not-ready row is skipped, not applied to");
+        report.AppliedCount.Should().Be(1, "the not-loaded row is skipped, not applied to");
+        report.SkippedNotLoadedCount.Should().Be(1, "and the skip is counted, so the apply line can say so (T-173)");
+        notLoaded.IntroEnd.Requested.Should().Be(TimeSpan.Zero, "nothing was written to it");
         ready.IntroEnd.Snapped.Should().Be(TimeSpan.FromSeconds(10));
     }
 

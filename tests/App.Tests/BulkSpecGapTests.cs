@@ -14,7 +14,7 @@ namespace VideoSplitJoiner.App.Tests;
 /// <summary>
 /// SPEC-011 bulk-cut-screen gaps (todo-automate): LastInputDir memory (I5), the per-row scan supersede
 /// (I14) + scan-throws identity fallback (I15) + Warning notes (I16), and the BulkCutViewModel apply-to-all
-/// guards / outro-clear / CanExecute (I20/I22/I24) plus the late-post terminal guard (I43). Reuses the
+/// guards / outro-clear / CanExecute (I21/I23/I25) plus the late-post terminal guard (I43). Reuses the
 /// existing internal Bulk fakes (<see cref="BulkFakeProbe"/>, <see cref="FakeBulkTrimEngine"/>,
 /// <see cref="ThrowingFakeSplitEngine"/>, <see cref="FakeThumbnailService"/>, <see cref="FakeSettings"/>).
 /// </summary>
@@ -188,38 +188,46 @@ public sealed class BulkSpecGapTests
             "a kept span above the boundary epsilon but below MinKeptSpan raises the very-short-keep note");
     }
 
-    // ---- I20: ApplyToAll no-op guards -------------------------------------------------------
+    // ---- I21: ApplyToAll source guard -------------------------------------------------------
 
-    // SPEC-011#I20 — BulkCutViewModel.ApplyToAll returns null and mutates nothing when the source is null
-    // or not KeyframesReady (still indexing) / has no probed Duration.
+    // SPEC-011#I21 — BulkCutViewModel.ApplyToAll returns null, mutates nothing and writes no report when the source
+    // is null or has no Duration (its probe failed). A source whose keyframe scan is still running is NOT a no-op
+    // (T-173): its requested cut is copied like any other.
     [Fact]
     [Trait("serves-spec", "SPEC-011")]
-    public async Task ApplyToAll_NullOrNotReadySource_ReturnsNull_MutatesNothing()
+    public async Task ApplyToAll_NullOrUnprobedSource_ReturnsNull_ButAScanningSourceApplies()
     {
         var (vm, probe, _) = BuildVm();
         probe.SetUniform(@"C:\v\a.mp4", TimeSpan.FromSeconds(60), 2);
         probe.SetUniform(@"C:\v\b.mp4", TimeSpan.FromSeconds(60), 2);
-        probe.GatedPaths.Add(@"C:\v\a.mp4"); // a's scan stays open → a is still indexing (not ready)
+        probe.GatedPaths.Add(@"C:\v\a.mp4");  // a's scan stays open → a is probed but still indexing
+        probe.FailProbePaths.Add(@"C:\v\c.mp4"); // c's probe fails → c never gets a Duration
 
-        await vm.AddFilesAsync(new[] { @"C:\v\a.mp4", @"C:\v\b.mp4" });
+        await vm.AddFilesAsync(new[] { @"C:\v\a.mp4", @"C:\v\b.mp4", @"C:\v\c.mp4" });
         var stillIndexing = vm.Items.Single(i => i.Path == @"C:\v\a.mp4");
         var target = vm.Items.Single(i => i.Path == @"C:\v\b.mp4");
+        var unprobed = vm.Items.Single(i => i.Path == @"C:\v\c.mp4");
         target.IntroEnd.Requested = TimeSpan.FromSeconds(6);
+        stillIndexing.IntroEnd.Requested = TimeSpan.FromSeconds(12);
 
-        stillIndexing.KeyframesReady.Should().BeFalse("precondition: source is still indexing");
-        var targetIntroBefore = target.IntroEnd.Requested;
+        stillIndexing.KeyframesReady.Should().BeFalse("precondition: a is still indexing");
+        unprobed.Duration.Should().BeNull("precondition: c's probe failed");
 
         vm.ApplyToAll(null).Should().BeNull("a null source is a no-op");
-        vm.ApplyToAll(stillIndexing).Should().BeNull("a not-ready source is a no-op");
-        target.IntroEnd.Requested.Should().Be(targetIntroBefore, "no target row was mutated");
+        vm.ApplyToAll(unprobed).Should().BeNull("a source with no duration has nothing to copy");
+        vm.ApplyToAllReport.Should().BeNull("a no-op writes no apply line");
+        target.IntroEnd.Requested.Should().Be(TimeSpan.FromSeconds(6), "no target row was mutated by a no-op");
+
+        vm.ApplyToAll(stillIndexing).Should().NotBeNull("a source whose scan is still running applies (T-173)");
+        target.IntroEnd.Requested.Should().Be(TimeSpan.FromSeconds(12), "the scanning source's requested intro was copied");
 
         probe.ReleaseScans();
         await stillIndexing.CurrentScanTask;
     }
 
-    // ---- I22: ApplyToAll clears outro when source has none ----------------------------------
+    // ---- I23: ApplyToAll clears outro when source has none ----------------------------------
 
-    // SPEC-011#I22 — when the SOURCE row has no outro, every applied target has its outro CLEARED so it
+    // SPEC-011#I23 — when the SOURCE row has no outro, every applied target has its outro CLEARED so it
     // mirrors the source's keep-to-EOF shape.
     [Fact]
     [Trait("serves-spec", "SPEC-011")]
@@ -237,12 +245,12 @@ public sealed class BulkSpecGapTests
         target.HasOutro.Should().BeFalse("a no-outro source clears every applied target's outro (mirror keep-to-EOF)");
     }
 
-    // SPEC-011#I22 — the per-TARGET filter: only rows that are IsCheckedByUser AND KeyframesReady AND
-    // have a probed Duration are applied to; the source row itself is skipped. An unticked row and a
-    // still-indexing row are both left exactly as they were.
+    // SPEC-011#I22 — the per-TARGET filter: rows that are IsCheckedByUser AND have a Duration (CanTakeCut) are
+    // applied to, whether or not their keyframe scan has finished (T-173); the source row itself is skipped, and an
+    // unticked row is left exactly as it was.
     [Fact]
     [Trait("serves-spec", "SPEC-011")]
-    public async Task ApplyToAll_SkipsTheSource_UncheckedRows_AndStillIndexingRows()
+    public async Task ApplyToAll_SkipsTheSourceAndUncheckedRows_ButReachesStillIndexingRows()
     {
         var (vm, probe, _) = BuildVm();
         var source = await AddRowAsync(vm, probe, @"C:\v\a.mp4", 60, 2, introSeconds: 12);
@@ -265,11 +273,14 @@ public sealed class BulkSpecGapTests
         var report = vm.ApplyToAll(source);
 
         report!.AppliedCount.Should().Be(
-            1, "only the checked, keyframes-ready, probed target is eligible — the other two are filtered out");
+            2, "the checked targets with a duration are applied to — the still-indexing one included (T-173)");
         eligible.IntroEnd.Requested.Should().Be(
-            TimeSpan.FromSeconds(12), "the one eligible target took the source's requested intro");
+            TimeSpan.FromSeconds(12), "the ready target took the source's requested intro");
         unticked.IntroEnd.Requested.Should().Be(untickedIntroBefore, "an unchecked row is never touched");
-        stillIndexing.IntroEnd.Requested.Should().Be(TimeSpan.Zero, "a still-indexing row is never touched");
+        stillIndexing.IntroEnd.Requested.Should().Be(
+            TimeSpan.FromSeconds(12), "a still-indexing target takes the cut too; its snap waits for the scan");
+        stillIndexing.IntroEnd.IsSnapPending.Should().BeTrue("the snap is still pending");
+        report.PendingSnapRows.Should().Equal(new[] { stillIndexing }, "the still-indexing target is reported as waiting");
         source.IntroEnd.Requested.Should().Be(
             TimeSpan.FromSeconds(12), "the source row itself is skipped, never re-applied to");
 
@@ -277,9 +288,9 @@ public sealed class BulkSpecGapTests
         await stillIndexing.CurrentScanTask;
     }
 
-    // ---- I24: ApplyToAllCommand.CanExecute needs > 1 row ------------------------------------
+    // ---- I25: ApplyToAllCommand.CanExecute needs > 1 row ------------------------------------
 
-    // SPEC-011#I24 — ApplyToAllCommand.CanExecute is true only when Items.Count > 1.
+    // SPEC-011#I25 — ApplyToAllCommand.CanExecute is true only when Items.Count > 1.
     [Fact]
     [Trait("serves-spec", "SPEC-011")]
     public async Task ApplyToAllCommand_CanExecute_NeedsMoreThanOneRow()

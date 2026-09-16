@@ -20,8 +20,8 @@ sources:
   - src/App/DropRefusal.cs
   - src/App/VideoFileFilter.cs
   - src/App/DropDiagnostics.cs
-serves-goal: [G-036, G-037, G-038, G-039, G-040, G-041, G-042, G-043, G-050, G-053]
-updated: 2026-09-12
+serves-goal: [G-036, G-037, G-038, G-039, G-040, G-041, G-042, G-043, G-050, G-053, G-057]
+updated: 2026-09-16
 ---
 
 ## What
@@ -146,20 +146,29 @@ SPEC-007); the shared `IThumbnailService`/`FfmpegThumbnailService` frame source 
   (time-from-start) and, when the source has an outro, outro **from end** (`targetDuration − (sourceDuration −
   source.OutroStart.Requested)`) so uneven-length episodes align; each target re-snaps against its own keyframes
   (`ApplyToAll`).
-- **I21** — `ApplyToAll` returns null and mutates nothing when the source is null, not `KeyframesReady`, or has no
-  `Duration` (`ApplyToAll` guard).
-- **I22** — `ApplyToAll` only touches other rows that are `IsCheckedByUser`, `KeyframesReady`, and have a
-  `Duration`; the source row itself is skipped. The filter is the user's raw **intent**, not eligibility
+- **I21** — `ApplyToAll` returns null, mutates nothing and writes no report when the source is null or has no probed
+  `Duration` (`!CanTakeCut`). A source whose keyframe scan is still running is **not** a no-op (T-173): its requested
+  cut is copied like any other (`ApplyToAll` guard).
+- **I22** — `ApplyToAll` only touches other rows that are `IsCheckedByUser` and have a `Duration` (`CanTakeCut`),
+  whether or not their keyframe scan has finished (T-173); the source row itself is skipped. A checked row with no
+  `Duration` is counted in `SkippedNotLoadedCount`; an unticked row is out of scope and never counted. The filter is the user's raw **intent**, not eligibility
   (I94/I96) — so a target the app is currently excluding for having no cut set yet is still a legitimate apply
   target, which is exactly how the copied cut makes it eligible (`ApplyToAll` `foreach` filter).
 - **I23** — when the source has **no** outro, `ApplyToAll` calls `ClearOutro()` on each applied target so it mirrors
   the source's keep-to-EOF shape (`ApplyToAll` `else target.ClearOutro()`).
-- **I24** — `ApplyToAll` records `AppliedCount` and collects every target the copied cut left invalid into
-  `ApplyToAllReport.InvalidatedRows` — invalidated rows are **reported, never dropped** from the list (`ApplyToAll`,
-  `ApplyToAllReport`).
+- **I24** — `ApplyToAll` records `AppliedCount` and classifies each applied target by **SPEC-007 I108**, through the
+  same `ApplyOutcome` as profile apply: `InvalidatedRows` (**reported, never dropped**), `InvalidStillScanningCount`,
+  `PendingSnapRows`, plus `SkippedNotLoadedCount` for checked targets with no `Duration` — so every copy path
+  publishes one outcome contract (`ApplyToAll`, `ApplyOutcome`, `ApplyToAllReport`).
 - **I25** — `ApplyToAllCommand.CanExecute` is true only when `Items.Count > 1` (`ApplyToAllCommand` predicate).
-- **I26** — `ApplyReportSummary` is `Applied to N row(s).` with no invalid rows, else `Applied to N row(s) · M now
-  invalid (see the red rows).`; null when there is no report (`ApplyReportSummary`).
+- **I26** — `ApplyReportSummary` (formatted by `FormatApplySummary`) is `Applied to N row(s)` followed — each part
+  only when non-zero, in this order, joined by ` · `, with one trailing period — by `R now invalid (see the red
+  rows)` (R = invalid rows that were ready at the click), `K invalid (red when their scan finishes)`
+  (K = `InvalidStillScanningCount`), `W waiting for their scan` (W = `PendingSnapRows`) and `S not loaded, skipped`
+  (S = `SkippedNotLoadedCount`); with none of them it is exactly `Applied to N row(s).` (T-173). A scanning row is
+  `loading…`, not red, so it is never pointed at as a red row. No part depends on precision. The counts are the
+  report's snapshot of the click, never re-read from the rows; null when there is no report
+  (`ApplyReportSummary`, `FormatApplySummary`).
 
 ### Shared preview player + selection (T-100 / G-037)
 - **I27** — setting `SelectedItem` opens that row's `Path` in the **one** shared `Player` (never a player per row);
@@ -247,10 +256,11 @@ SPEC-007); the shared `IThumbnailService`/`FfmpegThumbnailService` frame source 
   ticked row" rather than a special case. Targeting intent (not `IsEnabled`) is what lets a profile re-validate a
   row the app is currently excluding for having no usable cut yet. Invalidated rows are reported through
   `ApplyToAllReport`; no-op without a profile (`ApplyProfileToAll`, `CanApplyProfileToAll`).
-- **I57** — `CutProfileApplier.ApplyProfile` sets each ready target's intro to `IntroFromStart` clamped to
-  `[0, Duration]`; when the profile has an `OutroFromEnd` tail it sets the outro at `Duration − tail` (clamped,
-  from end) else clears the outro; it skips rows that are not `KeyframesReady`/have no `Duration` (not counted as
-  applied) and collects invalidated targets into the returned report; null `profile`/`targets` throw
+- **I57** — `CutProfileApplier.ApplyProfile` sets the intro of each target with a `Duration` (`CanTakeCut`, a
+  still-scanning target included — T-173) to `IntroFromStart` clamped to `[0, Duration]`; when the profile has an
+  `OutroFromEnd` tail it sets the outro at `Duration − tail` (clamped, from end) else clears the outro; it skips rows
+  with no `Duration` (counted in `SkippedNotLoadedCount`, not as applied) and classifies the applied targets per
+  SPEC-007 I108; null `profile`/`targets` throw
   `ArgumentNullException` (`CutProfileApplier.ApplyProfile`).
 - **I58** — `DeleteSelectedProfile` removes `SelectedProfile` via `IAppSettings.DeleteProfile`, refreshes the bar,
   and re-points the selection at the first remaining profile (or null when none remain); no-op when unset
@@ -384,7 +394,9 @@ SPEC-007); the shared `IThumbnailService`/`FfmpegThumbnailService` frame source 
   `Requested` and `SnapNote` (`Requested` setter → `Resnap()` → the `Delta` setter → `RaiseSnapNote`).
 - **I76** — while the row's background keyframe scan is in flight the marker reads `→ snapping…` with
   `HasSnapNote` true, and resolves to the real note (or to empty) when `ResolveSnap` clears `IsSnapPending`
-  (`SnapNote`, `IsSnapPending`, `ResolveSnap`).
+  (`SnapNote`, `IsSnapPending`, `ResolveSnap`). This also holds for a cut **written** during the scan — an apply, a
+  drag or a field edit (T-173): a Bulk handle is born pending, `Resnap` never clears `IsSnapPending`, and only
+  `ResolveSnap` does, when the scan lands or fails.
 
 ### Editable IN/OUT commit guard (G-041 / T-118)
 - **I77** — an **untouched** field never commits: `CutTimeCommit.IsUnchanged` compares the box text
@@ -545,7 +557,8 @@ SPEC-007); the shared `IThumbnailService`/`FfmpegThumbnailService` frame source 
   `ApplyToAll(_selectedItem)` — NOT a second copy implementation. The fan-out therefore inherits every
   apply-to-all rule verbatim: it targets `IsCheckedByUser` rows, re-snaps against each target's own
   keyframes, measures the outro **from the END of each file** so uneven lengths align, mirrors a cleared
-  outro, and reports invalidated rows through `ApplyToAllReport`.
+  outro, and reports invalidated rows through `ApplyToAllReport`. Since T-173 that includes reaching checked rows
+  whose keyframe scan is still running, and fanning out from a selected row that is itself still scanning (I21/I22).
 - **I105** — when OFF, only the selected row changes. An unticked row is never written to in either mode.
 
 - **I106** — `RunScopeSummary` states what Run will do BEFORE it is pressed: `Will cut N of M`, followed by
@@ -702,6 +715,17 @@ SPEC-007); the shared `IThumbnailService`/`FfmpegThumbnailService` frame source 
   300-character name does not take the whole line, so it is asserted as a chip-width ceiling **plus** at
   least one neighbour still sharing its row.
 
+### Applying a cut while rows still scan (G-057 / T-173, 2026-09-16)
+- **I156** — **a cut applied during a scan never reaches the run.** The row's `IsValidCut` stays false until its
+  scan resolves, so it is never among the rows the run takes (`IsEnabled && IsValidCut`, `RunBatchAsync`); while
+  that row is enabled, `CanRunBatch` is false as well (I37). An unticked scanning row holds nothing. Once the scan
+  lands, the run uses the resolved cut (`IsValidCut`, `CanRunBatch`).
+- **I157** — **`BulkItemViewModel.CancelScan` is reserved for rows leaving the list** — its only callers are
+  `BulkCutViewModel.Remove` and `Clear`. It clears the indexing flag **without** resolving the handles, so a future
+  caller that cancels a *surviving* row's scan must resolve its handles **and request their frames**: otherwise a
+  pending, identity-snapped handle sits on a `KeyframesReady` row, and its frame is never grabbed. Enforced by a
+  source assertion (`ApplyDuringScanTests.CancelScan_IsCalledOnlyFromRemoveAndClear`).
+
 ### Auto-delete after a clean batch (T-156)
 - **I132** - `AutoDeleteOriginals` runs the **existing** `DeleteOriginals()` sweep automatically once a
   batch finishes - same eligibility re-checks (I111, I118), same per-row isolation, same reporting. There
@@ -783,7 +807,7 @@ SPEC-007); the shared `IThumbnailService`/`FfmpegThumbnailService` frame source 
   vocabulary and the pluralisation, not one fixed sentence.
 
 ## Links
-- Design: D-004 (Bulk Cut screen) · D-005 (apply a cut before the snap — apply-to-all and the set-at-playhead fan-out reach rows still scanning; amends I21/I22/I76 at build)
+- Design: D-004 (Bulk Cut screen) · D-005 (apply a cut before the snap — built by T-173: I21/I22/I24/I26/I57/I76/I104 amended, I156–I157 added)
 - Goals: G-036 (batch trim), G-037 (shared preview + set-at-playhead + reusable cut profiles), G-038 (profile
   thumbnails + per-row cut-point frame previews — feature task T-108 for the per-row thumbnails here), G-039
   (Bulk Cut polish — layout-mode-aware body T-112, profiles-card regroup T-113, apply-to-all re-activation T-111),
@@ -792,7 +816,8 @@ SPEC-007); the shared `IThumbnailService`/`FfmpegThumbnailService` frame source 
   requested→snapped readout T-119 (I74–I76), real-snap-magnitude advisory T-120 (I80–I82), replace-originals
   UI T-123 (I83–I88)), G-042 (frame-exact cutting — the precision choice T-125 (I89–I93)), G-043 (tick the
   rows you want and have Run agree — the checkbox-intent/eligibility split T-127 (I94–I99), select all /
-  select none T-128 (I100–I102))
+  select none T-128 (I100–I102)), G-057 (apply a cut to rows still scanning — T-173 (I156–I157; I21/I22/I24/I26/I57/I76/I104
+  amended))
 - Related specs: SPEC-002 (the T-095 batch engine `IBulkTrimEngine` / `BulkTrimEngine` — incl. the engine-side
   handling of the `OutputMode`/`CutPrecision` axes this screen selects, kept orthogonal to `CollisionPolicy`'s
   own "what if the destination is taken?" question); T-094 kept-segment request (`KeptSegmentSelector`);
@@ -825,6 +850,7 @@ SPEC-007); the shared `IThumbnailService`/`FfmpegThumbnailService` frame source 
   `tests/App.Tests/SnapVisibilityTests.cs` (T-119 requested→snapped readout — I74–I76, 5 tests) ·
   `tests/App.Tests/SnapWarningTests.cs` (T-120 coarse-GOP + real-snap advisory — I80–I82, 5 tests) ·
   `tests/App.Tests/ReplaceOriginalModeTests.cs` (T-123 replace-originals UI — I83–I88, 7 tests) ·
-  `tests/App.Tests/ExactCutModeTests.cs` (T-125 precision choice — I89–I93, 8 tests) — all tagged `serves-spec=SPEC-011`.
+  `tests/App.Tests/ExactCutModeTests.cs` (T-125 precision choice — I89–I93, 8 tests) ·
+  `tests/App.Tests/ApplyDuringScanTests.cs` (T-173 apply while rows scan — I156–I157 and the amended I21/I22/I24/I26/I57/I76/I104) — all tagged `serves-spec=SPEC-011`.
   The intent-side targeting filters are additionally asserted by `tests/App.Tests/BulkCutProfileCommandsTests.cs`
   (I56) and `tests/App.Tests/BulkSpecGapTests.cs` (I22), both reading `IsCheckedByUser` directly.
