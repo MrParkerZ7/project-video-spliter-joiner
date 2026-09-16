@@ -303,7 +303,8 @@ public sealed class BulkItemViewModel : ObservableObject
 
     /// <summary>
     /// Temp jpg PATH of the frame at the outro-start cut point (null while loading / if unavailable / when
-    /// there is no outro). Cleared by <see cref="ClearOutro"/>; grabbed at the outro handle's snapped time.
+    /// there is no outro). Cleared by <see cref="ClearOutro"/>; grabbed at the outro handle's effective cut time
+    /// (<see cref="GrabTime"/>, T-174).
     /// </summary>
     public string? OutroThumbnailPath
     {
@@ -311,19 +312,37 @@ public sealed class BulkItemViewModel : ObservableObject
         private set => SetProperty(ref _outroThumbnailPath, value);
     }
 
-    /// <summary>Re-grab the intro-end frame at the current snapped time (debounced + latest-wins). No-op when inert.</summary>
-    private void RequestIntroThumbnail() => _introGrabber?.Request(Path, IntroEnd.Snapped);
+    /// <summary>
+    /// The time the run will cut <paramref name="handle"/> at, or null while that time is still provisional
+    /// (T-174, G-057 decision 1): no known duration yet, or Lossless with the snap still pending. Exact cut is
+    /// never provisional — it cuts where the user set it. Agrees with <see cref="EffectiveIntroEnd"/> /
+    /// <see cref="EffectiveOutroStart"/> whenever it is not null.
+    /// </summary>
+    private TimeSpan? GrabTime(CutMarkerViewModel handle) =>
+        Duration is null ? null
+        : _exactCut ? handle.Requested
+        : handle.IsSnapPending ? null
+        : handle.Snapped;
 
-    /// <summary>Re-grab the outro-start frame at the current snapped time (debounced + latest-wins). No-op without an outro.</summary>
-    private void RequestOutroThumbnail()
+    /// <summary>Re-grab the intro-end frame at its effective cut time (debounced + latest-wins). No-op when inert or provisional.</summary>
+    private void RequestIntroThumbnail()
     {
-        if (HasOutro)
+        if (GrabTime(IntroEnd) is { } time)
         {
-            _outroGrabber?.Request(Path, OutroStart!.Snapped);
+            _introGrabber?.Request(Path, time);
         }
     }
 
-    /// <summary>Grab both cut-point frames (on keyframe-resolve / apply-to-all / profile-apply, when Snapped becomes real).</summary>
+    /// <summary>Re-grab the outro-start frame at its effective cut time (debounced + latest-wins). No-op without an outro, or while provisional.</summary>
+    private void RequestOutroThumbnail()
+    {
+        if (OutroStart is { } outro && GrabTime(outro) is { } time)
+        {
+            _outroGrabber?.Request(Path, time);
+        }
+    }
+
+    /// <summary>Grab both cut-point frames at their effective cut times (on keyframe-resolve, when Snapped becomes real).</summary>
     private void RequestAllThumbnails()
     {
         RequestIntroThumbnail();
@@ -472,6 +491,12 @@ public sealed class BulkItemViewModel : ObservableObject
             return;
         }
 
+        // T-174: the chip shows the cut the run will make, so the flip follows each handle's grab time. Compared
+        // before and after rather than tested as Snapped != Requested: a snap-pending handle has Snapped ==
+        // Requested (an identity snap), yet its grab time goes from provisional to known when Exact is switched on.
+        var introBefore = GrabTime(IntroEnd);
+        var outroBefore = OutroStart is { } outroHandle ? GrabTime(outroHandle) : null;
+
         _exactCut = exact;
         IntroEnd.SuppressSnapNote = exact;
         if (OutroStart is { } outro)
@@ -482,6 +507,35 @@ public sealed class BulkItemViewModel : ObservableObject
         // Review finding #1: the precision flip changes which cut point eligibility is measured against
         // (EffectiveIntroEnd), so it must recompute the whole derived set — not just the warning text.
         RecomputeAll();
+
+        FollowGrabTime(IntroEnd, introBefore, _introGrabber, () => IntroThumbnailPath = null, RequestIntroThumbnail);
+        if (OutroStart is { } outroAfter)
+        {
+            FollowGrabTime(outroAfter, outroBefore, _outroGrabber, () => OutroThumbnailPath = null, RequestOutroThumbnail);
+        }
+    }
+
+    /// <summary>
+    /// T-174: after a precision flip, request <paramref name="handle"/>'s frame when its grab time became known or
+    /// moved; when it became provisional, cancel the grab and clear the chip back to the placeholder — exactly what
+    /// <see cref="ClearOutro"/> does — rather than keep showing a frame the run will not cut at.
+    /// </summary>
+    private void FollowGrabTime(
+        CutMarkerViewModel handle, TimeSpan? before, HandleThumbnailGrabber? grabber, Action clearPath, Action request)
+    {
+        var after = GrabTime(handle);
+        if (after is null)
+        {
+            if (before is not null)
+            {
+                grabber?.Cancel();
+                clearPath();
+            }
+        }
+        else if (after != before)
+        {
+            request();
+        }
     }
 
     private bool _exactCut;
@@ -749,8 +803,10 @@ public sealed class BulkItemViewModel : ObservableObject
         OutroStart?.ResolveSnap();
         RecomputeAll();
 
-        // T-108: keyframes just resolved (Snapped became real) → initial cut-point frame grab. A ResolveSnap
-        // that did NOT move Snapped raises no handle event, so this explicit kick covers that gap.
+        // T-108 / T-174: keyframes just resolved → the cut-point frame grab at the land. This kick CARRIES every
+        // Lossless grab at the land, not just a gap: the Snapped change raised inside ResolveSnap fires while the
+        // handle is still pending, so the change-driven route skips it. Contract (SPEC-011 I158): every
+        // ResolveSnap on a Bulk handle is followed by a frame request for that handle.
         RequestAllThumbnails();
     }
 
@@ -902,8 +958,11 @@ public sealed class BulkItemViewModel : ObservableObject
             RecomputeAll();
         }
 
-        // T-108: a Snapped change moves the cut → re-grab THAT handle's frame at the new snapped time.
-        if (e.PropertyName == nameof(CutMarkerViewModel.Snapped))
+        // T-108 / T-174: a change of the property that IS the cut re-grabs THAT handle's frame — Snapped in Lossless,
+        // Requested under Exact (where every drag moves the cut, even within one GOP). The helpers skip a time that
+        // is still provisional.
+        var cutProperty = _exactCut ? nameof(CutMarkerViewModel.Requested) : nameof(CutMarkerViewModel.Snapped);
+        if (e.PropertyName == cutProperty)
         {
             if (ReferenceEquals(sender, IntroEnd))
             {
@@ -1022,6 +1081,12 @@ public sealed class BulkItemViewModel : ObservableObject
         /// <summary>Cancel + dispose the in-flight request's CTS (if any) so a superseded/removed grab is dropped.</summary>
         public void Cancel()
         {
+            // T-174: advance the id FIRST, before the early return. A grab that already finished has nulled
+            // _requestCts in its finally but may still have its result queued on the captured context; OnResolved
+            // drops a post only when its id is stale, so without this a cancelled grab could commit its frame after
+            // the chip was cleared. Request's own increment after this is harmless.
+            ++_requestId;
+
             var cts = _requestCts;
             _requestCts = null;
             if (cts is null)

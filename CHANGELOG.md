@@ -22,6 +22,12 @@ goal; `0.1.0` is the first end-to-end, shippable cut.
   would have trimmed it — and it showed snap notes (`→ snapping…`, `→ 00:44.0 (−1.0s)`) for a snap Exact never
   makes. The same went for an outro added later to any row. Every row and every outro now follows the switch
   from the moment it appears.
+- **A row's cut-point frames now show where the cut will actually land.** Under **Exact cut** the small frame
+  beside each handle showed the nearest keyframe — up to a few seconds from where Exact cuts — and a drag within
+  one keyframe gap did not update it at all; now it shows the frame at the time you set, and moving the handle
+  always updates it. Switching precision updates the frames too, instead of leaving the other mode's picture up.
+  In the default lossless mode, a row whose keyframes are still being read keeps its placeholder until the cut
+  is known, instead of grabbing a frame at a time the cut will not use and then grabbing again.
 - **Profile pictures are saved sharper, and a picture too small for the hover card says so.** New pictures —
   captured, snapshotted or uploaded — are now kept at 640 pixels wide instead of 320, so the 320-wide hover
   card stays sharp on a display scaled up to 200%; capturing takes no longer. Pictures saved before now (in

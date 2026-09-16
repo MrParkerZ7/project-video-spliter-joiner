@@ -411,7 +411,9 @@ public sealed class BulkRowIntentTests
     [Trait("serves-spec", "SPEC-011")]
     public async Task ExclusionReason_NamesAHandleThatSitsOutsideTheVideo()
     {
-        var (vm, probe, thumbs) = Build();
+        // T-174: the immediate seam, so a frame request the flip makes really reaches the fake and is counted —
+        // the parked default would hide it, and "never re-grab" would stay green for the wrong reason.
+        var (vm, probe, thumbs) = Build(Immediate);
         var row = await AddRowAsync(vm, probe, PathA); // 60s source, 2s GOP
         row.IntroEnd.Requested = TimeSpan.FromSeconds(10);
         row.AddOutro(TimeSpan.FromSeconds(90)); // an outro 30s past the end of the file
@@ -426,9 +428,11 @@ public sealed class BulkRowIntentTests
         row.ExclusionReason.Should().BeNull("nothing is out of range once the handle has been snapped back inside");
 
         var scansBefore = probe.GetKeyframesCallCount;
-        var grabsBefore = thumbs.GetThumbnailCallCount;
+        row.InFlightGrabs.Wait(TimeSpan.FromSeconds(30)).Should().BeTrue();
+        var grabsBefore = thumbs.Requests.Count;
 
         vm.ExactCut = true; // the engine now cuts at the requested 90s of a 60s file
+        row.InFlightGrabs.Wait(TimeSpan.FromSeconds(30)).Should().BeTrue();
 
         row.IsValidCut.Should().BeFalse("the kept span would end 30s past the end of the source");
         row.IsNoOpTrim.Should().BeFalse("the intro is a real 10s trim, so this is not the no-op case");
@@ -445,7 +449,12 @@ public sealed class BulkRowIntentTests
         // PERFORMANCE: the range verdict is arithmetic over values already in hand.
         probe.GetKeyframesCallCount.Should().Be(
             scansBefore, "judging a handle out of range must never re-scan keyframes");
-        thumbs.GetThumbnailCallCount.Should().Be(grabsBefore, "and must never re-grab a frame");
+
+        // T-174 (SPEC-011 I93, amended): the flip requests exactly one frame — the outro's, whose cut moved from the
+        // snapped 60s to the requested 90s. The intro sits on a keyframe, so its cut did not move and it asks nothing.
+        thumbs.Requests.Skip(grabsBefore).Should().ContainSingle(
+                "the chip must show the cut the run will make, and only the outro's cut moved")
+            .Which.Time.Should().Be(TimeSpan.FromSeconds(90));
 
         // Pulling the handle back inside the file clears the sentence with no checkbox gesture.
         row.OutroStart!.Requested = TimeSpan.FromSeconds(50);
@@ -766,24 +775,31 @@ public sealed class BulkRowIntentTests
     [Trait("serves-spec", "SPEC-011")]
     public async Task FlippingExactCut_RaisesTheEligibilityProjection_NotJustTheWarning()
     {
-        var (vm, probe, thumbs) = Build();
+        // T-174: the immediate seam, so the frame request the flip makes is really counted (see below).
+        var (vm, probe, thumbs) = Build(Immediate);
         var row = await AddRowAsync(vm, probe, PathA, durationSeconds: 120, stepSeconds: 8);
         row.IntroEnd.Requested = TimeSpan.FromSeconds(3);
 
         var raised = new List<string>();
         row.PropertyChanged += (_, e) => raised.Add(e.PropertyName ?? string.Empty);
         var scansBefore = probe.GetKeyframesCallCount;
-        var grabsBefore = thumbs.GetThumbnailCallCount;
+        row.InFlightGrabs.Wait(TimeSpan.FromSeconds(30)).Should().BeTrue();
+        var grabsBefore = thumbs.Requests.Count;
 
         vm.ExactCut = true;
+        row.InFlightGrabs.Wait(TimeSpan.FromSeconds(30)).Should().BeTrue();
 
         raised.Should().Contain(nameof(BulkItemViewModel.IsEnabled));
         raised.Should().Contain(nameof(BulkItemViewModel.ExclusionReason));
         raised.Should().Contain(nameof(BulkItemViewModel.IsNoOpTrim));
 
-        // PERFORMANCE: the flip is pure VM arithmetic over values already in hand.
+        // PERFORMANCE: the flip never re-scans keyframes.
         probe.GetKeyframesCallCount.Should().Be(scansBefore, "changing precision must never re-scan keyframes");
-        thumbs.GetThumbnailCallCount.Should().Be(grabsBefore, "changing precision must never re-grab frames");
+
+        // T-174 (SPEC-011 I93, amended): it does request the one frame whose cut moved — the intro, from the
+        // snapped 0s to the requested 3s — so the chip shows where Exact will actually cut.
+        thumbs.Requests.Skip(grabsBefore).Should().ContainSingle("only the intro's cut moved")
+            .Which.Time.Should().Be(TimeSpan.FromSeconds(3));
     }
 
     // Review finding #4. Every other mutator of the eligibility inputs funnels through RecomputeAll;

@@ -33,7 +33,8 @@ provides: an **apply-to-all** gesture that copies one row's cut to the other che
 outro from end, each re-snapped + re-validated); reusable **cut profiles** (save / apply-to-selected /
 apply-to-all / delete); a **single shared mini-preview player** where selecting a row opens that file and two
 **set-at-playhead** gestures place the cut by watching (G-037); **per-row cut-point frame thumbnails** that grab a
-small frame at each row's snapped intro-end (and outro-start) so the cut can be verified by eye (G-038); and a
+small frame at each row's planned cut — the intro-end (and outro-start) the run will cut at, unless an exact cut
+falls back to a keyframe cut at run time (SPEC-002 I50) — so the cut can be verified by eye (G-038, T-174); and a
 batch **Run** that *delegates* the whole trim job to `IBulkTrimEngine.RunAsync` (the VM owns no batch loop),
 fanning weighted-monotonic overall progress, per-row progress, and the returned ledger back onto the rows.
 
@@ -278,20 +279,25 @@ SPEC-007); the shared `IThumbnailService`/`FfmpegThumbnailService` frame source 
   / `ApplyProfileToAll` / `ApplyToAll` all assign it).
 
 ### Per-row cut-point frame thumbnails (T-108, `BulkItemViewModel`)
-- **I61** — when a row's keyframes resolve, it grabs a small frame (`ThumbnailWidth` = 64) at the keyframe-**snapped**
-  intro-end and sets `IntroThumbnailPath` to it — the initial grab fires on scan-resolve, at `IntroEnd.Snapped` (e.g.
-  an intro requested at 11s on a 2s grid grabs the frame at the snapped 10s) (`RequestAllThumbnails`,
+- **I61** — when a row's keyframes resolve, it grabs a small frame (`ThumbnailWidth` = 64) at the intro-end's
+  **effective cut time** and sets `IntroThumbnailPath` to it — the keyframe-**snapped** time in Lossless, the
+  **requested** time under Exact (T-174). The grab fires on scan-resolve (e.g. an intro requested at 11s on a 2s grid
+  grabs the frame at the snapped 10s in Lossless, at 11s under Exact) (`RequestAllThumbnails`, `GrabTime`,
   `HandleThumbnailGrabber`).
-- **I62** — moving the intro handle re-grabs at the **new** snapped cut time: a `Snapped` change on `IntroEnd`
-  re-requests that handle's frame and `IntroThumbnailPath` updates to the frame at the new snapped position
-  (`OnHandleChanged` → `RequestIntroThumbnail`).
+- **I62** — moving the intro handle re-grabs at its **new effective cut time** once that time is not provisional
+  (I158): a `Snapped` change on `IntroEnd` in Lossless once the handle is not snap-pending, a `Requested` change under
+  Exact once the row has a known duration — so under Exact a move within one GOP re-grabs too, because it moves the
+  cut — and `IntroThumbnailPath` updates to that frame (`OnHandleChanged` → `RequestIntroThumbnail`).
 - **I63** — rapid handle moves are **debounced + cancel-prior + latest-wins** (the settle window defaults to
-  `DefaultThumbnailDebounce` = 200ms): while several moves happen inside the debounce window, only the **final**
-  snapped cut reaches the service (one grab), the superseded requests being cancelled before they touch ffmpeg
-  (`HandleThumbnailGrabber.Request`/`GrabAsync`).
-- **I64** — the outro thumbnail is **gated on `HasOutro`**: `AddOutro` grabs the outro-start frame at its snapped
-  time into `OutroThumbnailPath`, and `ClearOutro` cancels any in-flight outro grab and drops the frame
-  (`OutroThumbnailPath` → null, the chip hides) (`AddOutro`/`RequestOutroThumbnail`, `ClearOutro`).
+  `DefaultThumbnailDebounce` = 200ms): while several moves happen inside the debounce window, only the **final
+  effective** cut reaches the service — at most one grab, and none while that time is provisional (I158) — the
+  superseded requests being cancelled before they touch ffmpeg (`HandleThumbnailGrabber.Request`/`GrabAsync`).
+- **I64** — the outro thumbnail is **gated on `HasOutro`**: `AddOutro` grabs the outro-start frame into
+  `OutroThumbnailPath` at its **effective cut time** once that time is not provisional — on a ready row, immediately;
+  on a scanning row under Exact with a known duration, immediately; on a scanning Lossless row, at the land kick; on
+  a row whose probe has not returned, not at the add — once the probe sets `Duration` and the scan lands, the land
+  kick grabs it (I61, I158); on a load-failed row, never (T-174). `ClearOutro` cancels any in-flight outro grab and
+  drops the frame (`OutroThumbnailPath` → null, the chip hides) (`AddOutro`/`RequestOutroThumbnail`, `ClearOutro`).
 - **I65** — the grab is **best-effort / null-safe**: a grab that returns null (or fails) leaves the corresponding
   thumbnail path `null` — the view shows the muted placeholder chip, never an image, and nothing throws into the UI
   (`HandleThumbnailGrabber.OnResolved`, `GrabAsync` catch).
@@ -302,6 +308,16 @@ SPEC-007); the shared `IThumbnailService`/`FfmpegThumbnailService` frame source 
   owned by the tab VM and shared into every row — separate from the keyframe-scan gate, so eye-candy frame grabs
   never starve the ffprobe scans that gate `CanRunBatch`; the permit is held only around the grab, never during the
   debounce (`_thumbnailGate`, `HandleThumbnailGrabber.GrabAsync` gate scope).
+- **I158** — **a per-row cut-point frame is requested only at the handle's effective cut time, and never while that
+  time is provisional** — no known duration, or Lossless and snap-pending (T-174, G-057 decision 1). Exact is never
+  provisional once the duration is known: it cuts where the user set it. A precision flip that makes a handle's
+  grab time provisional cancels its grab and clears its frame back to the placeholder; a cancelled grab never
+  commits a frame, **even one that had already finished** (`Cancel()` advances the request id before its early
+  return, so a result already queued on the context is dropped). Every `ResolveSnap` on a Bulk handle is followed
+  by a frame request for that handle — the land kick carries every Lossless grab at the land, because the `Snapped`
+  change raised inside a resolve fires while the handle is still pending. The scope is deliberately the T-108
+  grabbers: the profile auto-thumbnail on save (SPEC-007 I61) is a different path (`GrabTime`,
+  `RequestIntroThumbnail` / `RequestOutroThumbnail`, `FollowGrabTime`, `HandleThumbnailGrabber.Cancel`).
 
 ### Layout-mode-aware body (G-039 / T-112)
 - **I68** — the Bulk body is **layout-mode-aware**: the preview pane and the row-list are the two
@@ -489,8 +505,10 @@ SPEC-007); the shared `IThumbnailService`/`FfmpegThumbnailService` frame source 
   exact cutting that offset will not occur; the **grid** advisory of I80 (`coarse keyframes…`) describes the
   source file itself and still shows (`Warning` → `var worstSnap = _exactCut ? TimeSpan.Zero :
   MaxSnapOffset()`).
-- **I93** — flipping precision is **pure VM state**: it re-raises the note and the rows' readouts and performs
-  **no** probe work — no `GetKeyframesAsync`, no re-scan (`ExactCut` setter, `SetExactCut`).
+- **I93** — flipping precision performs **no** probe work — no `GetKeyframesAsync`, no re-scan. It re-raises the
+  note and the rows' readouts, **requests a cut-point frame** for a handle whose grab time became known or moved,
+  and **cancels and clears** the frame of a handle whose grab time became provisional (T-174, I158) (`ExactCut`
+  setter, `SetExactCut`, `FollowGrabTime`).
 
 ### Row checkbox intent vs computed eligibility (G-043 / T-127)
 - **I94** — the row checkbox binds **two-way to the user's intent**, `IsCheckedByUser` — never to the computed
@@ -819,7 +837,7 @@ SPEC-007); the shared `IThumbnailService`/`FfmpegThumbnailService` frame source 
   vocabulary and the pluralisation, not one fixed sentence.
 
 ## Links
-- Design: D-004 (Bulk Cut screen) · D-005 (apply a cut before the snap — built by T-173: I21/I22/I24/I26/I57/I76/I104 amended, I156–I157 added; T-176: I8/I10/I12/I91 amended)
+- Design: D-004 (Bulk Cut screen) · D-005 (apply a cut before the snap — built by T-173: I21/I22/I24/I26/I57/I76/I104 amended, I156–I157 added; T-174: § What/I61–I64/I93 amended, I158 added; T-176: I8/I10/I12/I91 amended)
 - Goals: G-036 (batch trim), G-037 (shared preview + set-at-playhead + reusable cut profiles), G-038 (profile
   thumbnails + per-row cut-point frame previews — feature task T-108 for the per-row thumbnails here), G-039
   (Bulk Cut polish — layout-mode-aware body T-112, profiles-card regroup T-113, apply-to-all re-activation T-111),
@@ -829,7 +847,8 @@ SPEC-007); the shared `IThumbnailService`/`FfmpegThumbnailService` frame source 
   UI T-123 (I83–I88)), G-042 (frame-exact cutting — the precision choice T-125 (I89–I93)), G-043 (tick the
   rows you want and have Run agree — the checkbox-intent/eligibility split T-127 (I94–I99), select all /
   select none T-128 (I100–I102)), G-057 (apply a cut to rows still scanning — T-173 (I156–I157; I21/I22/I24/I26/I57/I76/I104
-  amended); Exact cut reaches every row — T-176 (I8/I10/I12/I91 amended))
+  amended); the chip shows the frame the run cuts at — T-174 (I158; § What/I61–I64/I93 amended); Exact cut reaches every row —
+  T-176 (I8/I10/I12/I91 amended))
 - Related specs: SPEC-002 (the T-095 batch engine `IBulkTrimEngine` / `BulkTrimEngine` — incl. the engine-side
   handling of the `OutputMode`/`CutPrecision` axes this screen selects, kept orthogonal to `CollisionPolicy`'s
   own "what if the destination is taken?" question); T-094 kept-segment request (`KeptSegmentSelector`);
@@ -864,6 +883,7 @@ SPEC-007); the shared `IThumbnailService`/`FfmpegThumbnailService` frame source 
   `tests/App.Tests/ReplaceOriginalModeTests.cs` (T-123 replace-originals UI — I83–I88, 7 tests) ·
   `tests/App.Tests/ExactCutModeTests.cs` (T-125 precision choice — I89–I93, 8 tests) ·
   `tests/App.Tests/ApplyDuringScanTests.cs` (T-173 apply while rows scan — I156–I157 and the amended I21/I22/I24/I26/I57/I76/I104) ·
-  `tests/App.Tests/ExactCutReachesEveryRowTests.cs` (T-176 rows and outros added after the toggle — I91 and the amended I8/I10/I12) — all tagged `serves-spec=SPEC-011`.
+  `tests/App.Tests/ExactCutReachesEveryRowTests.cs` (T-176 rows and outros added after the toggle — I91 and the amended I8/I10/I12) ·
+  `tests/App.Tests/BulkItemThumbnailTests.cs` § T-174 (the frame at the effective cut time — I158 and the amended I61–I64/I93) — all tagged `serves-spec=SPEC-011`.
   The intent-side targeting filters are additionally asserted by `tests/App.Tests/BulkCutProfileCommandsTests.cs`
   (I56) and `tests/App.Tests/BulkSpecGapTests.cs` (I22), both reading `IsCheckedByUser` directly.
