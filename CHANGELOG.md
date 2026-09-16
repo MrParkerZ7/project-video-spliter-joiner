@@ -16,6 +16,12 @@ goal; `0.1.0` is the first end-to-end, shippable cut.
   still waits** for that, so nothing is ever cut at a provisional time. The apply line now says what happened
   to each row: `Applied to 20 row(s) · 19 waiting for their scan`, `… invalid (red when their scan
   finishes)` for a cut no snap can rescue, and `… not loaded, skipped` for a file that has not been read yet.
+- **Exact cut now reaches videos you add after switching it on.** The switch only reached the rows already in
+  the list. A video added afterwards was still judged on its keyframe-snapped cut — so a coarse-keyframe video
+  whose intro snapped back to the start was dropped from the batch as "nothing to trim yet", although Exact
+  would have trimmed it — and it showed snap notes (`→ snapping…`, `→ 00:44.0 (−1.0s)`) for a snap Exact never
+  makes. The same went for an outro added later to any row. Every row and every outro now follows the switch
+  from the moment it appears.
 - **A file that is not a picture can no longer become a profile's picture.** The *Thumbnail…* chooser has
   an *All files* option, and whatever you picked through it was copied in and reported as success — no
   layer ever asked whether the file was an image. A real profile store on this machine ended up with a

@@ -103,17 +103,21 @@ SPEC-007); the shared `IThumbnailService`/`FfmpegThumbnailService` frame source 
 - **I7** — `StartKeyframeScanAsync` flips `IsIndexingKeyframes` true then, on completion, commits `Keyframes`,
   resolves the intro (and outro, if any) snaps, and raises `KeyframesReady`; a requested time snaps to the nearest
   keyframe (e.g. 12s → 10s on a 5s grid) (`StartKeyframeScanAsync`, `ScanBodyAsync`).
-- **I8** — `IsValidCut` is true iff `KeyframesReady`, `IntroEndSnapped ≥ 0`, `(OutroStartSnapped ?? Duration) ≤
-  Duration`, **and** `IntroEndSnapped < (OutroStartSnapped ?? Duration) − MinKeptSpan` (`IsValidCut`).
+- **I8** — `IsValidCut` is true iff `KeyframesReady`, `EffectiveIntroEnd ≥ 0`, `(EffectiveOutroStart ?? Duration) ≤
+  Duration`, **and** `EffectiveIntroEnd < (EffectiveOutroStart ?? Duration) − MinKeptSpan`. The **effective** cut is
+  the one the batch performs — `Snapped` on the lossless path, `Requested` under Exact cut (I91) — and has been since
+  T-127 review finding #1; this invariant named the snapped values until T-176 corrected it (`IsValidCut`,
+  `EffectiveIntroEnd`, `EffectiveOutroStart`).
 - **I9** — `MinKeptSpan` is `max(1 second, average GOP)` of the row's keyframes (`MinKeptSpan`,
   `_probe.AverageGop`).
-- **I10** — `IsNoOpTrim` is true iff the net result keeps the whole file: `IntroEndSnapped ≤ 500ms` **and**
-  (no outro **or** `Duration − OutroStartSnapped ≤ 500ms`) (`IsNoOpTrim`, `BoundaryEpsilon`).
+- **I10** — `IsNoOpTrim` is true iff keyframes are ready and the net result keeps the whole file:
+  `EffectiveIntroEnd ≤ 500ms` **and** (no outro **or** `Duration − EffectiveOutroStart ≤ 500ms`) — the effective cut
+  of I8, so under Exact a request that snaps back to 0 is still a trim (`IsNoOpTrim`, `BoundaryEpsilon`).
 - **I11** — `RowState` returns the active batch-phase overlay when set, else the computed base state in priority
   order `LoadFailed → Loading (not KeyframesReady) → NoOpTrim → Ready (IsValidCut) → Invalid`
   (`RowState`, `ComputeBaseRowState`).
-- **I12** — `KeptDuration` is `(OutroStartSnapped ?? Duration) − IntroEndSnapped`, and is null until keyframes are
-  ready (`KeptDuration`).
+- **I12** — `KeptDuration` is `(EffectiveOutroStart ?? Duration) − EffectiveIntroEnd` (the effective cut of I8), and
+  is null until keyframes are ready (`KeptDuration`).
 - **I13** — **eligibility** is auto-withdrawn once a row is known-ineligible: `IsAutoDisabled` is true for
   `LoadFailed`, or for `KeyframesReady` with `NoOpTrim`/`!IsValidCut`; a still-`Loading` row is **not**
   auto-disabled (`CanRunBatch` waits on it instead, I37). Since T-127 this is one half of the **read-only**
@@ -468,11 +472,19 @@ SPEC-007); the shared `IThumbnailService`/`FfmpegThumbnailService` frame source 
   land where you set them (re-encodes ~1s per cut)`, and the run sends `CutPrecision.Exact` — a third axis on
   `BulkTrimOptions`, orthogonal to both `Collision` and `Output` (`ExactCut` setter, `PrecisionNote`,
   `RunBatchAsync`).
-- **I91** — flipping the toggle propagates to **every row currently in `Items`** through `SetExactCut`, which
-  sets `SuppressSnapNote` on `IntroEnd` (and on `OutroStart` when the row has one): under Exact the row's
-  `HasSnapNote` is false and `SnapNote` empty — advertising a 4s keyframe for a cut that will land on 5s
-  would mislead — while `Requested` itself is **untouched**, so switching back to Lossless restores the full
-  readout of I74 (`ExactCut` setter, `BulkItemViewModel.SetExactCut`, `CutMarkerViewModel.SuppressSnapNote`).
+- **I91** — the tab's precision reaches **every row**: flipping the toggle propagates to every row currently in
+  `Items` through `SetExactCut`, **every row added later** takes it at construction — before its probe and scan,
+  so it holds from the row's first moment, on the picker and the drop path alike (`AddFilesAsync` →
+  `SetExactCut`) — and **every outro handle added later** inherits it (`AddOutro` sets `SuppressSnapNote` before
+  the handle resolves, so a handle added to a scanning row is covered too — + outro, *Set outro-start here*, a
+  profile tail and ⧉ all build it there). `SetExactCut` sets `SuppressSnapNote` on `IntroEnd` (and on `OutroStart`
+  when the row has one): under Exact the row's `HasSnapNote` is false — advertising a 4s keyframe for a cut that
+  will land on 5s would mislead — while `Requested` itself is **untouched**, so switching back to Lossless
+  restores the full readout of I74, on added rows and outros too (T-176). This **refines I74 and I76**: under
+  Exact, `HasSnapNote` is false even while the snap is pending or offset, and the note is hidden; the `SnapNote`
+  text is empty once the snap resolves but still reads `→ snapping…` while it is pending (`ExactCut` setter,
+  `BulkCutViewModel.AddFilesAsync`, `BulkItemViewModel.SetExactCut` / `AddOutro`,
+  `CutMarkerViewModel.SuppressSnapNote` / `HasSnapNote` / `SnapNote`).
 - **I92** — Exact also suppresses the **snap-magnitude** advisory of I81 (`cut moved Ns…`), because under
   exact cutting that offset will not occur; the **grid** advisory of I80 (`coarse keyframes…`) describes the
   source file itself and still shows (`Warning` → `var worstSnap = _exactCut ? TimeSpan.Zero :
@@ -807,7 +819,7 @@ SPEC-007); the shared `IThumbnailService`/`FfmpegThumbnailService` frame source 
   vocabulary and the pluralisation, not one fixed sentence.
 
 ## Links
-- Design: D-004 (Bulk Cut screen) · D-005 (apply a cut before the snap — built by T-173: I21/I22/I24/I26/I57/I76/I104 amended, I156–I157 added)
+- Design: D-004 (Bulk Cut screen) · D-005 (apply a cut before the snap — built by T-173: I21/I22/I24/I26/I57/I76/I104 amended, I156–I157 added; T-176: I8/I10/I12/I91 amended)
 - Goals: G-036 (batch trim), G-037 (shared preview + set-at-playhead + reusable cut profiles), G-038 (profile
   thumbnails + per-row cut-point frame previews — feature task T-108 for the per-row thumbnails here), G-039
   (Bulk Cut polish — layout-mode-aware body T-112, profiles-card regroup T-113, apply-to-all re-activation T-111),
@@ -817,7 +829,7 @@ SPEC-007); the shared `IThumbnailService`/`FfmpegThumbnailService` frame source 
   UI T-123 (I83–I88)), G-042 (frame-exact cutting — the precision choice T-125 (I89–I93)), G-043 (tick the
   rows you want and have Run agree — the checkbox-intent/eligibility split T-127 (I94–I99), select all /
   select none T-128 (I100–I102)), G-057 (apply a cut to rows still scanning — T-173 (I156–I157; I21/I22/I24/I26/I57/I76/I104
-  amended))
+  amended); Exact cut reaches every row — T-176 (I8/I10/I12/I91 amended))
 - Related specs: SPEC-002 (the T-095 batch engine `IBulkTrimEngine` / `BulkTrimEngine` — incl. the engine-side
   handling of the `OutputMode`/`CutPrecision` axes this screen selects, kept orthogonal to `CollisionPolicy`'s
   own "what if the destination is taken?" question); T-094 kept-segment request (`KeptSegmentSelector`);
@@ -851,6 +863,7 @@ SPEC-007); the shared `IThumbnailService`/`FfmpegThumbnailService` frame source 
   `tests/App.Tests/SnapWarningTests.cs` (T-120 coarse-GOP + real-snap advisory — I80–I82, 5 tests) ·
   `tests/App.Tests/ReplaceOriginalModeTests.cs` (T-123 replace-originals UI — I83–I88, 7 tests) ·
   `tests/App.Tests/ExactCutModeTests.cs` (T-125 precision choice — I89–I93, 8 tests) ·
-  `tests/App.Tests/ApplyDuringScanTests.cs` (T-173 apply while rows scan — I156–I157 and the amended I21/I22/I24/I26/I57/I76/I104) — all tagged `serves-spec=SPEC-011`.
+  `tests/App.Tests/ApplyDuringScanTests.cs` (T-173 apply while rows scan — I156–I157 and the amended I21/I22/I24/I26/I57/I76/I104) ·
+  `tests/App.Tests/ExactCutReachesEveryRowTests.cs` (T-176 rows and outros added after the toggle — I91 and the amended I8/I10/I12) — all tagged `serves-spec=SPEC-011`.
   The intent-side targeting filters are additionally asserted by `tests/App.Tests/BulkCutProfileCommandsTests.cs`
   (I56) and `tests/App.Tests/BulkSpecGapTests.cs` (I22), both reading `IsCheckedByUser` directly.

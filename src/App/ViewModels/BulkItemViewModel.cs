@@ -260,6 +260,10 @@ public sealed class BulkItemViewModel : ObservableObject
     public void AddOutro(TimeSpan requested)
     {
         var handle = new CutMarkerViewModel(_probe, () => Keyframes, requested, snapPending: true);
+
+        // T-176: SetExactCut suppresses the note only on the handles that exist at the flip, so a handle added later
+        // inherits it here — before the resolve, so a handle added to a scanning row is covered too.
+        handle.SuppressSnapNote = _exactCut;
         if (KeyframesReady)
         {
             handle.ResolveSnap();

@@ -1187,6 +1187,11 @@ public sealed class BulkCutViewModel : ObservableObject
             {
                 SizeBefore = SafeFileSize(path),
             };
+
+            // T-176: the ExactCut setter reaches only the rows present at the flip. A row added later must take the
+            // tab's precision from its first moment — before its probe and scan — or it is judged on the snapped time
+            // (and shows a snap note) while the run cuts it at the requested one. No probe work (SPEC-011 I93).
+            item.SetExactCut(_exactCut);
             item.PropertyChanged += OnItemChanged;
             Items.Add(item);
             added.Add(item);
