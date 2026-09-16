@@ -14,6 +14,11 @@
              item gutter = 48. Two rows = 96, plus 4px of slack. Past it the list scrolls; it never
              grows the header, which is what T-161's MaxWidth bought on the other axis. -->
         <sys:Double x:Key="ProfileBarMaxHeight">100</sys:Double>
+        <!-- T-172: the hover card's picture box width, in DIPs. Named because two other numbers depend on it
+             and must not become hand-typed copies: the low-resolution note appears for a picture with fewer
+             real pixels than this, and BulkCutViewModel.ProfileThumbnailWidth stores pictures at TWICE it
+             (640), so a picture is sharp here up to 200% display scaling. Tests pin both relationships. -->
+        <sys:Double x:Key="ProfilePreviewCardWidth">320</sys:Double>
         <conv:NullToCollapsedConverter x:Key="NullToCollapsed" />
         <conv:BoolToVisibilityConverter x:Key="BoolToVisibility" />
         <conv:InverseBoolConverter x:Key="InverseBool" />
@@ -28,6 +33,7 @@
              held open, returns null on a null/blank/missing path → the placeholder chip shows through).
              Reused verbatim from the T-078 scrub-thumb converter — same OnLoad + null-safety contract. -->
         <conv:PathToBitmapConverter x:Key="PathToBitmap" />
+        <conv:PixelWidthBelowToVisibleConverter x:Key="PixelWidthBelowToVisible" />
 
         <!-- Profile row: [thumb chip] Name — the ComboBox ItemTemplate (drives BOTH the drop-down rows
              and the selection box). The muted chip is the placeholder; the Image covers it when a
@@ -65,7 +71,7 @@
                                 CornerRadius="{StaticResource RadiusSm}"
                                 Padding="4"
                                 SnapsToDevicePixels="True">
-                            <StackPanel Width="320">
+                            <StackPanel Width="{StaticResource ProfilePreviewCardWidth}">
                                 <!-- Letterboxed so the card does not resize as you move between
                                      profiles whose pictures differ in aspect. Uniform, never
                                      UniformToFill: this is the view where detail matters, so nothing
@@ -76,9 +82,26 @@
                                         CornerRadius="{StaticResource RadiusSm}"
                                         ClipToBounds="True"
                                         Visibility="{Binding ThumbnailPath, Converter={StaticResource NullToCollapsed}}">
-                                    <Image Source="{Binding ThumbnailPath, Converter={StaticResource PathToBitmap}}"
+                                    <Image x:Name="CardImage"
+                                           Source="{Binding ThumbnailPath, Converter={StaticResource PathToBitmap}}"
                                            Stretch="Uniform" />
                                 </Border>
+
+                                <!-- T-172: Uniform fills the box, enlarging a small picture as readily as it
+                                     shrinks a big one - every picture saved before T-172 is 64-96px, drawn
+                                     here at 320. The card keeps filling (the request was "fill picture") and
+                                     says so, naming the gesture that re-takes it: a disclosed enlargement is
+                                     a known limitation, a silent one looks like a rendering bug. Judged on
+                                     the loaded bitmap's PIXELS against the box width resource, so there is
+                                     no third hand-typed number. -->
+                                <TextBlock Text="low resolution — re-take with 📷 Use current frame for a sharp preview"
+                                           Margin="4,4,4,0"
+                                           TextWrapping="Wrap"
+                                           FontSize="{StaticResource FontSizeSmall}"
+                                           Foreground="{StaticResource TextMutedBrush}"
+                                           Visibility="{Binding Source, ElementName=CardImage,
+                                                                Converter={StaticResource PixelWidthBelowToVisible},
+                                                                ConverterParameter={StaticResource ProfilePreviewCardWidth}}" />
 
                                 <!-- The full name. The chip trims it, so this is where a long one
                                      becomes readable (T-168 bounded the chip label at 220px). -->

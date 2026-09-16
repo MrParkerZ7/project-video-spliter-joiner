@@ -22,6 +22,12 @@ goal; `0.1.0` is the first end-to-end, shippable cut.
   would have trimmed it — and it showed snap notes (`→ snapping…`, `→ 00:44.0 (−1.0s)`) for a snap Exact never
   makes. The same went for an outro added later to any row. Every row and every outro now follows the switch
   from the moment it appears.
+- **Profile pictures are saved sharper, and a picture too small for the hover card says so.** New pictures —
+  captured, snapshotted or uploaded — are now kept at 640 pixels wide instead of 320, so the 320-wide hover
+  card stays sharp on a display scaled up to 200%; capturing takes no longer. Pictures saved before now (in
+  practice 64–96 pixels) still fill the card, but it now says *low resolution* and names **📷 Use current
+  frame** as the way to re-take them — the blur is disclosed instead of looking like a rendering bug. They
+  cannot be sharpened automatically: a profile does not remember which video its picture came from.
 - **A file that is not a picture can no longer become a profile's picture.** The *Thumbnail…* chooser has
   an *All files* option, and whatever you picked through it was copied in and reported as success — no
   layer ever asked whether the file was an image. A real profile store on this machine ended up with a

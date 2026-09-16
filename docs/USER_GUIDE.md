@@ -384,6 +384,9 @@ The Bulk tab **remembers its own split position per layout**, independent of the
      card opens above it with a **larger picture** (320px wide), the **full name**, and the **intro /
      outro** the profile would apply (the outro reads *to end* when the profile has none). It stays open
      for up to two minutes while you keep the cursor there. A profile with no picture shows the name and values only.
+     A picture too small to fill the card sharply still fills it, and the card says **low resolution** —
+     pictures saved by older versions are 64–96px wide. Select the chip and press **📷 Use current frame**
+     on the right video to re-take it; new pictures are kept at 640px wide, sharp even on a scaled display.
    - **Each profile carries a thumbnail.** When you **Save**, the app automatically uses the **frame at
      the row's intro-end** as the profile's thumbnail, shown **on its chip** so you can tell profiles
      apart at a glance. To change it later, select the profile's chip and use **📷 Use current frame** (the

@@ -116,6 +116,46 @@ public sealed class PathToBitmapConverter : IValueConverter
         => throw new NotSupportedException();
 }
 
+/// <summary>
+/// T-172: Visible when the bound picture has fewer real pixels across than the width it is drawn at
+/// (<c>ConverterParameter</c>, the card's box width), else Collapsed — and Collapsed for no picture.
+///
+/// <para><b>Pixels, never the DPI-scaled size.</b> WPF sizes a bitmap by its DPI metadata, so a 480px picture
+/// tagged 192 DPI is 240 DIPs "wide" and a 160px one tagged 48 DPI is 320. Whether an enlargement is soft is a
+/// question about the pixels the file actually holds.</para>
+/// </summary>
+public sealed class PixelWidthBelowToVisibleConverter : IValueConverter
+{
+    public object Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
+    {
+        if (value is not BitmapSource picture || !TryWidth(parameter, out var boxWidth))
+        {
+            return Visibility.Collapsed;
+        }
+
+        return picture.PixelWidth < boxWidth ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
+        => throw new NotSupportedException();
+
+    private static bool TryWidth(object? parameter, out double width)
+    {
+        switch (parameter)
+        {
+            case double d:
+                width = d;
+                return true;
+            case string s when double.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed):
+                width = parsed;
+                return true;
+            default:
+                width = 0;
+                return false;
+        }
+    }
+}
+
 /// <summary>Scales a 0..1 progress fraction to a 0..100 percentage for a <c>ProgressBar</c>.</summary>
 public sealed class FractionToPercentConverter : IValueConverter
 {

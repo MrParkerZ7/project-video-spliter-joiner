@@ -160,7 +160,49 @@ public sealed class SnapshotProfileThumbnailTests : IDisposable
         grab.Time.Should().Be(
             TimeSpan.FromSeconds(91),
             "the point of the gesture is THIS frame — not the intro-end the automatic capture uses");
-        grab.Width.Should().Be(320, "it must match the auto path's width or the stored pictures differ in size (T-169 raised it 96 -> 320)");
+        grab.Width.Should().Be(640, "it must match the auto path's width or the stored pictures differ in size (T-169 raised it 96 -> 320, T-172 to 640)");
+    }
+
+    [Trait("serves-spec", "SPEC-007")]
+    [Fact]
+    public async Task TheSnapshot_IsStored640Wide_ReadFromTheStoredFile()
+    {
+        var (vm, probe, thumbs, settings, player) = Build();
+        // A real picture at whatever width is asked for, as ffmpeg's scale=W:-1 produces.
+        thumbs.ThumbnailFactory = (_, _, width) => MakePicture(width, width * 9 / 16);
+        var profile = await ReadyToSnapAsync(vm, probe, player, atSeconds: 42);
+
+        (await vm.SnapshotProfileThumbnailAsync()).Should().BeTrue();
+
+        var stored = settings.CutProfiles.Single(p =>
+            string.Equals(p.Name, profile.Name, StringComparison.OrdinalIgnoreCase)).ThumbnailPath!;
+        var image = new System.Windows.Media.Imaging.BitmapImage();
+        image.BeginInit();
+        image.CacheOption = System.Windows.Media.Imaging.BitmapCacheOption.OnLoad;
+        image.CreateOptions = System.Windows.Media.Imaging.BitmapCreateOptions.IgnoreImageCache;
+        image.UriSource = new Uri(stored, UriKind.Absolute);
+        image.EndInit();
+        image.PixelWidth.Should().Be(640, "the stored file itself is 640 wide, not merely the request (T-172)");
+    }
+
+    private string MakePicture(int width, int height)
+    {
+        Directory.CreateDirectory(_dir);
+        var path = Path.Combine(_dir, $"grab-{Guid.NewGuid():N}.png");
+        var stride = width * 4;
+        var pixels = new byte[stride * height];
+        for (var i = 0; i < pixels.Length; i++)
+        {
+            pixels[i] = (byte)(i % 251);
+        }
+
+        var bitmap = System.Windows.Media.Imaging.BitmapSource.Create(
+            width, height, 96, 96, System.Windows.Media.PixelFormats.Bgra32, null, pixels, stride);
+        var encoder = new System.Windows.Media.Imaging.PngBitmapEncoder();
+        encoder.Frames.Add(System.Windows.Media.Imaging.BitmapFrame.Create(bitmap));
+        using var stream = File.Create(path);
+        encoder.Save(stream);
+        return path;
     }
 
     [Trait("serves-spec", "SPEC-007")]

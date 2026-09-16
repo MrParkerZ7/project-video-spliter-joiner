@@ -136,10 +136,18 @@ public sealed class BulkCutViewModel : ObservableObject
     /// — the scrub bar's — already captures at 160 and displays 160x90. Leaving profiles at 96 would have
     /// shipped a preview narrower than one the app already has.</para>
     ///
-    /// <para>Existing pictures keep whatever width they were saved at; nothing is migrated. Cost is
-    /// negligible either way — a real store measured 10,483 bytes for 11 pictures.</para>
+    /// <para>Raised 320 -> 640 by T-172 (G-056). The hover card's picture box is 320 DIPs wide
+    /// (<c>ProfilePreviewCardWidth</c> in <c>BulkCutView.xaml</c>), so 320 pixels were exact only at 100%
+    /// display scaling and soft at 150% or more; 640 is sharp up to 200%. The two are deliberately 1:2, and a
+    /// test pins it. Measured: a single-frame grab takes ~119 ms at 320, 640, 960 and 1920 alike, so the width
+    /// costs bytes, not time — and an 11-profile backup grows from ~0.10–0.26MB to ~0.23–1.1MB, which is why
+    /// this is a cap and not "keep the original".</para>
+    ///
+    /// <para>Existing pictures keep whatever width they were saved at; nothing is migrated, and nothing could
+    /// be — a profile records no source video to re-grab from. A picture narrower than the card says so in the
+    /// card (SPEC-007 I109) instead.</para>
     /// </summary>
-    private const int ProfileThumbnailWidth = 320;
+    internal const int ProfileThumbnailWidth = 640;
 
     /// <summary>
     /// Default settle window (T-115) before a SETTLED row selection opens in the shared preview player.

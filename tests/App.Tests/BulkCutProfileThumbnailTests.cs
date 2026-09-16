@@ -226,7 +226,7 @@ public sealed class BulkCutProfileThumbnailTests : IDisposable
     public async Task Upload_APictureWiderThanTheStoredWidth_IsShrunkBeforeItIsStored()
     {
         var (vm, probe, settings, _, _) = Build();
-        var row = await AddRowAsync(vm, probe, @"C:\ep01.mp4", 100, 2, introSeconds: 10);
+        var row = await AddRowAsync(vm, probe, @"C:\v\ep01.mp4", 100, 2, introSeconds: 10);
         vm.SelectedItem = row;
         vm.SaveProfile("Series");
 
@@ -234,9 +234,49 @@ public sealed class BulkCutProfileThumbnailTests : IDisposable
             .Should().BeTrue();
 
         var stored = settings.CutProfiles.Single().ThumbnailPath!;
-        PixelWidthOf(stored).Should().Be(320,
+        PixelWidthOf(stored).Should().Be(640,
             "every source must converge on one stored width, which is what SPEC-007 I74 claims — an " +
-            "upload copied verbatim is how that claim became false");
+            "upload copied verbatim is how that claim became false. T-172 raised it 320 -> 640");
+    }
+
+    /// <summary>
+    /// T-172 — an upload between the card's width and the stored width is kept as it is. The old 320 cap would
+    /// have thrown away detail the 640 store now keeps, so this is the case that tells the two caps apart.
+    /// </summary>
+    [Fact]
+    [Trait("serves-spec", "SPEC-007")]
+    public async Task Upload_APictureBetweenTheCardAndTheStoredWidth_IsKeptAsIs()
+    {
+        var (vm, probe, settings, _, _) = Build();
+        var row = await AddRowAsync(vm, probe, @"C:\ep01.mp4", 100, 2, introSeconds: 10);
+        vm.SelectedItem = row;
+        vm.SaveProfile("Series");
+
+        vm.UploadThumbnail(vm.SelectedProfile, MakeWidePng("mid.png", 500, 281))
+            .Should().BeTrue();
+
+        PixelWidthOf(settings.CutProfiles.Single().ThumbnailPath!).Should().Be(500,
+            "500px is narrower than the 640 store, so nothing is lost and nothing is shrunk");
+    }
+
+    /// <summary>
+    /// T-172 — a new capture is stored 640px wide, read from the STORED FILE rather than the requested width,
+    /// so the whole chain (request -> grab -> store) is what is asserted.
+    /// </summary>
+    [Fact]
+    [Trait("serves-spec", "SPEC-007")]
+    public async Task AnAutoCapture_IsStored640Wide_ReadFromTheStoredFile()
+    {
+        var (vm, probe, settings, thumbs, _) = Build();
+        // The fake grabs a real picture at whatever width it is asked for, as ffmpeg's scale=W:-1 does.
+        thumbs.ThumbnailFactory = (_, _, width) => MakeWidePng($"grab-{width}.png", width, width * 9 / 16);
+        var row = await AddRowAsync(vm, probe, @"C:\v\ep01.mp4", 100, 2, introSeconds: 10, outroSeconds: 90);
+        vm.SelectedItem = row;
+
+        await vm.SaveProfileWithAutoThumbnailAsync("Anime OP");
+
+        PixelWidthOf(settings.CutProfiles.Single().ThumbnailPath!).Should().Be(640,
+            "640 is sharp in the 320-DIP hover card up to 200% display scaling (T-172)");
     }
 
     /// <summary>T-169 — a picture already smaller is stored as it is; nothing is upscaled.</summary>
@@ -245,7 +285,7 @@ public sealed class BulkCutProfileThumbnailTests : IDisposable
     public async Task Upload_APictureNarrowerThanTheStoredWidth_IsNotInflated()
     {
         var (vm, probe, settings, _, _) = Build();
-        var row = await AddRowAsync(vm, probe, @"C:\ep01.mp4", 100, 2, introSeconds: 10);
+        var row = await AddRowAsync(vm, probe, @"C:\v\ep01.mp4", 100, 2, introSeconds: 10);
         vm.SelectedItem = row;
         vm.SaveProfile("Series");
 
@@ -254,7 +294,7 @@ public sealed class BulkCutProfileThumbnailTests : IDisposable
 
         var stored = settings.CutProfiles.Single().ThumbnailPath!;
         PixelWidthOf(stored).Should().Be(64,
-            "blowing a 64px picture up to 320 adds bytes and no detail — 6 of the 11 pictures in the " +
+            "blowing a 64px picture up to 640 adds bytes and no detail — 6 of the 11 pictures in the " +
             "real store that prompted this work are 64px wide");
     }
 
@@ -355,9 +395,10 @@ public sealed class BulkCutProfileThumbnailTests : IDisposable
 
         thumbs.GetThumbnailCallCount.Should().Be(1, "the auto-default grabbed exactly one frame");
         grabbedAt.Should().Be(row.IntroEnd.Snapped, "the default thumbnail is the row's snapped intro-end frame");
-        thumbs.Requests[0].Width.Should().Be(320,
+        thumbs.Requests[0].Width.Should().Be(640,
             "the auto-default grabs at the NAMED ProfileThumbnailWidth, not an arbitrary size. T-169 " +
-            "raised it 96 -> 320 so the hover preview has pixels to show; every source must move together " +
+            "raised it 96 -> 320 so the hover preview has pixels to show, and T-172 to 640 so it stays sharp " +
+            "on a scaled display; every source must move together " +
             "or SPEC-007 I74 stops being true");
         thumbs.Requests[0].InputPath.Should().Be(row.Path, "and from the row's own source file");
 

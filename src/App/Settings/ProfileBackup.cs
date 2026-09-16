@@ -20,7 +20,8 @@ namespace VideoSplitJoiner.App.Settings;
 /// change for an old install), the backup file carries the images inline, so one file is genuinely the
 /// whole story. See ADR-0021.</para>
 ///
-/// <para>Images are ~96px, so base64 inside the JSON costs little and removes any question of relative
+/// <para>Pictures are stored at most 640px wide (T-172; older ones at 64–320), so base64 inside the JSON
+/// costs little — an 11-profile backup measured ~0.23–1.1MB at 640 — and removes any question of relative
 /// paths, missing siblings, or zip handling.</para>
 ///
 /// <para><b>Import is an upsert, never a wipe.</b> Importing must not be able to cost someone the profiles

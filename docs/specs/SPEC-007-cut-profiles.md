@@ -15,7 +15,8 @@ sources:
   - src/App/ImageSignature.cs
   - src/App/Io/ImageNormalizer.cs
   - src/App/Views/BulkCutView.xaml
-serves-goal: [G-037, G-038, G-044, G-051, G-053, G-054, G-057]
+  - src/App/Views/Converters.cs
+serves-goal: [G-037, G-038, G-044, G-051, G-053, G-054, G-057, G-056]
 updated: 2026-09-16
 ---
 
@@ -148,8 +149,8 @@ Also in (T-161/T-168/T-169/T-170): the `ProfileBar` chip picker in `BulkCutView.
   picture is the same size whichever produced it. **Closer since T-169 (I106), still not literally
   true:** this was written as though already so while the upload path copied bytes verbatim, and a real
   store held 6 uploads at 64px against 4 captures at 96. T-169 brought uploads into line, but a capture
-  is exactly 320 wide while an upload narrower than 320 is kept narrower, and a restored picture keeps
-  whatever width it was backed up at.
+  is exactly `ProfileThumbnailWidth` wide (640 since T-172) while an upload narrower than that is kept
+  narrower, and a restored picture keeps whatever width it was backed up at.
 - **I75** — the snapshot grabs at `Player.Position` from the SELECTED row's file — the frame the user is
   looking at, never the intro-end the auto path uses — and is gated by `CanSnapshotProfileThumbnail`
   (a selected profile AND a selected row AND `Player.IsReady`), with `SnapshotUnavailableReason` naming
@@ -215,7 +216,7 @@ Also in (T-161/T-168/T-169/T-170): the `ProfileBar` chip picker in `BulkCutView.
 
 ### Hovering a profile shows its picture big enough to recognise (T-169, 2026-09-07)
 - **I101** — hovering a profile chip opens a **preview card** showing that profile's picture at
-  **320px**, against the chip's 28px, plus the **full name** (the chip trims it) and the **intro/outro
+  **320px** (the named `ProfilePreviewCardWidth`, T-172), against the chip's 28px, plus the **full name** (the chip trims it) and the **intro/outro
   values**. A picture alone does not identify a profile; the card is what makes I95's promise — pictures
   visible *before* you choose — actually answerable.
 - **I102** — the card is a **`ToolTip`**, not the `Popup` the scrub bars use. Those popups **track the
@@ -237,16 +238,23 @@ Also in (T-161/T-168/T-169/T-170): the `ProfileBar` chip picker in `BulkCutView.
 - **I105** — the card **never intercepts the click that selects**. I97 requires a click to SELECT, and a
   card sitting under the cursor is exactly what would break it. A `ToolTip` is never hit-testable and
   never focusable; both are asserted rather than assumed.
-- **I106** — **every gesture now targets one width, 320** — the width I74 has always claimed. Captures
-  and snapshots grab at it through ffmpeg (`scale=320:-1`, so exactly 320 — which **enlarges** a source
+- **I106** — **every gesture now targets one width, `ProfileThumbnailWidth` = 640** (320 from T-169, raised by
+  T-172) — the width I74 has always claimed. Captures
+  and snapshots grab at it through ffmpeg (`scale=640:-1`, so exactly 640 — which **enlarges** a source
   narrower than that, e.g. a 176x144 `.3gp`); an **upload is re-encoded** down to it (`ImageNormalizer.ShrinkToWidth`) instead of being copied byte-for-byte (I42's verbatim copy still
   describes the store, which now receives an already-normalized file). Measured on a real machine before
   the change: 6 of 11 stored pictures were 64px uploads against 4 captures at 96, so preview sharpness
-  silently depended on how the picture had been made. **Not covered:** a picture restored from a
+  silently depended on how the picture had been made. **Why 640 (T-172, G-056):** the card's box is 320 DIPs, so
+  320 pixels were exact only at 100% display scaling; 640 is sharp up to 200%. Measured: a single-frame grab takes
+  ~119 ms at 320, 640, 960 and 1920 alike, so width costs bytes, not time — and an 11-profile backup grows from
+  ~0.10–0.26MB to ~0.23–1.1MB, which is why this is a cap and not "keep the original". The stored width is
+  **twice** the card's named box width, asserted, not typed twice. **Not covered:** a picture restored from a
   backup (I91) is stored exactly as it was backed up and is never normalized.
-- **I107** — **upload** normalization **only ever shrinks** (captures are not normalized — see I106). An
-  upload already narrower than the target is stored untouched: inflating a 64px image to 320 adds bytes and no detail, turning "small but sharp" into
-  "large and soft" — the outcome the preview exists to avoid. It is also **best-effort**: any failure
+- **I107** — **storage** never enlarges: **upload** normalization **only ever shrinks** (captures are not
+  normalized — see I106). An upload already narrower than the target is stored untouched: inflating a 64px
+  image to 640 adds bytes and no detail, turning "small but sharp" into "large and soft". **Rescoped by T-172:**
+  the rule is about what is stored. The card still **fills** its box with a smaller picture, enlarging it — and
+  says so (I109). It is also **best-effort**: any failure
   stores the original, because a picture that cannot be re-encoded is still a picture and refusing it
   would turn a cosmetic improvement into data loss. (`ImageNormalizer.ShrinkToWidth` returns null for both
   cases and the caller stores the original.)
@@ -313,9 +321,21 @@ Also in (T-161/T-168/T-169/T-170): the `ProfileBar` chip picker in `BulkCutView.
   `MinKeptSpan` floor instead (the D-005 draft) would call rescuable rows invalid (`ApplyOutcome.Applied`,
   `BulkItemViewModel.IsCutHopelessBeforeSnap`).
 
+### The hover card fills, and says when a picture is too small to fill it sharply (T-172, 2026-09-16)
+- **I109** — the card's picture box is `ProfilePreviewCardWidth` (320) DIPs wide, and `Stretch="Uniform"`
+  **fills** it with any picture, enlarging a small one. A picture with **fewer real pixels** across than that
+  width also shows a **low-resolution note** naming the gesture that re-takes it (`low resolution — re-take with
+  📷 Use current frame for a sharp preview`); a picture at or above the box width shows none. The card keeps
+  filling because the request was to fill it, and every picture saved before T-172 is 64–96px and cannot be
+  re-grabbed (a profile records no source video); the note turns a silent 3–5x blur into a disclosed
+  limitation. Judged on the loaded bitmap's `PixelWidth` — never its DPI-scaled size, which WPF derives from
+  file metadata — against the same named resource the box is drawn at, so the threshold is not a third
+  hand-typed number (`PixelWidthBelowToVisibleConverter`; `BulkCutView.xaml` `ProfilePreviewCard`,
+  `ProfilePreviewCardWidth`).
+
 ## Links
 - Design: D-005 (apply a cut before the snap — built by T-173: I20/I24/I25/I27 amended, I108 added) · ADR-0021 (profiles survive reinstall by not being touched; portability via a backup file rather than a two-root migration) - (feature tasks T-096 apply-to-all convention · T-102 model/persistence/apply · T-103 VM command glue · T-106 thumbnail model/store · T-107 thumbnail UI glue · T-129 upload-failure reporting - T-147 backup/restore + installer guarantee)
-- Goals: G-037, G-038 (profile thumbnails), G-051 (profiles you can keep), G-044 (thumbnail change works — and says so when it does not), G-057 (apply a cut to rows still scanning — T-173)
+- Goals: G-037, G-038 (profile thumbnails), G-051 (profiles you can keep), G-044 (thumbnail change works — and says so when it does not), G-057 (apply a cut to rows still scanning — T-173), G-056 (a sharp hover card — T-172: I74/I101/I106/I107 amended, I109 added)
 - Related specs: SPEC-008 (operation-progress-eta — owns `OperationViewModel`, incl. the additive `ReportFailure` this spec's upload path calls); SPEC-011 (bulk-cut-screen — the T-103 non-thumbnail profile commands + the T-108 per-row cut-point thumbnails); the keyframe-snap / cut-validity spec — both adjacent, out of scope here
 - Key code: `src/Core/Profiles/CutProfile.cs` (`ThumbnailPath`) · `src/App/Settings/AppSettings.cs` (`CutProfiles`/`SaveProfile`/`DeleteProfile` cascade + `SettingsDto`/`CutProfileDto`) · `src/App/Settings/ProfileThumbnailStore.cs` (`Save`/`RenameExistingAside`/`RestoreAsides`/`Delete`/`DeleteByPath`/`DefaultRoot`/`SafeFileName`) · `src/App/ViewModels/CutProfileApplier.cs` · `src/App/ViewModels/BulkCutViewModel.cs` (`SaveProfileWithAutoThumbnailAsync`/`UploadThumbnail`/`ClearThumbnail`/`AttachThumbnail`/`TryAttachThumbnail`/`ReportThumbnailUploadFailure`/`ClearThumbnailUploadError`/`ThumbnailAttachOutcome`) · `src/App/ViewModels/OperationViewModel.cs` (`ReportFailure` — the reporting seam) · `src/App/Views/BulkCutView.xaml.cs` (`OnUploadThumbnailClicked`, `ChooseProfileExportPath`/`ChooseProfileImportPath`/`ConfirmProfileOverwrite`) - `src/App/Settings/ProfileBackup.cs` (`Export`/`Plan`/`Apply`/`ImportPlan`) - `packaging/VideoSplitJoiner.iss` (the absence asserted by I79)
-- Tests: `tests/App.Tests/ApplyDuringScanTests.cs` (T-173 — applying while a row still scans: I20, I24, I25, I27, I108) · `tests/Core.Tests/CutProfileTests.cs` · `tests/App.Tests/CutProfilePersistenceTests.cs` · `tests/App.Tests/CutProfileApplierTests.cs` · `tests/App.Tests/ProfileThumbnailStoreTests.cs` (store + `DeleteProfile` cascade, T-106; the copy-then-swap durability guarantee — I73) · `tests/App.Tests/BulkCutProfileThumbnailTests.cs` (auto-default/upload/clear, T-107; upload-failure reporting, T-129) (and app-layer `tests/App.Tests/BulkCutProfileCommandsTests.cs`) - `tests/App.Tests/ProfileBackupTests.cs` (the file format + the destructive cases, T-147) - `tests/App.Tests/BulkCutProfileBackupCommandsTests.cs` (the VM gestures + the default-keep collision contract) - `tests/App.Tests/InstallerLeavesUserDataTests.cs` (I79)
+- Tests: `tests/App.Tests/ApplyDuringScanTests.cs` (T-173 — applying while a row still scans: I20, I24, I25, I27, I108) · `tests/Core.Tests/CutProfileTests.cs` · `tests/App.Tests/CutProfilePersistenceTests.cs` · `tests/App.Tests/CutProfileApplierTests.cs` · `tests/App.Tests/ProfileThumbnailStoreTests.cs` (store + `DeleteProfile` cascade, T-106; the copy-then-swap durability guarantee — I73) · `tests/App.Tests/BulkCutProfileThumbnailTests.cs` (auto-default/upload/clear, T-107; upload-failure reporting, T-129) (and app-layer `tests/App.Tests/BulkCutProfileCommandsTests.cs`) - `tests/App.Tests/ProfileBackupTests.cs` (the file format + the destructive cases, T-147) - `tests/App.Tests/BulkCutProfileBackupCommandsTests.cs` (the VM gestures + the default-keep collision contract) - `tests/App.Tests/ProfileHoverPreviewTests.cs` (the hover card, T-169; the fill, the low-resolution note, its pixel threshold and the 1:2 width relationship, T-172 — I101, I109) - `tests/App.Tests/InstallerLeavesUserDataTests.cs` (I79)

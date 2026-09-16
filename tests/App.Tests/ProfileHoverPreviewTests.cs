@@ -181,18 +181,160 @@ public sealed class ProfileHoverPreviewTests
             "320px card once per chip");
     }
 
+    // ---- T-172: fill the card, and say when the picture is too small to fill it sharply --------------
+
+    /// <summary>
+    /// T-172 (G-056) — every picture in the real store is 64 or 96px wide, and the card draws it at 320. The
+    /// card keeps FILLING (the request was "fill picture"), and a picture narrower than the card's box says so
+    /// and names the gesture that fixes it — an enlargement the user is told about is a known limitation; a
+    /// silent one looks like a rendering bug.
+    /// </summary>
+    [Trait("serves-spec", "SPEC-007")]
+    [Fact]
+    public void APictureNarrowerThanTheCard_StillFillsIt_AndSaysItIsLowResolution()
+    {
+        var card = MeasureCard(64, 36);
+
+        card.ImageWidth.Should().Be(card.BoxWidth, "a small picture still fills the card's width");
+        card.ImageHeight.Should().Be(180, "and its height — a 16:9 picture leaves no bars in the 16:9 box");
+        card.NoteVisible.Should().BeTrue("a 5x enlargement must be disclosed, not left to look like a rendering bug");
+        card.NoteText.Should().Contain("Use current frame", "the note names the gesture that re-takes the picture");
+    }
+
+    /// <summary>The guard against the vacuous version: a note that is always visible passes the test above.</summary>
+    [Trait("serves-spec", "SPEC-007")]
+    [Theory]
+    [InlineData(320, 180)]
+    [InlineData(640, 360)]
+    public void APictureAtLeastAsWideAsTheCard_FillsItExactly_AndCarriesNoNote(int width, int height)
+    {
+        var card = MeasureCard(width, height);
+
+        card.ImageWidth.Should().Be(card.BoxWidth, "no crop and no bars: the picture fills the box exactly");
+        card.ImageHeight.Should().Be(180);
+        card.NoteVisible.Should().BeFalse($"a {width}px picture is sharp in the card, so there is nothing to disclose");
+    }
+
+    /// <summary>The threshold is the card's own box width, one pixel either side — not a third hand-typed number.</summary>
+    [Trait("serves-spec", "SPEC-007")]
+    [Fact]
+    public void TheNoteThreshold_IsTheCardsBoxWidth()
+    {
+        var box = (int)MeasureCard(320, 180).BoxWidth;
+
+        MeasureCard(box - 1, 180).NoteVisible.Should().BeTrue($"{box - 1}px is narrower than the {box}px box");
+        MeasureCard(box, 180).NoteVisible.Should().BeFalse($"{box}px fills the {box}px box pixel for pixel");
+    }
+
+    /// <summary>
+    /// Pixels, not DPI-scaled size. WPF sizes a bitmap by its DPI metadata, so a 480px picture tagged 192 DPI is
+    /// "240 wide" to WPF and a 160px one tagged 48 DPI is "320 wide". Sharpness is a question about pixels.
+    /// </summary>
+    [Trait("serves-spec", "SPEC-007")]
+    [Theory]
+    [InlineData(480, 270, 192, false)]
+    [InlineData(160, 90, 48, true)]
+    public void APictureIsJudgedByItsPixels_NotItsDpiSize(int width, int height, double dpi, bool lowResolution)
+    {
+        MeasureCard(width, height, dpi).NoteVisible.Should().Be(
+            lowResolution, $"{width}px at {dpi} DPI has {width} real pixels for a 320px box");
+    }
+
+    /// <summary>
+    /// The chip is unchanged by T-172 — still a 28x28 crop. Measured on the clipping box, not the image: under
+    /// UniformToFill a 16:9 picture overflows the square and the box clips it, so the image's own width is wider.
+    /// </summary>
+    [Trait("serves-spec", "SPEC-007")]
+    [Fact]
+    public void TheChipIsUnchanged_28Square_Cropped()
+    {
+        double width = 0, height = 0;
+        var stretch = Stretch.None;
+        var clips = false;
+
+        StaViewHarness.OnSta(() =>
+        {
+            var (view, chip) = FirstChip(thumbnailPath: ThumbnailFile(640, 360));
+            StaViewHarness.LayOut(view, 1280, 800);
+            var image = StaViewHarness.Descendants<Image>(chip).First();
+            var box = (Border)VisualTreeHelper.GetParent(image);
+            width = box.ActualWidth;
+            height = box.ActualHeight;
+            clips = box.ClipToBounds;
+            stretch = image.Stretch;
+        });
+
+        width.Should().Be(ChipThumbnailWidth);
+        height.Should().Be(ChipThumbnailWidth);
+        clips.Should().BeTrue();
+        stretch.Should().Be(Stretch.UniformToFill, "the chip crops to a square; only the card shows the whole frame");
+    }
+
+    /// <summary>
+    /// T-172 — the two numbers that depend on the card's box width read it; neither is a hand-typed copy. The
+    /// card is drawn at the named width, and pictures are stored at twice it, so a picture saved from now on is
+    /// sharp in the card up to 200% display scaling.
+    /// </summary>
+    [Trait("serves-spec", "SPEC-007")]
+    [Fact]
+    public void TheCardIsDrawnAtItsNamedWidth_AndPicturesAreStoredAtTwiceIt()
+    {
+        double named = 0, drawn = 0;
+
+        StaViewHarness.OnSta(() =>
+        {
+            var (view, chip) = FirstChip();
+            named = (double)view.Resources["ProfilePreviewCardWidth"];
+            var card = OpenCard(chip);
+            drawn = StaViewHarness.Descendants<StackPanel>(card).First().Width;
+        });
+
+        drawn.Should().Be(named, "the card's box reads the named width rather than repeating it");
+        VideoSplitJoiner.App.ViewModels.BulkCutViewModel.ProfileThumbnailWidth.Should().Be(
+            (int)(2 * named), "stored pictures are twice the card's width: sharp up to 200% scaling (G-056)");
+    }
+
+    private sealed record CardMeasure(double BoxWidth, double ImageWidth, double ImageHeight, bool NoteVisible, string NoteText);
+
+    /// <summary>Opens the card for a profile whose picture is <paramref name="width"/>x<paramref name="height"/> and measures it.</summary>
+    private static CardMeasure MeasureCard(int width, int height, double dpi = 96)
+    {
+        CardMeasure? result = null;
+
+        StaViewHarness.OnSta(() =>
+        {
+            var (view, chip) = FirstChip(thumbnailPath: ThumbnailFile(width, height, dpi));
+            StaViewHarness.LayOut(view, 1280, 800);
+
+            var card = OpenCard(chip);
+            var image = StaViewHarness.Descendants<Image>(card).Single();
+            image.Source.Should().NotBeNull("precondition: the picture loaded");
+            var box = StaViewHarness.Descendants<StackPanel>(card).First();
+            var note = StaViewHarness.Descendants<TextBlock>(card)
+                .FirstOrDefault(t => (t.Text ?? string.Empty).Contains("low resolution", StringComparison.OrdinalIgnoreCase));
+
+            var noteVisible = note is not null
+                && note.Visibility == Visibility.Visible
+                && Ancestors(note).OfType<UIElement>().TakeWhile(e => !ReferenceEquals(e, card)).All(e => e.Visibility == Visibility.Visible);
+
+            result = new CardMeasure(box.ActualWidth, image.ActualWidth, image.ActualHeight, noteVisible, note?.Text ?? string.Empty);
+        });
+
+        return result!;
+    }
+
     // ---- plumbing ---------------------------------------------------------------------------------
 
     /// <summary>Builds the view with one profile and returns its realised chip.</summary>
     private static (BulkCutView View, ListBoxItem Chip) FirstChip(
-        string name = "Season 1 opener", bool withThumbnail = true)
+        string name = "Season 1 opener", bool withThumbnail = true, string? thumbnailPath = null)
     {
         var settings = new FakeSettings();
         settings.SaveProfile(new VideoSplitJoiner.Core.Profiles.CutProfile(
             name,
             TimeSpan.FromSeconds(12),
             TimeSpan.FromSeconds(30),
-            withThumbnail ? ThumbnailFile() : null));
+            withThumbnail ? thumbnailPath ?? ThumbnailFile() : null));
 
         var view = new BulkCutView
         {
@@ -251,21 +393,21 @@ public sealed class ProfileHoverPreviewTests
         }
     }
 
-    /// <summary>A real 320x180 JPEG on disk, so the card has something to actually measure.</summary>
-    private static string ThumbnailFile()
+    /// <summary>A real JPEG on disk (320x180 by default), so the card has something to actually measure.</summary>
+    private static string ThumbnailFile(int width = 320, int height = 180, double dpi = 96)
     {
         var path = System.IO.Path.Combine(
             System.IO.Path.GetTempPath(), "vsj-hover-" + Guid.NewGuid().ToString("N") + ".jpg");
 
-        var stride = 320 * 4;
-        var pixels = new byte[stride * 180];
+        var stride = width * 4;
+        var pixels = new byte[stride * height];
         for (var i = 0; i < pixels.Length; i++)
         {
             pixels[i] = (byte)(i % 251);
         }
 
         var bitmap = System.Windows.Media.Imaging.BitmapSource.Create(
-            320, 180, 96, 96, PixelFormats.Bgra32, palette: null, pixels, stride);
+            width, height, dpi, dpi, PixelFormats.Bgra32, palette: null, pixels, stride);
 
         var encoder = new System.Windows.Media.Imaging.JpegBitmapEncoder();
         encoder.Frames.Add(System.Windows.Media.Imaging.BitmapFrame.Create(bitmap));

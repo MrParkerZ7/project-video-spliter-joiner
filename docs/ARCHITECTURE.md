@@ -572,14 +572,17 @@ ffmpeg/frame path:
   all **best-effort and off the save path**: the profile persists first, so a slow/failed grab or a store
   failure just leaves the placeholder and never blocks the save.
 - **Every source converges on one width; uploads are checked first (T-169 / T-170).** The auto-capture
-  and the on-screen snapshot (`SnapshotProfileThumbnailAsync`) grab at `ProfileThumbnailWidth` (320), and
+  and the on-screen snapshot (`SnapshotProfileThumbnailAsync`) grab at `ProfileThumbnailWidth` (640 since T-172), and
   the shared store-and-attach step passes every picture through `App/Io/ImageNormalizer.ShrinkToWidth`
   before the store copies it — a WPF-imaging JPEG re-encode that **only shrinks** (a picture no wider than
   that is stored as it is) and is best-effort (a failure stores the original). An upload is a file off the
   user's disk, so `UploadThumbnail` first checks it at that trust boundary with `ImageSignature.IsImage` — a
   leading-bytes test for PNG / JPEG / BMP / GIF / TIFF / WEBP — and refuses a non-image with a message
   rather than storing it; frames the app itself asked ffmpeg to write are not re-checked. Each profile chip
-  carries a `ProfilePreviewCard` ToolTip that previews the picture at 320px.
+  carries a `ProfilePreviewCard` ToolTip that previews the picture in a box `ProfilePreviewCardWidth` (320) DIPs
+  wide. The stored width is deliberately twice that — sharp up to 200% display scaling — and a picture with fewer
+  real pixels than the box still fills it but shows a low-resolution note, judged on `PixelWidth` by
+  `PixelWidthBelowToVisibleConverter` against the same resource (T-172, SPEC-007 I109).
 - **Profile backup — one file, pictures inline ([ADR 0021](adr/0021-profiles-survive-reinstall-via-backup-file.md)).**
   A profile lives in Roaming `settings.json` but its picture in Local `profile-thumbs/`, so copying
   "the settings" loses the images. `ProfileBackup` (`App/Settings/`, T-147) exports every profile to one

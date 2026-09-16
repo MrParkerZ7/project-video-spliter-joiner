@@ -116,6 +116,86 @@ public sealed class ProfileBackupTests : IDisposable
         File.ReadAllText(landed.ThumbnailPath!).Should().Be("PIC", "and it is the SAME picture, byte for byte");
     }
 
+    /// <summary>
+    /// T-172 — pictures are now stored 640px wide, and a backup inlines each one as base64 (I81). The round trip
+    /// must still be byte-exact at that size, and the size of the backup is NAMED here, so a regression in bulk —
+    /// an uncapped 1920px store, say — shows up as a number rather than as a slow export nobody measures.
+    /// </summary>
+    [Trait("serves-spec", "SPEC-007")]
+    [Fact]
+    public void APictureAtTheStoredWidth_SurvivesARoundTrip_AndTheBackupSizeIsNamed()
+    {
+        // The picture a 1080p upload becomes in the store: shrunk to the app's stored width by the real normalizer,
+        // so if that width ever grows, this backup grows with it and the bound below says so.
+        var source = Path_("frame-1080p.png");
+        WritePicture(source, 1920, 1080);
+        var picture = VideoSplitJoiner.App.Io.ImageNormalizer.ShrinkToWidth(
+            source, VideoSplitJoiner.App.ViewModels.BulkCutViewModel.ProfileThumbnailWidth)!;
+        picture.Should().NotBeNull("precondition: a 1920px upload is shrunk to the stored width");
+        var original = File.ReadAllBytes(picture);
+        var dest = Path_("backup.json");
+
+        ProfileBackup.Export(new[] { Profile("Anime OP", 90, 30, picture) }, dest);
+
+        var settings = new FakeSettings();
+        var plan = ProfileBackup.Plan(dest, settings.CutProfiles);
+        ProfileBackup.Apply(plan, settings, NewStore(), includeColliding: false);
+
+        var landed = settings.CutProfiles.Single().ThumbnailPath!;
+        File.ReadAllBytes(landed).Should().Equal(original, "a 640px picture comes back byte for byte");
+
+        // base64 is 4/3 of the picture, and System.Text.Json's default encoder writes each '+' of it as the
+        // six-character escape (backslash, u, 002B) — five bytes more. Anything past that plus a little JSON is not the picture.
+        var backupBytes = new FileInfo(dest).Length;
+        var escapedPlus = CountOf(File.ReadAllText(dest), "\\u002B");
+        var budget = (original.Length + 2) / 3 * 4 + 5L * escapedPlus + 4_096;
+        backupBytes.Should().BeLessThan(
+            budget,
+            $"a {original.Length:N0}-byte 640px picture made a {backupBytes:N0}-byte backup " +
+            $"({escapedPlus:N0} '+' escaped); the backup must carry the picture and little else");
+        backupBytes.Should().BeLessThan(
+            120_000,
+            $"one profile with a 640px picture backs up in {backupBytes:N0} bytes. T-172 measured an 11-profile " +
+            "backup at ~0.23-1.1MB for 640px pictures; a stored width raised again (1920px is ~9x the bytes) " +
+            "lands far past this bound");
+    }
+
+    private static int CountOf(string text, string needle)
+    {
+        var count = 0;
+        for (var at = text.IndexOf(needle, StringComparison.Ordinal); at >= 0; at = text.IndexOf(needle, at + 1, StringComparison.Ordinal))
+        {
+            count++;
+        }
+
+        return count;
+    }
+
+    private static void WritePicture(string path, int width, int height)
+    {
+        // Smooth gradients with a little texture — closer to a video frame than flat colour or pure noise.
+        var stride = width * 4;
+        var pixels = new byte[stride * height];
+        for (var y = 0; y < height; y++)
+        {
+            for (var x = 0; x < width; x++)
+            {
+                var i = (y * width + x) * 4;
+                pixels[i] = (byte)(x * 255 / width);
+                pixels[i + 1] = (byte)(y * 255 / height);
+                pixels[i + 2] = (byte)(((x / 8) ^ (y / 8)) % 64 + 96);
+                pixels[i + 3] = 255;
+            }
+        }
+
+        var bitmap = System.Windows.Media.Imaging.BitmapSource.Create(
+            width, height, 96, 96, System.Windows.Media.PixelFormats.Bgra32, null, pixels, stride);
+        var encoder = new System.Windows.Media.Imaging.PngBitmapEncoder();
+        encoder.Frames.Add(System.Windows.Media.Imaging.BitmapFrame.Create(bitmap));
+        using var stream = File.Create(path);
+        encoder.Save(stream);
+    }
+
     // ---- The destructive cases --------------------------------------------------------------------
 
     [Trait("serves-spec", "SPEC-007")]

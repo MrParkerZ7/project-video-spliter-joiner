@@ -60,9 +60,11 @@ Domain and codebase terms used across VideoSplitJoiner's docs, specs, and code.
   chip only selects the profile; *Apply to selected* / *Apply to all* do the applying.
 - **Preview card** — the hover card on a profile chip (`ProfilePreviewCard`, a ToolTip): the picture
   letterboxed in a 320×180 frame (no frame when the profile has none), the full name, and the intro/outro it would apply.
+  A picture with fewer than 320 real pixels across still fills the frame and adds a *low resolution* note naming
+  *Use current frame* (T-172, SPEC-007 I109).
 - **Snapshot thumbnail** — *Use current frame*: makes the frame on screen the selected profile's picture
   (`SnapshotProfileThumbnailAsync`). A picture source beside the automatic intro-end grab on save and an upload (see SPEC-007 I74).
-- **Thumbnail normalization** — every picture source is stored no wider than `ProfileThumbnailWidth` (320px): captured frames are grabbed at
+- **Thumbnail normalization** — every picture source is stored no wider than `ProfileThumbnailWidth` (640px since T-172, twice the preview card's width): captured frames are grabbed at
   that width, and an upload wider than it is re-encoded down (`ImageNormalizer.ShrinkToWidth`). That re-encode never upscales an upload; a
   picture that cannot be re-encoded is stored as it is.
 - **Image signature** — `ImageSignature.IsImage`: the leading-bytes check (PNG, JPEG, BMP, GIF, TIFF, WEBP) that refuses
