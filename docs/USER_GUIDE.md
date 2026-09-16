@@ -324,7 +324,10 @@ The Bulk tab **remembers its own split position per layout**, independent of the
    points — its intro-end **and** its outro (or its lack of one) — are **copied to every ticked row**,
    exactly as the row's **⧉ "all"** button does (step 5), with the outro measured from the end of each
    file. So *Set intro-end here* also gives every ticked row the previewed row's outro, and removes theirs
-   if the previewed row has none. Untick it to set only the video you are previewing. A
+   if the previewed row has none. Ticked rows whose keyframes are still being read are included, and the
+   note under the Profiles card says what happened to each (see *The apply note* in step 5). While the
+   *previewed* row's file has not been read yet (its length is not known), the gesture sets only that row:
+   nothing is copied and no new note appears. Untick it to set only the video you are previewing. A
    note under the checkbox always says which it will be — *"applies to every ticked video"* or
    *"applies to the previewed video only"* — and the choice is remembered. The selected row wears a **gold
    ring** in the list. **Only one video decodes at a time** — selecting another row hands the single
@@ -346,9 +349,21 @@ The Bulk tab **remembers its own split position per layout**, independent of the
    [Why cuts snap to keyframes](#why-cuts-snap-to-keyframes) — the snapped time is the real cut, shown
    per handle). Beside each row, a small **frame thumbnail shows exactly where each cut lands** — the
    frame at the **intro-end** (gold-ringed) and, once an outro is set, the frame at the **outro-start**
-   (blue-ringed) — so you can confirm a cut by eye without opening the preview. They **update as you drag**
-   each handle (a beat behind, once the cut settles), and show a muted placeholder while a frame loads or
-   if it can't be read. A row whose handles leave nothing meaningful to keep is marked invalid and excluded.
+   (blue-ringed) — so you can confirm a cut by eye without opening the preview. Each shows the frame at the
+   **planned cut**, a beat behind once the cut settles, taken at the cut time rounded down to the whole
+   second (so treat it as a check by eye, not a frame-exact one):
+   - **Lossless (the default):** the frames follow your drags once the row's keyframes have been read.
+     While they are still being read, the row keeps a muted placeholder — the cut is not known yet — and
+     the frame arrives once, when the scan finishes.
+   - **Exact cut:** every change of a cut's time updates its frame, even a small move, and so does
+     switching to Exact — during the keyframe scan as well as after it, once the row's file has been read;
+     otherwise a row's first frame arrives when its scan finishes. The frame is where you set the cut, not
+     the nearest keyframe. (An exact cut can still fall back to a keyframe cut when the video is run — see
+     [Cutting exactly where you set it](#cutting-exactly-where-you-set-it) — so the frame shows the cut as
+     planned.) Switching back to Lossless while a row is still scanning returns its frame to the placeholder.
+
+   A row whose file has not been read yet, or failed to load, always shows the placeholder, as does a frame
+   that cannot be read. A row whose handles leave nothing meaningful to keep is marked invalid and excluded.
 4. **Choose which videos run — the row checkboxes.** Every row carries a **checkbox** at its left edge,
    and every video you add starts **ticked**. Above the list, **Select all** / **Select none** tick or
    untick the whole list in one click, with the same running total the Run button shows
@@ -366,7 +381,26 @@ The Bulk tab **remembers its own split position per layout**, independent of the
    start, but **the outro is measured from the *end* of each file** — so a set of episodes of *different
    lengths* still line up (you trim the same amount off every tail, not to the same absolute timestamp).
    If a copied cut doesn't fit a shorter video, that row is **flagged for you to fix**, never silently
-   dropped.
+   dropped. You don't have to wait for the list to finish loading: **ticked rows whose keyframes are still
+   being read take the cut too**, as soon as the app knows each file's length. Their cut reads
+   **"→ snapping…"** until the scan finishes (under Exact cut that note stays hidden, as it does on every
+   row), and **Run waits for them**, so nothing is ever cut at a provisional time. While the row you copy
+   *from* has not been read yet (its length is not known), ⧉ copies nothing and no new note appears.
+
+   **The apply note.** Every apply — ⧉ "all", a profile's ⧉ Apply to selected / ⧉ Apply to all (step 6),
+   and *Set intro-end here* / *Set outro-start here* with **Apply to all ticked videos** on (step 2) —
+   writes one note under the Profiles card. It starts *"Applied to N row(s)"* and then adds, only when it
+   happened:
+   - *"R now invalid (see the red rows)"* — the cut does not fit these rows; they are red now;
+   - *"K invalid (red when their scan finishes)"* — rows still scanning whose cut can never be valid
+     (the outro would sit at or before the intro); they turn red when their scan ends;
+   - *"W waiting for their scan"* — rows still scanning; each is re-checked when its scan ends (in Lossless
+     it snaps to its own keyframes then), and may still turn out too short;
+   - *"S not loaded, skipped"* — rows whose file has not been read yet (or could not be), left
+     untouched — apply again once they have loaded.
+
+   For example *"Applied to 20 row(s) · 1 invalid (red when their scan finishes) · 19 waiting for their
+   scan."* The note describes the moment you clicked; it does not change as scans finish.
 6. **Save a cut once and reuse it — cut profiles (optional).** Once a row's intro (and optional outro)
    are set the way you want, save them as a **named profile** and reuse them on any list later — handy
    when a series always has the same-length opening titles and end card. The profile controls are grouped
@@ -409,11 +443,13 @@ The Bulk tab **remembers its own split position per layout**, independent of the
    - **Select a profile's chip**, then **⧉ Apply to selected** to apply it to the selected row, or
      **⧉ Apply to all** to apply it to **every checked row at once**. The intro is applied as an absolute
      time from the start, but — exactly like *apply cut points to all* — **the outro is measured from the
-     end of each file**, so a set of episodes of *different lengths* still line up. Every target
-     **re-snaps to its own keyframes and re-validates**; any row the profile doesn't fit (its intro
-     overshoots, or its tail is longer than the whole file) is **flagged red** and counted in the note
-     under the card — e.g. *"Applied to 8 row(s) · 1 now invalid (see the red rows)"* — never silently
-     dropped.
+     end of each file**, so a set of episodes of *different lengths* still line up. Rows still reading
+     their keyframes take the profile too, as in step 5. Each target is **re-checked against its own file**
+     — at once for a row that has finished loading, when its scan ends for one still scanning (in Lossless it
+     also snaps to its own keyframes then). Any row the profile doesn't fit (its intro overshoots, or its tail
+     is longer than the whole file) is **flagged red** and counted in the note under the card — e.g.
+     *"Applied to 8 row(s) · 1 now invalid (see the red rows)"* — never silently dropped. The note's other
+     parts are explained under *The apply note* in step 5.
    - The **✕** at the end of the action row removes the selected profile.
 7. **Run.** Click **Run bulk cut** (the button shows how many rows will run; if it counts fewer than you
    ticked, see [Why a ticked video isn't counted](#why-a-ticked-video-isnt-counted)). The videos are trimmed

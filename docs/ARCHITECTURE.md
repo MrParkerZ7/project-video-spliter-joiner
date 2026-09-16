@@ -426,11 +426,16 @@ through `App/Io/ImageNormalizer` (T-169, *Profile thumbnails*, below):
   supplies the collision-resolved written path.
 
 **Apply-to-all — outro measured from END.** `ApplyToAll(source)` copies the source row's requested
-cut points to every other checked, keyframes-ready row: the intro-end as an **absolute time-from-start**,
+cut points to every other checked row with a known duration (`CanTakeCut` — a row still scanning keyframes
+included, T-173): the intro-end as an **absolute time-from-start**,
 the outro as a **time-from-end** (`Duration − outroStart`) re-anchored on each target's own duration, so
 same-series episodes of *different* lengths align. Each target **re-snaps against its own keyframes and
-re-validates**; rows the copy invalidated are returned in an `ApplyToAllReport` and **reported, never
-silently dropped**. "Checked" here means the user's raw **intent** (`IsCheckedByUser`), not the computed
+re-validates** — at once when its scan has landed, when the scan lands otherwise (its handles stay
+snap-pending, and `IsValidCut` holds the run until then). One classifier, `ApplyOutcome`, shared with profile
+apply, sorts the targets into the `ApplyToAllReport`: rows the copy invalidated are **reported, never
+silently dropped**; a still-scanning row is called invalid only when no snap can rescue it (an outro handle
+at or before its intro), and every other one is reported as waiting for its scan; checked rows with no
+duration are counted as skipped. The report is a snapshot of the click. "Checked" here means the user's raw **intent** (`IsCheckedByUser`), not the computed
 `IsEnabled` — so an apply-to-all (or an applied profile) can rescue a row that is currently excluded for
 having no cut set yet. The accepted cost of one flag answering two questions is that **Select all** widens
 the batch *and* widens what the next apply-to-all overwrites.
@@ -548,8 +553,8 @@ G-037 adds a **preview player** and **reusable cut profiles** to the tab, record
   preserved). The **outro-from-END** convention is what lets one profile fit episodes of different lengths
   — the same convention `ApplyToAll` uses. `CutProfileApplier` (`App/ViewModels/`, a WPF-free static
   helper) applies a profile to a set of rows (intro absolute + clamped, outro from-end + clamped, each
-  target re-snapped + re-validated, invalidated rows **reported** through the shared `ApplyToAllReport` —
-  never silently dropped) and builds a profile from a row's current cut, **reusing** the apply-to-all
+  target re-snapped + re-validated, classified by the same `ApplyOutcome` as apply-to-all and **reported**
+  through the shared `ApplyToAllReport` — never silently dropped) and builds a profile from a row's current cut, **reusing** the apply-to-all
   convention rather than duplicating it.
 
 ### Profile thumbnails + per-row cut-point frames (G-038)
@@ -591,8 +596,11 @@ ffmpeg/frame path:
   **upsert, never a wipe**: profiles whose names already exist are overwritten only if the user confirms
   (`ConfirmProfileOverwrite`, which defaults to keeping them).
 - **Per-row cut-point frames reuse `IThumbnailService` behind a dedicated concurrency gate.** Each
-  `BulkItemViewModel` grabs a small frame at its keyframe-**snapped** intro-end (and outro-start, when
-  `HasOutro`) through the **same** shared `IThumbnailService` the hover-preview uses — no new frame path —
+  `BulkItemViewModel` grabs a small frame at its intro-end's (and outro-start's, when `HasOutro`) **effective
+  cut time** — snapped in Lossless, requested under Exact — and never while that time is provisional (no
+  duration, or Lossless and snap-pending; `GrabTime`, T-174). A precision flip follows each handle's grab
+  time, and `Cancel()` advances the request id so even a finished grab cannot commit after a cancel. Grabs go
+  through the **same** shared `IThumbnailService` the hover-preview uses — no new frame path —
   driven by an internal `HandleThumbnailGrabber` that copies `ThumbnailPreviewViewModel`'s **debounce +
   cancel-prior + latest-wins** discipline (a slower 200ms settle so a drag coalesces to one grab; results
   marshalled back over the captured `SynchronizationContext` via `Progress<T>`). Crucially the grabs run

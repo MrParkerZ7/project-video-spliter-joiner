@@ -28,9 +28,11 @@ Domain and codebase terms used across VideoSplitJoiner's docs, specs, and code.
 - **Intro-end / outro-start** — the two cut points on a Bulk row: drop the leading `[0 → intro-end]` and (optional) trailing
   `[outro-start → EOF]`, keep the middle `[intro-end → outro-start | EOF]`. Rendered as a gold + blue dual-handle scrub bar.
 - **Kept-segment / kept-middle** — the one segment a bulk trim keeps. `KeptSegmentSelector` resolves which planned part it is.
-- **Apply-to-all** — copy one row's **requested** cut points to every other **ticked**, keyframes-ready row (outro applied
-  **from the end** so uneven-length episodes align). Each target re-snaps against its own keyframes; rows the copy leaves
-  invalid are reported, never silently dropped. See `BulkCutViewModel.ApplyToAll`.
+- **Apply-to-all** — copy one row's **requested** cut points to every other **ticked** row whose duration is known, still
+  scanning or not (outro applied **from the end** so uneven-length episodes align). Each target re-snaps against its own
+  keyframes — when its scan lands, for a row still scanning; rows the copy leaves invalid are reported, never silently
+  dropped, and the apply note also counts rows waiting for their scan and rows not loaded (T-173). See
+  `BulkCutViewModel.ApplyToAll`, `ApplyOutcome`.
 - **Cut precision — Lossless vs Exact cut** — Bulk Cut's per-batch choice (`CutPrecision`). **Lossless** (default) snaps
   each cut to a keyframe and stream-copies every byte. **Exact cut** honours the requested time by re-encoding only the
   leading fragment up to the next keyframe (the whole range, if it ends before one) and stream-copying the rest
