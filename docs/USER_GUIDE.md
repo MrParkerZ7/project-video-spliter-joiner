@@ -517,12 +517,12 @@ With it on:
   the original's place once the whole file has been written and checked. A row that fails, and a batch
   you cancel, leave their sources exactly as they were.
 
-**Exact cut and Replace originals do not combine.** If both are on, the row is cut **losslessly** (to the
-nearest keyframe) and says so on the row: *"exact cut unavailable (replacing originals) — cut snapped to
-the nearest keyframe"*. Replacing an original is only safe because the new file is written and checked
-before anything is overwritten, and the old file is kept until the swap succeeds; the exact-cut path does
-not yet go through that machinery, so it is not allowed to write over your source. Turn Replace originals
-off if you need the cut to land exactly where you set it.
+**Exact cut works with Replace originals.** With both on, each exact cut is first written to a temporary
+file in the original's own folder, and only then swapped in by the same step a lossless replace uses: the
+original goes to the Recycle Bin (or is kept beside the new file as `.vsj-original`), and a swap that fails
+puts the original back and marks the row **Failed** — the original is never left half-replaced. A video
+that cannot be cut exactly still falls back to a keyframe cut and says so on the row, exactly as it does
+without Replace originals (see [Cutting exactly where you set it](#cutting-exactly-where-you-set-it)).
 
 ### Reclaiming space after a batch
 
