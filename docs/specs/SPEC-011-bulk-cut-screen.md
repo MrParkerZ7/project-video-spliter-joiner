@@ -20,8 +20,8 @@ sources:
   - src/App/DropRefusal.cs
   - src/App/VideoFileFilter.cs
   - src/App/DropDiagnostics.cs
-serves-goal: [G-036, G-037, G-038, G-039, G-040, G-041, G-042, G-043, G-050, G-053, G-057]
-updated: 2026-09-16
+serves-goal: [G-036, G-037, G-038, G-039, G-040, G-041, G-042, G-043, G-050, G-053, G-057, G-055]
+updated: 2026-09-18
 ---
 
 ## What
@@ -63,7 +63,8 @@ its auto-delete / auto-empty-bin layer, and the silent Recycle Bin path behind t
 `FileLockOwner`; I111–I118, I127–I138); **dropped-file intake** and the picker filter (`AddDroppedFilesAsync`,
 `DropSummary`, `DropRefusal`, `VideoFileFilter`, `DropDiagnostics`; I122–I126, I140–I144, I148–I150); the
 `BulkCutView.xaml` **layout rules** the invariants assert (I109, I110, I119, I120, I139, I145–I147, I152–I155);
-and the composition-root guard that the disposer is wired in (I151).
+the composition-root guard that the disposer is wired in (I151); and the **auto-clear after a clean batch**
+(`AutoClearAfterRun`, `DropRows`/`DropAllRows`, `LastRunOutputPath`; I159–I163).
 
 **Out:** the batch execution engine itself (`IBulkTrimEngine` / `BulkTrimEngine` — collision policy resolution,
 disk pre-flight, the per-item ffmpeg trim, `BatchResult`/`BatchOutcome` construction); the kept-segment request
@@ -301,9 +302,10 @@ SPEC-007); the shared `IThumbnailService`/`FfmpegThumbnailService` frame source 
 - **I65** — the grab is **best-effort / null-safe**: a grab that returns null (or fails) leaves the corresponding
   thumbnail path `null` — the view shows the muted placeholder chip, never an image, and nothing throws into the UI
   (`HandleThumbnailGrabber.OnResolved`, `GrabAsync` catch).
-- **I66** — grabs are cancelled **per row on Remove/Clear**: `CancelScan` cancels the intro and outro grabbers'
-  in-flight requests, so a removed/cleared row's parked grab faults, never reaches the service, and commits no frame
-  path (`CancelScan` → `_introGrabber?.Cancel()` / `_outroGrabber?.Cancel()`).
+- **I66** — grabs are cancelled **per row whenever a row leaves the list** — Remove, Clear all, and the automatic
+  clear after a clean batch (T-171): `CancelScan` cancels the intro and outro grabbers' in-flight requests, so a
+  removed/cleared row's parked grab faults, never reaches the service, and commits no frame path (`CancelScan` →
+  `_introGrabber?.Cancel()` / `_outroGrabber?.Cancel()`; since T-174 even a grab that had already finished — I158).
 - **I67** — cut-point frame grabs are bounded to **at most 3 concurrent** through a **dedicated** `SemaphoreSlim(3,3)`
   owned by the tab VM and shared into every row — separate from the keyframe-scan gate, so eye-candy frame grabs
   never starve the ffprobe scans that gate `CanRunBatch`; the permit is held only around the grab, never during the
@@ -751,10 +753,11 @@ SPEC-007); the shared `IThumbnailService`/`FfmpegThumbnailService` frame source 
   that row is enabled, `CanRunBatch` is false as well (I37). An unticked scanning row holds nothing. Once the scan
   lands, the run uses the resolved cut (`IsValidCut`, `CanRunBatch`).
 - **I157** — **`BulkItemViewModel.CancelScan` is reserved for rows leaving the list** — its only callers are
-  `BulkCutViewModel.Remove` and `Clear`. It clears the indexing flag **without** resolving the handles, so a future
+  `BulkCutViewModel.Remove` and `DropRows`, which `Clear` (through `DropAllRows`) and the automatic clear after a
+  clean batch (T-171) share. It clears the indexing flag **without** resolving the handles, so a future
   caller that cancels a *surviving* row's scan must resolve its handles **and request their frames**: otherwise a
   pending, identity-snapped handle sits on a `KeyframesReady` row, and its frame is never grabbed. Enforced by a
-  source assertion (`ApplyDuringScanTests.CancelScan_IsCalledOnlyFromRemoveAndClear`).
+  source assertion (`ApplyDuringScanTests.CancelScan_IsCalledOnlyFromRemoveAndDropRows`).
 
 ### Auto-delete after a clean batch (T-156)
 - **I132** - `AutoDeleteOriginals` runs the **existing** `DeleteOriginals()` sweep automatically once a
@@ -775,6 +778,36 @@ SPEC-007); the shared `IThumbnailService`/`FfmpegThumbnailService` frame source 
   overstating it teaches people to ignore the note.
 - **I138** - emptying the bin is **not scoped to this app's files** (`SHEmptyRecycleBin` empties the whole
   bin), so the confirmation says so explicitly. Both flags default OFF and persist.
+
+### Auto-clear after a clean batch (G-055 / T-171, 2026-09-18)
+- **I159** — `AutoClearAfterRun` (default **OFF**, persisted — SPEC-009 I29) takes the rows a run **finished** out of
+  the list, **only** when `BatchState == Completed` and **only after** `RunAutoDeleteIfArmed` — the delete sweep acts
+  on the rows, so clearing first would silently disarm it. After a partly-failed, cancelled or blocked batch, or a
+  run whose engine threw, it does nothing at all — not even add a line to the report. It is reached through
+  `RunBatchCommand`, the button's own path (`RunAutoClearIfArmed`, `RunBatchAsync`).
+- **I160** — **the run's report survives the clear.** Rows go through the row-only `DropRows` / `DropAllRows`, never
+  `Clear()`: the operation's completed state and `ResultSummary`, `BatchState` and `LastFailedItems` stay on screen,
+  while the list's own notes (`DropSummary`, `ApplyToAllReport`) and a selection that pointed at a removed row are
+  dropped. The report's **Open folder** reveals `LastRunOutputPath`, captured from the run's ledger rather than looked
+  up in the rows the clear removes. Clear all is unchanged and still resets all of it (`Clear`, `DropAllRows`,
+  `LastRunOutputPath`).
+- **I161** — **nothing the user could still act on is taken away** (G-055 criterion 3). A row stays when it was
+  **not one this run finished** (unticked, no cut yet, or added while the batch ran); when its **original is still
+  the user's to delete** (T-171 decision (b) — ✕ Delete originals needs the row; under Replace originals none is ever
+  left, because `DeletableOriginals` skips a row whose output IS its original, so the feature is not gated on
+  auto-delete); or when the run **reported a warning on it** (`HasRunWarnings` — e.g. an exact cut that fell back to
+  a keyframe; the row's `Warning` is the only place that is shown). The summary then gains `Kept in the list: N
+  original(s) left to delete (✕ Delete originals), N row(s) with a warning, N not in this run` — each part only when
+  non-zero (`RunAutoClearIfArmed`).
+- **I162** — with auto-delete armed, the sweep's line **joins** the run's line instead of replacing it
+  (`Trimmed N · Sent N original(s) to the Recycle Bin`), so once the rows are gone the report still says what was
+  cut as well as what was binned (`RunAutoDeleteIfArmed`).
+- **I163** — the checkbox (**Auto-clear list**) is its **own group directly before the irreversible group**, after a
+  separator — beside *Replace originals*, as asked, but outside the red group (I146), with a plain label and no
+  danger styling: it discards screen state, never a file. The completed surface lays its report line out in a
+  `*` column so it **wraps**, keeping Open folder inside the surface at the narrowest tested window — a horizontal
+  `StackPanel` measured it at infinite width and pushed both off the edge (`BulkCutView.xaml` `FooterOptions`,
+  `CompletedSummary`, `OpenOutputFolderButton`).
 
 ### The footer options row (T-156)
 - **I139** - the footer's option row **wraps rather than clips**. It is a `WrapPanel`: a horizontal
@@ -848,7 +881,8 @@ SPEC-007); the shared `IThumbnailService`/`FfmpegThumbnailService` frame source 
   rows you want and have Run agree — the checkbox-intent/eligibility split T-127 (I94–I99), select all /
   select none T-128 (I100–I102)), G-057 (apply a cut to rows still scanning — T-173 (I156–I157; I21/I22/I24/I26/I57/I76/I104
   amended); the chip shows the frame the run cuts at — T-174 (I158; § What/I61–I64/I93 amended); Exact cut reaches every row —
-  T-176 (I8/I10/I12/I91 amended))
+  T-176 (I8/I10/I12/I91 amended)), G-055 (Bulk Cut tidies up after itself — auto-clear, T-171 (I159–I163; I66/I157
+  amended))
 - Related specs: SPEC-002 (the T-095 batch engine `IBulkTrimEngine` / `BulkTrimEngine` — incl. the engine-side
   handling of the `OutputMode`/`CutPrecision` axes this screen selects, kept orthogonal to `CollisionPolicy`'s
   own "what if the destination is taken?" question); T-094 kept-segment request (`KeptSegmentSelector`);
@@ -884,6 +918,7 @@ SPEC-007); the shared `IThumbnailService`/`FfmpegThumbnailService` frame source 
   `tests/App.Tests/ExactCutModeTests.cs` (T-125 precision choice — I89–I93, 8 tests) ·
   `tests/App.Tests/ApplyDuringScanTests.cs` (T-173 apply while rows scan — I156–I157 and the amended I21/I22/I24/I26/I57/I76/I104) ·
   `tests/App.Tests/ExactCutReachesEveryRowTests.cs` (T-176 rows and outros added after the toggle — I91 and the amended I8/I10/I12) ·
-  `tests/App.Tests/BulkItemThumbnailTests.cs` § T-174 (the frame at the effective cut time — I158 and the amended I61–I64/I93) — all tagged `serves-spec=SPEC-011`.
+  `tests/App.Tests/BulkItemThumbnailTests.cs` § T-174 (the frame at the effective cut time — I158 and the amended I61–I64/I93) ·
+  `tests/App.Tests/AutoClearAfterRunTests.cs` (T-171 auto-clear after a clean batch — I159–I163) — all tagged `serves-spec=SPEC-011`.
   The intent-side targeting filters are additionally asserted by `tests/App.Tests/BulkCutProfileCommandsTests.cs`
   (I56) and `tests/App.Tests/BulkSpecGapTests.cs` (I22), both reading `IsCheckedByUser` directly.

@@ -37,6 +37,7 @@ public sealed class MainViewModelLayoutToggleTests
         public bool? BulkApplyCutToAllRows { get; set; }
         public bool? BulkAutoDeleteOriginals { get; set; }
         public bool? BulkAutoEmptyRecycleBin { get; set; }
+        public bool? BulkAutoClearAfterRun { get; set; }
 
         public bool? SplitAutoDeleteSource { get; set; }
 

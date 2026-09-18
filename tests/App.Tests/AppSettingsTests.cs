@@ -49,6 +49,25 @@ public sealed class AppSettingsTests : IDisposable
         reloaded.BulkAutoEmptyRecycleBin.Should().BeTrue();
     }
 
+    /// <summary>
+    /// T-171 — the auto-clear preference round-trips under its own key, and absent means OFF: a first run after
+    /// an upgrade must not empty the list before the user knows the option exists.
+    /// </summary>
+    [Trait("serves-spec", "SPEC-009")]
+    [Fact]
+    public void TheAutoClearFlagRoundTrips_AndAFileFromBeforeItLeavesItOff()
+    {
+        var settings = new AppSettings(_file);
+        settings.BulkAutoClearAfterRun = true;
+
+        new AppSettings(_file).BulkAutoClearAfterRun.Should().BeTrue();
+
+        File.WriteAllText(_file, "{ \"BulkAutoDeleteOriginals\": true }");
+        var older = new AppSettings(_file);
+        older.BulkAutoClearAfterRun.Should().NotBe(true, "a file written before the option existed never arms it");
+        older.BulkAutoDeleteOriginals.Should().BeTrue("precondition: the file was read, only the new key is absent");
+    }
+
     [Trait("serves-spec", "SPEC-009")]
     [Fact]
     public void ASettingsFileFromBeforeTheFeature_LeavesBothOff()

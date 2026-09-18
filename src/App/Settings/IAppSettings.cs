@@ -107,6 +107,15 @@ public interface IAppSettings
     bool? BulkAutoEmptyRecycleBin { get; set; }
 
     /// <summary>
+    /// T-171 (G-055) — clear the Bulk Cut row list automatically once a batch finishes cleanly, keeping the
+    /// run's report on screen.
+    ///
+    /// <para>Not destructive — it discards screen state, never a file — but still null/absent = OFF: a first
+    /// run must not make the list vanish before the user knows the option exists.</para>
+    /// </summary>
+    bool? BulkAutoClearAfterRun { get; set; }
+
+    /// <summary>
     /// T-163 (G-052) — delete the SPLIT source automatically once a split finishes cleanly.
     ///
     /// <para>Deliberately separate from <see cref="BulkAutoDeleteOriginals"/>: arming one screen must

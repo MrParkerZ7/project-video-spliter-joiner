@@ -50,6 +50,10 @@ Domain and codebase terms used across VideoSplitJoiner's docs, specs, and code.
   only be armed on top of auto-delete and asks first, then empties the whole Recycle Bin — files other programs binned
   included. See [adr/0022-silent-shell-recycle-over-vb-fileio.md](adr/0022-silent-shell-recycle-over-vb-fileio.md),
   [adr/0024-per-screen-delete-eligibility.md](adr/0024-per-screen-delete-eligibility.md).
+- **Auto-clear list** — Bulk Cut's *tidy up after a clean batch* option (`AutoClearAfterRun`, T-171): once a batch
+  completes with no failures, the rows it finished leave the list while the run's report stays on screen. Rows the
+  user could still act on stay and are counted in the report — not in the run, an original still to delete, or a
+  warning from the run. Not destructive (screen state only), off by default, remembered.
 - **Row intent vs eligibility** — a Bulk Cut row's tick is two properties. `IsCheckedByUser` is the user's **intent**:
   the only thing the checkbox binds to, and also the target set apply-to-all and a profile's *Apply to all* write to.
   `IsEnabled` is read-only computed **eligibility** — intent AND not auto-excluded (unreadable file, nothing to trim

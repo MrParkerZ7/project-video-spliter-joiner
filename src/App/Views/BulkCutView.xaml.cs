@@ -490,9 +490,9 @@ public partial class BulkCutView : UserControl
             return;
         }
 
-        // Reveal the first successfully-trimmed row's output (outputs land beside their sources).
-        var done = vm.Items.FirstOrDefault(i => i.RowState == RowState.Done && !string.IsNullOrEmpty(i.OutputPath));
-        var path = done?.OutputPath;
+        // Reveal the first successfully-trimmed output (outputs land beside their sources). T-171: read from the run's
+        // own record, not from the rows - the automatic clear after a clean batch removes them while this report stays.
+        var path = vm.LastRunOutputPath;
         if (string.IsNullOrEmpty(path))
         {
             return;

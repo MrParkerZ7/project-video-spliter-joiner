@@ -1215,8 +1215,9 @@
                      "Replace originals" and both new checkboxes simply vanished off the right edge at
                      1280px. Exactly the failure T-136 fixed in the profile bar and T-141 in the header;
                      third time, so it is now pinned by a layout test. -->
-                <!-- T-160: grouped by CONSEQUENCE, in reading order - output, then precision, then the
-                     three destructive controls together at the end. Previously the danger-coloured
+                <!-- T-160: grouped by CONSEQUENCE, in reading order - output, then precision, then (T-171) what
+                     happens to the list after the run, then the three destructive controls together at the end.
+                     Previously the danger-coloured
                      options were interleaved with the neutral ones (the armed-state note sat between
                      "Exact cut" and "Auto-delete"), so the red vocabulary was scattered across the row
                      and nothing read as a block. A 1px rule separates the groups. Still a WrapPanel,
@@ -1268,7 +1269,25 @@
                                VerticalAlignment="Center"
                                Fill="{StaticResource BorderBrush}" />
 
-                    <!-- ===== Group 3: the irreversible ones, together =====
+                    <!-- ===== Group 3: what happens to the list after the run (T-171) =====
+                         Asked for "near by Replace originals", so it sits right before that group - but NOT in
+                         it: clearing the list discards screen state, never a file, and the red group's
+                         vocabulary means "this touches your files". The run's report stays on screen, and the
+                         list is kept (with the summary saying why) while any original is still the user's to
+                         delete, because Delete originals needs the rows. -->
+                    <CheckBox Margin="16,0,0,0"
+                              VerticalAlignment="Center"
+                              Content="Auto-clear list"
+                              IsChecked="{Binding AutoClearAfterRun, Mode=TwoWay}"
+                              ToolTip="After a batch finishes with no failures, empty the list and keep the batch's summary on screen. If any original is still yours to delete, the list stays and the summary says why." />
+
+                    <Rectangle Width="1"
+                               Height="16"
+                               Margin="16,0,0,0"
+                               VerticalAlignment="Center"
+                               Fill="{StaticResource BorderBrush}" />
+
+                    <!-- ===== Group 4: the irreversible ones, together =====
                          Each is deliberately NOT a look-alike peer of the neutral checkboxes above -
                          danger colour-role + warning glyph + bold weight (three differentiators). -->
                     <CheckBox Margin="16,0,0,0"
@@ -1390,24 +1409,37 @@
                     BorderThickness="1"
                     CornerRadius="{StaticResource RadiusSm}"
                     Visibility="{Binding Operation.IsCompleted, Converter={StaticResource BoolToVisibility}}">
-                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                    <TextBlock Text="✓"
+                <!-- T-171: a Grid with the summary in a star column, not a horizontal StackPanel. A StackPanel
+                     measures its children at infinite width, so TextWrapping never engaged: a long summary (the run's
+                     line + the Recycle Bin line + why rows were kept) ran off the edge and took Open folder with it. -->
+                <Grid VerticalAlignment="Center">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Grid.Column="0"
+                               Text="✓"
                                FontFamily="{StaticResource MonoFontFamily}"
                                FontWeight="Bold"
                                Foreground="{StaticResource OkBrush}"
                                VerticalAlignment="Center" />
-                    <TextBlock Margin="8,0,0,0"
+                    <TextBlock x:Name="CompletedSummary"
+                               Grid.Column="1"
+                               Margin="8,0,0,0"
                                VerticalAlignment="Center"
                                TextWrapping="Wrap"
                                Foreground="{StaticResource TextPrimaryBrush}"
                                Text="{Binding Operation.ResultSummary}" />
-                    <Button Content="Open folder"
+                    <Button x:Name="OpenOutputFolderButton"
+                            Grid.Column="2"
+                            Content="Open folder"
                             Margin="10,0,0,0"
                             Padding="8,2"
                             VerticalAlignment="Center"
                             ToolTip="Reveal the output folder in Explorer"
                             Click="OnOpenFolderClicked" />
-                </StackPanel>
+                </Grid>
             </Border>
 
             <!-- FAILED-SOME surface: list of failed rows (jump-links + per-row copy/log) + Retry failed (N) -->

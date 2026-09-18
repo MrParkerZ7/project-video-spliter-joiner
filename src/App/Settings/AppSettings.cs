@@ -50,6 +50,7 @@ public sealed class AppSettings : IAppSettings
     private bool? _bulkApplyCutToAllRows;
     private bool? _bulkAutoDeleteOriginals;
     private bool? _bulkAutoEmptyRecycleBin;
+    private bool? _bulkAutoClearAfterRun;
     private bool? _splitAutoDeleteSource;
     private bool? _splitAutoEmptyRecycleBin;
     private AppTab? _lastTab;
@@ -205,6 +206,20 @@ public sealed class AppSettings : IAppSettings
             if (!Nullable.Equals(_bulkAutoEmptyRecycleBin, value))
             {
                 _bulkAutoEmptyRecycleBin = value;
+                Save();
+            }
+        }
+    }
+
+    /// <inheritdoc />
+    public bool? BulkAutoClearAfterRun
+    {
+        get => _bulkAutoClearAfterRun;
+        set
+        {
+            if (!Nullable.Equals(_bulkAutoClearAfterRun, value))
+            {
+                _bulkAutoClearAfterRun = value;
                 Save();
             }
         }
@@ -385,6 +400,7 @@ public sealed class AppSettings : IAppSettings
                 _bulkApplyCutToAllRows = dto.BulkApplyCutToAllRows;
                 _bulkAutoDeleteOriginals = dto.BulkAutoDeleteOriginals;   // absent -> null -> OFF
                 _bulkAutoEmptyRecycleBin = dto.BulkAutoEmptyRecycleBin;
+                _bulkAutoClearAfterRun = dto.BulkAutoClearAfterRun;       // absent -> null -> OFF
                 _splitAutoDeleteSource = dto.SplitAutoDeleteSource;     // absent -> null -> OFF
                 _splitAutoEmptyRecycleBin = dto.SplitAutoEmptyRecycleBin; // absent -> null -> OFF
                 _bulkHorizontalSplitRatio = ClampRatio(dto.BulkHorizontalSplitRatio); // absent (older file) → null → default
@@ -543,6 +559,7 @@ public sealed class AppSettings : IAppSettings
                 SplitAutoDeleteSource = _splitAutoDeleteSource,
                 SplitAutoEmptyRecycleBin = _splitAutoEmptyRecycleBin,
                 BulkAutoEmptyRecycleBin = _bulkAutoEmptyRecycleBin,
+                BulkAutoClearAfterRun = _bulkAutoClearAfterRun,
                 BulkHorizontalSplitRatio = _bulkHorizontalSplitRatio,
                 BulkVerticalSplitRatio = _bulkVerticalSplitRatio,
                 // Null (not an empty array) when there are none, so the key is omitted entirely
@@ -648,6 +665,8 @@ public sealed class AppSettings : IAppSettings
         public bool? SplitAutoEmptyRecycleBin { get; set; }
 
         public bool? BulkAutoEmptyRecycleBin { get; set; }
+
+        public bool? BulkAutoClearAfterRun { get; set; }
 
         [JsonPropertyName("bulkVerticalSplitRatio")]
         public double? BulkVerticalSplitRatio { get; set; }

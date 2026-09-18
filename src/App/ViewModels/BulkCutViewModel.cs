@@ -597,6 +597,14 @@ public sealed class BulkCutViewModel : ObservableObject
         return string.Join(" · ", parts) + ".";
     }
 
+    /// <summary>
+    /// T-171 — the first trimmed file of the last run, which the report's "Open folder" reveals. Captured from the
+    /// ledger rather than looked up in the rows, because the automatic clear after a clean batch takes the rows away
+    /// while the report stays on screen — a lookup in the list would leave that button doing nothing. Null before a
+    /// run, after <see cref="Clear"/>, and while a new run is starting.
+    /// </summary>
+    public string? LastRunOutputPath { get; private set; }
+
     /// <summary>The failed rows from the last run — the subset the UI offers to retry (T-097 renders "Retry failed (N)").</summary>
     public IReadOnlyList<BulkTrimItemResult> LastFailedItems
     {
@@ -944,6 +952,26 @@ public sealed class BulkCutViewModel : ObservableObject
         }
     }
 
+    /// <summary>
+    /// T-171 (G-055) — clear the row list automatically once a batch finishes cleanly, without taking the run's
+    /// report down with it. Not a destructive option (it discards screen state, never a file), so it is not
+    /// gated on the destructive ones. Defaults OFF and persists.
+    /// </summary>
+    public bool AutoClearAfterRun
+    {
+        get => _settings.BulkAutoClearAfterRun ?? false;
+        set
+        {
+            if (AutoClearAfterRun == value)
+            {
+                return;
+            }
+
+            _settings.BulkAutoClearAfterRun = value;
+            OnPropertyChanged();
+        }
+    }
+
     /// <summary>The bin checkbox is only meaningful once auto-delete is on.</summary>
     public bool CanAutoEmptyRecycleBin => AutoDeleteOriginals;
 
@@ -982,6 +1010,7 @@ public sealed class BulkCutViewModel : ObservableObject
             return;
         }
 
+        var runSummary = Operation.ResultSummary;
         var previousConfirm = ConfirmDeleteOriginals;
         try
         {
@@ -991,6 +1020,14 @@ public sealed class BulkCutViewModel : ObservableObject
         finally
         {
             ConfirmDeleteOriginals = previousConfirm;
+        }
+
+        // T-171: the sweep's line joins the run's line instead of replacing it. With the list auto-cleared, "Trimmed N"
+        // would otherwise survive nowhere - the report would say what was binned but not what was cut.
+        if (!string.IsNullOrEmpty(runSummary) && Operation.ResultSummary != runSummary)
+        {
+            Operation.ResultSummary = string.Create(
+                CultureInfo.InvariantCulture, $"{runSummary} · {Operation.ResultSummary}");
         }
 
         if (AutoEmptyRecycleBin)
@@ -1289,20 +1326,27 @@ public sealed class BulkCutViewModel : ObservableObject
             return;
         }
 
+        DropAllRows();
+        Operation.Reset();
+        BatchState = BulkBatchState.Idle;
+        LastFailedItems = Array.Empty<BulkTrimItemResult>();
+        LastRunOutputPath = null;
+        RaiseRunState();
+    }
+
+    /// <summary>
+    /// Empty the list — the selection, the shared player, every row, and the notes that describe the list. <b>Not</b>
+    /// the run's report: <see cref="Clear"/> resets that as well; the automatic clear after a clean batch (T-171) keeps
+    /// it.
+    /// </summary>
+    private void DropAllRows()
+    {
         // T-100: drop the selection (setter unloads the shared player), then blank the player
         // unconditionally so a Clear leaves the preview empty even if nothing was selected.
         SelectedItem = null;
         Player.Unload();
 
-        foreach (var item in Items)
-        {
-            item.CancelScan();
-            item.PropertyChanged -= OnItemChanged;
-        }
-
-        Items.Clear();
-        Operation.Reset();
-        BatchState = BulkBatchState.Idle;
+        DropRows(Items.ToList());
         ApplyToAllReport = null;
 
         // T-154 (Split/Join mirror) — the note was written on drop and cleared by NOTHING but a later
@@ -1310,9 +1354,122 @@ public sealed class BulkCutViewModel : ObservableObject
         // it. Found while mirroring this screen's fix onto Split and Join: copying it as-shipped would
         // have reproduced the stale note three times over.
         DropSummary = null;
+    }
 
-        LastFailedItems = Array.Empty<BulkTrimItemResult>();
+    /// <summary>
+    /// Take <paramref name="rows"/> out of the list: cancel each row's scan, drop its subscription, and unselect it if
+    /// it was selected (the setter unloads the preview). Besides <see cref="Remove"/>, this is the only place a row's
+    /// scan is cancelled — it is how rows LEAVE the list (SPEC-011 I157). The run-state refresh is suspended for the
+    /// loop and raised once, so removing N rows does not re-check every original N times.
+    /// </summary>
+    private void DropRows(IReadOnlyCollection<BulkItemViewModel> rows)
+    {
+        if (rows.Count == 0)
+        {
+            return;
+        }
+
+        if (_selectedItem is not null && rows.Contains(_selectedItem))
+        {
+            SelectedItem = null;
+        }
+
+        _suspendRunStateRefresh = true;
+        try
+        {
+            foreach (var item in rows)
+            {
+                item.CancelScan();   // rows leaving the list - SPEC-011 I157
+                item.PropertyChanged -= OnItemChanged;
+            }
+
+            if (rows.Count == Items.Count)
+            {
+                Items.Clear();
+            }
+            else
+            {
+                foreach (var item in rows)
+                {
+                    Items.Remove(item);
+                }
+            }
+        }
+        finally
+        {
+            _suspendRunStateRefresh = false;
+        }
+    }
+
+    /// <summary>
+    /// T-171 (G-055) — once a batch finishes cleanly, take the rows it FINISHED out of the list, keeping the run's
+    /// report on screen.
+    ///
+    /// <para><b>After</b> <see cref="RunAutoDeleteIfArmed"/>, never before: the delete sweep acts on the rows, so
+    /// clearing first would silently disarm it. <b>Only</b> on <see cref="BulkBatchState.Completed"/>: after a
+    /// partly-failed, cancelled or blocked batch the rows and <see cref="LastFailedItems"/> are the only record of what
+    /// went wrong.</para>
+    ///
+    /// <para><b>Nothing the user could still act on goes</b> (G-055 criterion 3). A row stays, and the summary counts
+    /// it, when it is not one this run finished (unticked, no cut yet, or added while the batch ran); when its original
+    /// is still the user's to delete (T-171 decision (b) — ✕ Delete originals needs the row; under Replace originals
+    /// none is ever left, since <see cref="DeletableOriginals"/> skips a row whose output IS its original); or when the
+    /// run reported a warning on it (e.g. an exact cut that fell back to a keyframe — the row is the only place that
+    /// warning is shown).</para>
+    /// </summary>
+    private void RunAutoClearIfArmed(IReadOnlyList<BulkItemViewModel> ran)
+    {
+        if (!AutoClearAfterRun || BatchState != BulkBatchState.Completed)
+        {
+            return;
+        }
+
+        var originalLeft = DeletableOriginals().ToHashSet();
+        var finished = ran.Where(r => Items.Contains(r) && r.RowState == RowState.Done).ToList();
+        var clear = finished.Where(r => !originalLeft.Contains(r) && !r.HasRunWarnings).ToList();
+
+        var keptForOriginal = finished.Count(originalLeft.Contains);
+        var keptForWarning = finished.Count(r => !originalLeft.Contains(r) && r.HasRunWarnings);
+        var notInRun = Items.Count - finished.Count;
+
+        var kept = new List<string>();
+        if (keptForOriginal > 0)
+        {
+            kept.Add(string.Create(
+                CultureInfo.InvariantCulture,
+                $"{keptForOriginal} original{Plural(keptForOriginal)} left to delete (✕ Delete originals)"));
+        }
+
+        if (keptForWarning > 0)
+        {
+            kept.Add(string.Create(CultureInfo.InvariantCulture, $"{keptForWarning} row{Plural(keptForWarning)} with a warning"));
+        }
+
+        if (notInRun > 0)
+        {
+            kept.Add(string.Create(CultureInfo.InvariantCulture, $"{notInRun} not in this run"));
+        }
+
+        if (kept.Count > 0)
+        {
+            var why = "Kept in the list: " + string.Join(", ", kept);
+            Operation.ResultSummary = string.IsNullOrEmpty(Operation.ResultSummary)
+                ? why
+                : string.Create(CultureInfo.InvariantCulture, $"{Operation.ResultSummary} · {why}");
+        }
+
+        if (clear.Count == Items.Count)
+        {
+            DropAllRows();
+        }
+        else
+        {
+            DropRows(clear);
+        }
+
         RaiseRunState();
+
+        static string Plural(int n) => n == 1 ? string.Empty : "s";
     }
 
     /// <summary>
@@ -2196,6 +2353,7 @@ public sealed class BulkCutViewModel : ObservableObject
         BatchState = BulkBatchState.Preparing;
         ApplyToAllReport = null;
         LastFailedItems = Array.Empty<BulkTrimItemResult>();
+        LastRunOutputPath = null;
 
         var rows = Items.Where(i => i.IsEnabled && i.IsValidCut).ToList();
         var items = rows.Select(r => r.BuildBulkTrimItem()).ToList();
@@ -2251,6 +2409,7 @@ public sealed class BulkCutViewModel : ObservableObject
         RaiseRunState();
 
         RunAutoDeleteIfArmed();   // T-156 — no-op unless the user armed it, and only on a clean batch
+        RunAutoClearIfArmed(rows); // T-171 — after the delete, never before: the delete acts on the rows
     }
 
     /// <summary>
@@ -2320,6 +2479,8 @@ public sealed class BulkCutViewModel : ObservableObject
         }
 
         LastFailedItems = batch.FailedItems;
+        LastRunOutputPath = batch.Items
+            .FirstOrDefault(r => r.Outcome == ItemOutcome.Done && !string.IsNullOrEmpty(r.OutputPath))?.OutputPath;
 
         Operation.ResultSummary = batch.Outcome switch
         {

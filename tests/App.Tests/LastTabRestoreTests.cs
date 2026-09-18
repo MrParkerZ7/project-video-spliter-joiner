@@ -126,6 +126,7 @@ public sealed class LastTabRestoreTests : IDisposable
         public bool? BulkApplyCutToAllRows { get; set; }
         public bool? BulkAutoDeleteOriginals { get; set; }
         public bool? BulkAutoEmptyRecycleBin { get; set; }
+        public bool? BulkAutoClearAfterRun { get; set; }
 
         public bool? SplitAutoDeleteSource { get; set; }
 
@@ -234,8 +235,9 @@ public sealed class LastTabRestoreTests : IDisposable
         public AppTab? LastTab { get => _inner.LastTab; set { _inner.LastTab = value; _onWrite(); } }
 
         public bool? BulkApplyCutToAllRows { get => _inner.BulkApplyCutToAllRows; set { _inner.BulkApplyCutToAllRows = value; _onWrite(); } }
-        public bool? BulkAutoDeleteOriginals { get => _inner.BulkApplyCutToAllRows; set { _inner.BulkApplyCutToAllRows = value; _onWrite(); } }
-        public bool? BulkAutoEmptyRecycleBin { get => _inner.BulkApplyCutToAllRows; set { _inner.BulkApplyCutToAllRows = value; _onWrite(); } }
+        public bool? BulkAutoDeleteOriginals { get => _inner.BulkAutoDeleteOriginals; set { _inner.BulkAutoDeleteOriginals = value; _onWrite(); } }
+        public bool? BulkAutoEmptyRecycleBin { get => _inner.BulkAutoEmptyRecycleBin; set { _inner.BulkAutoEmptyRecycleBin = value; _onWrite(); } }
+        public bool? BulkAutoClearAfterRun { get => _inner.BulkAutoClearAfterRun; set { _inner.BulkAutoClearAfterRun = value; _onWrite(); } }
 
         public bool? SplitAutoDeleteSource { get => _inner.SplitAutoDeleteSource; set { _inner.SplitAutoDeleteSource = value; _onWrite(); } }
 

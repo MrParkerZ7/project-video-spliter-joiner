@@ -542,7 +542,7 @@ public sealed class ApplyDuringScanTests
     /// </summary>
     [Fact]
     [Trait("serves-spec", "SPEC-011")]
-    public void CancelScan_IsCalledOnlyFromRemoveAndClear()
+    public void CancelScan_IsCalledOnlyFromRemoveAndDropRows()
     {
         var src = RepoPaths.Source("src");
         var call = new Regex(@"\bCancelScan\(\)");
@@ -568,8 +568,12 @@ public sealed class ApplyDuringScanTests
             .ToList();
 
         callers.Should().NotBeEmpty("precondition: today's two callers are found");
+
+        // T-171 moved the bulk row removal out of Clear into DropRows, which Clear (through DropAllRows) and the
+        // automatic clear after a clean batch both use. The rule is unchanged: only a method whose job is to take rows
+        // OUT of the list may cancel their scans.
         callers.Should().OnlyContain(
-            c => c == "BulkCutViewModel.cs:Remove" || c == "BulkCutViewModel.cs:Clear",
+            c => c == "BulkCutViewModel.cs:Remove" || c == "BulkCutViewModel.cs:DropRows",
             "a scan cancelled on a surviving row must also resolve its handles and request their frames (SPEC-011 I157)");
     }
 }

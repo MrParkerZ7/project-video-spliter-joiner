@@ -888,6 +888,13 @@ public sealed class BulkItemViewModel : ObservableObject
     /// <summary>True once this row's source has been binned (T-144) - it cannot be re-cut.</summary>
     public bool OriginalDeleted => _originalDeleted;
 
+    /// <summary>
+    /// T-171 — true when the last run's own result carried a warning for this row (e.g. an exact cut that fell back
+    /// to a keyframe). The row's <see cref="Warning"/> is the only place that warning is shown, so the automatic
+    /// clear after a clean batch leaves such a row in the list.
+    /// </summary>
+    internal bool HasRunWarnings => _ledgerWarnings.Count > 0;
+
     internal void ApplyResult(BulkTrimItemResult result)
     {
         _ledgerWarnings = result.Warnings ?? Array.Empty<string>();

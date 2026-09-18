@@ -553,6 +553,15 @@ While either is armed the footer says so in red, before you press Run, so you al
 batch will do. Turning auto-delete back off also switches the bin option off — it will ask again if you
 turn them both on later.
 
+**Clearing the list when a batch is done.** Tick **Auto-clear list** (just before the red options) and a batch
+that finishes **with no failures** takes the rows it finished out of the list, ready for the next set. The report
+stays on screen — what was trimmed and what went to the Recycle Bin — and **Open folder** still opens the output.
+Rows you might still need stay, and the report says how many and why: rows that were not part of this run
+(unticked, no cut set yet, or added while it ran), rows whose original is still yours to delete (so **✕ Delete
+originals** still works), and rows the run left a warning on. Under **Replace originals** no original is ever left
+to delete, so a clean run clears every row it trimmed. A batch with any failure clears nothing. Off until you turn
+it on; the choice is remembered.
+
 ## Progress, cancel, and errors
 
 Every long-running operation (split, join, and a Bulk Cut batch) shares the same experience, and the
