@@ -13,17 +13,18 @@ namespace VideoSplitJoiner.Core.Thumbnails;
 /// then <c>-frames:v 1 -vf scale=&lt;width&gt;:-1 -y &lt;temp.jpg&gt;</c>. Input-seek keeps it near-instant;
 /// keyframe accuracy is fine for a hover preview.</para>
 ///
-/// <para><b>Cache:</b> keyed by <c>(inputPath, bucket)</c> where <c>bucket</c> is <paramref name="time"/>
-/// floored to a configurable granularity (default 1s). A cached temp file for the bucket is returned
-/// WITHOUT running ffmpeg. The cache is LRU-bounded (default 128 entries) — the oldest entry (and its
-/// file) is evicted when the cap is exceeded.</para>
+/// <para><b>Cache:</b> keyed by <c>(inputPath, bucket, width)</c> where <c>bucket</c> is the requested time
+/// floored to a configurable granularity (default 1s). A cached temp file for that bucket AT THAT WIDTH is
+/// returned WITHOUT running ffmpeg; the same second at another width is a different file (T-179 — a 640px
+/// profile picture must never be handed a 64px row chip's cached frame). The cache is LRU-bounded (default
+/// 128 entries) — the oldest entry (and its file) is evicted when the cap is exceeded.</para>
 ///
 /// <para><b>Coalesce/cancel:</b> the supplied <see cref="CancellationToken"/> is honored end-to-end, so a
 /// superseded request can be cancelled and never clobbers a newer one. The service is stateless-per-call
 /// beyond the cache; the caller (the T-078 VM) enforces latest-wins by cancelling stale requests and
 /// using only the returned path for the time it asked about.</para>
 ///
-/// <para><b>Temp location:</b> <c>%LOCALAPPDATA%/VideoSplitJoiner/thumb-cache/&lt;hash-of-input&gt;/&lt;bucket&gt;.jpg</c>.
+/// <para><b>Temp location:</b> <c>%LOCALAPPDATA%/VideoSplitJoiner/thumb-cache/&lt;hash-of-input&gt;/&lt;bucketMs&gt;_w&lt;width&gt;.jpg</c>.
 /// The temp root is injectable so tests never touch the real per-user folder.</para>
 ///
 /// <para><b>Best-effort:</b> every public method wraps its work in try/catch and returns <c>null</c> /
@@ -108,7 +109,7 @@ public sealed class FfmpegThumbnailService : IThumbnailService
             ct.ThrowIfCancellationRequested();
 
             var bucket = FloorToBucket(time);
-            var cacheKey = BuildCacheKey(inputPath, bucket);
+            var cacheKey = BuildCacheKey(inputPath, bucket, width);
 
             // Cache HIT: return the existing temp file WITHOUT running ffmpeg (only if it still exists).
             if (TryGetCached(cacheKey, out var cachedPath) && File.Exists(cachedPath))
@@ -116,9 +117,10 @@ public sealed class FfmpegThumbnailService : IThumbnailService
                 return cachedPath;
             }
 
-            var tempPath = ResolveTempPath(inputPath, bucket);
+            var tempPath = ResolveTempPath(inputPath, bucket, width);
 
-            // A prior run may have left the file on disk though it's not tracked (fresh process). Reuse it.
+            // A prior run may have left the file on disk though it's not tracked (fresh process). Reuse it —
+            // the width is in the file name, so only a file of the requested width can match.
             if (File.Exists(tempPath))
             {
                 Remember(cacheKey, tempPath);
@@ -230,15 +232,18 @@ public sealed class FfmpegThumbnailService : IThumbnailService
     /// <summary>The per-input cache sub-folder: <c>&lt;cacheRoot&gt;/&lt;hash-of-inputPath&gt;</c>.</summary>
     internal string InputCacheDir(string inputPath) => Path.Combine(_cacheRoot, HashInput(inputPath));
 
-    /// <summary>The temp path for one (input, bucket): <c>&lt;inputDir&gt;/&lt;bucketMs&gt;.jpg</c>.</summary>
-    internal string ResolveTempPath(string inputPath, TimeSpan bucket)
-    {
-        var bucketName = ((long)bucket.TotalMilliseconds).ToString(CultureInfo.InvariantCulture);
-        return Path.Combine(InputCacheDir(inputPath), bucketName + ".jpg");
-    }
+    /// <summary>
+    /// The temp path for one (input, bucket, width): <c>&lt;inputDir&gt;/&lt;bucketMs&gt;_w&lt;width&gt;.jpg</c>. The
+    /// width is part of the name so a file another request left on disk is reused only at its own width.
+    /// </summary>
+    internal string ResolveTempPath(string inputPath, TimeSpan bucket, int width) =>
+        Path.Combine(InputCacheDir(inputPath), BucketName(bucket) + "_w" + width.ToString(CultureInfo.InvariantCulture) + ".jpg");
 
-    private static string BuildCacheKey(string inputPath, TimeSpan bucket) =>
-        inputPath + "|" + ((long)bucket.TotalMilliseconds).ToString(CultureInfo.InvariantCulture);
+    private static string BuildCacheKey(string inputPath, TimeSpan bucket, int width) =>
+        inputPath + "|" + BucketName(bucket) + "|w" + width.ToString(CultureInfo.InvariantCulture);
+
+    private static string BucketName(TimeSpan bucket) =>
+        ((long)bucket.TotalMilliseconds).ToString(CultureInfo.InvariantCulture);
 
     /// <summary>Stable, filesystem-safe subdir name for an input path (SHA-256, hex, first 16 bytes).</summary>
     private static string HashInput(string inputPath)

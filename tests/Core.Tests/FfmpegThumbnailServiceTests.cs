@@ -82,7 +82,7 @@ public class FfmpegThumbnailServiceTests : IDisposable
 
         var tokens = runner.Commands[0];
         tokens[tokens.IndexOf("-ss") + 1].Should().Be("7");
-        Path.GetFileName(path!).Should().Be("7000.jpg", "the bucket file is named by its floored-ms value");
+        Path.GetFileName(path!).Should().Be("7000_w160.jpg", "the file is named by its floored-ms bucket and its width (SPEC-005#I3, T-179)");
     }
 
     // ---- Cache ----
@@ -235,7 +235,7 @@ public class FfmpegThumbnailServiceTests : IDisposable
         var svc = NewService(runner, bucket: TimeSpan.FromSeconds(1));
 
         var atZero = await svc.GetThumbnailAsync(input, TimeSpan.Zero, 160, CancellationToken.None);
-        Path.GetFileName(atZero!).Should().Be("0.jpg");
+        Path.GetFileName(atZero!).Should().Be("0_w160.jpg", "bucket 0 at width 160 (SPEC-005#I4, T-179)");
         runner.Commands[0][runner.Commands[0].IndexOf("-ss") + 1].Should().Be("0");
     }
 
@@ -333,7 +333,7 @@ public class FfmpegThumbnailServiceTests : IDisposable
         var svc = NewService(runner, bucket: TimeSpan.FromSeconds(1));
 
         // Seed the exact temp path for (input, bucket 2s) on disk, on a service with nothing tracked yet.
-        var tempPath = svc.ResolveTempPath(input, TimeSpan.FromSeconds(2));
+        var tempPath = svc.ResolveTempPath(input, TimeSpan.FromSeconds(2), 160);
         Directory.CreateDirectory(Path.GetDirectoryName(tempPath)!);
         await File.WriteAllTextAsync(tempPath, "left-by-prior-process");
 
@@ -478,15 +478,15 @@ public class FfmpegThumbnailServiceTests : IDisposable
         runner.CallCount.Should().Be(2, "a thrown failure must not be cached");
     }
 
-    // SPEC-005#I6 - the temp-path layout is <cacheRoot>/<hash>/<bucketMs>.jpg, where <hash> is the first
-    // 16 bytes of SHA-256(inputPath) as lowercase hex. The <bucketMs>.jpg half is already pinned
-    // (GetThumbnailAsync_FractionalTime_FlooredToBucket_ForSeekAndPath asserts "7000.jpg"); the
+    // SPEC-005#I6 - the temp-path layout is <cacheRoot>/<hash>/<bucketMs>_w<width>.jpg, where <hash> is the
+    // first 16 bytes of SHA-256(inputPath) as lowercase hex. The file-name half is already pinned
+    // (GetThumbnailAsync_FractionalTime_FlooredToBucket_ForSeekAndPath asserts "7000_w160.jpg"); the
     // <cacheRoot>/<hash> half is not - GetThumbnailAsync_PreexistingOnDiskFile_ReusedWithoutFfmpeg_ThenCached
     // only compares the service against its OWN ResolveTempPath, i.e. self-consistency. This pins the
     // composition against an INDEPENDENTLY computed hash, mirroring the waveform suite's sibling test.
     [Trait("serves-spec", "SPEC-005")]
     [Fact]
-    public void ResolveTempPath_ComposesCacheRootHashBucketMsJpg()
+    public void ResolveTempPath_ComposesCacheRootHashBucketMsWidthJpg()
     {
         const string input = @"C:\videos\clip.mp4";
         var svc = NewService(new WritingFakeRunner());
@@ -502,22 +502,206 @@ public class FfmpegThumbnailServiceTests : IDisposable
         var hash = sb.ToString();
         hash.Should().HaveLength(32, "the sub-folder is the first 16 SHA-256 bytes rendered as two hex chars each");
 
-        svc.ResolveTempPath(input, TimeSpan.FromSeconds(7))
-            .Should().Be(Path.Combine(_cacheRoot, hash, "7000.jpg"),
-                "the temp path is <cacheRoot>/<hash>/<bucketMs>.jpg");
+        svc.ResolveTempPath(input, TimeSpan.FromSeconds(7), 160)
+            .Should().Be(Path.Combine(_cacheRoot, hash, "7000_w160.jpg"),
+                "the temp path is <cacheRoot>/<hash>/<bucketMs>_w<width>.jpg");
 
-        // The hash sub-folder is a property of the INPUT alone: the bucket only varies the file name.
+        // The hash sub-folder is a property of the INPUT alone: the bucket and the width only vary the file name.
         svc.InputCacheDir(input).Should().Be(Path.Combine(_cacheRoot, hash));
-        svc.ResolveTempPath(input, TimeSpan.Zero).Should().Be(Path.Combine(_cacheRoot, hash, "0.jpg"));
+        svc.ResolveTempPath(input, TimeSpan.Zero, 64).Should().Be(Path.Combine(_cacheRoot, hash, "0_w64.jpg"));
+        svc.ResolveTempPath(input, TimeSpan.FromSeconds(7), 640)
+            .Should().Be(Path.Combine(_cacheRoot, hash, "7000_w640.jpg"),
+                "one second at another width is another file in the same folder (T-179)");
 
         // A different input lands under a DIFFERENT sub-folder (the hash discriminates inputs).
         svc.InputCacheDir(@"C:\videos\other.mp4").Should().NotBe(Path.Combine(_cacheRoot, hash));
+    }
+
+    // ---- T-179 / G-058: the width is part of the cache key ----
+
+    // SPEC-005#I26 (repro, in-process) — two widths at one second are two files. Before T-179 the cache
+    // keyed on (input, bucket) only, so a 640 request at a second a 64px row chip had already grabbed was
+    // handed the chip's 64px file: the runner ran once and both calls returned the same path.
+    [Trait("serves-spec", "SPEC-005")]
+    [Fact]
+    public async Task GetThumbnailAsync_TwoWidthsInOneBucket_RunTwice_ReturnTwoFiles()
+    {
+        var input = MakeInput();
+        var runner = new WritingFakeRunner();
+        var svc = NewService(runner, bucket: TimeSpan.FromSeconds(1));
+
+        var chip = await svc.GetThumbnailAsync(input, TimeSpan.FromSeconds(7.2), 64, CancellationToken.None);
+        var picture = await svc.GetThumbnailAsync(input, TimeSpan.FromSeconds(7.6), 640, CancellationToken.None);
+
+        runner.CallCount.Should().Be(2, "a 640 request must not be served the 64px frame cached for the same second");
+        runner.Commands[1].Should().ContainInConsecutiveOrder("-vf", "scale=640:-1");
+        picture.Should().NotBeNull();
+        File.Exists(picture!).Should().BeTrue();
+        picture.Should().NotBe(chip, "each width is its own file");
+    }
+
+    // SPEC-005#I12 + I26 (repro, across processes) — a file a previous run left on disk is reused only at
+    // its own width. Before T-179 a fresh instance reused another run's 64px `2000.jpg` for a 640 request.
+    [Trait("serves-spec", "SPEC-005")]
+    [Fact]
+    public async Task GetThumbnailAsync_FreshInstance_DoesNotReuseAnotherWidthsFileFromDisk()
+    {
+        var input = MakeInput();
+        var runnerA = new WritingFakeRunner();
+        var serviceA = NewService(runnerA, bucket: TimeSpan.FromSeconds(1));
+        var chip = await serviceA.GetThumbnailAsync(input, TimeSpan.FromSeconds(2), 64, CancellationToken.None);
+        chip.Should().NotBeNull();
+
+        // Instance B: nothing tracked in memory, its own counting runner, the same cache root.
+        var runnerB = new WritingFakeRunner();
+        var serviceB = NewService(runnerB, bucket: TimeSpan.FromSeconds(1));
+        var picture = await serviceB.GetThumbnailAsync(input, TimeSpan.FromSeconds(2.4), 640, CancellationToken.None);
+
+        runnerB.CallCount.Should().Be(1, "the 64px file on disk is not a 640 picture, so ffmpeg must run");
+        runnerB.Commands[0].Should().ContainInConsecutiveOrder("-vf", "scale=640:-1");
+        picture.Should().NotBeNull();
+        File.Exists(picture!).Should().BeTrue();
+        Path.GetFileName(picture!).Should().Be("2000_w640.jpg");
+        picture.Should().NotBe(chip);
+    }
+
+    // SPEC-005#I26 — a file written before T-179 (<bucketMs>.jpg, no width in its name) is never matched
+    // again. It is exactly what an upgraded user's cache holds: 64px frames from earlier runs. A fallback to
+    // the legacy name would hand a 640 capture the 64px frame again with every other test still green.
+    [Trait("serves-spec", "SPEC-005")]
+    [Fact]
+    public async Task GetThumbnailAsync_LegacyWidthlessFileOnDisk_IsNeverReused()
+    {
+        var input = MakeInput();
+        var runner = new WritingFakeRunner();
+        var svc = NewService(runner, bucket: TimeSpan.FromSeconds(1));
+
+        var legacy = Path.Combine(svc.InputCacheDir(input), "2000.jpg");
+        Directory.CreateDirectory(Path.GetDirectoryName(legacy)!);
+        await File.WriteAllTextAsync(legacy, "64px-frame-from-before-T-179");
+
+        var picture = await svc.GetThumbnailAsync(input, TimeSpan.FromSeconds(2), 640, CancellationToken.None);
+
+        runner.CallCount.Should().Be(1, "the width-less legacy file is not a 640 picture");
+        runner.Commands[0].Should().ContainInConsecutiveOrder("-vf", "scale=640:-1");
+        Path.GetFileName(picture!).Should().Be("2000_w640.jpg");
+    }
+
+    // SPEC-005#I26 — the three widths the app asks for (row chip 64 · scrub preview 160 · profile picture
+    // 640) coexist in one bucket, each a hit for its own width, and Clear removes every one of them.
+    [Trait("serves-spec", "SPEC-005")]
+    [Fact]
+    public async Task GetThumbnailAsync_ThreeWidthsCoexistInOneBucket_EachHitsItsOwnFile_ClearRemovesAll()
+    {
+        var input = MakeInput();
+        var runner = new WritingFakeRunner();
+        var svc = NewService(runner, bucket: TimeSpan.FromSeconds(1));
+
+        var paths = new List<string>();
+        foreach (var width in new[] { 64, 160, 640 })
+        {
+            paths.Add((await svc.GetThumbnailAsync(input, TimeSpan.FromSeconds(4), width, CancellationToken.None))!);
+        }
+
+        runner.CallCount.Should().Be(3);
+        paths.Should().OnlyHaveUniqueItems();
+
+        foreach (var (width, path) in new[] { 64, 160, 640 }.Zip(paths))
+        {
+            var again = await svc.GetThumbnailAsync(input, TimeSpan.FromSeconds(4.5), width, CancellationToken.None);
+            again.Should().Be(path, "width {0} is a cache hit for its own file", width);
+        }
+
+        runner.CallCount.Should().Be(3, "every repeat was a hit");
+
+        svc.Clear(input);
+        paths.Should().AllSatisfy(p => File.Exists(p).Should().BeFalse("Clear deletes the files of every width"));
+    }
+
+    // SPEC-005#I15 + I26 — a failure at one width is not cached and leaves another width's file alone.
+    [Trait("serves-spec", "SPEC-005")]
+    [Fact]
+    public async Task GetThumbnailAsync_FailureAtOneWidth_NotCached_OtherWidthUntouched()
+    {
+        var input = MakeInput();
+        var runner = new FailsAtWidthRunner(failingWidth: 640);
+        var svc = NewService(runner, bucket: TimeSpan.FromSeconds(1));
+
+        var chip = await svc.GetThumbnailAsync(input, TimeSpan.FromSeconds(3), 64, CancellationToken.None);
+        var picture = await svc.GetThumbnailAsync(input, TimeSpan.FromSeconds(3), 640, CancellationToken.None);
+
+        picture.Should().BeNull("ffmpeg failed at 640");
+        File.Exists(chip!).Should().BeTrue("the failure at 640 leaves the 64px file alone");
+
+        var retry = await svc.GetThumbnailAsync(input, TimeSpan.FromSeconds(3), 640, CancellationToken.None);
+        retry.Should().BeNull();
+        runner.CallCount.Should().Be(3, "the failed 640 grab was not cached, so the retry ran ffmpeg again");
+
+        var chipAgain = await svc.GetThumbnailAsync(input, TimeSpan.FromSeconds(3), 64, CancellationToken.None);
+        chipAgain.Should().Be(chip);
+        runner.CallCount.Should().Be(3, "the 64px file is still a hit");
+    }
+
+    // SPEC-005#I18 boundary — the smallest valid width is 1; it names its own file.
+    [Trait("serves-spec", "SPEC-005")]
+    [Fact]
+    public async Task GetThumbnailAsync_WidthOne_IsValid_NamesItsOwnFile()
+    {
+        var input = MakeInput();
+        var runner = new WritingFakeRunner();
+        var svc = NewService(runner, bucket: TimeSpan.FromSeconds(1));
+
+        var path = await svc.GetThumbnailAsync(input, TimeSpan.FromSeconds(1), 1, CancellationToken.None);
+
+        path.Should().NotBeNull();
+        Path.GetFileName(path!).Should().Be("1000_w1.jpg");
+        runner.Commands[0].Should().ContainInConsecutiveOrder("-vf", "scale=1:-1");
     }
 
     private static void TryDelete(string dir)
     {
         try { if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true); }
         catch { /* best-effort */ }
+    }
+}
+
+/// <summary>
+/// Runner that fails (non-zero exit, no file) when asked for one width and succeeds, writing the file, at
+/// every other width. Models ffmpeg failing for one request only (T-179, SPEC-005#I15 + I26).
+/// </summary>
+internal sealed class FailsAtWidthRunner : IFfmpegRunner
+{
+    private readonly string _failingScale;
+
+    public FailsAtWidthRunner(int failingWidth) =>
+        _failingScale = $"scale={failingWidth.ToString(System.Globalization.CultureInfo.InvariantCulture)}:-1";
+
+    public int CallCount { get; private set; }
+
+    public Task<FfmpegResult> RunAsync(
+        FfmpegArgs args,
+        TimeSpan? totalDuration = null,
+        IProgress<double>? progress = null,
+        CancellationToken ct = default)
+    {
+        ct.ThrowIfCancellationRequested();
+        CallCount++;
+
+        var tokens = args.ToList().ToList();
+        if (tokens.Contains(_failingScale))
+        {
+            return Task.FromResult(new FfmpegResult(1, new[] { "failed at this width" }.ToList().AsReadOnly()));
+        }
+
+        var output = tokens[^1];
+        var dir = Path.GetDirectoryName(output);
+        if (!string.IsNullOrEmpty(dir))
+        {
+            Directory.CreateDirectory(dir);
+        }
+
+        File.WriteAllText(output, "jpg-bytes");
+        return Task.FromResult(new FfmpegResult(0, new List<string>().AsReadOnly()));
     }
 }
 

@@ -17,10 +17,11 @@ public interface IThumbnailService
     /// <paramref name="width"/> px wide (height auto), and return the temp jpg path — or <c>null</c> on
     /// any failure (missing input, ffmpeg error, cancellation, I/O). Never throws.
     /// <para>
-    /// Fast (keyframe-accurate) seek: <c>-ss</c> is placed BEFORE <c>-i</c>. Requests are cached by a
-    /// configurable time bucket, so repeat hovers within the same bucket reuse the file WITHOUT
-    /// re-running ffmpeg. Honors <paramref name="ct"/> — a superseded request can be cancelled and never
-    /// clobbers a newer result.
+    /// Fast (keyframe-accurate) seek: <c>-ss</c> is placed BEFORE <c>-i</c>. Requests are cached by
+    /// (input, time bucket, width), so a repeat request for the same bucket AT THE SAME WIDTH reuses the
+    /// file WITHOUT re-running ffmpeg; the same bucket at another width is a separate file (T-179 — a
+    /// caller asking for 640px must never be handed another caller's 64px frame). Honors
+    /// <paramref name="ct"/> — a superseded request can be cancelled and never clobbers a newer result.
     /// </para>
     /// </summary>
     /// <param name="inputPath">The source media file.</param>

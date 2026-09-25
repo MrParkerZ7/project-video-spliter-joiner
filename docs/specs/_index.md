@@ -16,7 +16,7 @@ One spec per feature; numbered invariants are the source `todo-automate` derives
 | [SPEC-002](SPEC-002-bulk-trim-engine.md) | bulk-trim-engine | core | 60 | ? | ? | Bulk trim engine (keep one middle segment) |
 | [SPEC-003](SPEC-003-join-concat.md) | join-concat | core | 31 | 30 | 1 | Join / concat engine |
 | [SPEC-004](SPEC-004-media-probe.md) | media-probe | core | 32 | 32 | 0 | Media probe — duration, keyframes, snapping |
-| [SPEC-005](SPEC-005-thumbnail-service.md) | thumbnail-service | core | 25 | 25 | 0 | Thumbnail service |
+| [SPEC-005](SPEC-005-thumbnail-service.md) | thumbnail-service | core | 26 | ? | ? | Thumbnail service |
 | [SPEC-006](SPEC-006-waveform-service.md) | waveform-service | core | 23 | 23 | 0 | Audio waveform service |
 | [SPEC-007](SPEC-007-cut-profiles.md) | cut-profiles | core | 109 | ? | ? | Cut profiles — model, persistence, apply |
 | [SPEC-008](SPEC-008-operation-progress-eta.md) | operation-progress-eta | app | 45 | ? | ? | Operation progress, status & ETA |
@@ -29,7 +29,7 @@ One spec per feature; numbered invariants are the source `todo-automate` derives
 | [SPEC-015](SPEC-015-app-shell-theming.md) | app-shell-theming | ui | 28 | 24 | 4 | App shell — window chrome, layout modes, theming, crash safety |
 | [SPEC-016](SPEC-016-error-reporting.md) | error-reporting | core | 53 | ? | ? | Error reporting — classification, copyable text, per-run log |
 | [SPEC-017](SPEC-017-ffmpeg-process.md) | ffmpeg-process | core | 54 | ? | ? | ffmpeg / ffprobe process layer |
-| **TOTAL** | | | **995** | **see note** | **see note** | |
+| **TOTAL** | | | **996** | **see note** | **see note** | |
 
 **Invariant counts recounted mechanically 2026-09-02** (T-153) — they had drifted **in both
 directions** and are now generated from the spec files rather than hand-incremented:
@@ -41,7 +41,7 @@ directions** and are now generated from the spec files rather than hand-incremen
   - SPEC-014: listed 35, actually 30 (-5) — **this one was wrong**: 35 was right; the recount could not see
     five qualified labels (see the 2026-09-11 entry below)
 
-Total documented invariants: **995** (633 before the 09-02 recount, 680 at that recount, +21 from
+Total documented invariants: **996** (633 before the 09-02 recount, 680 at that recount, +21 from
 T-154/T-155/T-156 documented the same day, +22 on 09-04 from T-154's Split/Join half — SPEC-010 +8,
 SPEC-012 +9, SPEC-011 +5; +4 more from T-157 — SPEC-010 +3, SPEC-008 +1; +3 on 09-05 from T-160 —
 SPEC-011 I145-I147, the two-row footer; +5 from T-161 — SPEC-007 I95-I99, the scrollable profile bar; +9 from T-162 — SPEC-010 I52-I60, delete-original on Split; +7 from T-163 — SPEC-010 I61-I67, the auto layer;
@@ -62,6 +62,8 @@ I20/I24/I25/I27 and SPEC-011 I21/I22/I24/I26/I57/I76/I104 were amended in place,
 +1 from T-174 — SPEC-011 I158, the cut-point chip shows the frame the run cuts at (§ What and I61–I64/I93 amended
 in place; T-176 amended SPEC-011 I8/I10/I12/I91 and added no id);
 +6 on 2026-09-18 from T-171 — SPEC-011 I159-I163 · SPEC-009 I29, the auto-clear after a clean batch (SPEC-011 I66/I157
+amended in place);
++1 on 2026-09-25 from T-179 — SPEC-005 I26, one second at two widths is two files (SPEC-005 I3/I4/I6/I7/I8/I12
 amended in place)).
 
 **The headline and the TOTAL row are enforced, not maintained (T-166).**

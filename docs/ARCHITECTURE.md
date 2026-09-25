@@ -866,11 +866,14 @@ throws. `FfmpegThumbnailService` is the production impl over the same `IFfmpegRu
 - **Fast keyframe-accurate seek** — `-ss <t>` placed **before** `-i`, then `-frames:v 1 -vf
   scale=<width>:-1 -y <temp.jpg>` (input-seek keeps it near-instant; keyframe accuracy is fine for a
   hover). Args are built via the same `FfmpegArgs` builder and exposed `internal` for token-order tests.
-- **Bucketed LRU cache** — requests are keyed by `(inputPath, bucket)` where `bucket` is the hovered
-  time floored to a configurable granularity (default 1s), so repeat hovers within a bucket reuse the
-  file **without** re-running ffmpeg. The cache is LRU-bounded (default 128 entries); evicting an entry
-  deletes its temp file. Temp files live under
-  `%LOCALAPPDATA%/VideoSplitJoiner/thumb-cache/<hash-of-input>/<bucketMs>.jpg` (root injectable for tests).
+- **Bucketed LRU cache** — requests are keyed by `(inputPath, bucket, width)` where `bucket` is the
+  requested time floored to a configurable granularity (default 1s), so a repeat request for the same
+  bucket at the same width reuses the file **without** re-running ffmpeg, and the same second at another
+  width is a separate file (T-179: a 640px profile capture is never handed a 64px row chip's cached frame
+  of the same second). The cache is LRU-bounded (default 128 entries); evicting an entry deletes its temp
+  file. Temp files live under
+  `%LOCALAPPDATA%/VideoSplitJoiner/thumb-cache/<hash-of-input>/<bucketMs>_w<width>.jpg` (root injectable
+  for tests).
 - **Cancellable, cache-swept** — the token is honored end-to-end so a superseded request never clobbers
   a newer one; `Clear(inputPath)` sweeps one file's cache dir and `ClearAll()` the whole root (both
   best-effort, never throw). `NullThumbnailService` is the inert no-op default (every grab → `null`) so

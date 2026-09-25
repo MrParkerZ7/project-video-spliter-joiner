@@ -2,7 +2,9 @@
 
 ## Status
 
-Accepted.
+Accepted. Amended by T-179 (2026-09-25) — the cache key and the temp file name also carry the requested
+width (`<bucketMs>_w<width>.jpg`), so one second at two widths is two files; see SPEC-005 I6/I8/I26. The
+`(inputPath, bucket)` key described below let a 640px profile capture be handed a 64px row chip's frame.
 
 ## Context
 
