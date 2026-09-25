@@ -14,11 +14,15 @@
              item gutter = 48. Two rows = 96, plus 4px of slack. Past it the list scrolls; it never
              grows the header, which is what T-161's MaxWidth bought on the other axis. -->
         <sys:Double x:Key="ProfileBarMaxHeight">100</sys:Double>
-        <!-- T-172: the hover card's picture box width, in DIPs. Named because two other numbers depend on it
-             and must not become hand-typed copies: the low-resolution note appears for a picture with fewer
-             real pixels than this, and BulkCutViewModel.ProfileThumbnailWidth stores pictures at TWICE it
-             (640), so a picture is sharp here up to 200% display scaling. Tests pin both relationships. -->
+        <!-- The hover card's picture box, in DIPs. T-180 (G-058): the box follows the picture's own width, one
+             picture pixel per screen pixel, between these two, and is always 16:9.
+             ProfilePreviewCardWidth is the MINIMUM (T-172 named it; the name stays because the low-resolution
+             note and T-181's refresh threshold read it): a narrower picture still fills a 320 box and shows the
+             note. ProfilePreviewCardMaxWidth is the cap, and a test pins it to
+             BulkCutViewModel.ProfileThumbnailWidth, so a stored capture shows pixel-exact at 100% and the two
+             cannot drift. -->
         <sys:Double x:Key="ProfilePreviewCardWidth">320</sys:Double>
+        <sys:Double x:Key="ProfilePreviewCardMaxWidth">640</sys:Double>
         <conv:NullToCollapsedConverter x:Key="NullToCollapsed" />
         <conv:BoolToVisibilityConverter x:Key="BoolToVisibility" />
         <conv:InverseBoolConverter x:Key="InverseBool" />
@@ -34,6 +38,8 @@
              Reused verbatim from the T-078 scrub-thumb converter — same OnLoad + null-safety contract. -->
         <conv:PathToBitmapConverter x:Key="PathToBitmap" />
         <conv:PixelWidthBelowToVisibleConverter x:Key="PixelWidthBelowToVisible" />
+        <conv:ProfilePreviewBoxSizeConverter x:Key="ProfilePreviewBoxSize" />
+        <conv:ProfileCutReadoutConverter x:Key="ProfileCutReadout" />
 
         <!-- Profile row: [thumb chip] Name — the ComboBox ItemTemplate (drives BOTH the drop-down rows
              and the selection box). The muted chip is the placeholder; the Image covers it when a
@@ -55,13 +61,19 @@
              see a card needs no tracking, and ToolTipService gives the open delay, the dismissal and the
              screen-edge flip for free - including the open delay the plan itself flagged as "the one
              thing ToolTip would have given". Its two objections are both settable: ShowDuration defeats
-             the 5-second auto-hide, and the themed MaxWidth of 360 comfortably holds a 320px picture. -->
+             the 5-second auto-hide, and MaxWidth is raised to 650 (T-180) - a 640 box + 2x4 padding +
+             2x1 border - so the largest card is never clipped by the tooltip chrome. UseLayoutRounding
+             (inherited by the whole card) puts the picture on whole device pixels: the 1px border and 4px
+             padding put it 5 DIPs in, which is 6.25 / 7.5 device pixels at 125% / 150%, and without
+             rounding every picture pixel is blended across two screen pixels - the softness T-180
+             exists to remove (found in the T-180 review). -->
         <Style x:Key="ProfilePreviewCard" TargetType="ToolTip">
+            <Setter Property="UseLayoutRounding" Value="True" />
             <Setter Property="Background" Value="{StaticResource Surface0Brush}" />
             <Setter Property="BorderBrush" Value="{StaticResource BorderStrongBrush}" />
             <Setter Property="HasDropShadow" Value="True" />
             <Setter Property="Padding" Value="0" />
-            <Setter Property="MaxWidth" Value="360" />
+            <Setter Property="MaxWidth" Value="650" />
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="ToolTip">
@@ -71,17 +83,44 @@
                                 CornerRadius="{StaticResource RadiusSm}"
                                 Padding="4"
                                 SnapsToDevicePixels="True">
-                            <StackPanel Width="{StaticResource ProfilePreviewCardWidth}">
-                                <!-- Letterboxed so the card does not resize as you move between
-                                     profiles whose pictures differ in aspect. Uniform, never
-                                     UniformToFill: this is the view where detail matters, so nothing
-                                     is cropped away. Collapsed entirely when the profile has no
-                                     picture - that is a normal state (I78), not a failure. -->
-                                <Border Height="180"
+                            <!-- T-180: the column is as wide as the picture box (the name and the readout wrap
+                                 at it); with no picture it is the minimum. -->
+                            <StackPanel x:Name="CardColumn">
+                                <StackPanel.Width>
+                                    <MultiBinding Converter="{StaticResource ProfilePreviewBoxSize}" ConverterParameter="width">
+                                        <Binding Path="Source" ElementName="CardImage" />
+                                        <Binding RelativeSource="{RelativeSource Self}" />
+                                        <Binding Source="{StaticResource ProfilePreviewCardWidth}" />
+                                        <Binding Source="{StaticResource ProfilePreviewCardMaxWidth}" />
+                                    </MultiBinding>
+                                </StackPanel.Width>
+                                <!-- The box follows the picture's own width (T-180), one picture pixel per screen
+                                     pixel, from the 320 minimum to the 640 cap, and is always 16:9. Uniform, never
+                                     UniformToFill: this is the view where detail matters, so nothing is cropped
+                                     away - a 4:3 picture is centred with bars. Collapsed when there is no loaded
+                                     picture: no profile picture (a normal state, I78), and also a path whose file
+                                     is missing or does not decode, which would otherwise show an empty frame. -->
+                                <Border x:Name="CardPictureBox"
                                         Background="{StaticResource VideoBgBrush}"
                                         CornerRadius="{StaticResource RadiusSm}"
                                         ClipToBounds="True"
-                                        Visibility="{Binding ThumbnailPath, Converter={StaticResource NullToCollapsed}}">
+                                        Visibility="{Binding Source, ElementName=CardImage, Converter={StaticResource NullToCollapsed}}">
+                                    <Border.Width>
+                                        <MultiBinding Converter="{StaticResource ProfilePreviewBoxSize}" ConverterParameter="width">
+                                            <Binding Path="Source" ElementName="CardImage" />
+                                            <Binding RelativeSource="{RelativeSource Self}" />
+                                            <Binding Source="{StaticResource ProfilePreviewCardWidth}" />
+                                            <Binding Source="{StaticResource ProfilePreviewCardMaxWidth}" />
+                                        </MultiBinding>
+                                    </Border.Width>
+                                    <Border.Height>
+                                        <MultiBinding Converter="{StaticResource ProfilePreviewBoxSize}" ConverterParameter="height">
+                                            <Binding Path="Source" ElementName="CardImage" />
+                                            <Binding RelativeSource="{RelativeSource Self}" />
+                                            <Binding Source="{StaticResource ProfilePreviewCardWidth}" />
+                                            <Binding Source="{StaticResource ProfilePreviewCardMaxWidth}" />
+                                        </MultiBinding>
+                                    </Border.Height>
                                     <Image x:Name="CardImage"
                                            Source="{Binding ThumbnailPath, Converter={StaticResource PathToBitmap}}"
                                            Stretch="Uniform" />
@@ -111,24 +150,29 @@
                                            FontWeight="SemiBold"
                                            Foreground="{StaticResource TextPrimaryBrush}" />
 
-                                <!-- What the profile would DO, so the card identifies it rather than
-                                     merely enlarging it. -->
-                                <StackPanel Orientation="Horizontal" Margin="4,3,4,4">
-                                    <TextBlock Text="intro "
-                                               FontSize="{StaticResource FontSizeSmall}"
-                                               Foreground="{StaticResource TextMutedBrush}" />
-                                    <TextBlock Text="{Binding IntroFromStart, Converter={StaticResource Clock}}"
-                                               FontFamily="{StaticResource MonoFontFamily}"
-                                               FontSize="{StaticResource FontSizeSmall}"
-                                               Foreground="{StaticResource AccentTextBrush}" />
-                                    <TextBlock Text="  ·  outro "
-                                               FontSize="{StaticResource FontSizeSmall}"
-                                               Foreground="{StaticResource TextMutedBrush}" />
-                                    <TextBlock Text="{Binding OutroFromEnd, Converter={StaticResource Clock}, TargetNullValue='to end'}"
-                                               FontFamily="{StaticResource MonoFontFamily}"
-                                               FontSize="{StaticResource FontSizeSmall}"
-                                               Foreground="{StaticResource TextPrimaryBrush}" />
-                                </StackPanel>
+                                <!-- Where the profile cuts, in words (T-180): the intro cut, and the outro cut
+                                     measured from the end, or that there is none. Body size, not a muted footnote.
+                                     A time differs from the words around it by colour role AND weight, never a
+                                     tint alone, so the one real cut stands out. The card shows the profile's own
+                                     values; on each video the cut then snaps to a keyframe (the row shows it). -->
+                                <TextBlock x:Name="IntroReadout"
+                                           Margin="4,4,4,0"
+                                           TextWrapping="Wrap"
+                                           FontSize="{StaticResource FontSizeBody}"
+                                           Foreground="{StaticResource TextSecondaryBrush}">
+                                    <Run Text="Intro" /><Run Text="  " /><Run Text="{Binding IntroFromStart, Mode=OneWay, Converter={StaticResource ProfileCutReadout}, ConverterParameter=intro-prefix}" /><Run Text="{Binding IntroFromStart, Mode=OneWay, Converter={StaticResource ProfileCutReadout}, ConverterParameter=intro-time}"
+                                         Foreground="{StaticResource AccentBrush}"
+                                         FontWeight="SemiBold" /><Run Text="{Binding IntroFromStart, Mode=OneWay, Converter={StaticResource ProfileCutReadout}, ConverterParameter=intro-suffix}" />
+                                </TextBlock>
+                                <TextBlock x:Name="OutroReadout"
+                                           Margin="4,2,4,4"
+                                           TextWrapping="Wrap"
+                                           FontSize="{StaticResource FontSizeBody}"
+                                           Foreground="{StaticResource TextSecondaryBrush}">
+                                    <Run Text="Outro" /><Run Text="  " /><Run Text="{Binding OutroFromEnd, Mode=OneWay, Converter={StaticResource ProfileCutReadout}, ConverterParameter=outro-prefix}" /><Run Text="{Binding OutroFromEnd, Mode=OneWay, Converter={StaticResource ProfileCutReadout}, ConverterParameter=outro-time}"
+                                         Foreground="{StaticResource AccentBrush}"
+                                         FontWeight="SemiBold" /><Run Text="{Binding OutroFromEnd, Mode=OneWay, Converter={StaticResource ProfileCutReadout}, ConverterParameter=outro-suffix}" />
+                                </TextBlock>
                             </StackPanel>
                         </Border>
                     </ControlTemplate>

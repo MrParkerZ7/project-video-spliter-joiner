@@ -340,13 +340,8 @@ public sealed class BulkCutProfileThumbnailTests : IDisposable
     }
 
     /// <summary>A file that exists and is definitely NOT an image — T-170's actual defect.</summary>
-    private string MakeNonImage(string fileName, string content = "x")
-    {
-        Directory.CreateDirectory(_srcDir);
-        var path = Path.Combine(_srcDir, fileName);
-        File.WriteAllText(path, content);
-        return path;
-    }
+    private string MakeNonImage(string fileName, string content = "x") =>
+        TestFiles.MakeNonImage(_srcDir, fileName, content);
 
     private static byte[] ImageBytes(string fileName, string content)
     {
