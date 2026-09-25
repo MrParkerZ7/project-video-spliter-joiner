@@ -1,12 +1,11 @@
 using System;
+using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using FluentAssertions;
-using VideoSplitJoiner.App.Media;
-using VideoSplitJoiner.App.ViewModels;
-using System.IO;
 using VideoSplitJoiner.App.Settings;
+using VideoSplitJoiner.App.ViewModels;
 using VideoSplitJoiner.Core.Profiles;
 using Xunit;
 
@@ -46,64 +45,6 @@ public sealed class SnapshotProfileThumbnailTests : IDisposable
         return path;
     }
 
-    private sealed class SnapPlayer : IMediaPlayer
-    {
-        public TimeSpan Position { get; set; }
-
-        public TimeSpan? Duration { get; private set; }
-
-        public bool IsPlaying { get; private set; }
-
-        public double Volume { get; set; } = 1.0;
-
-        public bool IsMuted { get; set; }
-
-        public double SpeedRatio { get; set; } = 1.0;
-
-        public void MakeReady(TimeSpan duration)
-        {
-            Duration = duration;
-            DurationAvailable?.Invoke(this, EventArgs.Empty);
-        }
-
-        public void MovePlayheadTo(TimeSpan t)
-        {
-            Position = t;
-            PositionChanged?.Invoke(this, EventArgs.Empty);
-        }
-
-        public void Open(string path)
-        {
-            IsPlaying = false;
-            Duration = null;
-            Position = TimeSpan.Zero;
-        }
-
-        public void Play() => IsPlaying = true;
-
-        public void Pause() => IsPlaying = false;
-
-        public void Stop() { IsPlaying = false; Position = TimeSpan.Zero; }
-
-        public void Seek(TimeSpan t) => Position = t;
-
-        public void Unload() { Duration = null; IsPlaying = false; Position = TimeSpan.Zero; }
-
-        public void StepFrame(int direction) { }
-
-        public event EventHandler? PositionChanged;
-
-        public event EventHandler? DurationAvailable;
-
-#pragma warning disable CS0067
-        public event EventHandler? Seeked;
-
-        public event EventHandler? Ended;
-
-        public event EventHandler<string>? Failed;
-#pragma warning restore CS0067
-    }
-
     private (BulkCutViewModel Vm, BulkFakeProbe Probe, FakeThumbnailService Thumbs, FakeSettings Settings, SnapPlayer Player) Build()
     {
         var probe = new BulkFakeProbe();
@@ -115,9 +56,14 @@ public sealed class SnapshotProfileThumbnailTests : IDisposable
         // The default fake grab returns null; script a REAL file so the store has something to copy.
         thumbs.ThumbnailFactory = (_, _, _) => MakeFrame();
 
+        // The preview opens the selected row at once (T-181). With the production 250 ms debounce the open could
+        // land BETWEEN two snapshots on a loaded machine — SnapPlayer.Open clears the duration, the player stops
+        // being ready, and the second snapshot is refused: MovingThePlayhead_AndSnappingAgain failed once in a full
+        // suite run for exactly that reason.
         var vm = new BulkCutViewModel(
             probe, new ThrowingFakeSplitEngine(), thumbs, settings, new FakeBulkTrimEngine(), player,
-            thumbnailStore: store);
+            thumbnailStore: store,
+            selectionOpenDelay: (_, _) => Task.CompletedTask);
         return (vm, probe, thumbs, settings, player);
     }
 

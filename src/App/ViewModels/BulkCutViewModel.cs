@@ -144,11 +144,22 @@ public sealed class BulkCutViewModel : ObservableObject
     /// 11-profile backup grows from ~0.10–0.26MB to ~0.23–1.1MB, which is why this is a cap and not "keep the
     /// original".</para>
     ///
-    /// <para>Existing pictures keep whatever width they were saved at; nothing is migrated, and nothing could
-    /// be — a profile records no source video to re-grab from. A picture narrower than the card says so in the
-    /// card (SPEC-007 I109) instead.</para>
+    /// <para>Existing pictures keep whatever width they were saved at until they are next used: a profile records
+    /// no source video, so nothing can be re-grabbed at rest — but APPLYING a profile supplies one, and since
+    /// T-181 an apply re-takes a picture narrower than <see cref="LowResolutionPictureWidth"/> from the video it
+    /// was just applied to (<see cref="PendingPictureRefresh"/>). Until then the card says the picture is low
+    /// resolution (SPEC-007 I109).</para>
     /// </summary>
     internal const int ProfileThumbnailWidth = 640;
+
+    /// <summary>
+    /// T-181 (G-058) — a stored picture narrower than this many pixels is re-taken at
+    /// <see cref="ProfileThumbnailWidth"/> when its profile is applied. It is the hover card's minimum box width
+    /// (<c>ProfilePreviewCardWidth</c> in <c>BulkCutView.xaml</c>, which a test pins equal), the same width below
+    /// which the card shows its low-resolution note — so "the card flags it" and "applying re-takes it" are one
+    /// condition.
+    /// </summary>
+    internal const int LowResolutionPictureWidth = 320;
 
     /// <summary>
     /// Default settle window (T-115) before a SETTLED row selection opens in the shared preview player.
@@ -203,6 +214,20 @@ public sealed class BulkCutViewModel : ObservableObject
     private bool _applyCutToAllRows = true;
     private bool _exactCut;
     private ApplyToAllReport? _applyToAllReport;
+
+    // T-181: the picture re-take on apply. The generation is bumped by every change to a profile's picture or
+    // to the profile's existence, from ONE view-model-wide counter, so it only ever increases (a delete bumps the
+    // name and keeps the entry — a re-created profile never lands back on a value captured earlier). A refresh
+    // attaches only if the generation it captured is still current. One refresh in flight per name.
+    private readonly Dictionary<string, long> _pictureGenerations = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, Task> _pictureRefreshes = new(StringComparer.OrdinalIgnoreCase);
+
+    // The report each in-flight re-take will announce under: the latest apply of that profile's name, so re-applying
+    // the same profile while its grab is in flight moves the note to the newer summary instead of losing it.
+    private readonly Dictionary<string, ApplyToAllReport> _pictureRefreshReports = new(StringComparer.OrdinalIgnoreCase);
+    private string? _profilePictureRefreshKeptPath;
+    private long _pictureGenerationCounter;
+    private string? _profilePictureRefreshNote;
     private IReadOnlyList<BulkTrimItemResult> _lastFailedItems = Array.Empty<BulkTrimItemResult>();
     private BulkItemViewModel? _selectedItem;
     private CutProfile? _selectedProfile;
@@ -545,10 +570,55 @@ public sealed class BulkCutViewModel : ObservableObject
         get => _applyToAllReport;
         private set
         {
+            // T-181: every writer of the report clears the picture note — it belongs to one apply's report, and
+            // must never sit under another action's summary.
+            SetPictureRefreshNote(null, null);
+
             if (SetProperty(ref _applyToAllReport, value))
             {
                 OnPropertyChanged(nameof(ApplyReportSummary));
             }
+
+            OnPropertyChanged(nameof(IsPictureRefreshLineReserved));
+        }
+    }
+
+    /// <summary>
+    /// T-181 — says that applying a profile re-took its picture at full size, from which file, and where the old
+    /// one went; null when there is nothing to say. Shown in the apply-note area under
+    /// <see cref="ApplyReportSummary"/>, and cleared whenever <see cref="ApplyToAllReport"/> is written or reset.
+    /// A re-take that fails, or is discarded, says nothing (SPEC-007).
+    /// </summary>
+    public string? ProfilePictureRefreshNote => _profilePictureRefreshNote;
+
+    /// <summary>
+    /// T-181 — the copy of the replaced picture in <c>profile-thumbs\replaced</c>, for the note's <i>Show old
+    /// picture</i> button (it opens Explorer on the file; the folder is under a hidden AppData path no user would
+    /// find from a name — found in the T-181 review). Null when the note has no kept file.
+    /// </summary>
+    public string? ProfilePictureRefreshKeptPath => _profilePictureRefreshKeptPath;
+
+    /// <summary>
+    /// T-181 — whether the apply-note area holds a line for the picture note: while a re-take is in flight for the
+    /// CURRENT report, and once its note is shown. Reserving the line from the click means the note arriving a grab
+    /// later fills a line that is already laid out, instead of pushing the list down under the pointer (T-181
+    /// review). A discard gives the line back.
+    /// </summary>
+    public bool IsPictureRefreshLineReserved =>
+        _profilePictureRefreshNote is not null
+        || (_applyToAllReport is { } current && _pictureRefreshReports.Values.Any(r => ReferenceEquals(r, current)));
+
+    private void SetPictureRefreshNote(string? note, string? keptPath)
+    {
+        var changed = !string.Equals(_profilePictureRefreshNote, note, StringComparison.Ordinal)
+            || !string.Equals(_profilePictureRefreshKeptPath, keptPath, StringComparison.Ordinal);
+        _profilePictureRefreshNote = note;
+        _profilePictureRefreshKeptPath = keptPath;
+        if (changed)
+        {
+            OnPropertyChanged(nameof(ProfilePictureRefreshNote));
+            OnPropertyChanged(nameof(ProfilePictureRefreshKeptPath));
+            OnPropertyChanged(nameof(IsPictureRefreshLineReserved));
         }
     }
 
@@ -1777,6 +1847,7 @@ public sealed class BulkCutViewModel : ObservableObject
 
         var profile = CutProfileApplier.BuildProfileFromRow(trimmed, row);
         _settings.SaveProfile(profile);
+        BumpPictureGeneration(profile.Name); // T-181: every save, the first included
         RefreshProfiles();
         SelectedProfile = Profiles.FirstOrDefault(
             p => string.Equals(p.Name, profile.Name, StringComparison.OrdinalIgnoreCase));
@@ -1970,6 +2041,11 @@ public sealed class BulkCutViewModel : ObservableObject
         var overwrite = plan.Colliding.Count > 0 && ConfirmProfileOverwrite(plan.Colliding.Count);
 
         var (written, restored) = ProfileBackup.Apply(plan, _settings, _thumbnailStore, overwrite);
+        foreach (var name in plan.New.Concat(plan.Colliding).Select(p => p.Name))
+        {
+            BumpPictureGeneration(name); // T-181: a restore may replace any picture in the set
+        }
+
         RefreshProfiles();
 
         var kept = plan.Colliding.Count > 0 && !overwrite
@@ -2054,6 +2130,7 @@ public sealed class BulkCutViewModel : ObservableObject
         }
 
         _settings.SaveProfile(existing with { ThumbnailPath = null });
+        BumpPictureGeneration(existing.Name);
         RefreshProfiles();
         SelectedProfile = FindBarProfile(existing.Name);
     }
@@ -2077,7 +2154,14 @@ public sealed class BulkCutViewModel : ObservableObject
     /// refused — which is what leaves the profile's current thumbnail exactly as it was.</para>
     /// </summary>
     /// <param name="detail">The refusing exception's message (empty on success) — the copyable detail line.</param>
-    private ThumbnailAttachOutcome TryAttachThumbnail(string profileName, string imagePath, out string detail)
+    /// <param name="keepSelection">
+    /// T-181: leave the bar's selection on whatever profile it was on (re-pointed at its refreshed instance, or
+    /// none) instead of moving it to the thumbnailed profile. Only the background re-take on apply uses it —
+    /// the user may have moved on to another profile while its grab was in flight. Every other caller keeps
+    /// today's select-the-thumbnailed-profile behaviour.
+    /// </param>
+    private ThumbnailAttachOutcome TryAttachThumbnail(
+        string profileName, string imagePath, out string detail, bool keepSelection = false)
     {
         detail = string.Empty;
 
@@ -2125,9 +2209,13 @@ public sealed class BulkCutViewModel : ObservableObject
             }
         }
 
+        var selectedName = _selectedProfile?.Name;
         _settings.SaveProfile(existing with { ThumbnailPath = storedPath });
+        BumpPictureGeneration(existing.Name);
         RefreshProfiles();
-        SelectedProfile = FindBarProfile(existing.Name);
+        SelectedProfile = keepSelection
+            ? selectedName is null ? null : FindBarProfile(selectedName)
+            : FindBarProfile(existing.Name);
         return ThumbnailAttachOutcome.Attached;
     }
 
@@ -2230,6 +2318,7 @@ public sealed class BulkCutViewModel : ObservableObject
         var report = CutProfileApplier.ApplyProfile(profile, new[] { row });
         ApplyToAllReport = report;
         RaiseRunState();
+        StartPictureRefresh(profile, new[] { row }, report);
         return report;
     }
 
@@ -2250,6 +2339,12 @@ public sealed class BulkCutViewModel : ObservableObject
         var report = CutProfileApplier.ApplyProfile(profile, targets);
         ApplyToAllReport = report;
         RaiseRunState();
+
+        // T-181: the picture source is the selected row when it is a target, otherwise the targets in list order.
+        var sources = _selectedItem is { } selected && targets.Contains(selected)
+            ? targets.Where(t => !ReferenceEquals(t, selected)).Prepend(selected).ToList()
+            : targets;
+        StartPictureRefresh(profile, sources, report);
         return report;
     }
 
@@ -2265,8 +2360,179 @@ public sealed class BulkCutViewModel : ObservableObject
         }
 
         _settings.DeleteProfile(profile.Name);
+        BumpPictureGeneration(profile.Name); // T-181: the entry is kept, so a re-created profile starts higher
         RefreshProfiles();
         SelectedProfile = Profiles.FirstOrDefault();
+    }
+
+    // ---- T-181: re-take a small picture on apply ----------------------------------------------------
+
+    /// <summary>
+    /// Completes when no picture re-take is in flight (<see cref="Task.CompletedTask"/> when none started). Every
+    /// test awaits it before asserting — the negative ones too — so "nothing was grabbed" can never pass just
+    /// because the background work had not run yet.
+    /// </summary>
+    internal Task PendingPictureRefresh =>
+        _pictureRefreshes.Count == 0 ? Task.CompletedTask : Task.WhenAll(_pictureRefreshes.Values.ToList());
+
+    /// <summary>The picture generation of <paramref name="profileName"/> (case-insensitive); 0 before its first change.</summary>
+    internal long PictureGeneration(string profileName) =>
+        _pictureGenerations.TryGetValue(profileName, out var generation) ? generation : 0;
+
+    private void BumpPictureGeneration(string profileName) =>
+        _pictureGenerations[profileName] = ++_pictureGenerationCounter;
+
+    /// <summary>
+    /// Whether the picture at <paramref name="path"/> is one an apply re-takes: a readable file narrower than
+    /// <see cref="LowResolutionPictureWidth"/>, or a file that is missing (nothing left to protect). Never a
+    /// profile with no picture (removing one is deliberate, I78), and never a file that exists but cannot be
+    /// measured — a picture we could not measure is never replaced.
+    /// </summary>
+    private static bool PictureNeedsRefresh(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return false;
+        }
+
+        if (!File.Exists(path))
+        {
+            return true;
+        }
+
+        return ImageNormalizer.TryReadPixelWidth(path) is { } width && width < LowResolutionPictureWidth;
+    }
+
+    /// <summary>
+    /// After an apply, start ONE background re-take of <paramref name="applied"/>'s picture when it qualifies
+    /// (<see cref="PictureNeedsRefresh"/>), from the first of <paramref name="sources"/> whose probed duration is
+    /// longer than the profile's intro — at the profile's own <c>IntroFromStart</c>, not the row's snapped cut, so
+    /// no keyframe scan is needed. Nothing starts while one is already in flight for the same name.
+    /// </summary>
+    private void StartPictureRefresh(
+        CutProfile applied, IReadOnlyList<BulkItemViewModel> sources, ApplyToAllReport report)
+    {
+        if (FindPersistedProfile(applied.Name) is not { } profile)
+        {
+            return;
+        }
+
+        if (_pictureRefreshes.ContainsKey(profile.Name))
+        {
+            // One in flight per name. It announces under THIS apply now: a re-apply of the same profile before
+            // the grab lands must not leave the picture replaced with no note under either summary (T-181 review).
+            _pictureRefreshReports[profile.Name] = report;
+            OnPropertyChanged(nameof(IsPictureRefreshLineReserved));
+            return;
+        }
+
+        if (!PictureNeedsRefresh(profile.ThumbnailPath))
+        {
+            return;
+        }
+
+        var source = sources.FirstOrDefault(r => r.Duration is { } d && d > profile.IntroFromStart);
+        if (source is null)
+        {
+            return;
+        }
+
+        // Reserve the slot BEFORE starting: a grab that completes synchronously runs the whole refresh, finally
+        // included, inside this call, and must find its own entry to free.
+        _pictureRefreshes[profile.Name] = Task.CompletedTask;
+        _pictureRefreshReports[profile.Name] = report;
+        OnPropertyChanged(nameof(IsPictureRefreshLineReserved));
+        var refresh = RefreshPictureAsync(
+            profile.Name, source.Path, profile.IntroFromStart, PictureGeneration(profile.Name));
+        if (refresh.IsCompleted)
+        {
+            _pictureRefreshes.Remove(profile.Name);
+        }
+        else
+        {
+            _pictureRefreshes[profile.Name] = refresh;
+        }
+    }
+
+    /// <summary>
+    /// The re-take itself. Grabs off the UI thread, then — back on it — re-checks that the profile still exists,
+    /// its generation is unchanged and its picture still qualifies; keeps the old file aside (a COPY into
+    /// <c>replaced/</c>, never a move); attaches the frame by name without moving the selection; and writes the
+    /// note only if the latest apply of its profile is still the current report (a same-profile re-apply adopts it). Any failure or discard is silent and leaves the
+    /// old picture where it was. Never throws.
+    /// </summary>
+    private async Task RefreshPictureAsync(string profileName, string videoPath, TimeSpan time, long generation)
+    {
+        try
+        {
+            string? frame;
+            try
+            {
+                frame = await _thumbnails
+                    .GetThumbnailAsync(videoPath, time, ProfileThumbnailWidth, CancellationToken.None)
+                    .ConfigureAwait(true);
+            }
+            catch
+            {
+                return; // silent, like the automatic default (I66)
+            }
+
+            if (string.IsNullOrEmpty(frame)
+                || FindPersistedProfile(profileName) is not { } current
+                || PictureGeneration(profileName) != generation
+                || !PictureNeedsRefresh(current.ThumbnailPath))
+            {
+                return;
+            }
+
+            var oldPath = current.ThumbnailPath!;
+            var hadFile = File.Exists(oldPath);
+            string? kept = null;
+            if (hadFile)
+            {
+                try
+                {
+                    kept = _thumbnailStore.KeepAside(current.Name, oldPath);
+                }
+                catch
+                {
+                    return; // no copy, no replacement: the old picture stays exactly where it is
+                }
+            }
+
+            if (TryAttachThumbnail(current.Name, frame, out _, keepSelection: true) != ThumbnailAttachOutcome.Attached)
+            {
+                // The copy is redundant only if the old picture is verifiably back where it was: the store restores its
+                // asides best-effort, and deleting the copy after a double failure would lose the picture (T-181 review).
+                if (kept is not null && File.Exists(oldPath))
+                {
+                    _thumbnailStore.DeleteByPath(kept);
+                }
+
+                return;
+            }
+
+            if (_pictureRefreshReports.TryGetValue(profileName, out var announceUnder)
+                && ReferenceEquals(_applyToAllReport, announceUnder))
+            {
+                var file = Path.GetFileName(videoPath);
+                SetPictureRefreshNote(
+                    hadFile
+                        ? string.Create(
+                            CultureInfo.InvariantCulture,
+                            $"Picture for \"{current.Name}\" re-taken at full size from {file} — the old one is kept.")
+                        : string.Create(
+                            CultureInfo.InvariantCulture,
+                            $"Picture for \"{current.Name}\" re-taken at full size from {file} — its old picture file was missing."),
+                    kept);
+            }
+        }
+        finally
+        {
+            _pictureRefreshes.Remove(profileName);
+            _pictureRefreshReports.Remove(profileName);
+            OnPropertyChanged(nameof(IsPictureRefreshLineReserved));
+        }
     }
 
     /// <summary>Re-project <see cref="IAppSettings.CutProfiles"/> into <see cref="Profiles"/> + re-gate the profile commands.</summary>

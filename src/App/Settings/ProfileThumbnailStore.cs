@@ -38,6 +38,12 @@ public sealed class ProfileThumbnailStore
     /// <summary>Sub-folder under the app-data root that holds all profile thumbnails.</summary>
     public const string ThumbsFolderName = "profile-thumbs";
 
+    /// <summary>
+    /// Sub-folder of the thumbnails root that holds pictures an apply re-took (T-181, <see cref="KeepAside"/>).
+    /// The store's own sweeps enumerate the root only, so nothing in here is ever swept.
+    /// </summary>
+    public const string ReplacedFolderName = "replaced";
+
     /// <summary>Fallback extension when the source has no recognized image extension.</summary>
     private const string DefaultExtension = ".png";
 
@@ -223,6 +229,59 @@ public sealed class ProfileThumbnailStore
             {
                 // Best-effort — the aside file still holds the bytes even if the rename back fails.
             }
+        }
+    }
+
+    /// <summary>
+    /// T-181 — COPY (never move) <paramref name="path"/> into <c>replaced/&lt;safe(name)&gt;-&lt;yyyyMMdd-HHmmss&gt;&lt;ext&gt;</c>
+    /// under the root and return the copy's path, before an apply re-takes a small picture. The original is
+    /// left exactly where it is, so a failure after this call still leaves the profile its picture; the caller
+    /// removes a copy it no longer needs with <see cref="DeleteByPath"/>. Two copies in the same second get
+    /// distinct names (<c>-2</c>, <c>-3</c>, …) — one never overwrites another.
+    /// <para>Throws, unlike the deletes: <see cref="ArgumentException"/> on a blank name or path,
+    /// <see cref="FileNotFoundException"/> when the file does not exist, and an <see cref="IOException"/> (or
+    /// <see cref="UnauthorizedAccessException"/>) when the copy cannot be made — the caller then replaces
+    /// nothing.</para>
+    /// </summary>
+    /// <param name="profileName">The profile whose picture is being kept (its safe name prefixes the copy).</param>
+    /// <param name="path">The picture file to copy.</param>
+    /// <param name="stamp">The time in the file name; the local clock when null.</param>
+    /// <returns>The absolute path of the copy.</returns>
+    public string KeepAside(string profileName, string path, DateTime? stamp = null)
+    {
+        if (string.IsNullOrWhiteSpace(profileName))
+        {
+            throw new ArgumentException("A profile name is required to keep a picture aside.", nameof(profileName));
+        }
+
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            throw new ArgumentException("A picture path is required.", nameof(path));
+        }
+
+        if (!File.Exists(path))
+        {
+            throw new FileNotFoundException("The picture to keep aside was not found.", path);
+        }
+
+        var folder = Path.Combine(_root, ReplacedFolderName);
+        Directory.CreateDirectory(folder);
+
+        var stem = SafeFileName(profileName) + "-"
+            + (stamp ?? DateTime.Now).ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture);
+        var extension = NormalizeExtension(path);
+
+        for (var n = 1; ; n++)
+        {
+            var destination = Path.Combine(
+                folder, n == 1 ? stem + extension : string.Create(CultureInfo.InvariantCulture, $"{stem}-{n}{extension}"));
+            if (File.Exists(destination))
+            {
+                continue;
+            }
+
+            File.Copy(path, destination, overwrite: false);
+            return destination;
         }
     }
 

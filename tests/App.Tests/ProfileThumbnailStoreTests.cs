@@ -736,6 +736,95 @@ public sealed class ProfileThumbnailStoreTests : IDisposable
 
     // ---- helpers for the failure tests -------------------------------------------------------------
 
+    // ---- KeepAside (T-181) ---------------------------------------------------------------------
+
+    /// <summary>
+    /// T-181 (SPEC-007) — before an apply re-takes a small picture, the old one is COPIED, never moved, into
+    /// <c>replaced/&lt;safe(name)&gt;-&lt;yyyyMMdd-HHmmss&gt;&lt;ext&gt;</c>. The original stays exactly where it
+    /// is, so if anything after the copy fails the profile still has its picture.
+    /// </summary>
+    [Fact]
+    [Trait("serves-spec", "SPEC-007")]
+    public void KeepAside_CopiesTheFileIntoReplaced_AndLeavesTheOriginalWhereItIs()
+    {
+        var store = new ProfileThumbnailStore(_root);
+        var stored = store.Save("Season 1 opener", MakeSource("old.png", "the-64px-picture"));
+        var before = File.ReadAllBytes(stored);
+
+        var kept = store.KeepAside("Season 1 opener", stored, new DateTime(2026, 9, 25, 14, 3, 7));
+
+        Path.GetDirectoryName(kept).Should().Be(Path.Combine(_root, ProfileThumbnailStore.ReplacedFolderName));
+        Path.GetFileName(kept).Should().Be(
+            ProfileThumbnailStore.SafeFileName("Season 1 opener") + "-20260925-140307.png");
+        File.ReadAllBytes(kept).Should().Equal(before, "the kept file is a byte-identical copy");
+        File.Exists(stored).Should().BeTrue("a copy, never a move: the original is still the profile's picture");
+        File.ReadAllBytes(stored).Should().Equal(before);
+    }
+
+    [Fact]
+    [Trait("serves-spec", "SPEC-007")]
+    public void KeepAside_TwiceInTheSameSecond_KeepsBoth()
+    {
+        var store = new ProfileThumbnailStore(_root);
+        var stamp = new DateTime(2026, 9, 25, 14, 3, 7);
+        var first = store.KeepAside("P", MakeSource("a.jpg", "first"), stamp);
+        var second = store.KeepAside("P", MakeSource("b.jpg", "second"), stamp);
+
+        second.Should().NotBe(first, "a second copy must never overwrite the first");
+        File.ReadAllText(first).Should().Be("first");
+        File.ReadAllText(second).Should().Be("second");
+    }
+
+    /// <summary>
+    /// The copy failing THROWS, so the caller stops before replacing anything. Fixture: a FILE named
+    /// <c>replaced</c> in a usable root, so the folder can never be created.
+    /// </summary>
+    [Fact]
+    [Trait("serves-spec", "SPEC-007")]
+    public void KeepAside_WhenTheReplacedFolderCannotBeCreated_Throws_AndTouchesNothing()
+    {
+        var store = new ProfileThumbnailStore(_root);
+        var stored = store.Save("P", MakeSource("old.png", "keep-me"));
+        File.WriteAllText(Path.Combine(_root, ProfileThumbnailStore.ReplacedFolderName), "a file, not a folder");
+        var snapshot = SnapshotRoot();
+
+        ((Action)(() => store.KeepAside("P", stored))).Should().Throw<IOException>();
+
+        SnapshotRoot().Should().Equal(snapshot, "a failed keep-aside writes nothing");
+        File.ReadAllText(stored).Should().Be("keep-me");
+    }
+
+    [Fact]
+    [Trait("serves-spec", "SPEC-007")]
+    public void KeepAside_MissingOrBlankInput_Throws()
+    {
+        var store = new ProfileThumbnailStore(_root);
+
+        ((Action)(() => store.KeepAside("P", Path.Combine(_srcDir, "missing.png"))))
+            .Should().Throw<FileNotFoundException>();
+        ((Action)(() => store.KeepAside(" ", MakeSource()))).Should().Throw<ArgumentException>();
+        ((Action)(() => store.KeepAside("P", " "))).Should().Throw<ArgumentException>();
+    }
+
+    /// <summary>
+    /// The store's own sweeps enumerate the root only, so a later Save, Delete or re-take of the same
+    /// profile never touches what was kept aside.
+    /// </summary>
+    [Fact]
+    [Trait("serves-spec", "SPEC-007")]
+    public void KeptFiles_SurviveTheStoresOwnSweeps()
+    {
+        var store = new ProfileThumbnailStore(_root);
+        var stored = store.Save("P", MakeSource("old.png", "old"));
+        var kept = store.KeepAside("P", stored);
+
+        store.Save("P", MakeSource("new.jpg", "new"));
+        store.Delete("P");
+
+        File.Exists(kept).Should().BeTrue("replaced/ is outside every sweep");
+        File.ReadAllText(kept).Should().Be("old");
+    }
+
     /// <summary>
     /// Every staging artifact sitting in the root — <c>&lt;safeName&gt;.incoming&lt;ext&gt;</c>, the file
     /// <see cref="ProfileThumbnailStore.Save"/> copies into before it swaps. Matched by substring rather

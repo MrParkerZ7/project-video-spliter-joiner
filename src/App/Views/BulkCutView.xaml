@@ -133,7 +133,7 @@
                                      a known limitation, a silent one looks like a rendering bug. Judged on
                                      the loaded bitmap's PIXELS against the box width resource, so there is
                                      no third hand-typed number. -->
-                                <TextBlock Text="low resolution — re-take with 📷 Use current frame for a sharp preview"
+                                <TextBlock Text="low resolution — applying this profile to a video re-takes it at full size, or use 📷 Use current frame"
                                            Margin="4,4,4,0"
                                            TextWrapping="Wrap"
                                            FontSize="{StaticResource FontSizeSmall}"
@@ -701,10 +701,54 @@
                         BorderThickness="1"
                         CornerRadius="{StaticResource RadiusSm}"
                         Visibility="{Binding ApplyToAllReport, Converter={StaticResource NullToCollapsed}}">
-                    <TextBlock Text="{Binding ApplyReportSummary}"
-                               TextWrapping="Wrap"
-                               FontSize="{StaticResource FontSizeSmall}"
-                               Foreground="{StaticResource TextSecondaryBrush}" />
+                    <StackPanel>
+                        <TextBlock Text="{Binding ApplyReportSummary}"
+                                   TextWrapping="Wrap"
+                                   FontSize="{StaticResource FontSizeSmall}"
+                                   Foreground="{StaticResource TextSecondaryBrush}" />
+                        <!-- T-181: an apply that re-took the profile's small picture says so, under its own
+                             summary and not part of it. The note belongs to one report: the view-model clears it
+                             whenever the report is written or reset, so it never sits under another action. -->
+                        <!-- The line is reserved from the click while the re-take is in flight, so the note
+                             arriving a grab later does not push the list down under the pointer. "Show old
+                             picture" opens Explorer on the kept copy: its folder is under a hidden AppData path,
+                             so naming it would not help anyone find it (T-181 review). -->
+                        <!-- The button flows inline right after the sentence (an InlineUIContainer), so it reads
+                             as part of it at any width; collapsing the button collapses its container. The
+                             template's TextBlock takes the button's colour and size explicitly: the app-wide
+                             implicit TextBlock style would otherwise paint it primary white. -->
+                        <StackPanel x:Name="ProfilePictureRefreshLine"
+                                    Margin="0,2,0,0"
+                                    Visibility="{Binding IsPictureRefreshLineReserved, Converter={StaticResource BoolToVisibility}}">
+                            <TextBlock x:Name="ProfilePictureRefreshNote"
+                                       TextWrapping="Wrap"
+                                       FontSize="{StaticResource FontSizeSmall}"
+                                       Foreground="{StaticResource TextSecondaryBrush}">
+                                <Run Text="{Binding ProfilePictureRefreshNote, Mode=OneWay}" />
+                                <InlineUIContainer BaselineAlignment="TextBottom">
+                                    <Button x:Name="ShowOldPictureButton"
+                                            Margin="6,0,0,0"
+                                            Cursor="Hand"
+                                            Foreground="{StaticResource AccentBrush}"
+                                            FontSize="{StaticResource FontSizeSmall}"
+                                            ToolTip="Show the replaced picture in Explorer"
+                                            Visibility="{Binding ProfilePictureRefreshKeptPath, Converter={StaticResource NullToCollapsed}}"
+                                            Click="OnShowOldPictureClicked">
+                                        <Button.Template>
+                                            <ControlTemplate TargetType="Button">
+                                                <Border Background="Transparent">
+                                                    <TextBlock Text="Show old picture"
+                                                               TextDecorations="Underline"
+                                                               Foreground="{TemplateBinding Foreground}"
+                                                               FontSize="{TemplateBinding FontSize}" />
+                                                </Border>
+                                            </ControlTemplate>
+                                        </Button.Template>
+                                    </Button>
+                                </InlineUIContainer>
+                            </TextBlock>
+                        </StackPanel>
+                    </StackPanel>
                 </Border>
 
                 <!-- T-154: why a drop did not add everything you dropped. The reportable paths are the

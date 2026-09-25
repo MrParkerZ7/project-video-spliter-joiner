@@ -314,7 +314,10 @@ public sealed class ProfileHoverPreviewTests
         card.NoteVisible.Should().Be(note);
         if (note)
         {
-            card.NoteText.Should().Contain("Use current frame", "the note names the gesture that re-takes the picture");
+            card.NoteText.Should().Contain(
+                "applying this profile to a video re-takes it at full size",
+                "since T-181 re-taking is automatic on apply, and the note says so");
+            card.NoteText.Should().Contain("Use current frame", "and it still names the manual gesture");
         }
     }
 
@@ -589,6 +592,10 @@ public sealed class ProfileHoverPreviewTests
         max.Should().Be(
             VideoSplitJoiner.App.ViewModels.BulkCutViewModel.ProfileThumbnailWidth,
             "the cap IS the stored width: a stored capture shows one picture pixel per screen pixel at 100%");
+        min.Should().Be(
+            VideoSplitJoiner.App.ViewModels.BulkCutViewModel.LowResolutionPictureWidth,
+            "T-181: the width below which an apply re-takes a picture IS the card's minimum — the width below which "
+            + "the card shows its low-resolution note — so the two conditions cannot drift apart");
     }
 
     private sealed record CardMeasure(

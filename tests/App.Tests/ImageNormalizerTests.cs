@@ -113,7 +113,66 @@ public sealed class ImageNormalizerTests : IDisposable
             "a nonsense target width is not a reason to throw");
     }
 
-    private string WritePng(string name, int width, int height)
+    /// <summary>
+    /// T-181 (SPEC-007) — the pixel width of a stored picture, read from its header, decides whether an apply
+    /// re-takes it. Pixels, never the DPI-derived size: a file tagged 192 DPI is as wide as its pixels.
+    /// </summary>
+    [Trait("serves-spec", "SPEC-007")]
+    [Theory]
+    [InlineData(64, 36, 96)]
+    [InlineData(319, 180, 96)]
+    [InlineData(640, 360, 96)]
+    [InlineData(480, 270, 192)]
+    public void TryReadPixelWidth_ReadsThePixels(int width, int height, double dpi)
+    {
+        ImageNormalizer.TryReadPixelWidth(WritePng($"w{width}.png", width, height, dpi)).Should().Be(width);
+    }
+
+    [Trait("serves-spec", "SPEC-007")]
+    [Fact]
+    public void TryReadPixelWidth_ReadsAJpegToo()
+    {
+        var png = WritePng("src.png", 700, 400);
+        var jpeg = ImageNormalizer.ShrinkToWidth(png, 640)!;
+        try
+        {
+            ImageNormalizer.TryReadPixelWidth(jpeg).Should().Be(640);
+        }
+        finally
+        {
+            File.Delete(jpeg);
+        }
+    }
+
+    /// <summary>
+    /// Null means "could not measure it". The caller tells a missing file (re-take it) from an unreadable one
+    /// (never replace what we could not measure), so both return null here and File.Exists decides.
+    /// </summary>
+    [Trait("serves-spec", "SPEC-007")]
+    [Fact]
+    public void TryReadPixelWidth_ReturnsNullForAnythingItCannotMeasure()
+    {
+        var junk = Path.Combine(_dir, "junk.png");
+        File.WriteAllText(junk, "x");
+
+        ImageNormalizer.TryReadPixelWidth(junk).Should().BeNull();
+        ImageNormalizer.TryReadPixelWidth(Path.Combine(_dir, "missing.png")).Should().BeNull();
+        ImageNormalizer.TryReadPixelWidth(null).Should().BeNull();
+        ImageNormalizer.TryReadPixelWidth(" ").Should().BeNull();
+    }
+
+    /// <summary>The reader closes the file: the store can replace or delete it straight after.</summary>
+    [Trait("serves-spec", "SPEC-007")]
+    [Fact]
+    public void TryReadPixelWidth_LeavesTheFileUnlocked()
+    {
+        var png = WritePng("locked.png", 64, 36);
+        ImageNormalizer.TryReadPixelWidth(png).Should().Be(64);
+
+        ((Action)(() => File.Delete(png))).Should().NotThrow();
+    }
+
+    private string WritePng(string name, int width, int height, double dpi = 96)
     {
         var path = Path.Combine(_dir, name);
 
@@ -125,7 +184,7 @@ public sealed class ImageNormalizerTests : IDisposable
         }
 
         var bitmap = BitmapSource.Create(
-            width, height, 96, 96, PixelFormats.Bgra32, palette: null, pixels, stride);
+            width, height, dpi, dpi, PixelFormats.Bgra32, palette: null, pixels, stride);
 
         var encoder = new PngBitmapEncoder();
         encoder.Frames.Add(BitmapFrame.Create(bitmap));

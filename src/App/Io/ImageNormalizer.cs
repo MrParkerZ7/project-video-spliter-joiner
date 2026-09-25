@@ -27,6 +27,32 @@ namespace VideoSplitJoiner.App.Io;
 internal static class ImageNormalizer
 {
     /// <summary>
+    /// T-181 — the pixel width of the picture at <paramref name="path"/>, read from its header only
+    /// (<see cref="BitmapCreateOptions.DelayCreation"/>, no pixel decode), or null when it cannot be measured:
+    /// a blank path, a missing file, or anything that is not a readable image. Pixels, never the DPI-derived
+    /// size. The file is closed before this returns. Callers that must tell <i>missing</i> from
+    /// <i>unreadable</i> check <see cref="File.Exists"/> themselves.
+    /// </summary>
+    internal static int? TryReadPixelWidth(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
+        {
+            return null;
+        }
+
+        try
+        {
+            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            var decoder = BitmapDecoder.Create(stream, BitmapCreateOptions.DelayCreation, BitmapCacheOption.None);
+            return decoder.Frames.Count > 0 && decoder.Frames[0].PixelWidth > 0 ? decoder.Frames[0].PixelWidth : null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
     /// Re-encode <paramref name="sourcePath"/> to at most <paramref name="targetWidth"/> pixels wide,
     /// writing a JPEG beside it in the temp folder and returning that path. Returns null when the source
     /// is already narrow enough, or when anything at all goes wrong.

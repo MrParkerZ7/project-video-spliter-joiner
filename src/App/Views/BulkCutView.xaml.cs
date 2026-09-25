@@ -483,6 +483,24 @@ public partial class BulkCutView : UserControl
 
     // ---- Completed surface: reveal the output folder ----------------------------------------
 
+    /// <summary>T-181 — reveal the picture a re-take on apply kept aside in <c>profile-thumbs\replaced</c>.</summary>
+    private void OnShowOldPictureClicked(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is not BulkCutViewModel { ProfilePictureRefreshKeptPath: { Length: > 0 } kept } || !File.Exists(kept))
+        {
+            return;
+        }
+
+        try
+        {
+            Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{kept}\"") { UseShellExecute = true });
+        }
+        catch
+        {
+            // Best-effort, like Open folder: a shell that refuses leaves the app as it was.
+        }
+    }
+
     private void OnOpenFolderClicked(object sender, RoutedEventArgs e)
     {
         if (DataContext is not BulkCutViewModel vm)

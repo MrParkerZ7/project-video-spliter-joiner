@@ -125,7 +125,7 @@ Also in (T-161/T-168/T-169/T-170): the `ProfileBar` chip picker in `BulkCutView.
 - **I60** — the cascade is optional and best-effort: an `AppSettings` with **no** wired store (`AppSettings(file)`) simply skips the thumbnail cleanup — the profile is still removed and persisted, without throwing (`_thumbnailStore?.Delete`).
 
 ### Profile-thumbnail glue — auto-default / upload / clear (T-107) (`src/App/ViewModels/BulkCutViewModel.cs`)
-- **I61** — `SaveProfileWithAutoThumbnailAsync(name)` auto-captures the selected row's **intro-end frame** as the profile's default thumbnail: it grabs exactly one frame at `row.IntroEnd.Snapped` (width `ProfileThumbnailWidth` = 320 — the one stored width of I106), copies it into the `ProfileThumbnailStore`, persists the stored path onto the profile, and re-points the bar's `SelectedProfile` at the thumbnailed instance.
+- **I61** — `SaveProfileWithAutoThumbnailAsync(name)` auto-captures the selected row's **intro-end frame** as the profile's default thumbnail: it grabs exactly one frame at `row.IntroEnd.Snapped` (width `ProfileThumbnailWidth` = 640 — the one stored width of I106), copies it into the `ProfileThumbnailStore`, persists the stored path onto the profile, and re-points the bar's `SelectedProfile` at the thumbnailed instance.
 - **I62** — the auto-default persists the profile **first** and is never blocked on the grab: a grab that returns **null** still saves the profile with a `null` thumbnail (placeholder) (`SaveProfileWithAutoThumbnailAsync` step 1 → `SaveProfile`, then best-effort attach).
 - **I63** — a grab that **throws** never blocks or fails the save: the profile still saves with a `null` thumbnail (`SaveProfileWithAutoThumbnailAsync` try/catch, and the `TryAttachThumbnail` catch behind `AttachThumbnail`).
 - **I64** — with **no selected row**, `SaveProfileWithAutoThumbnailAsync` is a no-op: nothing is saved and no frame grab is attempted.
@@ -143,10 +143,11 @@ Also in (T-161/T-168/T-169/T-170): the `ProfileBar` chip picker in `BulkCutView.
 #### A failed `Save` never destroys the thumbnail it was replacing (G-044)
 - **I73** — the store is **copy-then-swap**, so a `Save` that fails leaves the profile's prior thumbnail **byte-identical** and leaves no stray working file behind. This is the fix for what SPEC-007 used to record as a live "known store-side gap" under I70: under the old delete-before-copy order, a copy that failed *after* the delete (a source locked by another program, a full or read-only volume) destroyed the picture the profile already had — the caller correctly reported `StoreFailed` and correctly left `CutProfile.ThumbnailPath` untouched, but the path then pointed at a file that no longer existed and the picker silently reverted to the placeholder. Both failure points are now covered: a **copy** that fails happens before any prior file has been touched and sweeps its own partial staging file; a **move** that fails restores the asides over their originals and then sweeps the staging file — so the half-swapped state is never observable to the caller. Both cleanups are best-effort (`TryDeleteFile` / `RestoreAsides` swallow), which is a strictly safer failure mode, not a hole: in the pathological case where the rename-back itself fails the prior bytes still exist under the `.vsj-aside` sibling rather than being lost, and the next `Save` deletes that stale aside before renaming again. **On the exception type:** a failed `Save` rethrows the underlying exception rather than a normalized one, and because the failing step is now the *move*, a locked **destination** surfaces on .NET 8 / Windows as `UnauthorizedAccessException` — which does **not** derive from `IOException` — where a locked **source** still gives `IOException`. A caller must therefore not filter on `IOException` alone; I69's classifier does not, since everything outside `FileNotFoundException`/`DirectoryNotFoundException`/`ArgumentException` falls through to `StoreFailed`, so both types report identically. (`Save`, `RenameExistingAside`, `RestoreAsides`, `TryDeleteFile`)
 
-- **I74** — a profile's thumbnail has THREE sources, all converging on the same store-and-attach step
+- **I74** — a profile's thumbnail has FOUR sources, all converging on the same store-and-attach step
   (`TryAttachThumbnail`): the **auto** capture at `IntroEnd.Snapped` when a profile is saved, the
-  **upload** of a chosen image file, and the **snapshot** of the frame currently on screen
-  (`SnapshotProfileThumbnailAsync`, T-135). All three store at `ProfileThumbnailWidth`, so the stored
+  **upload** of a chosen image file, the **snapshot** of the frame currently on screen
+  (`SnapshotProfileThumbnailAsync`, T-135), and the **re-take on apply** of a picture narrower than 320px
+  (T-181, I110–I118). All four store at `ProfileThumbnailWidth`, so the stored
   picture is the same size whichever produced it. **Closer since T-169 (I106), still not literally
   true:** this was written as though already so while the upload path copied bytes verbatim, and a real
   store held 6 uploads at 64px against 4 captures at 96. T-169 brought uploads into line, but a capture
@@ -260,8 +261,8 @@ Also in (T-161/T-168/T-169/T-170): the `ProfileBar` chip picker in `BulkCutView.
   say a `ToolTip` is never hit-testable. It is — the old combined assertion passed only because it is not
   focusable.)
 - **I106** — **every gesture now targets one width, `ProfileThumbnailWidth` = 640** (320 from T-169, raised by
-  T-172) — the width I74 has always claimed. Captures
-  and snapshots grab at it through ffmpeg (`scale=640:-1`, so exactly 640 — which **enlarges** a source
+  T-172) — the width I74 has always claimed, for all four of its sources. Captures, snapshots and the re-take on
+  apply (I110) grab at it through ffmpeg (`scale=640:-1`, so exactly 640 — which **enlarges** a source
   narrower than that, e.g. a 176x144 `.3gp`); an **upload is re-encoded** down to it (`ImageNormalizer.ShrinkToWidth`) instead of being copied byte-for-byte (I42's verbatim copy still
   describes the store, which now receives an already-normalized file). Measured on a real machine before
   the change: 6 of 11 stored pictures were 64px uploads against 4 captures at 96, so preview sharpness
@@ -271,8 +272,10 @@ Also in (T-161/T-168/T-169/T-170): the `ProfileBar` chip picker in `BulkCutView.
   ~0.10–0.26MB to ~0.23–1.1MB, which is why this is a cap and not "keep the original". Since T-180 the card grows to
   the picture, so the stored width is the card's **cap**, not twice its box: a stored capture shows pixel-exact at
   100%, and a test pins the two equal (T-172's "twice the card, sharp up to 200%" rationale described a fixed 320
-  card). **Not covered:** a picture restored from a
-  backup (I91) is stored exactly as it was backed up and is never normalized.
+  card). **"Captures are exactly 640" held only on a cold cache second until T-179:** the thumbnail cache was keyed
+  on the input and the second, not the width, so a second first grabbed at 64 for a row's chip handed that 64px
+  file to a later 640 grab of the same second. T-179 keyed the cache on width too (SPEC-005 I26). **Not covered:** a
+  picture restored from a backup (I91) is stored exactly as it was backed up and is never normalized.
 - **I107** — **storage** never enlarges: **upload** normalization **only ever shrinks** (captures are not
   normalized — see I106). An upload already narrower than the target is stored untouched: inflating a 64px
   image to 640 adds bytes and no detail, turning "small but sharp" into "large and soft". **Rescoped by T-172:**
@@ -348,18 +351,82 @@ Also in (T-161/T-168/T-169/T-170): the `ProfileBar` chip picker in `BulkCutView.
 - **I109** — the card's picture box is **at least** `ProfilePreviewCardWidth` (320) DIPs wide (T-180 made it the
   minimum of a box that grows to the picture — I101), and `Stretch="Uniform"` **fills** it with any picture,
   enlarging a small one. A picture with **fewer real pixels** across than that
-  width also shows a **low-resolution note** naming the gesture that re-takes it (`low resolution — re-take with
-  📷 Use current frame for a sharp preview`); a picture at or above the box width shows none. The card keeps
-  filling because the request was to fill it, and every picture saved before T-172 is 64–96px and cannot be
-  re-grabbed (a profile records no source video); the note turns a silent 3–5x blur into a disclosed
-  limitation. Judged on the loaded bitmap's `PixelWidth` — never its DPI-scaled size, which WPF derives from
+  width also shows a **low-resolution note** naming what re-takes it (`low resolution — applying this profile to a
+  video re-takes it at full size, or use 📷 Use current frame`, T-181); a picture at or above the box width shows
+  none. The card keeps filling because the request was to fill it; every picture saved before T-172 is 64–96px,
+  and since T-181 the next apply of its profile re-takes it (I110) — until then the note turns a silent 3–5x blur
+  into a disclosed limitation. Judged on the loaded bitmap's `PixelWidth` — never its DPI-scaled size, which WPF derives from
   file metadata — against the same named resource the box is drawn at, so the threshold is not a third
   hand-typed number (`PixelWidthBelowToVisibleConverter`; `BulkCutView.xaml` `ProfilePreviewCard`,
   `ProfilePreviewCardWidth`).
+- **I110** — **applying a profile re-takes a small picture** (T-181, G-058). `ApplyProfileToSelected()` /
+  `ApplyProfileToAll()` apply exactly as before — synchronously, with the same return value, `ApplyToAllReport`
+  and apply note (SPEC-011 I26) — and then start **one** background re-take **only if** the applied profile's
+  stored picture is a readable file narrower than `LowResolutionPictureWidth` (**320**, pinned equal to the card's
+  `ProfilePreviewCardWidth`, so "the card flags it" (I109) and "applying re-takes it" are one condition), or a
+  file that is **missing** (nothing left to protect). **Never** for a picture 320px or wider, a file that exists
+  but cannot be measured (never replace a picture we could not measure), a profile with **no** picture (removing
+  one is deliberate, I78), or any gesture other than apply — save, select, hover and backup restore never re-take
+  (`StartPictureRefresh` · `PictureNeedsRefresh` · `ImageNormalizer.TryReadPixelWidth`, header-only, pixels
+  never the DPI size).
+- **I111** — **the source row.** Apply-to-selected uses the selected row. Apply-to-all tries the selected row first
+  when it is a target, then the **other** targets from the top of the list (so a selected row in the middle that
+  cannot hold the intro hands over to the first qualifying target from the top, not the one after it). The first
+  of them whose probed `Duration` is **longer** than the profile's `IntroFromStart` is the source; one with no duration, or a duration not longer than the
+  intro, is passed over, and if none qualifies there is no re-take. Whether the row's *cut* is valid does not
+  matter for a *picture*.
+- **I112** — **the time is the profile's own `IntroFromStart`** on the source row's file, at
+  `ProfileThumbnailWidth` — not the row's snapped cut. It is the same for every target and needs no keyframe scan,
+  so it works while a row is still scanning (T-173). The automatic default (I61) grabs the snapped intro-end; the
+  two differ by less than one GOP, which does not matter for a recognition picture. The grab returns a true 640px
+  frame only because the thumbnail cache is keyed on width (T-179, SPEC-005 I26). An intro of 0 grabs the first
+  frame.
+- **I113** — **a re-take attaches only if nothing changed while its grab was in flight.** Each profile name
+  (case-insensitive) has a **picture generation**, stamped from one view-model-wide counter, so it **only ever
+  increases**. It is bumped by every change to a profile's picture or existence: `TryAttachThumbnail` (every
+  source — auto, upload, snapshot and this re-take), `ClearThumbnail`, `DeleteSelectedProfile` (which keeps the
+  entry, so a re-created profile never lands back on an earlier value), **every** `SaveProfile` (the first
+  included) and a backup restore (every name in the restored set). A path check alone is not enough: the store
+  names each file after the profile, so a new small upload with the same extension keeps the same path. When the
+  grab lands, the re-take is **discarded** silently unless the profile still exists, its generation is unchanged
+  and its picture still qualifies (I110) — which covers *Use current frame*, any upload, *✕ Picture*, a re-save, a
+  delete and a delete-then-re-create (`PictureGeneration`).
+- **I114** — **the old picture is kept, never lost.** Before storing, the re-take **copies** — never moves — the
+  current file, when it exists, to `profile-thumbs/replaced/<SafeFileName(name)>-<yyyyMMdd-HHmmss><ext>`
+  (`ProfileThumbnailStore.KeepAside`; two copies in one second get distinct names). If that copy fails, the
+  re-take stops and the old picture stays where it is. If the copy succeeds and the store's `Save` then fails,
+  the old picture is still at its original path and still attached, and the redundant copy is deleted (best
+  effort) — but only once the old file is verifiably back at its path: the store restores its asides best-effort,
+  and deleting the copy after a double failure would lose the picture. The store's own sweeps enumerate the root only, so they never touch `replaced/`.
+- **I115** — **a re-take that does not happen is silent.** A grab that returns nothing or throws, a discard
+  (I113), or a keep-aside or store failure (I114) shows nothing: `Operation.Error` is never set, the apply note is
+  unchanged, nothing is kept aside, and the old picture is byte-identical — like the automatic default (I66).
+- **I116** — **a re-take that happens says so, once, under its own apply.** `ProfilePictureRefreshNote` reads
+  `Picture for "<profile>" re-taken at full size from <file name> — the old one is kept.`, with a **Show old
+  picture** button that opens Explorer on the kept copy (`ProfilePictureRefreshKeptPath`) — the folder is under a
+  hidden AppData path, so naming it would not help anyone find it — or `… — its old picture file was missing.`
+  with no button when there was no file to keep. It is shown in the apply-note area under `ApplyReportSummary`
+  (and not part of it), on a line **reserved from the click** while the re-take is in flight for the current
+  report (`IsPictureRefreshLineReserved`), so the note arriving a grab later does not push the list down under
+  the pointer; a discard gives the line back. The note is cleared in the `ApplyToAllReport` setter, so every
+  writer of the report clears it — both profile applies, the row-level *Apply to all*, the set-at-playhead
+  fan-out, list clear and batch start. A re-take announces under the **latest apply of its profile**: re-applying
+  the same profile while its grab is in flight moves the note to the newer summary rather than losing it. A
+  re-take that lands after that report was replaced by any other action still attaches the picture, but its note
+  is **dropped**, so it never appears under another action's summary. (The wording and the button are the T-181
+  review's change to the planned sentence, which named a folder no user could find.)
+- **I117** — **a re-take never moves the selection.** It attaches by name through the selection-preserving mode of
+  `TryAttachThumbnail` (`keepSelection`): the bar's selection is re-pointed at the refreshed instance of whatever
+  profile was selected — the one the user may have moved to while the grab was in flight — or stays empty. It
+  holds with the real profile bar, whose `ListBox` binds `SelectedItem` two-way and loses it when the bar is
+  re-projected. Every other attach keeps selecting the thumbnailed profile.
+- **I118** — **one re-take in flight per profile name** (case-insensitive): an apply of the same profile while one
+  is in flight starts nothing; a discarded or finished re-take frees the slot, so a later apply can retry.
+  `PendingPictureRefresh` completes when none is in flight, and every test awaits it before asserting.
 
 ## Links
 - Design: D-005 (apply a cut before the snap — built by T-173: I20/I24/I25/I27 amended, I108 added) · ADR-0021 (profiles survive reinstall by not being touched; portability via a backup file rather than a two-root migration) - (feature tasks T-096 apply-to-all convention · T-102 model/persistence/apply · T-103 VM command glue · T-106 thumbnail model/store · T-107 thumbnail UI glue · T-129 upload-failure reporting - T-147 backup/restore + installer guarantee)
-- Goals: G-037, G-038 (profile thumbnails), G-051 (profiles you can keep), G-044 (thumbnail change works — and says so when it does not), G-057 (apply a cut to rows still scanning — T-173), G-056 (a sharp hover card — T-172: I74/I101/I106/I107 amended, I109 added), G-058 (the card shows the picture at its own size and says where the profile cuts — T-180: I101/I104/I106/I109 amended)
+- Goals: G-037, G-038 (profile thumbnails), G-051 (profiles you can keep), G-044 (thumbnail change works — and says so when it does not), G-057 (apply a cut to rows still scanning — T-173), G-056 (a sharp hover card — T-172: I74/I101/I106/I107 amended, I109 added), G-058 (the card shows the picture at its own size and says where the profile cuts — T-180: I101/I104/I105/I106/I109 amended; applying a profile re-takes a small picture — T-181: I110–I118 added, I61/I74/I106/I109 amended)
 - Related specs: SPEC-008 (operation-progress-eta — owns `OperationViewModel`, incl. the additive `ReportFailure` this spec's upload path calls); SPEC-011 (bulk-cut-screen — the T-103 non-thumbnail profile commands + the T-108 per-row cut-point thumbnails); the keyframe-snap / cut-validity spec — both adjacent, out of scope here
-- Key code: `src/Core/Profiles/CutProfile.cs` (`ThumbnailPath`) · `src/App/Settings/AppSettings.cs` (`CutProfiles`/`SaveProfile`/`DeleteProfile` cascade + `SettingsDto`/`CutProfileDto`) · `src/App/Settings/ProfileThumbnailStore.cs` (`Save`/`RenameExistingAside`/`RestoreAsides`/`Delete`/`DeleteByPath`/`DefaultRoot`/`SafeFileName`) · `src/App/ViewModels/CutProfileApplier.cs` · `src/App/ViewModels/BulkCutViewModel.cs` (`SaveProfileWithAutoThumbnailAsync`/`UploadThumbnail`/`ClearThumbnail`/`AttachThumbnail`/`TryAttachThumbnail`/`ReportThumbnailUploadFailure`/`ClearThumbnailUploadError`/`ThumbnailAttachOutcome`) · `src/App/ViewModels/OperationViewModel.cs` (`ReportFailure` — the reporting seam) · `src/App/Views/BulkCutView.xaml.cs` (`OnUploadThumbnailClicked`, `ChooseProfileExportPath`/`ChooseProfileImportPath`/`ConfirmProfileOverwrite`) - `src/App/Settings/ProfileBackup.cs` (`Export`/`Plan`/`Apply`/`ImportPlan`) - `packaging/VideoSplitJoiner.iss` (the absence asserted by I79) - `src/App/Views/ProfilePreviewCard.cs` (`ProfilePreviewBox` / `ProfilePreviewBoxSizeConverter` — the hover card's size; `ProfileCutReadout` / `ProfileCutReadoutConverter` — its readout, T-180)
-- Tests: `tests/App.Tests/ApplyDuringScanTests.cs` (T-173 — applying while a row still scans: I20, I24, I25, I27, I108) · `tests/Core.Tests/CutProfileTests.cs` · `tests/App.Tests/CutProfilePersistenceTests.cs` · `tests/App.Tests/CutProfileApplierTests.cs` · `tests/App.Tests/ProfileThumbnailStoreTests.cs` (store + `DeleteProfile` cascade, T-106; the copy-then-swap durability guarantee — I73) · `tests/App.Tests/BulkCutProfileThumbnailTests.cs` (auto-default/upload/clear, T-107; upload-failure reporting, T-129) (and app-layer `tests/App.Tests/BulkCutProfileCommandsTests.cs`) - `tests/App.Tests/ProfileBackupTests.cs` (the file format + the destructive cases, T-147) - `tests/App.Tests/BulkCutProfileBackupCommandsTests.cs` (the VM gestures + the default-keep collision contract) - `tests/App.Tests/ProfileHoverPreviewTests.cs` (the hover card, T-169; the fill, the low-resolution note and its pixel threshold, T-172; the card at the picture's own size, the cut readout and the minimum/cap pins, T-180 — I101, I104, I109) - `tests/App.Tests/ProfilePreviewCardLogicTests.cs` (the box-size function and the readout, exact — T-180) - `tests/App.Tests/InstallerLeavesUserDataTests.cs` (I79)
+- Key code: `src/Core/Profiles/CutProfile.cs` (`ThumbnailPath`) · `src/App/Settings/AppSettings.cs` (`CutProfiles`/`SaveProfile`/`DeleteProfile` cascade + `SettingsDto`/`CutProfileDto`) · `src/App/Settings/ProfileThumbnailStore.cs` (`Save`/`RenameExistingAside`/`RestoreAsides`/`Delete`/`DeleteByPath`/`DefaultRoot`/`SafeFileName`; `KeepAside` — the copy into `replaced/`, T-181) · `src/App/ViewModels/CutProfileApplier.cs` · `src/App/ViewModels/BulkCutViewModel.cs` (`SaveProfileWithAutoThumbnailAsync`/`UploadThumbnail`/`ClearThumbnail`/`AttachThumbnail`/`TryAttachThumbnail`/`ReportThumbnailUploadFailure`/`ClearThumbnailUploadError`/`ThumbnailAttachOutcome`; the re-take on apply — `LowResolutionPictureWidth`/`StartPictureRefresh`/`PictureNeedsRefresh`/`RefreshPictureAsync`/`PictureGeneration`/`PendingPictureRefresh`/`ProfilePictureRefreshNote`, T-181) · `src/App/Io/ImageNormalizer.cs` (`TryReadPixelWidth` — header-only pixel width, T-181) · `src/App/ViewModels/OperationViewModel.cs` (`ReportFailure` — the reporting seam) · `src/App/Views/BulkCutView.xaml.cs` (`OnUploadThumbnailClicked`, `ChooseProfileExportPath`/`ChooseProfileImportPath`/`ConfirmProfileOverwrite`) - `src/App/Settings/ProfileBackup.cs` (`Export`/`Plan`/`Apply`/`ImportPlan`) - `packaging/VideoSplitJoiner.iss` (the absence asserted by I79) - `src/App/Views/ProfilePreviewCard.cs` (`ProfilePreviewBox` / `ProfilePreviewBoxSizeConverter` — the hover card's size; `ProfileCutReadout` / `ProfileCutReadoutConverter` — its readout, T-180)
+- Tests: `tests/App.Tests/ApplyDuringScanTests.cs` (T-173 — applying while a row still scans: I20, I24, I25, I27, I108) · `tests/Core.Tests/CutProfileTests.cs` · `tests/App.Tests/CutProfilePersistenceTests.cs` · `tests/App.Tests/CutProfileApplierTests.cs` · `tests/App.Tests/ProfileThumbnailStoreTests.cs` (store + `DeleteProfile` cascade, T-106; the copy-then-swap durability guarantee — I73) · `tests/App.Tests/BulkCutProfileThumbnailTests.cs` (auto-default/upload/clear, T-107; upload-failure reporting, T-129) (and app-layer `tests/App.Tests/BulkCutProfileCommandsTests.cs`) - `tests/App.Tests/ProfileBackupTests.cs` (the file format + the destructive cases, T-147) - `tests/App.Tests/BulkCutProfileBackupCommandsTests.cs` (the VM gestures + the default-keep collision contract) - `tests/App.Tests/ProfileHoverPreviewTests.cs` (the hover card, T-169; the fill, the low-resolution note and its pixel threshold, T-172; the card at the picture's own size, the cut readout and the minimum/cap pins, T-180 — I101, I104, I109) - `tests/App.Tests/ProfilePreviewCardLogicTests.cs` (the box-size function and the readout, exact — T-180) - `tests/App.Tests/ProfilePictureRefreshTests.cs` (the re-take on apply: the gate, the source row, the time, the generation re-check, keep-aside, silence, the note, the selection, one in flight — T-181, I110–I118) - `tests/App.Tests/ImageNormalizerTests.cs` / `ProfileThumbnailStoreTests.cs` (`TryReadPixelWidth`, `KeepAside` — T-181) - `tests/App.Tests/InstallerLeavesUserDataTests.cs` (I79)
