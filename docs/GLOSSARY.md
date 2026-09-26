@@ -33,7 +33,8 @@ Domain and codebase terms used across VideoSplitJoiner's docs, specs, and code.
   keyframes — when its scan lands, for a row still scanning; rows the copy leaves invalid are reported, never silently
   dropped, and the apply note also counts rows waiting for their scan and rows not loaded (T-173). See
   `BulkCutViewModel.ApplyToAll`, `ApplyOutcome`.
-- **Cut precision — Lossless vs Exact cut** — Bulk Cut's per-batch choice (`CutPrecision`). **Lossless** (default) snaps
+- **Cut precision — Lossless vs Exact cut** — Bulk Cut's precision choice (`CutPrecision`), remembered across
+  launches since T-186. **Lossless** (default) snaps
   each cut to a keyframe and stream-copies every byte. **Exact cut** honours the requested time by re-encoding only the
   leading fragment up to the next keyframe (the whole range, if it ends before one) and stream-copying the rest
   (`SmartCutEngine`, the "smart cut"); a source with no encoder mapped for its codecs is cut Lossless instead. See [adr/0018-smart-cut-exact-trimming.md](adr/0018-smart-cut-exact-trimming.md).

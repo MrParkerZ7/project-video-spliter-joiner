@@ -6,7 +6,9 @@ Accepted. Amended by [ADR 0017](0017-output-mode-replace-original.md) — rule (
 `OutputMode.NewFile`; under `ReplaceOriginal` the source is the destination
 (`src/Core/Bulk/BulkTrimEngine.cs:385-388`) — and by [ADR 0018](0018-smart-cut-exact-trimming.md) — a
 `CutPrecision.Exact` row is cut by `SmartCutEngine`, a second ffmpeg code path
-(`BulkTrimEngine.cs:248-258`). The default lossless route is still the reuse described here.
+(`BulkTrimEngine.cs:248-258`). The default lossless route is still the reuse described here. Amended by T-186
+(2026-09-26) — rule (d)'s **Overwrite** toggle is no longer per-run: it is remembered across launches
+(`BulkOverwrite`) and, while on, stated in red before Run. The default is still AutoSuffix.
 
 ## Context
 

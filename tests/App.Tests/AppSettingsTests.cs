@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Linq;
 using FluentAssertions;
 using VideoSplitJoiner.App.Settings;
 using Xunit;
@@ -47,6 +48,51 @@ public sealed class AppSettingsTests : IDisposable
         var reloaded = new AppSettings(_file);
         reloaded.BulkAutoDeleteOriginals.Should().BeTrue();
         reloaded.BulkAutoEmptyRecycleBin.Should().BeTrue();
+    }
+
+    /// <summary>
+    /// T-186 — Overwrite existing output, Exact cut and Replace originals are remembered: each is written as its own key,
+    /// read back, turned off persists false, and a file from before T-186 leaves all three off.
+    /// </summary>
+    [Trait("serves-spec", "SPEC-009")]
+    [Theory]
+    [InlineData("BulkOverwrite")]
+    [InlineData("BulkExactCut")]
+    [InlineData("BulkReplaceOriginals")]
+    public void TheFooterOptionsRoundTrip_EachUnderItsOwnKey_AndAnOlderFileLeavesThemOff(string key)
+    {
+        static bool? Get(AppSettings s, string k) => k switch
+        {
+            "BulkOverwrite" => s.BulkOverwrite,
+            "BulkExactCut" => s.BulkExactCut,
+            _ => s.BulkReplaceOriginals,
+        };
+
+        static void Set(AppSettings s, string k, bool v)
+        {
+            switch (k)
+            {
+                case "BulkOverwrite": s.BulkOverwrite = v; break;
+                case "BulkExactCut": s.BulkExactCut = v; break;
+                default: s.BulkReplaceOriginals = v; break;
+            }
+        }
+
+        var settings = new AppSettings(_file);
+        Set(settings, key, true);
+
+        File.ReadAllText(_file).Should().Contain($"\"{key}\": true", "each option is its own key in the file");
+        Get(new AppSettings(_file), key).Should().BeTrue();
+        var reloaded = new AppSettings(_file);
+        var others = new[] { "BulkOverwrite", "BulkExactCut", "BulkReplaceOriginals" }
+            .Where(k => k != key).Select(k => Get(reloaded, k)).ToList();
+        others.Should().NotContain(true, "setting one never sets another");
+
+        Set(settings, key, false);
+        Get(new AppSettings(_file), key).Should().BeFalse("turning it off is remembered too");
+
+        File.WriteAllText(_file, "{ \"BulkAutoDeleteOriginals\": true }");
+        Get(new AppSettings(_file), key).Should().NotBe(true, "a file written before T-186 keeps today's default, off");
     }
 
     /// <summary>

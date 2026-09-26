@@ -294,6 +294,12 @@ public sealed class BulkCutViewModel : ObservableObject
         _originalDisposer = originalDisposer;
         _applyCutToAllRows = _settings.BulkApplyCutToAllRows ?? true;
 
+        // T-186: the footer options are remembered. Seeded straight into the fields the run reads - not through the
+        // setters - so a restore writes nothing back; absent = off, today's default.
+        _overwrite = _settings.BulkOverwrite ?? false;
+        _exactCut = _settings.BulkExactCut ?? false;
+        _replaceOriginal = _settings.BulkReplaceOriginals ?? false;
+
         _selectionOpenDebounce = selectionOpenDebounce is { } d && d > TimeSpan.Zero ? d : DefaultSelectionOpenDebounce;
         _selectionOpenDelay = selectionOpenDelay ?? ((wait, ct) => Task.Delay(wait, ct));
 
@@ -464,11 +470,23 @@ public sealed class BulkCutViewModel : ObservableObject
         set => SetProperty(ref _collisionPolicy, value);
     }
 
-    /// <summary>Per-run overwrite toggle — when true the run uses <see cref="CollisionPolicy.Overwrite"/>.</summary>
+    /// <summary>
+    /// Overwrite toggle — when true the run uses <see cref="CollisionPolicy.Overwrite"/>. Remembered since T-186
+    /// (<see cref="IAppSettings.BulkOverwrite"/>). It writes over an existing <c>_trimmed</c> file in place with no
+    /// confirmation and no Recycle Bin, so while it is on (and Replace originals is off) the footer's red
+    /// <see cref="OverwriteOutputNote"/> says so before Run.
+    /// </summary>
     public bool Overwrite
     {
         get => _overwrite;
-        set => SetProperty(ref _overwrite, value);
+        set
+        {
+            if (SetProperty(ref _overwrite, value))
+            {
+                _settings.BulkOverwrite = value;
+                OnPropertyChanged(nameof(OverwriteOutputNote));
+            }
+        }
     }
 
     /// <summary>
@@ -487,8 +505,10 @@ public sealed class BulkCutViewModel : ObservableObject
         {
             if (SetProperty(ref _replaceOriginal, value))
             {
+                _settings.BulkReplaceOriginals = value;   // T-186: remembered; every batch still asks before it replaces
                 OnPropertyChanged(nameof(CollisionIsInert));
                 OnPropertyChanged(nameof(OutputNote));
+                OnPropertyChanged(nameof(OverwriteOutputNote));   // Replace makes Overwrite inert
             }
         }
     }
@@ -537,6 +557,7 @@ public sealed class BulkCutViewModel : ObservableObject
         {
             if (SetProperty(ref _exactCut, value))
             {
+                _settings.BulkExactCut = value;   // T-186: remembered
                 OnPropertyChanged(nameof(PrecisionNote));
                 foreach (var row in Items)
                 {
@@ -1093,6 +1114,21 @@ public sealed class BulkCutViewModel : ObservableObject
             : AutoDeleteOriginals
                 ? "Originals will be sent to the Recycle Bin after each successful batch"
                 : null;
+
+    /// <summary>
+    /// T-186 — a remembered <see cref="Overwrite"/> must never be silent: it has neither a confirmation nor a Recycle
+    /// Bin. Shown in red after <see cref="DestructiveOutputNote"/>, closing the irreversible group (SPEC-011 I146), while
+    /// Overwrite is on and Replace originals is off (under Replace the collision policy is inert, so the sentence would be
+    /// false). It opens with the checkbox's own name, so it says which box to untick even though that box sits in the
+    /// first group. Its own element rather than a clause joined to the delete note: joined, the longest pair measured
+    /// ~830px — a TextBlock in the footer's WrapPanel is measured at infinite width, so it ran past a 760px window
+    /// instead of wrapping; as a separate child it flows onto the next line when it does not fit. Null when it does not
+    /// apply.
+    /// </summary>
+    public string? OverwriteOutputNote =>
+        _overwrite && !_replaceOriginal
+            ? "Overwrite existing output is on — existing _trimmed files are replaced in place, not recoverable"
+            : null;
 
     /// <summary>
     /// T-156 — run the delete sweep automatically once a batch finishes, if the user armed it.

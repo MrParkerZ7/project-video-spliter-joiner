@@ -59,6 +59,12 @@ public sealed class ViewModelSettingsTests : IDisposable
         public bool? BulkAutoEmptyRecycleBin { get; set; }
         public bool? BulkAutoClearAfterRun { get; set; }
 
+        public bool? BulkOverwrite { get; set; }
+
+        public bool? BulkExactCut { get; set; }
+
+        public bool? BulkReplaceOriginals { get; set; }
+
         public bool? SplitAutoDeleteSource { get; set; }
 
         public bool? SplitAutoEmptyRecycleBin { get; set; }

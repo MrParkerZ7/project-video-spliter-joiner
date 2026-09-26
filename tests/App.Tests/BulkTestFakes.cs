@@ -378,6 +378,21 @@ internal sealed class FakeSettings : IAppSettings
     public bool? BulkAutoEmptyRecycleBin { get; set; }
     public bool? BulkAutoClearAfterRun { get; set; }
 
+    // T-186: the three remembered footer options count their writes, so a test can prove that building the view-model
+    // (a restore) writes none of them back.
+    private bool? _bulkOverwrite;
+    private bool? _bulkExactCut;
+    private bool? _bulkReplaceOriginals;
+
+    public bool? BulkOverwrite { get => _bulkOverwrite; set { _bulkOverwrite = value; FooterOptionWrites++; } }
+
+    public bool? BulkExactCut { get => _bulkExactCut; set { _bulkExactCut = value; FooterOptionWrites++; } }
+
+    public bool? BulkReplaceOriginals { get => _bulkReplaceOriginals; set { _bulkReplaceOriginals = value; FooterOptionWrites++; } }
+
+    /// <summary>T-186 — how many times any of the three remembered footer options was written.</summary>
+    public int FooterOptionWrites { get; private set; }
+
     public bool? SplitAutoDeleteSource { get; set; }
 
     public bool? SplitAutoEmptyRecycleBin { get; set; }

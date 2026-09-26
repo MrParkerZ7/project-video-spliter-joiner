@@ -116,6 +116,26 @@ public interface IAppSettings
     bool? BulkAutoClearAfterRun { get; set; }
 
     /// <summary>
+    /// T-186 — Bulk Cut's <b>Overwrite existing output</b>, remembered. Destructive — it writes over an existing
+    /// <c>_trimmed</c> file in place, with no confirmation and no Recycle Bin — so null/absent = OFF, and while it is
+    /// on (and Replace originals is off) a red note in the footer names it before Run.
+    /// </summary>
+    bool? BulkOverwrite { get; set; }
+
+    /// <summary>
+    /// T-186 — Bulk Cut's <b>Exact cut</b>, remembered. Not destructive (a precision choice). Null/absent = OFF: the
+    /// lossless keyframe cut stays the default an older settings file gets.
+    /// </summary>
+    bool? BulkExactCut { get; set; }
+
+    /// <summary>
+    /// T-186 — Bulk Cut's <b>Replace originals</b>, remembered. Destructive, so null/absent = OFF; remembering it
+    /// removes no safeguard — every batch still asks before it replaces anything, and replaced originals go to the
+    /// Recycle Bin.
+    /// </summary>
+    bool? BulkReplaceOriginals { get; set; }
+
+    /// <summary>
     /// T-163 (G-052) — delete the SPLIT source automatically once a split finishes cleanly.
     ///
     /// <para>Deliberately separate from <see cref="BulkAutoDeleteOriginals"/>: arming one screen must

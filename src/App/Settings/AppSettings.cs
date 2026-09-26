@@ -51,6 +51,9 @@ public sealed class AppSettings : IAppSettings
     private bool? _bulkAutoDeleteOriginals;
     private bool? _bulkAutoEmptyRecycleBin;
     private bool? _bulkAutoClearAfterRun;
+    private bool? _bulkOverwrite;
+    private bool? _bulkExactCut;
+    private bool? _bulkReplaceOriginals;
     private bool? _splitAutoDeleteSource;
     private bool? _splitAutoEmptyRecycleBin;
     private AppTab? _lastTab;
@@ -220,6 +223,48 @@ public sealed class AppSettings : IAppSettings
             if (!Nullable.Equals(_bulkAutoClearAfterRun, value))
             {
                 _bulkAutoClearAfterRun = value;
+                Save();
+            }
+        }
+    }
+
+    /// <inheritdoc />
+    public bool? BulkOverwrite
+    {
+        get => _bulkOverwrite;
+        set
+        {
+            if (!Nullable.Equals(_bulkOverwrite, value))
+            {
+                _bulkOverwrite = value;
+                Save();
+            }
+        }
+    }
+
+    /// <inheritdoc />
+    public bool? BulkExactCut
+    {
+        get => _bulkExactCut;
+        set
+        {
+            if (!Nullable.Equals(_bulkExactCut, value))
+            {
+                _bulkExactCut = value;
+                Save();
+            }
+        }
+    }
+
+    /// <inheritdoc />
+    public bool? BulkReplaceOriginals
+    {
+        get => _bulkReplaceOriginals;
+        set
+        {
+            if (!Nullable.Equals(_bulkReplaceOriginals, value))
+            {
+                _bulkReplaceOriginals = value;
                 Save();
             }
         }
@@ -401,6 +446,9 @@ public sealed class AppSettings : IAppSettings
                 _bulkAutoDeleteOriginals = dto.BulkAutoDeleteOriginals;   // absent -> null -> OFF
                 _bulkAutoEmptyRecycleBin = dto.BulkAutoEmptyRecycleBin;
                 _bulkAutoClearAfterRun = dto.BulkAutoClearAfterRun;       // absent -> null -> OFF
+                _bulkOverwrite = dto.BulkOverwrite;                       // absent -> null -> OFF (T-186)
+                _bulkExactCut = dto.BulkExactCut;                         // absent -> null -> OFF (T-186)
+                _bulkReplaceOriginals = dto.BulkReplaceOriginals;         // absent -> null -> OFF (T-186)
                 _splitAutoDeleteSource = dto.SplitAutoDeleteSource;     // absent -> null -> OFF
                 _splitAutoEmptyRecycleBin = dto.SplitAutoEmptyRecycleBin; // absent -> null -> OFF
                 _bulkHorizontalSplitRatio = ClampRatio(dto.BulkHorizontalSplitRatio); // absent (older file) → null → default
@@ -560,6 +608,9 @@ public sealed class AppSettings : IAppSettings
                 SplitAutoEmptyRecycleBin = _splitAutoEmptyRecycleBin,
                 BulkAutoEmptyRecycleBin = _bulkAutoEmptyRecycleBin,
                 BulkAutoClearAfterRun = _bulkAutoClearAfterRun,
+                BulkOverwrite = _bulkOverwrite,
+                BulkExactCut = _bulkExactCut,
+                BulkReplaceOriginals = _bulkReplaceOriginals,
                 BulkHorizontalSplitRatio = _bulkHorizontalSplitRatio,
                 BulkVerticalSplitRatio = _bulkVerticalSplitRatio,
                 // Null (not an empty array) when there are none, so the key is omitted entirely
@@ -667,6 +718,12 @@ public sealed class AppSettings : IAppSettings
         public bool? BulkAutoEmptyRecycleBin { get; set; }
 
         public bool? BulkAutoClearAfterRun { get; set; }
+
+        public bool? BulkOverwrite { get; set; }
+
+        public bool? BulkExactCut { get; set; }
+
+        public bool? BulkReplaceOriginals { get; set; }
 
         [JsonPropertyName("bulkVerticalSplitRatio")]
         public double? BulkVerticalSplitRatio { get; set; }

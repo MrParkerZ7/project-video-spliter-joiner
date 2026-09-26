@@ -462,7 +462,9 @@ The Bulk tab **remembers its own split position per layout**, independent of the
    `episode1.mkv` → `episode1_trimmed.mkv`). **The original is never modified** unless you deliberately
    turn on [Replace originals](#replacing-the-originals). If a `_trimmed` file already exists, the app
    **auto-suffixes** the new one (`_trimmed_2`, `_trimmed_3`, …) so nothing is ever clobbered — unless
-   you tick **Overwrite**, which replaces the existing output in place. (Even then, the source file
+   you tick **Overwrite**, which replaces the existing output in place. The choice is remembered the next time
+   you open the app, and while it is on (and Replace originals is off) the bottom of the screen says so in red,
+   because it cannot be undone. (Even then, the source file
    itself is never a write target.)
 
 Press **Clear all** (when no run is in progress) to empty the list and start a fresh set.
@@ -499,7 +501,8 @@ when rows you ticked are being left out — rows you unticked yourself don't cou
 By default a batch writes new `_trimmed` files and leaves your sources alone. Tick **⚠ Replace originals**
 in the footer if you would rather the trimmed result **take each original's place** — same folder, same
 name, nothing to tidy up afterwards. It is deliberately marked in red: it is the one Bulk Cut option that
-changes files you already have.
+changes files you already have. Like the other options at the bottom, it is remembered the next time
+you open the app — and every batch still asks before it replaces anything.
 
 With it on:
 
@@ -671,6 +674,7 @@ and stream-copies everything after it, so the rest of the file is still untouche
 | Speed | instant | a short re-encode per cut |
 | Quality | byte-identical | one re-encoded fragment; the rest untouched |
 
-Use **Lossless** for most batches. Turn on **Exact cut** when the precise moment matters. If a file's
+Use **Lossless** for most batches. Turn on **Exact cut** when the precise moment matters; the choice is
+remembered the next time you open the app. If a file's
 codec cannot be re-encoded reliably, that row falls back to a lossless cut and says so rather than
 producing a questionable file.

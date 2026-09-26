@@ -128,6 +128,12 @@ public sealed class LastTabRestoreTests : IDisposable
         public bool? BulkAutoEmptyRecycleBin { get; set; }
         public bool? BulkAutoClearAfterRun { get; set; }
 
+        public bool? BulkOverwrite { get; set; }
+
+        public bool? BulkExactCut { get; set; }
+
+        public bool? BulkReplaceOriginals { get; set; }
+
         public bool? SplitAutoDeleteSource { get; set; }
 
         public bool? SplitAutoEmptyRecycleBin { get; set; }
@@ -215,6 +221,34 @@ public sealed class LastTabRestoreTests : IDisposable
         writes.Should().Be(0, "startup restore is not a user gesture — it has nothing new to persist");
     }
 
+    /// <summary>
+    /// T-186 — the delegating fake routes each new footer key to its OWN member (T-171 found this fake wired to the
+    /// wrong member by copy-paste once), so a write-count test built on it measures the key it names.
+    /// </summary>
+    [Trait("serves-spec", "SPEC-009")]
+    [Fact]
+    public void TheDelegatingFake_RoutesEachFooterKeyToItsOwnMember()
+    {
+        var inner = new TabFakeSettings();
+        var writes = 0;
+        var tracking = new WriteCountingSettings(inner, () => writes++);
+
+        // Each step leaves the other two unset, so a getter or setter wired to the wrong member shows here.
+        tracking.BulkOverwrite = true;
+        (inner.BulkOverwrite, inner.BulkExactCut, inner.BulkReplaceOriginals).Should().Be(((bool?)true, (bool?)null, (bool?)null));
+        (tracking.BulkOverwrite, tracking.BulkExactCut, tracking.BulkReplaceOriginals).Should().Be(((bool?)true, (bool?)null, (bool?)null));
+
+        tracking.BulkExactCut = false;
+        (inner.BulkExactCut, inner.BulkReplaceOriginals).Should().Be(((bool?)false, (bool?)null));
+        (tracking.BulkExactCut, tracking.BulkReplaceOriginals).Should().Be(((bool?)false, (bool?)null));
+
+        tracking.BulkReplaceOriginals = true;
+        inner.BulkReplaceOriginals.Should().BeTrue();
+        (tracking.BulkOverwrite, tracking.BulkExactCut, tracking.BulkReplaceOriginals)
+            .Should().Be(((bool?)true, (bool?)false, (bool?)true), "each reads back its own member");
+        writes.Should().Be(3);
+    }
+
     private sealed class WriteCountingSettings : IAppSettings
     {
         private readonly IAppSettings _inner;
@@ -238,6 +272,12 @@ public sealed class LastTabRestoreTests : IDisposable
         public bool? BulkAutoDeleteOriginals { get => _inner.BulkAutoDeleteOriginals; set { _inner.BulkAutoDeleteOriginals = value; _onWrite(); } }
         public bool? BulkAutoEmptyRecycleBin { get => _inner.BulkAutoEmptyRecycleBin; set { _inner.BulkAutoEmptyRecycleBin = value; _onWrite(); } }
         public bool? BulkAutoClearAfterRun { get => _inner.BulkAutoClearAfterRun; set { _inner.BulkAutoClearAfterRun = value; _onWrite(); } }
+
+        public bool? BulkOverwrite { get => _inner.BulkOverwrite; set { _inner.BulkOverwrite = value; _onWrite(); } }
+
+        public bool? BulkExactCut { get => _inner.BulkExactCut; set { _inner.BulkExactCut = value; _onWrite(); } }
+
+        public bool? BulkReplaceOriginals { get => _inner.BulkReplaceOriginals; set { _inner.BulkReplaceOriginals = value; _onWrite(); } }
 
         public bool? SplitAutoDeleteSource { get => _inner.SplitAutoDeleteSource; set { _inner.SplitAutoDeleteSource = value; _onWrite(); } }
 

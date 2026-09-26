@@ -8,6 +8,10 @@ goal; `0.1.0` is the first end-to-end, shippable cut.
 ## [Unreleased]
 
 ### Fixed
+- **Bulk Cut's options now all remember how you left them.** *Overwrite existing output*, *Exact cut* and *Replace
+  originals* reset to off every time the app started, while the other options at the bottom kept their setting.
+  All of them are remembered now. Replace originals still asks before every batch, and while *Overwrite* is on the
+  footer says in red that existing `_trimmed` files will be overwritten — it has no undo.
 - **Applying a cut no longer skips the rows that are still scanning.** On Bulk Cut, a profile apply, a row's ⧉
   copy and setting a cut at the playhead for every ticked row all quietly passed over any file whose
   keyframe scan had not finished — with the buttons enabled. Drop 20 files, apply a profile while 17 still

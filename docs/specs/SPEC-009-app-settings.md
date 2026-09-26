@@ -8,7 +8,7 @@ sources:
   - src/App/Settings/AppSettings.cs
   - src/App/Settings/IAppSettings.cs
 serves-goal: [G-010, G-037, G-039, G-055]
-updated: 2026-09-18
+updated: 2026-09-26
 ---
 
 ## What
@@ -17,8 +17,8 @@ set of "remember where I was / how I had it" values to a single JSON file
 (`%APPDATA%/VideoSplitJoiner/settings.json` by default) via `System.Text.Json`: the last input and
 output folders, the layout axis, the two per-axis split ratios (plus a second, **Bulk-specific**
 per-axis ratio pair, G-039), the saved cut profiles, the last-used tab, and the per-screen preference
-flags (Bulk Cut's apply-cut-to-all-rows and auto-clear-list, and the auto-delete / auto-empty-bin pair on each of
-Bulk Cut and Split). Reads happen
+flags (Bulk Cut's apply-cut-to-all-rows and auto-clear-list, its three output options — overwrite, exact cut,
+replace originals — and the auto-delete / auto-empty-bin pair on each of Bulk Cut and Split). Reads happen
 once on construction; every setter persists its change immediately and best-effort. The store is robust
 by design — a missing, empty, corrupt, or older/partial file degrades to documented defaults and never
 crashes the app, and a write failure is swallowed while the value stays live in memory for the session.
@@ -42,7 +42,8 @@ temp-then-rename write + swallowed-write-failure behavior, and the **settings-pe
 `CutProfiles` (round-trip via the file, seconds encoding, missing-field → empty, key-omission, corrupt-row
 skip, dedup-on-load, no loss of siblings); and the persistence of the preference keys `LastTab` (T-143),
 `BulkApplyCutToAllRows` (T-133 — its ON default is SPEC-011 I103's), `BulkAutoDeleteOriginals`/
-`BulkAutoEmptyRecycleBin` (T-156), `BulkAutoClearAfterRun` (T-171) and `SplitAutoDeleteSource`/`SplitAutoEmptyRecycleBin` (T-163).
+`BulkAutoEmptyRecycleBin` (T-156), `BulkAutoClearAfterRun` (T-171), `BulkOverwrite`/`BulkExactCut`/`BulkReplaceOriginals`
+(T-186) and `SplitAutoDeleteSource`/`SplitAutoEmptyRecycleBin` (T-163).
 
 **Out:** the cut-profile *mutation* semantics — `SaveProfile` upsert-in-place and `DeleteProfile`
 by-name/no-op, and the profile model's own validation and apply-to-cut behavior — belong to
@@ -135,9 +136,9 @@ out of scope.
 - **I26** - `LastTab` remembers the tab the user was last on, so the app reopens where they left it, as
   the layout orientation already did. Absent/unknown falls back to the first tab rather than throwing.
 - **I27** - `BulkAutoDeleteOriginals` and `BulkAutoEmptyRecycleBin` persist the two destructive Bulk Cut
-  preferences, and `SplitAutoDeleteSource`/`SplitAutoEmptyRecycleBin` (T-163) the Split screen's pair, under
-  their own keys so arming one screen never arms the other. **All four are `bool?` and absent means OFF**: a
-  settings file written by an older build must
+  preferences, `BulkOverwrite` and `BulkReplaceOriginals` (T-186) Bulk Cut's two destructive output options, and
+  `SplitAutoDeleteSource`/`SplitAutoEmptyRecycleBin` (T-163) the Split screen's pair, under their own keys so arming
+  one never arms another. **All six are `bool?` and absent means OFF**: a settings file written by an older build must
   not silently arm a destructive option, so the tolerant-load default is the safe one rather than the
   convenient one.
 - **I28** - every preference writes through the same `Save()` path and only **on change** (the setters
@@ -145,14 +146,19 @@ out of scope.
 - **I29** - `BulkAutoClearAfterRun` (T-171) persists Bulk Cut's *Auto-clear list* under its own key. It is not
   destructive — it discards screen state, never a file — but it is `bool?` and **absent means OFF** all the same, for
   its own reason: a first run after an upgrade must not empty the list before the user knows the option exists.
+- **I30** - `BulkExactCut` (T-186) persists Bulk Cut's *Exact cut* under its own key. It is not destructive — a
+  precision choice — and it is `bool?` with **absent meaning OFF**, so an older settings file keeps the lossless
+  keyframe cut, the app's default. The view-model seeds its fields from these three keys at construction without
+  calling the setters, so a restore writes nothing back (I28).
 
 ## Links
 - Design: D-001 (vertical-monitor layout — persisted layout state); D-004 (Bulk Cut screen); ADR-0016 (cut profiles)
 - Goals: G-010 (remember last input/output location), G-037 (reusable cut profiles), G-039 (Bulk Cut polish —
-  the Bulk-specific per-axis split ratios, T-112), G-055 (Bulk Cut's auto-clear list, T-171 — I29)
+  the Bulk-specific per-axis split ratios, T-112), G-055 (Bulk Cut's auto-clear list, T-171 — I29); T-186 (the footer's output options remembered — I27, I30)
 - Related specs: SPEC-007 (cut profiles — profile model, upsert/delete/apply semantics); SPEC-011 (Bulk Cut
   screen — consumes the Bulk-specific ratios I23–I25, its I68); SPEC-015 (app shell — the `OrientedSplitPanel`
   the Bulk ratios drive, and the Split-tab layout axis / ratios)
 - Key code: src/App/Settings/AppSettings.cs, src/App/Settings/IAppSettings.cs, src/Core/Profiles/CutProfile.cs
-- Tests: tests/App.Tests/AppSettingsTests.cs (incl. the T-112 Bulk-ratio round-trip cases — round-trip,
+- Tests: tests/App.Tests/AppSettingsTests.cs (incl. `TheFooterOptionsRoundTrip_EachUnderItsOwnKey_AndAnOlderFileLeavesThemOff`
+  — T-186, I27/I30; and the T-112 Bulk-ratio round-trip cases — round-trip,
   default-null, legacy-absent→null with Split ratios surviving, clamp; tagged `serves-spec=SPEC-011`)

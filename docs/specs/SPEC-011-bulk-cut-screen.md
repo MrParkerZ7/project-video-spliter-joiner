@@ -455,13 +455,21 @@ SPEC-007); the shared `IThumbnailService`/`FfmpegThumbnailService` frame source 
 ### Replace-originals output mode (G-041 / T-123)
 - **I83** — the default is the **non-destructive** mode: `ReplaceOriginal == false`, `CollisionIsInert ==
   false`, and `OutputNote` reads `Output → same folder · _trimmed suffix · originals kept` — a user who
-  ignores this feature keeps every original (`ReplaceOriginal`, `CollisionIsInert`, `OutputNote`).
+  ignores this feature keeps every original (`ReplaceOriginal`, `CollisionIsInert`, `OutputNote`). Since T-186 the
+  choice is **remembered** (`BulkReplaceOriginals`, SPEC-009 I27): absent = off, so this still holds for anyone who
+  never ticked it; a user who did finds it ticked next launch, with the REPLACES note from the first frame and the
+  per-batch confirmation (I85) unchanged.
 - **I84** — turning it on makes the collision control **inert** and re-states the destination: the setter
   raises `CollisionIsInert` (now true — the view greys the "Overwrite existing output" checkbox, because a
   destination that is always the source makes collision policy meaningless) **and** `OutputNote`, which now
   reads `Output → REPLACES each original file · originals go to the Recycle Bin`. The note is **bound, never
   hard-coded**, so it can never contradict the active mode (`ReplaceOriginal` setter, `BulkCutView.xaml`
-  `IsEnabled="{Binding CollisionIsInert, …InverseBool}"`).
+  `IsEnabled="{Binding CollisionIsInert, …InverseBool}"`). **Overwrite existing output** is remembered too (T-186,
+  `BulkOverwrite`); it writes over an existing `_trimmed` file with no confirmation and no Recycle Bin, so while it
+  is on **and Replace is off** a red, SemiBold `OverwriteOutputNote` (the same style as `DestructiveOutputNote`,
+  I137/I146) reads `Overwrite existing output is on — existing _trimmed files are replaced in place, not recoverable` — its own element in the
+  footer row, not a clause joined to the delete note, because joined the longest pair overran a 760px window (a
+  TextBlock in a WrapPanel cannot wrap); the `Overwrite` and `ReplaceOriginal` setters both raise it.
 - **I85** — under this mode `RunBatchAsync` blocks on a **counted** confirmation before anything runs:
   `ConfirmReplaceOriginals(atRisk)` is called **exactly once**, with `atRisk` = the number of
   `IsEnabled && IsValidCut` rows (so the prompt names the blast radius), ahead of the preview release, the
@@ -482,8 +490,9 @@ SPEC-007); the shared `IThumbnailService`/`FfmpegThumbnailService` frame source 
   `Player.Unload()` / `Player.Stop()`).
 
 ### Cut precision — lossless vs exact (G-042 / T-125)
-- **I89** — `ExactCut` defaults **false** (the lossless stream-copy path is the app's identity and stays the
-  default) and `PrecisionNote` says so: `Lossless — cuts snap to the nearest keyframe (instant, no quality
+- **I89** — `ExactCut` is **false when nothing is stored** (the lossless stream-copy path is the app's identity and
+  stays the default; since T-186 the choice is remembered as `BulkExactCut`, SPEC-009 I30, and a row added later
+  inherits it) and `PrecisionNote` says so: `Lossless — cuts snap to the nearest keyframe (instant, no quality
   loss)`; the run sends `BulkTrimOptions.Precision == CutPrecision.Lossless` (`ExactCut`, `PrecisionNote`,
   `RunBatchAsync`).
 - **I90** — turning it on states the **cost up front, before the run**: `PrecisionNote` becomes `Exact — cuts
@@ -842,7 +851,8 @@ SPEC-007); the shared `IThumbnailService`/`FfmpegThumbnailService` frame source 
   fails a test rather than merely reading as "a bit tight".
 - **I146** — the three irreversible controls (**Replace originals**, **Auto-delete originals**,
   **and empty bin**) sit **together at the end** of the options row, after a separator, with
-  `DestructiveOutputNote` closing the group. Previously the danger-coloured note sat *between* Exact cut
+  `DestructiveOutputNote` — and, since T-186, `OverwriteOutputNote` after it (I84), which names the *Overwrite existing
+  output* checkbox it warns about since that box sits in the first group — closing the group. Previously the danger-coloured note sat *between* Exact cut
   and Auto-delete, so the red vocabulary was scattered through the row and nothing read as a block.
 - **I147** — I119/I146's placement rule survives the re-row: **Delete originals stays at the opposite end
   from Run**, in its own grid column. T-146 established that separation after the first attempt put the
@@ -934,6 +944,7 @@ SPEC-007); the shared `IThumbnailService`/`FfmpegThumbnailService` frame source 
   `tests/App.Tests/ApplyDuringScanTests.cs` (T-173 apply while rows scan — I156–I157 and the amended I21/I22/I24/I26/I57/I76/I104) ·
   `tests/App.Tests/ExactCutReachesEveryRowTests.cs` (T-176 rows and outros added after the toggle — I91 and the amended I8/I10/I12) ·
   `tests/App.Tests/BulkItemThumbnailTests.cs` § T-174 (the frame at the effective cut time — I158 and the amended I61–I64/I93) ·
-  `tests/App.Tests/AutoClearAfterRunTests.cs` (T-171 auto-clear after a clean batch — I159–I163) — all tagged `serves-spec=SPEC-011`.
+  `tests/App.Tests/AutoClearAfterRunTests.cs` (T-171 auto-clear after a clean batch — I159–I163; T-185 in every mode — I161/I162) ·
+  `tests/App.Tests/FooterOptionsRememberedTests.cs` (T-186 the footer options remembered, `OverwriteOutputNote` — I83/I84/I89/I146) — all tagged `serves-spec=SPEC-011`.
   The intent-side targeting filters are additionally asserted by `tests/App.Tests/BulkCutProfileCommandsTests.cs`
   (I56) and `tests/App.Tests/BulkSpecGapTests.cs` (I22), both reading `IsCheckedByUser` directly.

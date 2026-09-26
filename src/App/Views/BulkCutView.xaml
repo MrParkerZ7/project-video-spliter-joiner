@@ -1330,7 +1330,7 @@
                               VerticalAlignment="Center"
                               IsChecked="{Binding Overwrite, Mode=TwoWay}"
                               IsEnabled="{Binding CollisionIsInert, Converter={StaticResource InverseBool}}"
-                              ToolTip="Ignored while &quot;Replace originals&quot; is on — the destination is the source file." />
+                              ToolTip="Replace an existing _trimmed output in place instead of writing _trimmed_2, _trimmed_3 … — not recoverable. Remembered the next time you open the app. Ignored while &quot;Replace originals&quot; is on — the destination is the source file." />
 
                     <Rectangle Width="1"
                                Height="16"
@@ -1418,13 +1418,28 @@
                          after a batch has already deleted something. T-160 moved it to the END of the
                          destructive group - it summarises what the two boxes above just armed, so it
                          belongs after them rather than between the neutral options and them. -->
-                    <TextBlock Text="{Binding DestructiveOutputNote}"
+                    <TextBlock x:Name="DestructiveOutputNote"
+                               Text="{Binding DestructiveOutputNote}"
                                Margin="14,0,0,0"
                                VerticalAlignment="Center"
                                FontWeight="SemiBold"
                                Foreground="{StaticResource DangerBrush}"
                                FontSize="{StaticResource FontSizeSmall}"
                                Visibility="{Binding DestructiveOutputNote, Converter={StaticResource NullToCollapsed}}" />
+                    <!-- T-186: a remembered Overwrite existing output is said in red too - it has no confirmation and
+                         no Recycle Bin. It closes the red group after the note above (I146) and opens with the
+                         checkbox's name, since that box sits in the first group. Its own element, not a clause joined
+                         to the note above: joined, the longest pair ran past a 760px window, because a TextBlock in a
+                         WrapPanel is measured at infinite width and cannot wrap; as a separate child it moves to the
+                         next line when it does not fit. -->
+                    <TextBlock x:Name="OverwriteOutputNote"
+                               Text="{Binding OverwriteOutputNote}"
+                               Margin="14,0,0,0"
+                               VerticalAlignment="Center"
+                               FontWeight="SemiBold"
+                               Foreground="{StaticResource DangerBrush}"
+                               FontSize="{StaticResource FontSizeSmall}"
+                               Visibility="{Binding OverwriteOutputNote, Converter={StaticResource NullToCollapsed}}" />
                 </WrapPanel>
 
                 <StackPanel Grid.Row="1" Grid.Column="2" Orientation="Horizontal">
