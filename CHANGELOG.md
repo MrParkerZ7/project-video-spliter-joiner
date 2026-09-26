@@ -77,11 +77,15 @@ goal; `0.1.0` is the first end-to-end, shippable cut.
   before you ever opened the file. The tests now write to a temp folder of their own.
 ### Added
 - **Bulk Cut can clear its own list after a clean batch.** A new **Auto-clear list** checkbox, just before
-  *Replace originals*, takes the finished rows out of the list once a batch completes with no failures, so the
-  list is ready for the next set — and unlike *Clear all*, it keeps the batch's report on screen: what was trimmed,
-  what went to the Recycle Bin, and a working **Open folder**. It never takes away something you could still act
-  on: rows that were not in the run, rows whose original is still yours to delete, and rows with a warning stay,
-  and the report says how many and why. A batch with any failure clears nothing. Off by default; remembered.
+  *Replace originals*, takes every video the batch trimmed out of the list once it completes with no failures, so
+  the list is ready for the next set — and unlike *Clear all*, it keeps the batch's report on screen: what was
+  trimmed, what went to the Recycle Bin, and a working **Open folder**. The report also says what the rows used to:
+  `Cleared 3 from the list — their originals are still on disk` when you keep originals, and which videos Exact cut
+  had to cut on a keyframe instead. Videos that were not in the run stay, and so does — with Auto-delete on — an
+  original another program was holding, unticked so the next Run leaves it alone; pressing ✕ Delete originals on it
+  adds the result to the report instead of replacing it. A batch with any failure clears nothing. Off by default;
+  remembered. (Its first version kept every row whose original was still on disk, which in the default mode meant it
+  cleared nothing — reported as T-183, fixed by T-185 before release.)
 - **Hover a profile to see its picture properly.** The profile chips show their picture at 28 pixels,
   which is too small to tell two frames of the same show apart — so choosing by picture, which is why the
   bar exists at all, only half worked. Hovering a profile now opens a card showing the picture at **320

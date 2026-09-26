@@ -1360,14 +1360,15 @@
                     <!-- ===== Group 3: what happens to the list after the run (T-171) =====
                          Asked for "near by Replace originals", so it sits right before that group - but NOT in
                          it: clearing the list discards screen state, never a file, and the red group's
-                         vocabulary means "this touches your files". The run's report stays on screen, and the
-                         list is kept (with the summary saying why) while any original is still the user's to
-                         delete, because Delete originals needs the rows. -->
+                         vocabulary means "this touches your files". The run's report stays on screen. Since
+                         T-185 every row the run finished goes - kept originals and exact-cut fallbacks are said
+                         in the summary instead of holding rows - except, with Auto-delete armed, a row whose
+                         original could not be binned (the delete can be retried on it). -->
                     <CheckBox Margin="16,0,0,0"
                               VerticalAlignment="Center"
                               Content="Auto-clear list"
                               IsChecked="{Binding AutoClearAfterRun, Mode=TwoWay}"
-                              ToolTip="After a batch finishes with no failures, empty the list and keep the batch's summary on screen. If any original is still yours to delete, the list stays and the summary says why." />
+                              ToolTip="After a batch finishes with no failures, take the videos it trimmed out of the list and keep its summary on screen. If you keep your originals, they stay on disk beside the outputs, where ✕ Delete originals can no longer reach them — tick Auto-delete originals to have them binned, or leave this off to review first. Videos not in this run stay in the list, and so does any original Auto-delete could not bin." />
 
                     <Rectangle Width="1"
                                Height="16"

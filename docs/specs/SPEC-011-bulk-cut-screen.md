@@ -21,7 +21,7 @@ sources:
   - src/App/VideoFileFilter.cs
   - src/App/DropDiagnostics.cs
 serves-goal: [G-036, G-037, G-038, G-039, G-040, G-041, G-042, G-043, G-050, G-053, G-057, G-055]
-updated: 2026-09-18
+updated: 2026-09-26
 ---
 
 ## What
@@ -791,17 +791,32 @@ SPEC-007); the shared `IThumbnailService`/`FfmpegThumbnailService` frame source 
   dropped. The report's **Open folder** reveals `LastRunOutputPath`, captured from the run's ledger rather than looked
   up in the rows the clear removes. Clear all is unchanged and still resets all of it (`Clear`, `DropAllRows`,
   `LastRunOutputPath`).
-- **I161** — **nothing the user could still act on is taken away** (G-055 criterion 3). A row stays when it was
-  **not one this run finished** (unticked, no cut yet, or added while the batch ran); when its **original is still
-  the user's to delete** (T-171 decision (b) — ✕ Delete originals needs the row; under Replace originals none is ever
-  left, because `DeletableOriginals` skips a row whose output IS its original, so the feature is not gated on
-  auto-delete); or when the run **reported a warning on it** (`HasRunWarnings` — e.g. an exact cut that fell back to
-  a keyframe; the row's `Warning` is the only place that is shown). The summary then gains `Kept in the list: N
-  original(s) left to delete (✕ Delete originals), N row(s) with a warning, N not in this run` — each part only when
-  non-zero (`RunAutoClearIfArmed`).
-- **I162** — with auto-delete armed, the sweep's line **joins** the run's line instead of replacing it
-  (`Trimmed N · Sent N original(s) to the Recycle Bin`), so once the rows are gone the report still says what was
-  cut as well as what was binned (`RunAutoDeleteIfArmed`).
+- **I161** — **every row the run finished goes, and the summary says what the rows used to** (T-185, reversing
+  T-171 decision (b) and its warned-row exception — in the default new-file mode those two kept every row, and the
+  user reported the list as still there, T-183). Only two kinds of row stay: one **not in this run** (unticked, no cut
+  yet, or added while the batch ran), and — **only with Auto-delete armed** — one whose original is still in
+  `DeletableOriginals` after the sweep, i.e. the sweep could not bin it (still in use): the user asked for it to go,
+  and ✕ Delete originals on that row is the retry. Such a kept, finished row is **unticked**, so the next Run does not
+  trim it again. The summary gains, joined with ` · ` after the run's and the sweep's lines, each part only when it
+  applies: `Cleared N from the list — their originals are still on disk` (`… 1 … — its original is …`), when every
+  cleared row's original exists and is not the output (none under Replace originals, none once binned) — and, if only
+  some do, `Cleared N from the list — K original(s) still on disk`, so the row count is never wrong; `Not cut
+  exactly (snapped to a keyframe): a.mkv, b.mkv, c.mkv and N more` — the cleared rows carrying an exact-cut fallback,
+  the one run warning the user could not have seen before Run (planner snap/ignored-cut notes were on the row already
+  and are not repeated), matched on `BulkTrimEngine.ExactFallbackPrefix`; and `Kept in the list: N original(s) still
+  in use, N not in this run`; a row not in the run keeps its tick. With Auto-clear on, ✕ Delete originals no longer
+  reaches a cleared row's original, and the checkbox's tooltip says so — conditionally: *"If you keep your originals,
+  …"*, since under Replace originals none is left (`RunAutoClearIfArmed`).
+- **I162** — while a clean run's report is still the summary on screen, a delete sweep's line **joins** it instead
+  of replacing it (`Trimmed N · Sent N original(s) to the Recycle Bin`), so once the rows are gone the report still
+  says what was cut as well as what was binned. This holds for the automatic sweep (`RunAutoDeleteIfArmed`) and,
+  since T-185, for a **manual** ✕ Delete originals too — the retry on a row kept by I161 used to replace the whole
+  report. The view-model keeps the run's report (`_runReport`: the run's line, the automatic sweep's line and the
+  clear's clauses, without the volatile `Kept in the list` part); a manual sweep writes that report plus its **own
+  latest** line, so pressing again replaces the earlier attempt instead of piling up, and a stale "still in use"
+  clause goes once the user acts on it. If another gesture replaced the summary since (a profile backup or restore),
+  or no clean run's report stands (a failed batch, Clear all, a new run), the sweep's line replaces the summary as
+  before (`DeleteOriginals`).
 - **I163** — the checkbox (**Auto-clear list**) is its **own group directly before the irreversible group**, after a
   separator — beside *Replace originals*, as asked, but outside the red group (I146), with a plain label and no
   danger styling: it discards screen state, never a file. The completed surface lays its report line out in a
@@ -882,7 +897,7 @@ SPEC-007); the shared `IThumbnailService`/`FfmpegThumbnailService` frame source 
   select none T-128 (I100–I102)), G-057 (apply a cut to rows still scanning — T-173 (I156–I157; I21/I22/I24/I26/I57/I76/I104
   amended); the chip shows the frame the run cuts at — T-174 (I158; § What/I61–I64/I93 amended); Exact cut reaches every row —
   T-176 (I8/I10/I12/I91 amended)), G-055 (Bulk Cut tidies up after itself — auto-clear, T-171 (I159–I163; I66/I157
-  amended))
+  amended); auto-clear in every mode, T-185 (I161/I162 amended))
 - Related specs: SPEC-002 (the T-095 batch engine `IBulkTrimEngine` / `BulkTrimEngine` — incl. the engine-side
   handling of the `OutputMode`/`CutPrecision` axes this screen selects, kept orthogonal to `CollisionPolicy`'s
   own "what if the destination is taken?" question); T-094 kept-segment request (`KeptSegmentSelector`);

@@ -26,14 +26,18 @@ namespace VideoSplitJoiner.App.Tests;
 /// moment it is produced — the user would watch a batch finish and be left with an empty screen and no account
 /// of what happened. This takes the FINISHED rows out and keeps the report.</para>
 ///
-/// <para><b>What it never takes away</b> (G-055 criterion 3, T-171 decision (b) as refined after review): a row
-/// that was not part of the run (unticked, no cut yet, added while the batch ran), a row whose original is still the
-/// user's to delete (✕ Delete originals needs it), and a row the run reported a warning on (the row is the only
-/// place that warning is shown). The summary says how many were kept and why.</para>
+/// <para><b>What it takes and what it says</b> (G-055 criterion 3). T-171 kept a finished row whose original was still
+/// on disk (decision (b)) and a row the run warned on — which, in the default new-file mode, kept every row, and the user
+/// reported the list as still there (T-183). Since T-185 every row the run finished clears; the summary says the
+/// originals are still on disk and names any row that was not cut exactly. What stays: a row not in the run (unticked,
+/// no cut yet, added while the batch ran), and — only with Auto-delete armed — a row whose original the sweep could not
+/// bin, unticked so the delete can be retried without the next Run trimming it again.</para>
 /// </summary>
 public sealed class AutoClearAfterRunTests
 {
-    private const string ExactFellBack = "exact cut unavailable (no encoder for this codec) - cut snapped to the nearest keyframe";
+    // Built from the engine's own constant (T-185), so a reworded engine warning cannot pass here on a stale copy.
+    private const string ExactFellBack =
+        BulkTrimEngine.ExactFallbackPrefix + " (no encoder for this codec) - cut snapped to the nearest keyframe";
 
     private readonly string _dir = Path.Combine(Path.GetTempPath(), "vsj-t171-" + Guid.NewGuid().ToString("N"));
 
@@ -92,12 +96,18 @@ public sealed class AutoClearAfterRunTests
         vm.ConfirmReplaceOriginals = _ => true;
     }
 
-    /// <summary>A clean batch that wrote a NEW file beside each original — the originals are left to delete.</summary>
-    private static void NewFileOutputs(FakeBulkTrimEngine engine, params string[] outputs)
+    /// <summary>A clean batch that wrote a NEW file beside each original — the originals stay on disk (T-185: and the
+    /// rows still clear; T-171 kept them).</summary>
+    private static void NewFileOutputs(
+        FakeBulkTrimEngine engine, string[] outputs, Func<int, IReadOnlyList<string>>? warnings = null)
         => engine.ResultFactory = (items, _) => new BatchResult(
             BatchOutcome.Completed,
-            items.Select((item, i) => new BulkTrimItemResult(item, ItemOutcome.Done, outputs[i], null, Array.Empty<string>()))
+            items.Select((item, i) => new BulkTrimItemResult(
+                    item, ItemOutcome.Done, outputs[i], null, warnings?.Invoke(i) ?? Array.Empty<string>()))
                 .ToList());
+
+    private static void NewFileOutputs(FakeBulkTrimEngine engine, params string[] outputs)
+        => NewFileOutputs(engine, outputs, warnings: null);
 
     /// <summary>A clean batch under Replace originals — each output IS its original.</summary>
     private static void ReplacedInPlace(FakeBulkTrimEngine engine, Func<int, IReadOnlyList<string>>? warnings = null)
@@ -190,32 +200,58 @@ public sealed class AutoClearAfterRunTests
     // ---- What is never taken away ----------------------------------------------------------------------
 
     /// <summary>
-    /// Decision (b): auto-delete is off and the batch wrote new files, so every original is still the user's to delete
-    /// — and ✕ Delete originals needs the rows. The rows stay and the summary says why. This is also the case that
-    /// rules out option (a), "clear anyway".
+    /// T-185 (T-183, the user's own case) — spec change: auto-delete off, new files written, so every original is still
+    /// on disk. T-171 decision (b) kept every row here (this test was <c>OriginalsLeftToDelete_KeepTheirRows_…</c>), so
+    /// in the default mode Auto-clear cleared nothing. The user kept their originals by leaving auto-delete off; the rows
+    /// now clear and the summary says the originals are still on disk.
     /// </summary>
     [Trait("serves-spec", "SPEC-011")]
     [Fact]
-    public async Task OriginalsLeftToDelete_KeepTheirRows_AndTheSummarySaysWhy()
+    public async Task OriginalsKeptOnDisk_TheRowsStillClear_AndTheSummarySaysTheOriginalsAreOnDisk()
     {
-        var (vm, probe, engine, _) = Build(new RecordingDisposer());
-        await AddRowAsync(vm, probe, MakeVideo("a.mp4"));
-        await AddRowAsync(vm, probe, MakeVideo("b.mp4"));
-        NewFileOutputs(engine, MakeVideo("a_trimmed.mp4"), MakeVideo("b_trimmed.mp4"));
+        var disposer = new RecordingDisposer();
+        var (vm, probe, engine, _) = Build(disposer);
+        var originals = new[] { MakeVideo("a.mp4"), MakeVideo("b.mp4"), MakeVideo("c.mp4") };
+        foreach (var original in originals)
+        {
+            await AddRowAsync(vm, probe, original);
+        }
+
+        var before = originals.Select(File.ReadAllBytes).ToList();
+        NewFileOutputs(engine, MakeVideo("a_trimmed.mp4"), MakeVideo("b_trimmed.mp4"), MakeVideo("c_trimmed.mp4"));
+        vm.AutoDeleteOriginals.Should().BeFalse("precondition: the user's setting");
         vm.AutoClearAfterRun = true;
 
         await vm.RunBatchAsync();
 
-        vm.Items.Should().HaveCount(2, "clearing would take away the only way to delete those originals");
-        vm.CanDeleteOriginals.Should().BeTrue("the manual Delete originals button is still there to press");
-        vm.Operation.ResultSummary.Should().StartWith("Trimmed 2", "the run's own line comes first");
-        vm.Operation.ResultSummary.Should().Contain("2 originals").And.Contain("Delete originals",
-            "the user is told why the rows stayed and what to do about them");
+        vm.Items.Should().BeEmpty("the user asked for the finished list to go, and kept their originals on purpose");
+        vm.Operation.ResultSummary.Should().Be("Trimmed 3 · Cleared 3 from the list — their originals are still on disk");
+        originals.Select(File.ReadAllBytes).Should().BeEquivalentTo(before, o => o.WithStrictOrdering(),
+            "the originals are untouched");
+        disposer.Disposed.Should().BeEmpty("nothing was sent anywhere");
+        vm.CanDeleteOriginals.Should().BeFalse("no row is left for ✕ Delete originals to act on");
+    }
+
+    /// <summary>T-185 — one original reads in the singular.</summary>
+    [Trait("serves-spec", "SPEC-011")]
+    [Fact]
+    public async Task OneOriginalKept_ReadsInTheSingular()
+    {
+        var (vm, probe, engine, _) = Build(new RecordingDisposer());
+        await AddRowAsync(vm, probe, MakeVideo("a.mp4"));
+        NewFileOutputs(engine, MakeVideo("a_trimmed.mp4"));
+        vm.AutoClearAfterRun = true;
+
+        await vm.RunBatchAsync();
+
+        vm.Operation.ResultSummary.Should().Be("Trimmed 1 · Cleared 1 from the list — its original is still on disk");
     }
 
     /// <summary>
     /// Auto-delete armed, one original binned and one refused (still in use). The binned row goes; the refused row's
-    /// original is still on disk for the user to deal with, so that row — and only that row — stays.
+    /// original is still on disk for the user to deal with, so that row — and only that row — stays. T-185 — spec change:
+    /// the clause reads "still in use" (was "1 original left to delete"), and the kept row is unticked so the next Run
+    /// does not trim it again.
     /// </summary>
     [Trait("serves-spec", "SPEC-011")]
     [Fact]
@@ -233,7 +269,164 @@ public sealed class AutoClearAfterRunTests
 
         vm.Items.Should().Equal(new[] { heldRow }, "only the row whose original is still there is kept");
         vm.Operation.ResultSummary.Should().Contain("Still in use", "the delete sweep's report is kept")
-            .And.Contain("1 original left to delete", "and the reason the row stayed is added to it");
+            .And.Contain("Kept in the list: 1 original still in use", "and the reason the row stayed is added to it");
+        vm.Operation.ResultSummary.Should().NotContain("Cleared", "the binned original is not on disk to mention");
+        heldRow.IsCheckedByUser.Should().BeFalse("a kept, finished row must not be trimmed again by the next Run");
+    }
+
+    /// <summary>
+    /// T-185 — the kept row is how the user retries the delete, and doing so must not erase the run's report: a manual
+    /// ✕ Delete originals joins its line to the report while a completed run's report is on screen, exactly as the
+    /// automatic sweep's does (it used to replace the whole summary).
+    /// </summary>
+    [Trait("serves-spec", "SPEC-011")]
+    [Fact]
+    public async Task RetryingTheDeleteOnTheKeptRow_KeepsTheRunsReport()
+    {
+        var held = MakeVideo("held.mp4");
+        var locked = true;
+        var disposer = new RecordingDisposer { RefuseWhen = p => locked && p == held };
+        var (vm, probe, engine, _) = Build(disposer);
+        var heldRow = await AddRowAsync(vm, probe, held);
+        await AddRowAsync(vm, probe, MakeVideo("free.mp4"));
+        NewFileOutputs(engine, MakeVideo("held_trimmed.mp4"), MakeVideo("free_trimmed.mp4"));
+        vm.AutoDeleteOriginals = true;
+        vm.AutoClearAfterRun = true;
+        await vm.RunBatchAsync();
+        vm.Items.Should().Equal(new[] { heldRow }, "precondition: the refused row stayed");
+
+        locked = false;
+        vm.ConfirmDeleteOriginals = (_, _) => true;
+        vm.DeleteOriginals();
+
+        File.Exists(held).Should().BeFalse("the retry binned it");
+        vm.Operation.ResultSummary.Should().StartWith("Trimmed 2", "what the run trimmed is still said")
+            .And.EndWith("Sent 1 original(s) to the Recycle Bin", "and the retry's line is added, not substituted");
+        vm.Operation.ResultSummary.Should().NotContain("Kept in the list",
+            "the stale 'still in use' clause goes once the user has acted on it");
+    }
+
+    /// <summary>
+    /// T-185 — without Auto-clear, the automatic sweep's line is still part of the run's report: a manual retry keeps it
+    /// and adds its own after it.
+    /// </summary>
+    [Trait("serves-spec", "SPEC-011")]
+    [Fact]
+    public async Task WithoutAutoClear_AManualRetryKeepsTheAutomaticSweepsLine()
+    {
+        var held = MakeVideo("held.mp4");
+        var locked = true;
+        var (vm, probe, engine, _) = Build(new RecordingDisposer { RefuseWhen = p => locked && p == held });
+        await AddRowAsync(vm, probe, held);
+        await AddRowAsync(vm, probe, MakeVideo("free.mp4"));
+        NewFileOutputs(engine, MakeVideo("held_trimmed.mp4"), MakeVideo("free_trimmed.mp4"));
+        vm.AutoDeleteOriginals = true;
+        await vm.RunBatchAsync();
+        var afterRun = vm.Operation.ResultSummary!;
+        afterRun.Should().StartWith("Trimmed 2 · Sent 1 to the Recycle Bin. Still in use: held.mp4", "precondition");
+
+        locked = false;
+        vm.ConfirmDeleteOriginals = (_, _) => true;
+        vm.DeleteOriginals();
+
+        vm.Operation.ResultSummary.Should().Be(afterRun + " · Sent 1 original(s) to the Recycle Bin");
+    }
+
+    /// <summary>
+    /// T-185 review — if some cleared rows' originals are no longer on disk (moved or binned by hand during the run), the
+    /// clause gives both counts rather than a wrong number of cleared rows.
+    /// </summary>
+    [Trait("serves-spec", "SPEC-011")]
+    [Fact]
+    public async Task WhenOnlySomeOriginalsAreStillOnDisk_TheClauseGivesBothCounts()
+    {
+        var gone = MakeVideo("gone.mp4");
+        var (vm, probe, engine, _) = Build(new RecordingDisposer());
+        await AddRowAsync(vm, probe, gone);
+        await AddRowAsync(vm, probe, MakeVideo("b.mp4"));
+        await AddRowAsync(vm, probe, MakeVideo("c.mp4"));
+        NewFileOutputs(engine, MakeVideo("gone_trimmed.mp4"), MakeVideo("b_trimmed.mp4"), MakeVideo("c_trimmed.mp4"));
+        engine.BeforeReturn = () => File.Delete(gone);   // the user bins one original by hand while the batch runs
+        vm.AutoClearAfterRun = true;
+
+        await vm.RunBatchAsync();
+
+        vm.Items.Should().BeEmpty();
+        vm.Operation.ResultSummary.Should().Be("Trimmed 3 · Cleared 3 from the list — 2 originals still on disk");
+    }
+
+    /// <summary>
+    /// T-185 review — pressing ✕ Delete originals again while the file is still held reports the latest attempt; it does
+    /// not append another copy each time.
+    /// </summary>
+    [Trait("serves-spec", "SPEC-011")]
+    [Fact]
+    public async Task RetryingTwiceWhileStillHeld_ReportsTheLatestAttempt_WithoutGrowing()
+    {
+        var held = MakeVideo("held.mp4");
+        var (vm, probe, engine, _) = Build(new RecordingDisposer { RefuseWhen = p => p == held });
+        await AddRowAsync(vm, probe, held);
+        await AddRowAsync(vm, probe, MakeVideo("free.mp4"));
+        NewFileOutputs(engine, MakeVideo("held_trimmed.mp4"), MakeVideo("free_trimmed.mp4"));
+        vm.AutoDeleteOriginals = true;
+        vm.AutoClearAfterRun = true;
+        await vm.RunBatchAsync();
+        vm.ConfirmDeleteOriginals = (_, _) => true;
+
+        vm.DeleteOriginals();
+        var once = vm.Operation.ResultSummary;
+        vm.DeleteOriginals();
+
+        vm.Operation.ResultSummary.Should().Be(once, "a second press replaces the first press's line, it does not add to it");
+        once.Should().StartWith("Trimmed 2 · Sent 1 to the Recycle Bin").And.EndWith("Still in use: held.mp4");
+    }
+
+    /// <summary>
+    /// T-185 review — the join is onto the RUN's report only. After another gesture replaced the summary (a profile
+    /// backup), a manual delete replaces it as before instead of welding two unrelated messages together.
+    /// </summary>
+    [Trait("serves-spec", "SPEC-011")]
+    [Fact]
+    public async Task AManualDeleteAfterAnotherGesturesMessage_ReplacesIt()
+    {
+        var (vm, probe, engine, _) = Build(new RecordingDisposer());
+        await AddRowAsync(vm, probe, MakeVideo("a.mp4"));
+        NewFileOutputs(engine, MakeVideo("a_trimmed.mp4"));
+        await vm.RunBatchAsync();   // auto-clear off: the row stays, its original deletable
+        var backup = Path.Combine(_dir, "profiles.vsjprofiles");
+        vm.ChooseProfileExportPath = () => backup;
+        vm.ExportProfiles();
+        vm.Operation.ResultSummary.Should().StartWith("Exported", "precondition: another gesture's message is up");
+
+        vm.ConfirmDeleteOriginals = (_, _) => true;
+        vm.DeleteOriginals();
+
+        vm.Operation.ResultSummary.Should().Be("Sent 1 original(s) to the Recycle Bin");
+    }
+
+    /// <summary>T-185 — with no clean run's report standing (a failed batch), a manual delete replaces the summary as before.</summary>
+    [Trait("serves-spec", "SPEC-011")]
+    [Fact]
+    public async Task AManualDeleteAfterAPartlyFailedBatch_ReplacesTheSummary()
+    {
+        var (vm, probe, engine, _) = Build(new RecordingDisposer());
+        await AddRowAsync(vm, probe, MakeVideo("good.mp4"));
+        await AddRowAsync(vm, probe, MakeVideo("bad.mp4"));
+        var output = MakeVideo("good_trimmed.mp4");
+        engine.ResultFactory = (items, _) => new BatchResult(
+            BatchOutcome.CompletedWithFailures,
+            new List<BulkTrimItemResult>
+            {
+                new(items[0], ItemOutcome.Done, output, null, Array.Empty<string>()),
+                new(items[1], ItemOutcome.Failed, null,
+                    new UserFacingError(ErrorCategory.Unknown, "boom", "tail"), Array.Empty<string>()),
+            });
+        await vm.RunBatchAsync();
+
+        vm.ConfirmDeleteOriginals = (_, _) => true;
+        vm.DeleteOriginals();
+
+        vm.Operation.ResultSummary.Should().Be("Sent 1 original(s) to the Recycle Bin");
     }
 
     /// <summary>
@@ -257,7 +450,9 @@ public sealed class AutoClearAfterRunTests
         await vm.RunBatchAsync();
 
         vm.Items.Should().BeEquivalentTo(new[] { unticked, noCut }, "only the row the run finished goes");
-        vm.Operation.ResultSummary.Should().Contain("2 not in this run");
+        vm.Operation.ResultSummary.Should().Be("Trimmed 1 · Kept in the list: 2 not in this run");
+        noCut.IsCheckedByUser.Should().BeTrue("T-185: a row not in the run keeps its tick - only a kept, finished row is unticked");
+        unticked.IsCheckedByUser.Should().BeFalse("and an unticked one stays unticked");
         vm.SelectedItem.Should().BeNull("the previewed row was the one taken out, so nothing it pointed at remains");
     }
 
@@ -281,19 +476,22 @@ public sealed class AutoClearAfterRunTests
         await vm.RunBatchAsync();
 
         vm.Items.Select(i => i.Path).Should().Equal(new[] { next }, "the file added mid-run was never in the run");
+        vm.Items.Single().IsCheckedByUser.Should().BeTrue("it keeps its tick for the next batch (T-185)");
+        vm.Operation.ResultSummary.Should().Contain("Kept in the list: 1 not in this run");
     }
 
     /// <summary>
     /// A row the run reported a warning on — here an exact cut that fell back to a keyframe and was written over the
-    /// original — keeps its row: the row's Warning is the only place that warning is shown, and the batch still counts
-    /// as clean.
+    /// original. T-185 — spec change (was <c>ARowTheRunWarnedAbout_StaysInTheList_…</c>): keeping warned rows kept the
+    /// list full for the same user, since every row of a codec that cannot be re-encoded falls back. The row clears and
+    /// the summary names it — the fallback is the one warning the user could not have seen before Run.
     /// </summary>
     [Trait("serves-spec", "SPEC-011")]
     [Fact]
-    public async Task ARowTheRunWarnedAbout_StaysInTheList_AndTheSummarySaysSo()
+    public async Task ARowTheRunWarnedAbout_Clears_AndItsExactCutFallbackIsNamedInTheSummary()
     {
         var (vm, probe, engine, _) = Build(new RecordingDisposer());
-        var warned = await AddRowAsync(vm, probe, MakeVideo("warned.mp4"));
+        await AddRowAsync(vm, probe, MakeVideo("warned.mp4"));
         await AddRowAsync(vm, probe, MakeVideo("clean.mp4"));
         ReplaceMode(vm);
         ReplacedInPlace(engine, i => i == 0 ? new[] { ExactFellBack } : Array.Empty<string>());
@@ -302,9 +500,98 @@ public sealed class AutoClearAfterRunTests
         await vm.RunBatchAsync();
 
         vm.BatchState.Should().Be(BulkBatchState.Completed, "precondition: a warning does not make the batch unclean");
-        vm.Items.Should().Equal(new[] { warned }, "the warned row stays; the clean one goes");
-        warned.Warning.Should().Contain("exact cut unavailable", "and its warning is still on it");
-        vm.Operation.ResultSummary.Should().Contain("1 row with a warning");
+        vm.Items.Should().BeEmpty("a warned row clears like the rest");
+        vm.Operation.ResultSummary.Should().Be("Trimmed 2 · Not cut exactly (snapped to a keyframe): warned.mp4");
+    }
+
+    /// <summary>
+    /// T-185 (the warned-rows repro) — in the user's own mode, a planner note (an outro-only row's ignored cut at 0:00)
+    /// and an exact-cut fallback both used to keep their rows. Both clear; only the fallback is named — the planner's
+    /// notes were on the row before Run.
+    /// </summary>
+    [Trait("serves-spec", "SPEC-011")]
+    [Fact]
+    public async Task PlannerNotesAndFallbacks_DoNotHoldTheList_OnlyTheFallbackIsNamed()
+    {
+        const string PlannerNote = "Cut at 0:00 is outside the file bounds [0:00, 1:00] and was ignored.";
+        var (vm, probe, engine, _) = Build(new RecordingDisposer());
+        await AddRowAsync(vm, probe, MakeVideo("outro-only.mp4"));
+        await AddRowAsync(vm, probe, MakeVideo("fell-back.mp4"));
+        await AddRowAsync(vm, probe, MakeVideo("clean.mp4"));
+        NewFileOutputs(
+            engine,
+            new[] { MakeVideo("outro-only_trimmed.mp4"), MakeVideo("fell-back_trimmed.mp4"), MakeVideo("clean_trimmed.mp4") },
+            i => i switch { 0 => new[] { PlannerNote }, 1 => new[] { ExactFellBack }, _ => Array.Empty<string>() });
+        vm.AutoClearAfterRun = true;
+
+        await vm.RunBatchAsync();
+
+        vm.Items.Should().BeEmpty();
+        vm.Operation.ResultSummary.Should().Be(
+            "Trimmed 3 · Cleared 3 from the list — their originals are still on disk"
+            + " · Not cut exactly (snapped to a keyframe): fell-back.mp4");
+    }
+
+    /// <summary>T-185 — exactly three names needs no "and N more".</summary>
+    [Trait("serves-spec", "SPEC-011")]
+    [Fact]
+    public async Task ExactlyThreeFallbacks_AreAllNamed()
+    {
+        var (vm, probe, engine, _) = Build(new RecordingDisposer());
+        for (var i = 1; i <= 3; i++)
+        {
+            await AddRowAsync(vm, probe, MakeVideo($"ep0{i}.mp4"));
+        }
+
+        ReplaceMode(vm);
+        ReplacedInPlace(engine, _ => new[] { ExactFellBack });
+        vm.AutoClearAfterRun = true;
+
+        await vm.RunBatchAsync();
+
+        vm.Operation.ResultSummary.Should().EndWith("Not cut exactly (snapped to a keyframe): ep01.mp4, ep02.mp4, ep03.mp4");
+    }
+
+    /// <summary>T-185 — both "Kept in the list" parts, in order, comma-separated, plural.</summary>
+    [Trait("serves-spec", "SPEC-011")]
+    [Fact]
+    public async Task BothKeptParts_ReadTogether_InThePlural()
+    {
+        var a = MakeVideo("held-a.mp4");
+        var b = MakeVideo("held-b.mp4");
+        var (vm, probe, engine, _) = Build(new RecordingDisposer { RefuseWhen = p => p == a || p == b });
+        await AddRowAsync(vm, probe, a);
+        await AddRowAsync(vm, probe, b);
+        var later = await AddRowAsync(vm, probe, MakeVideo("later.mp4"));
+        later.IsCheckedByUser = false;
+        NewFileOutputs(engine, MakeVideo("held-a_trimmed.mp4"), MakeVideo("held-b_trimmed.mp4"));
+        vm.AutoDeleteOriginals = true;
+        vm.AutoClearAfterRun = true;
+
+        await vm.RunBatchAsync();
+
+        vm.Operation.ResultSummary.Should().EndWith("Kept in the list: 2 originals still in use, 1 not in this run");
+    }
+
+    /// <summary>T-185 — at most three names, then how many more.</summary>
+    [Trait("serves-spec", "SPEC-011")]
+    [Fact]
+    public async Task ManyFallbacks_NameThree_ThenCountTheRest()
+    {
+        var (vm, probe, engine, _) = Build(new RecordingDisposer());
+        for (var i = 1; i <= 5; i++)
+        {
+            await AddRowAsync(vm, probe, MakeVideo($"ep0{i}.mp4"));
+        }
+
+        ReplaceMode(vm);
+        ReplacedInPlace(engine, _ => new[] { ExactFellBack });
+        vm.AutoClearAfterRun = true;
+
+        await vm.RunBatchAsync();
+
+        vm.Operation.ResultSummary.Should().EndWith(
+            "Not cut exactly (snapped to a keyframe): ep01.mp4, ep02.mp4, ep03.mp4 and 2 more");
     }
 
     // ---- Only a clean batch ----------------------------------------------------------------------------
@@ -576,7 +863,7 @@ public sealed class AutoClearAfterRunTests
 
             surface!.Visibility = Visibility.Visible;   // the surface is bound to IsCompleted; force it for the measure
             summary.Text = "Trimmed 12 · Sent 11 to the Recycle Bin. Still in use: The.Show.S01E07.1080p.WEB-DL.mkv "
-                + "(held by explorer.exe, MsMpEng.exe) · Kept in the list: 1 original left to delete (✕ Delete originals)";
+                + "(held by explorer.exe, MsMpEng.exe) · Kept in the list: 1 original still in use";   // T-185 wording
             StaViewHarness.LayOut(view, w, h);
 
             Rect Bounds(FrameworkElement e) => e.TransformToAncestor(view).TransformBounds(new Rect(e.RenderSize));
@@ -598,6 +885,33 @@ public sealed class AutoClearAfterRunTests
         });
 
         failures.Should().BeEmpty();
+    }
+
+    /// <summary>T-185 — the tooltip says what the box does now, exactly: the list empties, the originals stay on disk
+    /// where ✕ Delete originals no longer reaches them, and what still stays.</summary>
+    [Trait("serves-spec", "SPEC-011")]
+    [Fact]
+    public void TheCheckboxTooltip_SaysExactlyWhatHappens()
+    {
+        string? tooltip = null;
+        StaViewHarness.OnSta(() =>
+        {
+            var view = new BulkCutView
+            {
+                DataContext = new BulkCutViewModel(
+                    new BulkFakeProbe(), new ThrowingFakeSplitEngine(), new FakeThumbnailService(),
+                    new FakeSettings(), new FakeBulkTrimEngine()),
+            };
+            StaViewHarness.LayOut(view, 1280, 800);
+            tooltip = StaViewHarness.Descendants<CheckBox>(view)
+                .Single(c => (c.Content as string) == "Auto-clear list").ToolTip as string;
+        });
+
+        tooltip.Should().Be(
+            "After a batch finishes with no failures, take the videos it trimmed out of the list and keep its summary "
+            + "on screen. If you keep your originals, they stay on disk beside the outputs, where ✕ Delete originals can "
+            + "no longer reach them — tick Auto-delete originals to have them binned, or leave this off to review first. "
+            + "Videos not in this run stay in the list, and so does any original Auto-delete could not bin.");
     }
 
     private static DependencyProperty ToggleButton_IsChecked => System.Windows.Controls.Primitives.ToggleButton.IsCheckedProperty;

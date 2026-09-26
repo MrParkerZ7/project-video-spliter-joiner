@@ -529,7 +529,9 @@ without Replace originals (see [Cutting exactly where you set it](#cutting-exact
 A finished batch leaves both copies on disk — your originals and the new `_trimmed` files. Two ways to
 get the space back.
 
-**By hand.** When a batch finishes, a **Delete originals** button appears at the far left of the footer.
+**By hand.** When a batch finishes, a **Delete originals** button appears at the far left of the footer. (Not with
+**Auto-clear list** on: the rows are gone then, so tick **Auto-delete originals** instead — see *Clearing the list
+when a batch is done* below.)
 It tells you how many files and roughly how much space (*"Delete 12 originals (8.4 GB)"*), asks once, and
 sends them to the **Recycle Bin** — never a permanent delete, so you can put them back. It only offers
 videos that were trimmed successfully and whose trimmed file is still on disk, and it re-checks that at
@@ -554,13 +556,22 @@ batch will do. Turning auto-delete back off also switches the bin option off —
 turn them both on later.
 
 **Clearing the list when a batch is done.** Tick **Auto-clear list** (just before the red options) and a batch
-that finishes **with no failures** takes the rows it finished out of the list, ready for the next set. The report
-stays on screen — what was trimmed and what went to the Recycle Bin — and **Open folder** still opens the output.
-Rows you might still need stay, and the report says how many and why: rows that were not part of this run
-(unticked, no cut set yet, or added while it ran), rows whose original is still yours to delete (so **✕ Delete
-originals** still works), and rows the run left a warning on. Under **Replace originals** no original is ever left
-to delete, so a clean run clears every row it trimmed. A batch with any failure clears nothing. Off until you turn
-it on; the choice is remembered.
+that finishes **with no failures** takes every video it trimmed out of the list, ready for the next set. The report
+stays on screen — what was trimmed, what went to the Recycle Bin — and **Open folder** still opens the first output's
+folder. The report also says what the list used to show you:
+
+- **Your originals are still on disk.** If you keep originals (Auto-delete off), the report reads *Cleared 3 from the
+  list — their originals are still on disk*. They sit beside their trimmed copies as always, but **✕ Delete
+  originals** can no longer reach them once their rows are gone. So if you want the originals binned after a batch,
+  tick **Auto-delete originals** too; if you want to look at the results before deciding, leave Auto-clear off.
+- **Videos that were not cut exactly.** With **Exact cut** on, a video whose format cannot be re-encoded is cut on the
+  nearest keyframe instead; the report names them (*Not cut exactly (snapped to a keyframe): …*), since their rows
+  are gone.
+
+What stays in the list: videos that were not part of this run (unticked, no cut set yet, or added while it ran), and —
+with Auto-delete on — any original that could not be binned because another program had it open. That row is
+unticked so the next Run does not trim it again; press **✕ Delete originals** to try again once the file is free. A
+batch with any failure clears nothing. Off until you turn it on; the choice is remembered.
 
 ## Progress, cancel, and errors
 

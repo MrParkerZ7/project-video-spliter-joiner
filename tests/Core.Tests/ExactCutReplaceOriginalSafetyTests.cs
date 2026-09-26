@@ -236,7 +236,9 @@ public sealed class ExactCutReplaceOriginalSafetyTests
 
             var warnings = result.Items[0].Warnings ?? Array.Empty<string>();
             warnings.Should().ContainSingle("the user asked for exact cutting and did not get it")
-                .Which.Should().Contain("exact cut unavailable").And.Contain("replacing originals");
+                .Which.Should().StartWith(BulkTrimEngine.ExactFallbackPrefix,
+                    "T-185: the Bulk Cut screen names fallback rows by matching this prefix at the START of the warning")
+                .And.Contain("replacing originals");
         }
         finally { Cleanup(dir); }
     }

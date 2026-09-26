@@ -16,6 +16,14 @@ namespace VideoSplitJoiner.Core.Bulk;
 /// </summary>
 public sealed class BulkTrimEngine : IBulkTrimEngine
 {
+    /// <summary>
+    /// How every "an exact cut was not possible, so this row was cut on a keyframe" warning begins (T-185). The
+    /// Bulk Cut screen names such rows in its summary when it clears the finished list — they are the one run warning
+    /// the user could not have seen before Run — so the text is written here, once, and matched there against this
+    /// constant rather than against a copy of the sentence.
+    /// </summary>
+    public const string ExactFallbackPrefix = "exact cut unavailable";
+
     /// <summary>Container/overhead slack added to each output drive's required-space estimate (mirrors <c>SplitEngine</c>).</summary>
     private const long PreflightMarginBytes = 16L * 1024 * 1024;
 
@@ -242,7 +250,7 @@ public sealed class BulkTrimEngine : IBulkTrimEngine
                 {
                     rowWarnings = new[]
                     {
-                        "exact cut unavailable (replacing originals) - cut snapped to the nearest keyframe",
+                        $"{ExactFallbackPrefix} (replacing originals) - cut snapped to the nearest keyframe",
                     };
                 }
                 else if (opts.Precision == CutPrecision.Exact && _smartCut is not null)
@@ -295,7 +303,7 @@ public sealed class BulkTrimEngine : IBulkTrimEngine
                         {
                             // Only worth telling the user when exact was genuinely unavailable - an
                             // already-on-a-keyframe cut is exact either way and needs no note.
-                            rowWarnings = new[] { $"exact cut unavailable ({fbReason}) - cut snapped to the nearest keyframe" };
+                            rowWarnings = new[] { $"{ExactFallbackPrefix} ({fbReason}) - cut snapped to the nearest keyframe" };
                         }
                     }
                 }

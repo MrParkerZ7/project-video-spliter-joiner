@@ -27,7 +27,7 @@ sources:
   - src/Core/Split/SplitEngine.cs
   - src/Core/Split/SmartCutEngine.cs
 serves-goal: [G-036, G-041, G-042]
-updated: 2026-09-12
+updated: 2026-09-26
 ---
 
 ## What
@@ -258,7 +258,9 @@ from the guarantee, because neither owns it.
   `SplitAsync`) and is recorded exactly like a `Lossless` row. The fallback is **per row** — it never aborts,
   downgrades, or re-routes the rest of the batch.
 - **I51** — The fallback reason is surfaced as a **row warning** —
-  `"exact cut unavailable (<reason>) - cut snapped to the nearest keyframe"` — when `FallbackReason` is present
+  `"exact cut unavailable (<reason>) - cut snapped to the nearest keyframe"` (its opening words are the constant
+  `BulkTrimEngine.ExactFallbackPrefix`, which the Bulk Cut screen matches to name such rows — SPEC-011 I161, T-185) —
+  when `FallbackReason` is present
   **and** `Strategy != SmartCutStrategy.PureCopy`. A `PureCopy` fallback (the requested time was already on a
   keyframe, so the lossless cut IS exact there) adds **no** warning. Any `SplitResult` warnings from the
   fallback run are appended to it, so I29's warning surface is unchanged.

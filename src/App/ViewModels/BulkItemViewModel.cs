@@ -890,10 +890,16 @@ public sealed class BulkItemViewModel : ObservableObject
 
     /// <summary>
     /// T-171 — true when the last run's own result carried a warning for this row (e.g. an exact cut that fell back
-    /// to a keyframe). The row's <see cref="Warning"/> is the only place that warning is shown, so the automatic
-    /// clear after a clean batch leaves such a row in the list.
+    /// to a keyframe).
     /// </summary>
     internal bool HasRunWarnings => _ledgerWarnings.Count > 0;
+
+    /// <summary>
+    /// T-185 — the last run's own warnings for this row. The automatic clear after a clean batch takes the row away,
+    /// so it names an exact-cut fallback (<see cref="VideoSplitJoiner.Core.Bulk.BulkTrimEngine.ExactFallbackPrefix"/>)
+    /// in the summary instead of keeping the row for it.
+    /// </summary>
+    internal IReadOnlyList<string> RunWarnings => _ledgerWarnings;
 
     internal void ApplyResult(BulkTrimItemResult result)
     {

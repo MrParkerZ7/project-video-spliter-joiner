@@ -226,6 +226,12 @@ public sealed class BulkCutViewModel : ObservableObject
     // the same profile while its grab is in flight moves the note to the newer summary instead of losing it.
     private readonly Dictionary<string, ApplyToAllReport> _pictureRefreshReports = new(StringComparer.OrdinalIgnoreCase);
     private string? _profilePictureRefreshKeptPath;
+
+    // T-185: the run's own report — what the batch trimmed, what the automatic sweep binned, what the auto-clear took
+    // away — without the volatile "Kept in the list" part. A manual delete sweep rebuilds the summary as this plus its
+    // own latest line, so retrying never grows the line or leaves a stale clause, and a summary some other gesture
+    // wrote since (a profile backup, say) is never mistaken for the run's report. Null when no clean run's report stands.
+    private string? _runReport;
     private long _pictureGenerationCounter;
     private string? _profilePictureRefreshNote;
     private IReadOnlyList<BulkTrimItemResult> _lastFailedItems = Array.Empty<BulkTrimItemResult>();
@@ -856,7 +862,9 @@ public sealed class BulkCutViewModel : ObservableObject
 
     /// <summary>
     /// T-144 - send the eligible originals to the Recycle Bin. Per-row isolated: one file that cannot be
-    /// binned never stops the rest, and the summary states binned vs refused.
+    /// binned never stops the rest, and the summary states binned vs refused. While a clean run's report is still
+    /// the summary on screen, the line is added after it rather than replacing it (T-171 for the automatic sweep,
+    /// T-185 for a manual one), and a later manual press replaces the earlier manual line.
     /// </summary>
     public void DeleteOriginals()
     {
@@ -915,13 +923,36 @@ public sealed class BulkCutViewModel : ObservableObject
         // for which one; "still in use" without a culprit leaves them unable to do anything about it
         // (T-155). The holder is looked up only for files that actually failed, so the common path pays
         // nothing.
-        Operation.ResultSummary = refusedPaths.Count == 0
+        var line = refusedPaths.Count == 0
             ? string.Create(CultureInfo.InvariantCulture, $"Sent {binned} original(s) to the Recycle Bin")
             : string.Create(
                 CultureInfo.InvariantCulture,
                 $"Sent {binned} to the Recycle Bin. Still in use: {DescribeRefusals(refusedPaths)}");
 
+        // T-171 / T-185: while a clean run's report is still the summary on screen, the sweep's line JOINS it — the
+        // automatic sweep and a manual one alike. The list may already be cleared, so replacing the summary would leave
+        // "Trimmed N" said nowhere. The line goes after the run's report and REPLACES any earlier manual line, so
+        // pressing the button again reports the latest attempt instead of piling attempts up.
+        if (BatchState == BulkBatchState.Completed
+            && _runReport is { } report
+            && (Operation.ResultSummary ?? string.Empty).StartsWith(report, StringComparison.Ordinal))
+        {
+            Operation.ResultSummary = string.Create(CultureInfo.InvariantCulture, $"{report} · {line}");
+        }
+        else
+        {
+            Operation.ResultSummary = line;
+        }
+
         RaiseRunState();
+    }
+
+    /// <summary>Adds <paramref name="part"/> to the summary line with <c> · </c>, or makes it the line if there is none.</summary>
+    private void AppendToRunSummary(string part)
+    {
+        Operation.ResultSummary = string.IsNullOrEmpty(Operation.ResultSummary)
+            ? part
+            : string.Create(CultureInfo.InvariantCulture, $"{Operation.ResultSummary} · {part}");
     }
 
     /// <summary>
@@ -1081,25 +1112,18 @@ public sealed class BulkCutViewModel : ObservableObject
             return;
         }
 
-        var runSummary = Operation.ResultSummary;
         var previousConfirm = ConfirmDeleteOriginals;
         try
         {
             ConfirmDeleteOriginals = (_, _) => true;   // consent was given by ticking the box
-            DeleteOriginals();
+            DeleteOriginals();   // joins its line to the run's (T-171 I162) - BatchState is Completed here
         }
         finally
         {
             ConfirmDeleteOriginals = previousConfirm;
         }
 
-        // T-171: the sweep's line joins the run's line instead of replacing it. With the list auto-cleared, "Trimmed N"
-        // would otherwise survive nowhere - the report would say what was binned but not what was cut.
-        if (!string.IsNullOrEmpty(runSummary) && Operation.ResultSummary != runSummary)
-        {
-            Operation.ResultSummary = string.Create(
-                CultureInfo.InvariantCulture, $"{runSummary} · {Operation.ResultSummary}");
-        }
+        _runReport = Operation.ResultSummary;   // the automatic sweep is part of what the run did
 
         if (AutoEmptyRecycleBin)
         {
@@ -1402,6 +1426,7 @@ public sealed class BulkCutViewModel : ObservableObject
         BatchState = BulkBatchState.Idle;
         LastFailedItems = Array.Empty<BulkTrimItemResult>();
         LastRunOutputPath = null;
+        _runReport = null;
         RaiseRunState();
     }
 
@@ -1481,12 +1506,14 @@ public sealed class BulkCutViewModel : ObservableObject
     /// partly-failed, cancelled or blocked batch the rows and <see cref="LastFailedItems"/> are the only record of what
     /// went wrong.</para>
     ///
-    /// <para><b>Nothing the user could still act on goes</b> (G-055 criterion 3). A row stays, and the summary counts
-    /// it, when it is not one this run finished (unticked, no cut yet, or added while the batch ran); when its original
-    /// is still the user's to delete (T-171 decision (b) — ✕ Delete originals needs the row; under Replace originals
-    /// none is ever left, since <see cref="DeletableOriginals"/> skips a row whose output IS its original); or when the
-    /// run reported a warning on it (e.g. an exact cut that fell back to a keyframe — the row is the only place that
-    /// warning is shown).</para>
+    /// <para><b>T-185 — every row the run finished goes</b>, in every output mode. T-171 kept a row whose original was
+    /// still on disk (decision (b)) and a row the run warned on; in the default new-file mode that kept every row, and
+    /// the user reported the list as still there (T-183). Instead the summary says what the rows used to: the originals
+    /// that are still on disk, and any row that was not cut exactly (an exact-cut fallback — the one run warning the
+    /// user could not have seen before Run; planner notes were on the row already). A row stays only when it was not in
+    /// this run (unticked, no cut yet, added while the batch ran), or — with Auto-delete armed — when its original is
+    /// still deletable after the sweep, i.e. the sweep could not bin it: the user asked for it to go, and ✕ Delete
+    /// originals on that row is the retry. Such a row is unticked, so the next Run does not trim it again.</para>
     /// </summary>
     private void RunAutoClearIfArmed(IReadOnlyList<BulkItemViewModel> ran)
     {
@@ -1495,25 +1522,60 @@ public sealed class BulkCutViewModel : ObservableObject
             return;
         }
 
-        var originalLeft = DeletableOriginals().ToHashSet();
         var finished = ran.Where(r => Items.Contains(r) && r.RowState == RowState.Done).ToList();
-        var clear = finished.Where(r => !originalLeft.Contains(r) && !r.HasRunWarnings).ToList();
 
-        var keptForOriginal = finished.Count(originalLeft.Contains);
-        var keptForWarning = finished.Count(r => !originalLeft.Contains(r) && r.HasRunWarnings);
+        // Only with Auto-delete armed does an original still deletable after the sweep mean "it could not be binned".
+        var refused = AutoDeleteOriginals
+            ? DeletableOriginals().Where(finished.Contains).ToList()
+            : new List<BulkItemViewModel>();
+        var clear = finished.Except(refused).ToList();
+
+        var originalsOnDisk = clear.Count(r =>
+            r.OutputPath is { Length: > 0 } output && !FileFacts.Same(output, r.Path) && FileFacts.Exists(r.Path));
+        var notExact = clear
+            .Where(r => r.RunWarnings.Any(w => w.StartsWith(BulkTrimEngine.ExactFallbackPrefix, StringComparison.Ordinal)))
+            .Select(r => Path.GetFileName(r.Path))
+            .ToList();
         var notInRun = Items.Count - finished.Count;
 
-        var kept = new List<string>();
-        if (keptForOriginal > 0)
+        foreach (var row in refused)
         {
-            kept.Add(string.Create(
-                CultureInfo.InvariantCulture,
-                $"{keptForOriginal} original{Plural(keptForOriginal)} left to delete (✕ Delete originals)"));
+            row.IsCheckedByUser = false;   // kept to retry the delete - never to be trimmed a second time
         }
 
-        if (keptForWarning > 0)
+        var parts = new List<string>();
+        if (originalsOnDisk > 0)
         {
-            kept.Add(string.Create(CultureInfo.InvariantCulture, $"{keptForWarning} row{Plural(keptForWarning)} with a warning"));
+            // Normally every cleared row still has its original; if some were moved or binned meanwhile, say both counts
+            // rather than state a wrong number of cleared rows.
+            parts.Add(originalsOnDisk == clear.Count
+                ? originalsOnDisk == 1
+                    ? "Cleared 1 from the list — its original is still on disk"
+                    : string.Create(CultureInfo.InvariantCulture, $"Cleared {originalsOnDisk} from the list — their originals are still on disk")
+                : string.Create(
+                    CultureInfo.InvariantCulture,
+                    $"Cleared {clear.Count} from the list — {originalsOnDisk} original{Plural(originalsOnDisk)} still on disk"));
+        }
+
+        if (notExact.Count > 0)
+        {
+            var names = string.Join(", ", notExact.Take(3));
+            parts.Add(notExact.Count > 3
+                ? string.Create(CultureInfo.InvariantCulture, $"Not cut exactly (snapped to a keyframe): {names} and {notExact.Count - 3} more")
+                : $"Not cut exactly (snapped to a keyframe): {names}");
+        }
+
+        if (parts.Count > 0)
+        {
+            AppendToRunSummary(string.Join(" · ", parts));
+        }
+
+        _runReport = Operation.ResultSummary;   // what the clear took away is part of the report; what stays is not
+
+        var kept = new List<string>();
+        if (refused.Count > 0)
+        {
+            kept.Add(string.Create(CultureInfo.InvariantCulture, $"{refused.Count} original{Plural(refused.Count)} still in use"));
         }
 
         if (notInRun > 0)
@@ -1523,10 +1585,7 @@ public sealed class BulkCutViewModel : ObservableObject
 
         if (kept.Count > 0)
         {
-            var why = "Kept in the list: " + string.Join(", ", kept);
-            Operation.ResultSummary = string.IsNullOrEmpty(Operation.ResultSummary)
-                ? why
-                : string.Create(CultureInfo.InvariantCulture, $"{Operation.ResultSummary} · {why}");
+            AppendToRunSummary("Kept in the list: " + string.Join(", ", kept));
         }
 
         if (clear.Count == Items.Count)
@@ -2618,6 +2677,7 @@ public sealed class BulkCutViewModel : ObservableObject
         }
 
         BatchState = BulkBatchState.Preparing;
+        _runReport = null;
         ApplyToAllReport = null;
         LastFailedItems = Array.Empty<BulkTrimItemResult>();
         LastRunOutputPath = null;
@@ -2673,6 +2733,7 @@ public sealed class BulkCutViewModel : ObservableObject
             runningStatus: "Trimming…").ConfigureAwait(true);
 
         BatchState = MapOutcome(batch);
+        _runReport = BatchState == BulkBatchState.Completed ? Operation.ResultSummary : null;
         RaiseRunState();
 
         RunAutoDeleteIfArmed();   // T-156 — no-op unless the user armed it, and only on a clean batch

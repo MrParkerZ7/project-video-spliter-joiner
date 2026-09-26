@@ -205,7 +205,9 @@ public sealed class CutPrecisionRoutingTests
             var row = result.Items.Single();
             row.Outcome.Should().Be(ItemOutcome.Done);
             row.Warnings.Should().ContainSingle()
-                .Which.Should().Contain("exact cut unavailable").And.Contain("prores_raw_hq",
+                .Which.Should().StartWith(BulkTrimEngine.ExactFallbackPrefix,
+                    "T-185: the Bulk Cut screen names fallback rows by matching this prefix at the START of the warning")
+                .And.Contain("prores_raw_hq",
                     "the user is told why this row is not frame-exact, rather than silently getting a different result");
         }
         finally { Cleanup(dir); }
