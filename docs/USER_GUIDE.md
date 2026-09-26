@@ -415,12 +415,22 @@ The Bulk tab **remembers its own split position per layout**, independent of the
      **stored in your settings and survives a restart**. Saving under a name that already exists
      **replaces** it, so you can refine a profile in place.
    - **Hover a chip to see it properly.** Hold the cursor on a chip and, after about half a second, a
-     card opens above it with a **larger picture** (320px wide), the **full name**, and the **intro /
-     outro** the profile would apply (the outro reads *to end* when the profile has none). It stays open
-     for up to two minutes while you keep the cursor there. A profile with no picture shows the name and values only.
-     A picture too small to fill the card sharply still fills it, and the card says **low resolution** —
-     pictures saved by older versions are 64–96px wide. Select the chip and press **📷 Use current frame**
-     on the right video to re-take it; new pictures are kept at 640px wide, sharp even on a scaled display.
+     card opens above it with the **picture at its own size** — one picture pixel per screen pixel, from
+     320 up to 640 pixels wide (a 4:3 or portrait picture shows whole, with bars beside it) — the **full
+     name**, and **where the profile cuts, in words**: *Intro  cuts at 00:32.0* (or *none — keeps from the
+     start*) and *Outro  cuts 01:30.0 before the end* (or *none — keeps to the end*); the times are in gold.
+     These are the profile's own values: on each video the cut then snaps to that video's nearest keyframe,
+     so a row can show a time a second or two away (*requested → snapped*) — that is the snap, not the
+     profile being wrong. The card stays open for up to two minutes while you keep the cursor there. A
+     profile with no picture shows the name and the cut lines only.
+     A picture narrower than 320 pixels still fills the card, and the card says **low resolution** —
+     pictures saved by older versions are 64–96px wide. **Applying that profile to a video re-takes its
+     picture at full size** (640px), from the video you applied it to, at the profile's intro cut, and a line
+     under the apply summary says so — *Picture for "…" re-taken at full size from episode01.mkv — the old one
+     is kept.* Press **Show old picture** on that line to see the old file in Explorer: replaced pictures
+     are kept in `%LOCALAPPDATA%\VideoSplitJoiner\profile-thumbs\replaced`, so a replacement can be undone
+     by hand. You can also re-take a picture yourself with **📷 Use current frame**. On a library from an
+     older version, the cards grow only as their pictures are re-taken.
    - **Each profile carries a thumbnail.** When you **Save**, the app automatically uses the **frame at
      the row's intro-end** as the profile's thumbnail, shown **on its chip** so you can tell profiles
      apart at a glance. To change it later, select the profile's chip and use **📷 Use current frame** (the

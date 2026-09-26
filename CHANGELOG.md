@@ -33,11 +33,14 @@ goal; `0.1.0` is the first end-to-end, shippable cut.
   In the default lossless mode, a row whose keyframes are still being read keeps its placeholder until the cut
   is known, instead of grabbing a frame at a time the cut will not use and then grabbing again.
 - **Profile pictures are saved sharper, and a picture too small for the hover card says so.** New pictures —
-  captured, snapshotted or uploaded — are now kept at 640 pixels wide instead of 320, so the 320-wide hover
-  card stays sharp on a display scaled up to 200%; capturing takes no longer. Pictures saved before now (in
-  practice 64–96 pixels) still fill the card, but it now says *low resolution* and names **📷 Use current
-  frame** as the way to re-take them — the blur is disclosed instead of looking like a rendering bug. They
-  cannot be sharpened automatically: a profile does not remember which video its picture came from.
+  captured, snapshotted or uploaded — are now kept at 640 pixels wide instead of 320; capturing takes no longer.
+  Pictures saved before now (in practice 64–96 pixels) still fill the card, but it says *low resolution* — the
+  blur is disclosed instead of looking like a rendering bug — and they are re-taken at full size the next time
+  their profile is applied (see *Added*).
+- **A 640-pixel profile picture could come out 64 pixels wide.** The frame-grab cache kept one file per second of
+  video whatever width was asked for, so once a row's 64-pixel chip had grabbed a second, a 640-pixel capture of
+  the same second was handed that 64-pixel file — and the scrub preview could show a 64-pixel frame the same way.
+  The cache now keeps one file per second and width.
 - **A file that is not a picture can no longer become a profile's picture.** The *Thumbnail…* chooser has
   an *All files* option, and whatever you picked through it was copied in and reported as success — no
   layer ever asked whether the file was an image. A real profile store on this machine ended up with a
@@ -80,6 +83,13 @@ goal; `0.1.0` is the first end-to-end, shippable cut.
   log discards its older half when it fills, a test run could delete the drop line you were about to send
   before you ever opened the file. The tests now write to a temp folder of their own.
 ### Added
+- **Applying a profile re-takes its small picture at full size.** Most profiles saved by older versions have
+  64–96-pixel pictures. When you apply such a profile, the app now grabs a new 640-pixel picture from the video you
+  applied it to, at the profile's intro cut, and says so under the apply line — *Picture for "…" re-taken at full
+  size from episode01.mkv — the old one is kept*, with a **Show old picture** button. The old picture is never lost:
+  it is copied to `%LOCALAPPDATA%\VideoSplitJoiner\profile-thumbs\replaced` first. A picture that is already sharp
+  (320 pixels or wider), one that cannot be read, and a profile with no picture are never touched, and nothing but an
+  apply ever re-takes. On an existing library the hover cards grow as their pictures are re-taken.
 - **Bulk Cut can clear its own list after a clean batch.** A new **Auto-clear list** checkbox, just before
   *Replace originals*, takes every video the batch trimmed out of the list once it completes with no failures, so
   the list is ready for the next set — and unlike *Clear all*, it keeps the batch's report on screen: what was
@@ -119,6 +129,11 @@ goal; `0.1.0` is the first end-to-end, shippable cut.
   "permanent" while it is still recoverable.
 
 ### Changed
+- **The profile hover card shows the picture at its own size and says where the profile cuts.** The card was a
+  fixed 320 pixels, so a 640-pixel picture showed at half its size. It now follows the picture — one picture pixel
+  per screen pixel, from 320 up to 640 pixels wide, a 4:3 or portrait picture whole with bars — and states the cut
+  in words at a readable size: *Intro  cuts at 00:32.0* / *none — keeps from the start*, *Outro  cuts 01:30.0 before
+  the end* / *none — keeps to the end*, with the times in gold.
 - **Cut profiles are a bar you click, not a dropdown you open.** Profiles can carry a picture, and the
   old picker hid every one of them behind a closed list — so you chose by name and only saw the picture
   afterwards. They now sit in a bar you can see at a glance; click one to select it, and the
