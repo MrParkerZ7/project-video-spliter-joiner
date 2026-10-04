@@ -262,8 +262,9 @@ public sealed class BulkItemViewModel : ObservableObject
         var handle = new CutMarkerViewModel(_probe, () => Keyframes, requested, snapPending: true);
 
         // T-176: SetExactCut suppresses the note only on the handles that exist at the flip, so a handle added later
-        // inherits it here — before the resolve, so a handle added to a scanning row is covered too.
-        handle.SuppressSnapNote = _exactCut;
+        // inherits it here — before the resolve, so a handle added to a scanning row is covered too. T-189: only when
+        // Exact really cuts this row; a row whose source Exact cannot cut keeps the readout.
+        handle.SuppressSnapNote = ExactCutApplies;
         if (KeyframesReady)
         {
             handle.ResolveSnap();
@@ -314,13 +315,14 @@ public sealed class BulkItemViewModel : ObservableObject
 
     /// <summary>
     /// The time the run will cut <paramref name="handle"/> at, or null while that time is still provisional
-    /// (T-174, G-057 decision 1): no known duration yet, or Lossless with the snap still pending. Exact cut is
-    /// never provisional — it cuts where the user set it. Agrees with <see cref="EffectiveIntroEnd"/> /
+    /// (T-174, G-057 decision 1): no known duration yet, or a snapped cut with the snap still pending. An Exact cut
+    /// Exact really makes is never provisional — it cuts where the user set it; a row whose source Exact cannot cut
+    /// is cut at the snapped keyframe, as in Lossless (T-189). Agrees with <see cref="EffectiveIntroEnd"/> /
     /// <see cref="EffectiveOutroStart"/> whenever it is not null.
     /// </summary>
     private TimeSpan? GrabTime(CutMarkerViewModel handle) =>
         Duration is null ? null
-        : _exactCut ? handle.Requested
+        : ExactCutApplies ? handle.Requested
         : handle.IsSnapPending ? null
         : handle.Snapped;
 
@@ -401,12 +403,14 @@ public sealed class BulkItemViewModel : ObservableObject
     /// snapped value: <see cref="BuildBulkTrimItem"/> hands the engine <c>IntroEnd.Requested</c>, so on a
     /// coarse GOP an Exact-mode row whose request snaps back to 0 would otherwise be judged a no-op and
     /// excluded — and, since T-127, told "nothing to trim yet" for a trim Exact mode performs correctly.
+    /// T-189: <c>Requested</c> only when Exact really cuts this row (<see cref="ExactCutApplies"/>); a row whose
+    /// source Exact cannot cut falls back to the lossless cut, which lands on <c>Snapped</c>.
     /// </summary>
-    private TimeSpan EffectiveIntroEnd => _exactCut ? IntroEnd.Requested : IntroEnd.Snapped;
+    private TimeSpan EffectiveIntroEnd => ExactCutApplies ? IntroEnd.Requested : IntroEnd.Snapped;
 
     /// <summary>The outro-start the batch will actually cut at — see <see cref="EffectiveIntroEnd"/>.</summary>
     private TimeSpan? EffectiveOutroStart =>
-        HasOutro ? (_exactCut ? OutroStart!.Requested : OutroStart!.Snapped) : (TimeSpan?)null;
+        HasOutro ? (ExactCutApplies ? OutroStart!.Requested : OutroStart!.Snapped) : (TimeSpan?)null;
 
     private TimeSpan? OutroStartSnapped => HasOutro ? OutroStart!.Snapped : (TimeSpan?)null;
 
@@ -482,7 +486,8 @@ public sealed class BulkItemViewModel : ObservableObject
 
     /// <summary>
     /// T-125: under EXACT cutting the cut lands on the requested time, so the row must stop advertising
-    /// a keyframe offset that will not happen. Propagated from the tab's precision choice.
+    /// a keyframe offset that will not happen. Propagated from the tab's precision choice. T-189: only on a row Exact
+    /// really cuts (<see cref="ExactCutApplies"/>) — a row whose source Exact cannot cut keeps its readout.
     /// </summary>
     public void SetExactCut(bool exact)
     {
@@ -491,17 +496,51 @@ public sealed class BulkItemViewModel : ObservableObject
             return;
         }
 
+        ApplyPrecisionRule(() => _exactCut = exact);
+    }
+
+    /// <summary>
+    /// T-189 (G-059): record whether Exact can cut this row's source, from the SAME gate the engine falls back on —
+    /// <see cref="SmartCutArgsBuilder.TryResolveEncoders"/> on the row's probed <see cref="MediaInfo"/> — so the row and
+    /// the run never disagree. Called by the tab when the row's probe succeeds, before its duration is set; a row whose
+    /// probe failed never reaches it. Re-evaluates the row exactly as a precision flip does.
+    /// </summary>
+    internal void SetSourceMedia(MediaInfo info)
+    {
+        ArgumentNullException.ThrowIfNull(info);
+
+        var reason = SmartCutArgsBuilder.TryResolveEncoders(info, out _, out _, out var why)
+            ? null
+            : why ?? "this video cannot be cut frame-exactly";
+
+        if (_sourceKnown && string.Equals(reason, _exactUnavailableReason, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        _sourceKnown = true;
+        ApplyPrecisionRule(() => _exactUnavailableReason = reason);
+    }
+
+    /// <summary>
+    /// Change one input of the "does Exact really cut this row?" rule, then follow it everywhere the rule is read: the
+    /// handles' snap readout, the derived eligibility set, and each handle's chip.
+    /// </summary>
+    private void ApplyPrecisionRule(Action change)
+    {
         // T-174: the chip shows the cut the run will make, so the flip follows each handle's grab time. Compared
         // before and after rather than tested as Snapped != Requested: a snap-pending handle has Snapped ==
         // Requested (an identity snap), yet its grab time goes from provisional to known when Exact is switched on.
         var introBefore = GrabTime(IntroEnd);
         var outroBefore = OutroStart is { } outroHandle ? GrabTime(outroHandle) : null;
 
-        _exactCut = exact;
-        IntroEnd.SuppressSnapNote = exact;
+        change();
+
+        var suppress = ExactCutApplies;
+        IntroEnd.SuppressSnapNote = suppress;
         if (OutroStart is { } outro)
         {
-            outro.SuppressSnapNote = exact;
+            outro.SuppressSnapNote = suppress;
         }
 
         // Review finding #1: the precision flip changes which cut point eligibility is measured against
@@ -540,6 +579,33 @@ public sealed class BulkItemViewModel : ObservableObject
 
     private bool _exactCut;
 
+    // T-189: why Exact cannot cut this row's source (null = it can, or the probe has not said yet), and whether the
+    // probe has said.
+    private string? _exactUnavailableReason;
+    private bool _sourceKnown;
+
+    /// <summary>
+    /// T-189: why Exact cannot cut this row's source, in the words the run's warning uses
+    /// (<see cref="SmartCutArgsBuilder.TryResolveEncoders"/>'s reason) — or null when it can, or before the probe.
+    /// </summary>
+    internal string? ExactUnavailableReason => _exactUnavailableReason;
+
+    /// <summary>
+    /// T-189 (G-059): THE per-row predicate every Exact-gated read uses — Exact is on AND Exact can cut this row. When
+    /// false the row behaves exactly as in Lossless: snap readout shown, cut and chip at <c>Snapped</c> (provisional
+    /// while the snap is pending), eligibility from <c>Snapped</c>, and the T-120 "cut moved" note.
+    /// </summary>
+    internal bool ExactCutApplies => _exactCut && _exactUnavailableReason is null;
+
+    /// <summary>
+    /// T-189: the before-Run statement of an Exact row whose source Exact cannot cut, in the run's own words
+    /// (<see cref="BulkTrimEngine"/> writes the same sentence as the row warning when it falls back); null otherwise.
+    /// </summary>
+    private string? ExactFallbackNote =>
+        _exactCut && _exactUnavailableReason is { } reason
+            ? $"{BulkTrimEngine.ExactFallbackPrefix} ({reason}) - cut snapped to the nearest keyframe"
+            : null;
+
     /// <summary>Largest absolute snap offset across this row's handles (T-120) — how far the cut really moved.</summary>
     private TimeSpan MaxSnapOffset()
     {
@@ -555,6 +621,14 @@ public sealed class BulkItemViewModel : ObservableObject
         {
             var notes = new List<string>();
 
+            // T-189: an Exact row whose source Exact cannot cut says so BEFORE Run, in the run's own words — it depends on
+            // the source alone, so it shows while the keyframes are still scanning too.
+            var fallbackNote = ExactFallbackNote;
+            if (fallbackNote is not null)
+            {
+                notes.Add(fallbackNote);
+            }
+
             if (KeyframesReady && Duration is { } d)
             {
                 var gop = _probe.AverageGop(Keyframes);
@@ -563,8 +637,9 @@ public sealed class BulkItemViewModel : ObservableObject
                     notes.Add(string.Create(CultureInfo.InvariantCulture, $"coarse keyframes — cuts may move ~{gop.TotalSeconds:0.0}s"));
                 }
 
-                // T-120: report the snap that actually happened on THIS row, even on a fine mean grid.
-                var worstSnap = _exactCut ? TimeSpan.Zero : MaxSnapOffset();
+                // T-120: report the snap that actually happened on THIS row, even on a fine mean grid. Zero only where
+                // Exact really cuts the row (T-189): a fall-back row's snap is real.
+                var worstSnap = ExactCutApplies ? TimeSpan.Zero : MaxSnapOffset();
                 if (worstSnap >= NoticeableSnapThreshold)
                 {
                     notes.Add(string.Create(CultureInfo.InvariantCulture, $"cut moved {worstSnap.TotalSeconds:0.0}s to the nearest keyframe"));
@@ -581,7 +656,11 @@ public sealed class BulkItemViewModel : ObservableObject
                 }
             }
 
-            notes.AddRange(_ledgerWarnings);
+            // T-189: the engine writes the same sentence into the ledger when the row falls back. RunWarnings keeps it
+            // (the auto-clear summary reads it, SPEC-011 I161); only this text de-duplicates, so the reason shows once.
+            notes.AddRange(fallbackNote is null
+                ? _ledgerWarnings
+                : _ledgerWarnings.Where(w => !string.Equals(w, fallbackNote, StringComparison.Ordinal)));
 
             return notes.Count == 0 ? null : string.Join("; ", notes);
         }
@@ -973,8 +1052,9 @@ public sealed class BulkItemViewModel : ObservableObject
 
         // T-108 / T-174: a change of the property that IS the cut re-grabs THAT handle's frame — Snapped in Lossless,
         // Requested under Exact (where every drag moves the cut, even within one GOP). The helpers skip a time that
-        // is still provisional.
-        var cutProperty = _exactCut ? nameof(CutMarkerViewModel.Requested) : nameof(CutMarkerViewModel.Snapped);
+        // is still provisional. T-189: Requested only where Exact really cuts the row — a fall-back row keyed on
+        // Requested would grab the OLD Snapped (the Requested setter raises before Resnap) and never re-grab on a drag.
+        var cutProperty = ExactCutApplies ? nameof(CutMarkerViewModel.Requested) : nameof(CutMarkerViewModel.Snapped);
         if (e.PropertyName == cutProperty)
         {
             if (ReferenceEquals(sender, IntroEnd))

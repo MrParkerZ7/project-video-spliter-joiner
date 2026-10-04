@@ -548,7 +548,7 @@ public sealed class BulkCutViewModel : ObservableObject
     /// nearest keyframe. Off by default - the lossless path is the app's identity and the right choice
     /// for most batches. On, roughly one GOP (~1-2s of video) is re-encoded per cut and the rest is
     /// still copied untouched; a source whose codecs cannot be reproduced falls back automatically and
-    /// says so on the row.
+    /// says so on the row — before Run as well as after it (T-189: such a row shows its snapped cut and the reason).
     /// </summary>
     public bool ExactCut
     {
@@ -567,10 +567,13 @@ public sealed class BulkCutViewModel : ObservableObject
         }
     }
 
-    /// <summary>Plain-language statement of the active precision, so the trade-off is never hidden.</summary>
+    /// <summary>
+    /// Plain-language statement of the active precision, so the trade-off is never hidden. Exact names its exception
+    /// (T-189): HEVC sources fall back to the keyframe-snapped lossless cut, and each such row says so before Run.
+    /// </summary>
     public string PrecisionNote =>
         _exactCut
-            ? "Exact — cuts land where you set them (re-encodes ~1s per cut)"
+            ? "Exact — cuts land where you set them (re-encodes ~1s per cut; HEVC video still snaps to keyframes)"
             : "Lossless — cuts snap to the nearest keyframe (instant, no quality loss)";
 
     /// <summary>The footer's plain-language statement of where output goes - it must never lie.</summary>
@@ -1414,6 +1417,9 @@ public sealed class BulkCutViewModel : ObservableObject
 
         if (probe is ProbeResult.ProbeSucceeded ok)
         {
+            // T-189: the row learns whether Exact can cut its source from the same gate the engine falls back on, before
+            // its duration makes it judgeable — so an Exact row of an HEVC file never shows a Requested cut, even briefly.
+            item.SetSourceMedia(ok.Info);
             item.Duration = ok.Info.Duration;
             _ = item.StartKeyframeScanAsync(); // throttled background scan (§3)
         }
@@ -1545,8 +1551,9 @@ public sealed class BulkCutViewModel : ObservableObject
     /// <para><b>T-185 — every row the run finished goes</b>, in every output mode. T-171 kept a row whose original was
     /// still on disk (decision (b)) and a row the run warned on; in the default new-file mode that kept every row, and
     /// the user reported the list as still there (T-183). Instead the summary says what the rows used to: the originals
-    /// that are still on disk, and any row that was not cut exactly (an exact-cut fallback — the one run warning the
-    /// user could not have seen before Run; planner notes were on the row already). A row stays only when it was not in
+    /// that are still on disk, and every row whose Exact cut fell back (read from <see cref="BulkItemViewModel.RunWarnings"/>,
+    /// which keep the ledger warning — whether or not the row already stated its reason before Run, as a row whose source
+    /// Exact cannot cut does since T-189; planner notes were on the row already). A row stays only when it was not in
     /// this run (unticked, no cut yet, added while the batch ran), or — with Auto-delete armed — when its original is
     /// still deletable after the sweep, i.e. the sweep could not bin it: the user asked for it to go, and ✕ Delete
     /// originals on that row is the retry. Such a row is unticked, so the next Run does not trim it again.</para>

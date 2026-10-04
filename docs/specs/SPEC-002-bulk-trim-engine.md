@@ -26,8 +26,8 @@ sources:
   - src/Core/Io/OriginalReplacer.cs
   - src/Core/Split/SplitEngine.cs
   - src/Core/Split/SmartCutEngine.cs
-serves-goal: [G-036, G-041, G-042]
-updated: 2026-09-26
+serves-goal: [G-036, G-041, G-042, G-059]
+updated: 2026-10-05
 ---
 
 ## What
@@ -133,7 +133,12 @@ preview player, and cut profiles (G-037) — those are app-layer specs.
   loop stops; every not-yet-started row is **NotStarted**; earlier **Done** rows are kept; batch outcome is
   **Cancelled**.
 - **I18** — A `NoOpTrimException` from the builder → the row is **Skipped** (deliberate no-op, not Failed), the
-  engine is not called for it, and the batch continues.
+  engine is not called for it, and the batch continues. A Skipped row carries **no** warning, with one exception
+  (T-189): an `Exact` row that fell back and was announced — I51's `exact cut unavailable (<reason>) …` warning, or
+  I55's `(replacing originals)` one — keeps that warning on its **Skipped** result, because the lossless pass it fell
+  back to is what found nothing to remove (an HEVC intro inside the first GOP snaps to 0), and a caller that reaches
+  the engine without the view model would otherwise see a skip with no reason. A `Lossless` no-op, and an `Exact`
+  row whose fallback was the unannounced `PureCopy` one, stay warning-free.
 
 ### Collision policy (`CollisionPolicy`, resolved before any ffmpeg runs)
 - **I19** — `AutoSuffix` (default): a colliding output resolves to the first free `<stem>_2<ext>`, `_3`, …; the
@@ -165,7 +170,8 @@ preview player, and cut profiles (G-037) — those are app-layer specs.
   blocked.
 - **I29** — Ledger-entry fields: a **Done** row records the effective `OutputPath` and surfaces the
   `SplitResult`'s non-fatal warnings (coarse GOP, no keyframes, …); a **Failed** row records the mapped
-  `UserFacingError`; both are null on the other outcomes.
+  `UserFacingError`; both are null on the other outcomes. Warnings are empty on every outcome but **Done**, except a
+  **Skipped** `Exact` row that fell back, which keeps its fallback warning (I18, T-189).
 - **I30** — A `SplitException` carrying ffmpeg stderr is mapped to a **categorized** `UserFacingError` (e.g. an
   ENOSPC stderr signature → `ErrorCategory.DiskFull`), keeping the log path + full text.
 - **I31** — Progress: `OverallFraction` is monotonic non-decreasing, reaches `1.0` on normal completion, and the
@@ -255,15 +261,19 @@ from the guarantee, because neither owns it.
   every row stays lossless whatever `Precision` says: `Exact` degrades silently rather than failing, so
   existing callers keep working unchanged.
 - **I50** — Per-row fallback: `FellBack == true` → that row runs the ordinary lossless path (build request →
-  `SplitAsync`) and is recorded exactly like a `Lossless` row. The fallback is **per row** — it never aborts,
-  downgrades, or re-routes the rest of the batch.
+  `SplitAsync`) and is recorded like a `Lossless` row, plus I51's warning — also when that lossless pass is a no-op:
+  the row is then **Skipped** and keeps the warning (I18, T-189), where a `Lossless` no-op has none. The fallback is
+  **per row** — it never aborts, downgrades, or re-routes the rest of the batch.
 - **I51** — The fallback reason is surfaced as a **row warning** —
   `"exact cut unavailable (<reason>) - cut snapped to the nearest keyframe"` (its opening words are the constant
   `BulkTrimEngine.ExactFallbackPrefix`, which the Bulk Cut screen matches to name such rows — SPEC-011 I161, T-185) —
   when `FallbackReason` is present
   **and** `Strategy != SmartCutStrategy.PureCopy`. A `PureCopy` fallback (the requested time was already on a
-  keyframe, so the lossless cut IS exact there) adds **no** warning. Any `SplitResult` warnings from the
-  fallback run are appended to it, so I29's warning surface is unchanged.
+  keyframe, so the lossless cut IS exact there) adds **no** warning. *(Known gap, found at the T-189 review: exact for
+  the start only — the lossless pass also snaps a mid-GOP outro, so such a row's end moves to a keyframe with no
+  word. A discovered defect, not changed here; SPEC-011 I158/I164 say so on the screen side.)* Any `SplitResult`
+  warnings from the fallback run are appended to it, so I29's warning surface is unchanged. The warning survives a
+  no-op lossless pass: the row is **Skipped** with it, not with none (I18, T-189).
 - **I52** — Exact rows sit inside the same batch contract: the smart cut writes to the collision-resolved
   effective path — or, when that path IS the user's original, to the sibling temp of I56 that is then swapped
   onto it — and reports through the same per-row progress reporter, so collision resolution + source safety
@@ -333,7 +343,9 @@ the lossless route uses.
 - Design: D-004 (`docs/design/D-004/README.md`, `docs/design/D-004/core-flow.md`)
 - Goals: G-036 (Build the Bulk Cut tab; tasks T-094→T-098); G-041 (make keyframe snapping visible + the
   opt-in replace-original output mode; tasks T-121→T-123); G-042 (frame-exact "Exact cut"; tasks T-124/T-125,
-  and T-130 — routing the exact path through the same safe swap so it may write over originals)
+  and T-130 — routing the exact path through the same safe swap so it may write over originals); G-059 (4K fast
+  and correct — T-189: an HEVC source falls back from Exact, and a fall-back row the lossless pass skips as a no-op
+  keeps its fallback warning, I18/I29/I50/I51 amended)
 - ADR: 0015 — bulk trim reuses Split single-segment (`docs/adr/0015-bulk-trim-reuses-split-single-segment.md`);
   0018 — frame-exact cutting as a separate opt-in engine (`docs/adr/0018-smart-cut-exact-trimming.md`)
 - Related specs: SPEC-001 (the `-c copy` / temp-then-move / planner contract this feature reuses, plus its

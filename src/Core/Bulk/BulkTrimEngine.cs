@@ -18,8 +18,9 @@ public sealed class BulkTrimEngine : IBulkTrimEngine
 {
     /// <summary>
     /// How every "an exact cut was not possible, so this row was cut on a keyframe" warning begins (T-185). The
-    /// Bulk Cut screen names such rows in its summary when it clears the finished list — they are the one run warning
-    /// the user could not have seen before Run — so the text is written here, once, and matched there against this
+    /// Bulk Cut screen names such rows in its summary when it clears the finished list — every row whose Exact cut fell
+    /// back, whether or not the row already stated the reason before Run (T-189: a row whose source Exact cannot cut
+    /// says so in the same words before Run) — so the text is written here, once, and matched there against this
     /// constant rather than against a copy of the sentence.
     /// </summary>
     public const string ExactFallbackPrefix = "exact cut unavailable";
@@ -223,14 +224,18 @@ public sealed class BulkTrimEngine : IBulkTrimEngine
                     progress.Report(new BulkTrimProgress(i, n, fileName, clamped, overall, BulkTrimPhase.Item));
                 });
 
+            // Declared outside the try so a row the lossless pass skips as a no-op keeps the fallback warning that explains
+            // why it was not cut exactly (T-189) — the catch below reads it.
+            IReadOnlyList<string> rowWarnings = NoWarnings;
+
             try
             {
-                IReadOnlyList<string> rowWarnings = NoWarnings;
                 var producedExactly = false;
 
                 // T-125: exact cutting honours the requested time by re-encoding ~1 GOP. A source whose
-                // codecs cannot be reproduced (or a cut already on a keyframe) reports FellBack, and the
-                // row silently takes the ordinary lossless path instead of risking a bad file.
+                // codecs cannot be reproduced (an HEVC source since T-189, or a cut already on a keyframe) reports
+                // FellBack, and the row takes the ordinary lossless path instead of risking a bad file — announced
+                // below, except for the already-on-a-keyframe case.
                 // SAFETY (2026-08-30): exact cutting is NOT available when the destination is the user's
                 // original. SmartCutEngine finishes with MoveIntoPlace, which File.Delete()s the
                 // destination before moving the result in — and under ReplaceOriginal the destination IS
@@ -333,8 +338,10 @@ public sealed class BulkTrimEngine : IBulkTrimEngine
             }
             catch (NoOpTrimException)
             {
-                // Both boundaries collapsed → nothing would be removed → a deliberate skip, not a failure.
-                results[i] = new BulkTrimItemResult(item, ItemOutcome.Skipped, null, null, NoWarnings);
+                // Both boundaries collapsed → nothing would be removed → a deliberate skip, not a failure. An Exact row that
+                // fell back keeps its fallback warning here (T-189): an HEVC intro inside the first GOP snaps to 0, and
+                // without it a caller that reaches the engine without the view model would see a skip with no reason.
+                results[i] = new BulkTrimItemResult(item, ItemOutcome.Skipped, null, null, rowWarnings);
                 runnableDone++;
                 ReportRowComplete(progress, i, n, fileName, runnableDone, runnableTotal);
             }

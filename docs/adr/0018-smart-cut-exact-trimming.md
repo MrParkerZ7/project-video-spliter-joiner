@@ -3,7 +3,9 @@
 ## Status
 
 Accepted. Updated 2026-09-11 — `Exact` + "Replace originals" now goes through the shared replace
-machinery (T-130), and its H.264/HEVC encoders are GPL-only — see § Update.
+machinery (T-130), and its H.264 encoder is GPL-only — see § Update. Amended by T-189 — HEVC sources fall back to
+the lossless cut: the concat demuxer converts parameter sets in-band for H.264 only, so an HEVC joint decodes
+against the head's configuration (see § (d)/(e)).
 
 ## Context
 
@@ -88,29 +90,49 @@ keyframe-snapped stream copy remains the default for every batch.
 
 - **(d) Encode parameters are read from the source's own probe, never assumed.**
   `SmartCutArgsBuilder.HeadReencode` reproduces what the concat demuxer keys on, taken from the `MediaInfo`
-  the engine already probed: video codec → encoder (`h264`→`libx264`, `hevc`→`libx265`,
-  `vp9`→`libvpx-vp9`, `av1`→`libsvtav1`, …) plus `-pix_fmt` and `-s <w>x<h>`; audio codec → encoder
+  the engine already probed: video codec → encoder (`h264`→`libx264`, `vp9`→`libvpx-vp9`,
+  `av1`→`libsvtav1`, …) plus `-pix_fmt` and `-s <w>x<h>`; audio codec → encoder
   (`aac`→`aac`, `mp3`→`libmp3lame`, `opus`→`libopus`, …) plus `-ar` and `-ac`. A mismatch here is the main
-  failure mode, so it is resolved up front instead of discovered at concat time.
+  failure mode, so it is resolved up front instead of discovered at concat time. **Amended by T-189:** the map no
+  longer holds `hevc`/`h265`. Matching codec, pixel format and resolution is not enough for HEVC: the concat output
+  takes its codec configuration from the first file, the re-encoded head (hev1 extradata), while the copied tail's
+  slices refer to parameter sets that exist only in the source's hvc1 extradata. The concat demuxer converts parameter
+  sets in-band (`h264_mp4toannexb`) for H.264 only, so an HEVC joint decodes against the head's configuration —
+  measured as decoder errors and wrong frames from the joint on (SPEC-001 I65). The repair is T-201, and it must pass
+  that joint-integrity check before HEVC goes back in the map; the other mapped encoders (VP9, VP8, AV1, MPEG-4,
+  MPEG-2) stay unverified until T-202. Even for H.264 the conversion is no blanket guarantee: `h264_mp4toannexb` puts
+  SPS/PPS in-band only before an IDR slice, so what is verified is a **closed-GOP** H.264 source, whose boundary
+  keyframe is an IDR. An **open-GOP** H.264 source, whose boundary keyframe can be a non-IDR I-frame, is known to fail
+  the check (decoder errors and lost, wrong frames after the joint — measured at the T-189 review, SPEC-001 I65); the
+  engine does not yet fall back for it, a discovered defect.
 
 - **(e) An unmappable source FALLS BACK with a stated reason — it is never guessed at.**
   `TryResolveEncoders` returns `false` with a reason (*"no known encoder for video codec 'prores_raw_hq'"*,
-  or *"the source has no video or audio streams"*) rather than picking a plausible encoder, and
+  or *"the source has no video or audio streams"*; since T-189 an HEVC source gets *"frame-exact cutting is not
+  supported for HEVC/H.265 video yet"*, checked before the generic branch so the user reads a cause, not an encoder
+  name) rather than picking a plausible encoder, and
   `SmartCutEngine` turns that into a `SmartCutResult` with `FellBack = true` and no output. `PureCopy`
   reports `FellBack` too — the lossless path is already exact there, so re-encoding would buy nothing.
   `BulkTrimEngine` (`src/Core/Bulk/BulkTrimEngine.cs`) routes an `Exact` row to the smart engine and, on
   `FellBack`, runs the ordinary lossless split for that row instead, surfacing
   `exact cut unavailable (<reason>) - cut snapped to the nearest keyframe` as a **row warning** —
-  except for the `PureCopy` case, which needs no note because the result is exact either way. A batch
-  runner constructed without an `ISmartCutEngine` simply stays lossless.
+  except for the `PureCopy` case, which needs no note because the result is exact either way. *(Not quite, found
+  at the T-189 review: the start is exact there, but the lossless pass also snaps a mid-GOP **end**, so an `Exact` row
+  whose intro is on a keyframe or at 0 with a mid-GOP outro gets a snapped outro with no word — a discovered defect,
+  recorded in SPEC-011 I158/I164 until it is fixed.)* A batch
+  runner constructed without an `ISmartCutEngine` simply stays lossless. Since T-189 the Bulk Cut row asks the same
+  `TryResolveEncoders` on its own probed `MediaInfo`, so a row whose source Exact cannot cut shows the snapped cut and
+  the same sentence **before** Run (SPEC-011 I164), and a fall-back row the lossless pass skips as a no-op keeps the
+  warning on its `Skipped` result.
 
 - **(f) `Lossless` is the default; `Exact` is an explicit choice whose cost is stated where it is made.**
   `CutPrecision` (`src/Core/Bulk/CutPrecision.cs`) is a **third axis** on `BulkTrimOptions`, orthogonal to
   both `CollisionPolicy` ("what if the destination is taken?") and `OutputMode` ("which destination?"), and
   it defaults to `CutPrecision.Lossless`. The UI is an "Exact cut" checkbox plus a bound `PrecisionNote`
   that names the trade-off in plain language — *"Exact — cuts land where you set them (re-encodes ~1s per
-  cut)"* against *"Lossless — cuts snap to the nearest keyframe (instant, no quality loss)"*. Under `Exact`
-  every row **stops advertising a snap offset**: `BulkItemViewModel.SetExactCut` sets each handle's
+  cut)"* against *"Lossless — cuts snap to the nearest keyframe (instant, no quality loss)"* (since T-189 the Exact
+  note adds *"HEVC video still snaps to keyframes"*). Under `Exact` every row Exact will really cut **stops
+  advertising a snap offset** (T-189: a row whose source Exact cannot cut keeps it): `BulkItemViewModel.SetExactCut` sets each handle's
   `CutMarkerViewModel.SuppressSnapNote` and zeroes the row's worst-snap magnitude, so G-041's
   *"cut moved Xs to the nearest keyframe"* warning goes quiet too — that offset will not happen, and
   showing it would mislead. (The coarse-keyframe advisory is untouched; it still describes the source.)
@@ -183,9 +205,10 @@ G-042; the lossless promise is why the app exists.
 - **The fallback must always reach the user.** An exact-cut mode that quietly degraded to a snapped cut
   would be a worse version of the defect this epic fixes: the row warning and the `PrecisionNote` are part
   of the contract, not decoration.
-- **Any surface that offers `Exact` must suppress the snap readout.** `SuppressSnapNote` exists because a
+- **Any surface that offers `Exact` must suppress the snap readout** …on rows Exact will really cut; a row Exact
+  cannot cut keeps the readout and says why before the run (T-189). `SuppressSnapNote` exists because a
   displayed keyframe offset is untrue under exact cutting; a new precision-aware screen has to propagate
-  it the way `BulkItemViewModel.SetExactCut` does.
+  it the way `BulkItemViewModel.SetExactCut` does, gated on the same `TryResolveEncoders` the engine falls back on.
 - **If exact cutting is extended to the Split screen, or married more closely to replace-in-place, the
   destination contract must be shared rather than re-implemented** — verify-then-`File.Replace`-with-backup
   and the `IOriginalDisposer` seam live in `SplitEngine` today and would have to be lifted, not copied.
@@ -208,8 +231,9 @@ last forced follow-on was met for the replace step by lifting it, as asked (the 
 - *"Exact cutting is Bulk-Cut-only today"* is still true: `MainViewModel` passes a `SmartCutEngine` only to
   `BulkCutViewModel` (`src/App/ViewModels/MainViewModel.cs:123-130`).
 
-**The H.264/HEVC entries of the encoder map depend on GPL-only encoders.** Decision (d)'s `h264`→`libx264` and `hevc`→`libx265`
-(`src/Core/Split/SmartCutArgsBuilder.cs:21-24`) name encoders ffmpeg includes only in a GPL build. Because
+**The H.264 entry of the encoder map depends on a GPL-only encoder.** Decision (d)'s `h264`→`libx264`
+(`src/Core/Split/SmartCutArgsBuilder.cs:21-22`) names an encoder ffmpeg includes only in a GPL build; the HEVC entry
+(`hevc`→`libx265`, also GPL-only) is gone since T-189, so only `h264`→`libx264` remains GPL-only. Because
 `TryResolveEncoders` checks only the map, not the running ffmpeg, a build without the encoder does not
 produce the (e) fallback for a cut that needs a head re-encode: the head command fails, `SmartCutEngine` throws `SplitException`
 (`SmartCutEngine.cs:124-129`), and the row is Failed. The licensing consequence is recorded in

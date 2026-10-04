@@ -20,8 +20,7 @@ public static class SmartCutArgsBuilder
         {
             ["h264"] = "libx264",
             ["avc1"] = "libx264",
-            ["hevc"] = "libx265",
-            ["h265"] = "libx265",
+            // hevc/h265 are deliberately absent: an HEVC joint decodes against the head's parameter sets (T-189); T-201 repairs it.
             ["vp9"] = "libvpx-vp9",
             ["vp8"] = "libvpx",
             ["av1"] = "libsvtav1",
@@ -43,9 +42,32 @@ public static class SmartCutArgsBuilder
         };
 
     /// <summary>
+    /// Video codecs whose head/tail joint is known to break, each with the reason a user reads on the row (T-189). They
+    /// are checked BEFORE the generic "no known encoder" branch so the row names a cause the user can act on.
+    ///
+    /// <para><b>HEVC.</b> The concat output takes its codec configuration from the first file, the re-encoded head (hev1
+    /// extradata), while the copied tail's slices refer to parameter sets that exist only in the source's hvc1 extradata.
+    /// The concat demuxer puts parameter sets in-band automatically for H.264 only (<c>h264_mp4toannexb</c>), so an HEVC
+    /// final decodes with errors and wrong frames from the joint on. Measured by <c>SmartCutJointIntegrity</c>; the
+    /// repair is T-201, and it must pass that check before HEVC goes back into <see cref="VideoEncoders"/>.</para>
+    /// </summary>
+    private static readonly IReadOnlyDictionary<string, string> UnsupportedVideoCodecs =
+        new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["hevc"] = HevcUnsupportedReason,
+            ["h265"] = HevcUnsupportedReason,
+        };
+
+    private const string HevcUnsupportedReason = "frame-exact cutting is not supported for HEVC/H.265 video yet";
+
+    /// <summary>
     /// Resolve the encoders needed to reproduce <paramref name="info"/>'s streams, or explain why this
     /// source cannot be smart-cut. A null result means the caller MUST fall back to the lossless cut —
     /// never guess an encoder, because a mismatch surfaces as a corrupt or failed concat.
+    ///
+    /// <para>This is the ONE predicate that decides whether Exact really runs for a source (G-059): the engine falls back
+    /// on it, and the Bulk Cut row evaluates it on its own probed <see cref="MediaInfo"/> to decide, before Run, whether
+    /// it shows the snapped cut and the reason (T-189) — so the row and the run never disagree.</para>
     /// </summary>
     public static bool TryResolveEncoders(MediaInfo info, out string? videoEncoder, out string? audioEncoder, out string? reason)
     {
@@ -57,6 +79,12 @@ public static class SmartCutArgsBuilder
         if (info.HasVideo)
         {
             var codec = info.VideoStreams[0].CodecName;
+            if (UnsupportedVideoCodecs.TryGetValue(codec, out var unsupported))
+            {
+                reason = unsupported;
+                return false;
+            }
+
             if (!VideoEncoders.TryGetValue(codec, out var enc))
             {
                 reason = $"no known encoder for video codec '{codec}'";

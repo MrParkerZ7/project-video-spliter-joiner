@@ -16,8 +16,8 @@ sources:
   - src/Core/Split/SmartCutPlanner.cs
   - src/Core/Split/SmartCutArgsBuilder.cs
   - src/Core/Split/PartProgress.cs
-serves-goal: [G-001, G-005, G-042]
-updated: 2026-09-12
+serves-goal: [G-001, G-005, G-042, G-059]
+updated: 2026-10-05
 ---
 
 ## What
@@ -44,7 +44,8 @@ snap rules), the segment-muxer vs per-segment extraction routing, `SplitArgsBuil
 and the copy invariant (`SatisfiesCopyInvariant` / `ForbiddenEncoderTokens`), segment selection
 (`SelectedSegmentIndices`), overwrite refusal, disk pre-flight, temp-then-move cancel-safety, request-shape
 validation, ffmpeg-failure mapping, output naming, and the `SplitResult` / `SplitSegment` contract; and the
-separate frame-exact engine (`SmartCutPlanner` / `SmartCutArgsBuilder` / `SmartCutEngine`, T-124, I40–I48);
+separate frame-exact engine (`SmartCutPlanner` / `SmartCutArgsBuilder` / `SmartCutEngine`, T-124, I40–I48 and
+its joint integrity, I65);
 and the per-part export-progress channel — the pure `PartMapping.PartAt` time→part function and both
 extraction paths' `PartProgress` emission (T-069, I49–I64).
 **Out:** Keyframe probing / snapping internals (`IMediaProbe.SnapToNearestKeyframe`, `GetKeyframesAsync`,
@@ -222,7 +223,8 @@ one ffmpeg pass.
 
 ## Links
 - Design: — (no D-NNN for the v1.0 core; goal G-001) · related D-004 (bulk cut reuses this engine via `KeptSegmentSelector`)
-- Goals: G-001 (ship v1.0 stream-copy splitter) · G-005 (fast 4K split — copy is resolution-independent)
+- Goals: G-001 (ship v1.0 stream-copy splitter) · G-005 (fast 4K split — copy is resolution-independent) ·
+  G-059 (4K fast and correct — T-189: HEVC Exact falls back, the joint-integrity invariant I65)
 - Related specs: SPEC-002 (bulk-trim-engine) — reuses this engine's per-segment path; SPEC-003 (join-concat) — sibling copy operation
 - Key code: `src/Core/Split/SplitEngine.cs` · `SplitArgsBuilder.cs` · `SplitPlan.cs` (`SplitPlanner`) ·
   `SplitRequest.cs` · `SplitResult.cs` · `SplitSegment.cs` · `SplitException.cs` · per-part progress:
@@ -230,7 +232,9 @@ one ffmpeg pass.
   `SmartCutEngine.cs` · `SmartCutPlanner.cs` · `SmartCutArgsBuilder.cs`
 - Tests: per-part progress (I49–I64) — `tests/Core.Tests/PartMappingTests.cs` (the pure mapping,
   I51–I56) · `tests/Core.Tests/SplitEnginePartProgressTests.cs` (both paths' emission, I50 · I58 · I60 ·
-  I61 · I62)
+  I61 · I62) · frame-exact joint integrity and the HEVC fallback (I45 · I46 · I65, T-189) —
+  `tests/Core.Tests/SmartCutJointIntegrityTests.cs` (the check, its line filter, the H.264 baseline, the HEVC repro) ·
+  `tests/Core.Tests/HevcExactFallbackTests.cs` (the gate, zero ffmpeg runs, the batch's lossless cut and warning)
 
 ## Frame-exact ("smart") cutting — SmartCutEngine (T-124, epic G-042)
 
@@ -250,10 +254,16 @@ unchanged, and nothing below alters them. Frame-exact cutting is a SEPARATE engi
   lossless path would have produced.
 - **I45** — The head is encoded with parameters read from the source's own probe (video codec→encoder,
   pixel format, resolution; audio codec→encoder, sample rate, channels) so the concat demuxer accepts
-  the join.
+  the join. The encoder map no longer holds `hevc`/`h265` (T-189): the concat output takes its codec configuration
+  from the head, and the demuxer puts parameter sets in-band for H.264 only, so an HEVC joint decodes against the
+  head's parameter sets (I46, I65). The later repair (T-201) must pass I65's check before HEVC goes back in.
 - **I46** — A codec with no known encoder mapping yields a FALLBACK result (`FellBack = true` with a
   stated reason) — never a guessed encoder and never a silently corrupt concat. The caller then runs
-  the ordinary lossless cut.
+  the ordinary lossless cut. An HEVC source falls back with a stated reason (T-189): `TryResolveEncoders` checks a
+  small named set of codecs whose joint is known to break **before** the generic branch and returns
+  *"frame-exact cutting is not supported for HEVC/H.265 video yet"* for `hevc`/`h265` (not *"no known encoder for
+  video codec 'hevc'"*), with zero ffmpeg runs and `ReencodedDuration` zero. The same call is the Bulk Cut row's
+  before-Run gate (SPEC-011 I164), so the row and the run never disagree.
 - **I47** — All intermediates live in a `.vsj-smartcut-<guid>` temp dir swept in a `finally`; the final
   file is moved into place only after it exists (same cancel-safety contract as `SplitEngine`). That move is
   `MoveIntoPlace`, a **delete-then-move** onto the destination it was given — so a caller must never hand this
@@ -261,3 +271,24 @@ unchanged, and nothing below alters them. Frame-exact cutting is a SEPARATE engi
   temp and performs the swap through `Core/Io/OriginalReplacer` instead (SPEC-002 I53/I56–I57).
 - **I48** — Exactly three ffmpeg invocations for a `HeadReencode` (head encode, tail copy, concat) and
   one for a `FullReencode` — never one per GOP.
+- **I65** — **Joint integrity, scoped to what is verified** (T-189): an H.264 Exact result **whose boundary keyframe
+  `HeadEnd` is an IDR frame** (a closed-GOP source — libx264's default) decodes with zero decoder and demuxer errors, and
+  its video frames from the joint on are md5-identical, in order, to the source's from `HeadEnd`, over the same number
+  of frames; HEVC falls back (T-189, I46); **open-GOP H.264 is known to FAIL it** — a `HeadEnd` keyframe that is a
+  non-IDR I-frame starts a tail that is not self-contained (its open-GOP frames reference the GOP before it, and the
+  concat demuxer's `h264_mp4toannexb` puts SPS/PPS in-band only before IDR slices). Measured at the T-189 review on
+  synthetic fixtures (x264 `open-gop=1:keyint=50:min-keyint=50:scenecut=0`, 320x240, 25 fps, 12 s, cut at 3.4 s): 2
+  decoder errors (`co located POCs unavailable`, `mmco: unref short failure`) and 193 tail frames against the source's
+  200, none matching; with `cabac=0:8x8dct=0:ref=1` and `-bf 2`, 663 errors and 63 frames. That is a discovered defect,
+  not fixed by T-189 (the engine does not yet fall back on a non-IDR `HeadEnd`). VP9, VP8, AV1, MPEG-4 and MPEG-2 are
+  unverified until T-202. The check is the test helper `SmartCutJointIntegrity` (bundled ffmpeg through
+  `FfmpegRunner`): it decodes the whole final with `-v error … -f null -` and counts decoder and demuxer error lines —
+  the null muxer's own `[null @ …] … non monotonically increasing dts to muxer` lines are excluded (a timing symptom
+  T-190 owns; the full line count is returned for it) — then compares `framemd5` of the final's video from
+  `HeadEnd − Start` (measured from its first video frame) with the source's from `HeadEnd`, and requires the two tails
+  to have the same number of frames (content, not timestamps). Both `framemd5` passes keep the file's own timestamps
+  (`-copyts`, in the stream's time base), so the source tail is selected on the probe's time base also when its
+  `start_time` is not 0. The check is for an open-ended cut and looks at the joint and the tail only, never the head's
+  content. Measured on synthetic fixtures: H.264 (closed GOP) on a 1 s and a 4 s GOP pass on the shipped engine, 200 of
+  200 and 300 of 300 tail frames; the shipped engine's HEVC final failed it (3 decoder errors, 240 of 240 frames after
+  the joint wrong) before T-189 made HEVC fall back.

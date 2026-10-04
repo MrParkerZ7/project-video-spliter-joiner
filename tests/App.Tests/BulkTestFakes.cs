@@ -31,6 +31,34 @@ internal sealed class BulkFakeProbe : IMediaProbe
 
     public TimeSpan DefaultDuration { get; set; } = TimeSpan.FromSeconds(60);
 
+    /// <summary>
+    /// The streams a successful probe reports (T-189). A Bulk row in Exact mode now reads its source's codecs to decide
+    /// whether Exact can cut it (<c>SmartCutArgsBuilder.TryResolveEncoders</c>), so the fake reports what a real probe
+    /// of a typical phone or camera MP4 reports — one H.264 video and one AAC audio stream — instead of no stream at
+    /// all, which the real <c>MediaProbe</c> never returns (it fails a file with no stream). Per-path overrides go in
+    /// <see cref="StreamsByPath"/> (<see cref="SetCodecs"/>).
+    /// </summary>
+    public static readonly IReadOnlyList<StreamInfo> DefaultVideoStreams =
+        new[] { new StreamInfo(0, "h264", "video", 1920, 1080, "yuv420p", null, null, "1/30") };
+
+    /// <inheritdoc cref="DefaultVideoStreams"/>
+    public static readonly IReadOnlyList<StreamInfo> DefaultAudioStreams =
+        new[] { new StreamInfo(1, "aac", "audio", null, null, null, 48000, 2, "1/48000") };
+
+    /// <summary>Per-path probed streams (T-189). Missing path ⇒ <see cref="DefaultVideoStreams"/> + <see cref="DefaultAudioStreams"/>.</summary>
+    public Dictionary<string, (IReadOnlyList<StreamInfo> Video, IReadOnlyList<StreamInfo> Audio)> StreamsByPath { get; } =
+        new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Report <paramref name="videoCodec"/> (null = no video) and <paramref name="audioCodec"/> (null = no audio) for <paramref name="path"/>.</summary>
+    public void SetCodecs(string path, string? videoCodec, string? audioCodec = "aac") =>
+        StreamsByPath[path] = (
+            videoCodec is null
+                ? Array.Empty<StreamInfo>()
+                : new[] { new StreamInfo(0, videoCodec, "video", 1920, 1080, "yuv420p", null, null, "1/30") },
+            audioCodec is null
+                ? Array.Empty<StreamInfo>()
+                : new[] { new StreamInfo(1, audioCodec, "audio", null, null, null, 48000, 2, "1/48000") });
+
     public IReadOnlyList<TimeSpan> DefaultKeyframes { get; set; } = Array.Empty<TimeSpan>();
 
     /// <summary>When a scan enters for a gated path it awaits this gate — set to hold scans open.</summary>
@@ -74,7 +102,10 @@ internal sealed class BulkFakeProbe : IMediaProbe
         }
 
         var duration = ByPath.TryGetValue(path, out var entry) ? entry.Duration : DefaultDuration;
-        var info = new MediaInfo(duration, "mp4", Array.Empty<StreamInfo>(), Array.Empty<StreamInfo>());
+        var (video, audio) = StreamsByPath.TryGetValue(path, out var streams)
+            ? streams
+            : (DefaultVideoStreams, DefaultAudioStreams);
+        var info = new MediaInfo(duration, "mp4", video, audio);
         return Task.FromResult(ProbeResult.Success(info));
     }
 
