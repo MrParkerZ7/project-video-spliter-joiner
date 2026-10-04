@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    T-188: the dev-only 4K performance bench. A console app over VideoSplitJoiner.Core ONLY, in the
+    solution so a Core API change breaks its build. Not a test project (dotnet test runs none of it),
+    not referenced by the App, and packaging/package.ps1 publishes only the App, so it never ships.
+    It only ever opens files under its own fixture root (FixtureRoot), all of them synthetic.
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>VideoSplitJoiner.Bench</RootNamespace>
+    <AssemblyName>VideoSplitJoiner.Bench</AssemblyName>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <!-- Io.ColdCopy writes through an aligned native buffer (FILE_FLAG_NO_BUFFERING needs sector alignment). -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>false</IsTestProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Core\VideoSplitJoiner.Core.csproj" />
+  </ItemGroup>
+
+</Project>

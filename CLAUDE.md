@@ -9,6 +9,8 @@ A .NET 8 WPF app that splits and joins video **without re-encoding**. See [READM
   Io, Profiles, Thumbnails, Waveform).
 - `src/App/` — `VideoSplitJoiner.App`, WPF UI + hand-rolled MVVM view models.
 - `tests/Core.Tests/`, `tests/App.Tests/` — xUnit + FluentAssertions.
+- `bench/` — `VideoSplitJoiner.Bench`, the dev-only performance bench (T-188): synthetic fixtures only, never
+  packaged. See [bench/README.md](bench/README.md).
 - `packaging/package.ps1` — single-file self-contained win-x64 publish + bundled ffmpeg + zip.
 - `docs/todo/` — the task board. **Do not touch it** during code/doc work.
 
@@ -240,6 +242,13 @@ powershell -File packaging/package.ps1        # produces dist/VideoSplitJoiner-v
   binaries are **not committed** — the test path references them as an override; packaging copies
   them in from `-FfmpegSource`.
 - `Directory.Build.props` holds `<Version>` (currently `1.2.0`; `1.0.0` shipped 2026-08-26).
+- **Performance timings go in a ticket's Build log via `bench/`, never into a test assertion (T-137); the bench
+  only ever opens files it generated.** `bench fixtures` builds its synthetic matrix under its own fixture root
+  (default `%TEMP%\vsj-bench-fixtures`), and every scenario's input passes the root's guard, which refuses any
+  path, `..` escape or link that leads outside it, and any file the root's `fixtures.json` does not list (the
+  bench's own `work\` files aside). `--root` takes only a new or empty folder or an existing bench root (its
+  `.vsj-bench-root` marker). The bench builds with the solution (a Core API change breaks it), is not a test
+  project, and `package.ps1` never publishes it. Never point it at a user's video.
 
 ## Git
 
