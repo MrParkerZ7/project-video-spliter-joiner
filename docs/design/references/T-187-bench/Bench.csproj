@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <NoWarn>CS1591;CS8618</NoWarn>
+    <AssemblyName>T187Bench</AssemblyName>
+    <RootNamespace>T187Bench</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="D:/Programing/Projects/project-video-spliter-joiner/src/Core/VideoSplitJoiner.Core.csproj" />
+  </ItemGroup>
+
+</Project>

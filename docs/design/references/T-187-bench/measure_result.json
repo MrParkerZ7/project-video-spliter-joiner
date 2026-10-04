@@ -1,0 +1,647 @@
+{
+ "harness_path": "C:/Users/priva/AppData/Local/Temp/claude/D--Programing-claude-prompt-root-master/2c9ff7ab-8298-4632-b799-b6600a56a1a9/scratchpad/t187-bench",
+ "env": {
+  "ffmpeg_version": "ffmpeg version n7.1.5-2-g998de74adf-20260715 (the app's own ffmpeg-shared build, GPL shared)",
+  "encoders_of_note": "libx264, libx265, h264_nvenc, hevc_nvenc, h264_qsv, hevc_qsv, h264_amf, hevc_amf, h264_mf, hevc_mf, libsvtav1. The app's Exact cut uses libx264 / libx265 at default settings (SmartCutArgsBuilder.cs:21-24, no -preset/-crf, so medium/crf23 and medium/crf28)",
+  "hwaccels": "cuda, vaapi, dxva2, qsv, d3d11va, opencl, vulkan, d3d12va",
+  "cpu": "Intel Core i5-14500 (14 cores / 20 threads, 6P+8E), 32 GB RAM",
+  "gpu": "NVIDIA GeForce RTX 4070 + Intel UHD Graphics 770 (and a Meta Virtual Monitor adapter)",
+  "disk_note": "Fixtures and outputs are on C: = NVMe SSD (HS-SSD-FUTURE 1024G). The box also has two 4 TB 5400-rpm-class SATA HDDs (Seagate ST4000DM004, Toshiba HDWD240). I did not use them because the rules forbid it, so every HDD number below is inferred, not measured. LOAD CAVEAT: the night runs (2026-10-03 ~18:10-18:35 UTC) were quiet and repeatable. During the 2026-10-04 16:15-16:51 runs, other sessions' flutter_tester and python processes kept about 6-15 of 20 logical cores busy (total CPU 100%). Those runs come out about 1.6x slower for CPU-bound work (I re-ran the 4K core scenarios to measure that), and x265 was erratic (142/184/12.7 s for one command). Only compare an alternative with the baseline taken in the same run."
+ },
+ "fixtures": [
+  {
+   "name": "4k",
+   "path": "C:/Users/priva/AppData/Local/Temp/claude/D--Programing-claude-prompt-root-master/2c9ff7ab-8298-4632-b799-b6600a56a1a9/scratchpad/t187-fixtures/4k_h264_g2s_120s.mp4",
+   "codec": "H.264 High yuv420p (h264_nvenc p2 CBR, 2 B-frames) + AAC-LC 192k 48 kHz stereo; moov at end",
+   "resolution": "3840x2160",
+   "bitrate": "60.5 Mbit/s",
+   "duration_s": 120,
+   "fps": "30",
+   "gop": "2 s (60 keyframes)",
+   "size_mb": 907.2
+  },
+  {
+   "name": "1080",
+   "path": "C:/Users/priva/AppData/Local/Temp/claude/D--Programing-claude-prompt-root-master/2c9ff7ab-8298-4632-b799-b6600a56a1a9/scratchpad/t187-fixtures/1080_h264_g2s_120s.mp4",
+   "codec": "H.264 High yuv420p + AAC 192k stereo (same recipe)",
+   "resolution": "1920x1080",
+   "bitrate": "15.2 Mbit/s",
+   "duration_s": 120,
+   "fps": "30",
+   "gop": "2 s (60 keyframes)",
+   "size_mb": 228.6
+  },
+  {
+   "name": "hevc",
+   "path": "C:/Users/priva/AppData/Local/Temp/claude/D--Programing-claude-prompt-root-master/2c9ff7ab-8298-4632-b799-b6600a56a1a9/scratchpad/t187-fixtures/4k_hevc_g2s_60s.mp4",
+   "codec": "HEVC Main hvc1 yuv420p (hevc_nvenc) + AAC 192k stereo",
+   "resolution": "3840x2160",
+   "bitrate": "50.8 Mbit/s",
+   "duration_s": 60,
+   "fps": "30",
+   "gop": "2 s (30 keyframes)",
+   "size_mb": 381
+  },
+  {
+   "name": "g10",
+   "path": "C:/Users/priva/AppData/Local/Temp/claude/D--Programing-claude-prompt-root-master/2c9ff7ab-8298-4632-b799-b6600a56a1a9/scratchpad/t187-fixtures/4k_h264_g10s_60s.mp4",
+   "codec": "H.264 High yuv420p (h264_nvenc) + AAC 192k stereo",
+   "resolution": "3840x2160",
+   "bitrate": "60.7 Mbit/s",
+   "duration_s": 60,
+   "fps": "30",
+   "gop": "10 s (6 keyframes)",
+   "size_mb": 455.3
+  },
+  {
+   "name": "4k10m (added for scaling)",
+   "path": "C:/Users/priva/AppData/Local/Temp/claude/D--Programing-claude-prompt-root-master/2c9ff7ab-8298-4632-b799-b6600a56a1a9/scratchpad/t187-fixtures/4k_h264_g2s_600s.mp4",
+   "codec": "the 4k fixture concatenated 5x with -c copy (H.264 High + AAC)",
+   "resolution": "3840x2160",
+   "bitrate": "60.5 Mbit/s",
+   "duration_s": 600,
+   "fps": "30",
+   "gop": "2 s (300 keyframes)",
+   "size_mb": 4535.9
+  }
+ ],
+ "io_floor": "4K fixture (907.2 MB) on the NVMe SSD: plain File.Copy takes 0.24-0.34 s from a warm source and 0.42-0.51 s from a cold one (Windows caches the write). An unbuffered write-through copy takes 0.86-1.88 s. A sequential read takes 0.38 s cold (2.37 GB/s) and 0.22-0.24 s warm. A raw 'ffmpeg -i in -map 0 -c copy out.mp4' of the whole file takes 0.86-1.47 s (warm and cold about the same), and demux only (-f null) takes 0.84-1.25 s. 1080 fixture (228.6 MB): File.Copy 0.05-0.09 s, ffmpeg -c copy 0.22-0.28 s. The ffmpeg step of SplitEngine's 3-part 4K split takes 0.74-0.78 s, so split export runs at the ffmpeg -c copy floor (verified). On the box's SATA HDDs (about 150-190 MB/s, from the drive specs, not measured) a cold read of the same file would take roughly 5-6 s (inferred).",
+ "timings": [
+  {
+   "tab": "shared",
+   "operation": "MediaProbe.ProbeAsync: ffprobe -show_streams -show_format -print_format json (MediaProbe.cs:78, args 90-92; no cache)",
+   "fixture": "4k",
+   "seconds": 0.27,
+   "runs": 5,
+   "cpu_note": "night",
+   "notes": "warm 0.266-0.302, cold 0.276. Reads 3.7 MB. Almost all of it is H.264 find_stream_info decoding the first frames: -nofind_stream_info takes 0.034 s"
+  },
+  {
+   "tab": "shared",
+   "operation": "MediaProbe.ProbeAsync",
+   "fixture": "1080",
+   "seconds": 0.1,
+   "runs": 5,
+   "cpu_note": "night",
+   "notes": "0.096-0.102, cold 0.106"
+  },
+  {
+   "tab": "shared",
+   "operation": "MediaProbe.ProbeAsync",
+   "fixture": "hevc",
+   "seconds": 0.035,
+   "runs": 5,
+   "cpu_note": "night",
+   "notes": "4K HEVC probes 8x faster than 4K H.264"
+  },
+  {
+   "tab": "shared",
+   "operation": "MediaProbe.GetKeyframesAsync: ffprobe -select_streams v:0 -show_packets -show_entries packet=pts_time,dts_time,flags json (MediaProbe.cs:253-259), cached per (path,mtime,len) at MediaProbe.cs:162-166",
+   "fixture": "4k",
+   "seconds": 0.73,
+   "runs": 4,
+   "cpu_note": "night",
+   "notes": "warm 0.70-0.74, cold 0.81. The ffprobe process alone takes 0.72 s and writes 447 KB of JSON. Reads 865 MB = 100% of the file (GetProcessIoCounters)"
+  },
+  {
+   "tab": "shared",
+   "operation": "MediaProbe.GetKeyframesAsync",
+   "fixture": "1080",
+   "seconds": 0.21,
+   "runs": 4,
+   "cpu_note": "night",
+   "notes": "0.18-0.24, cold 0.25; reads 100% of the file"
+  },
+  {
+   "tab": "shared",
+   "operation": "MediaProbe.GetKeyframesAsync",
+   "fixture": "4k10m",
+   "seconds": 2.93,
+   "runs": 4,
+   "cpu_note": "today, about 9-11 other cores busy",
+   "notes": "2.88-2.99, cold 3.66, 2.26 MB JSON. The 2-min 4K file under the same load takes 1.29. On a 5400-rpm HDD a cold 4.5 GB read alone would take about 24-30 s (inferred)"
+  },
+  {
+   "tab": "split",
+   "operation": "FfmpegWaveformService.GetPeaksAsync(1800): ffmpeg -i in -vn -ac 1 -ar 4000 -f s16le temp (FfmpegWaveformService.cs:227-235)",
+   "fixture": "4k",
+   "seconds": 0.35,
+   "runs": 4,
+   "cpu_note": "night",
+   "notes": "warm 0.347-0.359, cold 0.75. Reads 116 MB (13%). With -nofind_stream_info it takes 0.115 s and gives identical PCM, so 70% of the cost is the video stream-info decode even with -vn"
+  },
+  {
+   "tab": "split",
+   "operation": "FfmpegWaveformService.GetPeaksAsync(1800)",
+   "fixture": "1080",
+   "seconds": 0.19,
+   "runs": 4,
+   "cpu_note": "night",
+   "notes": "0.183-0.188, cold 0.48"
+  },
+  {
+   "tab": "shared",
+   "operation": "FfmpegThumbnailService grab 160px hover: ffmpeg -ss t -i in -frames:v 1 -vf scale=160:-1 (FfmpegThumbnailService.cs:207-214), on a keyframe",
+   "fixture": "4k",
+   "seconds": 0.5,
+   "runs": 3,
+   "cpu_note": "night",
+   "notes": "0.496-0.516. Chip 64px is 0.48-0.49 and profile 640px is 0.49-0.51, so width does not matter. Cache hit: 0.000"
+  },
+  {
+   "tab": "shared",
+   "operation": "FfmpegThumbnailService grab 160px, 1 s into a GOP",
+   "fixture": "4k",
+   "seconds": 0.62,
+   "runs": 3,
+   "cpu_note": "night",
+   "notes": "0.603-0.629, cold 0.62. Reads 18 MB. The view model adds a 60 ms debounce (ThumbnailPreviewViewModel.cs:36)"
+  },
+  {
+   "tab": "shared",
+   "operation": "FfmpegThumbnailService grab 160px, 1 s into a GOP",
+   "fixture": "1080",
+   "seconds": 0.21,
+   "runs": 3,
+   "cpu_note": "night",
+   "notes": "0.20-0.24; on a keyframe 0.17-0.20"
+  },
+  {
+   "tab": "shared",
+   "operation": "FfmpegThumbnailService grab 160px, 9 s into a 10 s GOP",
+   "fixture": "g10",
+   "seconds": 1.78,
+   "runs": 3,
+   "cpu_note": "night",
+   "notes": "1.74-2.03; on a keyframe 0.50"
+  },
+  {
+   "tab": "split",
+   "operation": "Hover sweep: 10 new 1-s buckets, sequential (latest-wins grabs)",
+   "fixture": "4k",
+   "seconds": 5.45,
+   "runs": 1,
+   "cpu_note": "night",
+   "notes": "0.545 s per grab; 1080 1.86 (0.186 per grab); hevc 4.03; g10 10.84 (1.08 per grab); 4k10m 21.99 (2.2 per grab, under load)"
+  },
+  {
+   "tab": "split",
+   "operation": "Split LOAD (SplitViewModel.LoadAsync 894-972): await ProbeAsync (897), then Player.Open (936), then in parallel StartKeyframeIndex (968 -> 997) and StartWaveformExtraction (972 -> 1134). Time until keyframes are ready = cuts snap and Split is enabled",
+   "fixture": "4k",
+   "seconds": 0.99,
+   "runs": 3,
+   "cpu_note": "night",
+   "notes": "0.95-1.05, cold 1.33. Probe gate 0.27 (the preview can open). Waveform drawn 0.64-0.70 (cold 1.34). FFME Player.Open was not reproduced (GUI)"
+  },
+  {
+   "tab": "split",
+   "operation": "Split LOAD until Split is enabled",
+   "fixture": "1080",
+   "seconds": 0.31,
+   "runs": 3,
+   "cpu_note": "night",
+   "notes": "0.30-0.32, cold 0.42; probe gate 0.10"
+  },
+  {
+   "tab": "split",
+   "operation": "Split LOAD until Split is enabled",
+   "fixture": "4k10m",
+   "seconds": 5.16,
+   "runs": 3,
+   "cpu_note": "today, load",
+   "notes": "4.83-5.37, cold 5.41; probe gate 0.69-0.80; waveform 2.18-2.89. The 2-min 4K file under the same load takes 1.73 (cold 2.21)"
+  },
+  {
+   "tab": "split",
+   "operation": "SplitEngine.SplitAsync, 3 parts, all selected = segment muxer (SplitArgsBuilder.cs:47-55), re-probe at SplitEngine.cs:121, temp dir then rename (179/200)",
+   "fixture": "4k",
+   "seconds": 1.08,
+   "runs": 3,
+   "cpu_note": "night",
+   "notes": "1.079-1.643. Prepare (re-probe) 0.27-0.35, ffmpeg 0.735-0.781, finalize 0.002-0.59 (outlier). Cold file plus cold keyframe cache: 1.84. Reads 865 MB and writes 865 MB"
+  },
+  {
+   "tab": "split",
+   "operation": "SplitEngine.SplitAsync, part 2 only = per-segment -ss before -i -c copy (SplitArgsBuilder.cs:69-99)",
+   "fixture": "4k",
+   "seconds": 0.75,
+   "runs": 3,
+   "cpu_note": "night",
+   "notes": "0.729-0.788; ffmpeg 0.44, prepare 0.27-0.33"
+  },
+  {
+   "tab": "split",
+   "operation": "SplitEngine.SplitAsync, 3 parts",
+   "fixture": "1080",
+   "seconds": 0.34,
+   "runs": 3,
+   "cpu_note": "night",
+   "notes": "0.328-0.345 (ffmpeg 0.22, prepare 0.10); cold 0.59"
+  },
+  {
+   "tab": "split",
+   "operation": "SplitEngine.SplitAsync, 3 parts",
+   "fixture": "4k10m",
+   "seconds": 5.48,
+   "runs": 3,
+   "cpu_note": "today, load",
+   "notes": "5.06-6.03 (ffmpeg 4.47-4.83, prepare 0.56-1.07); cold 9.30. The 2-min 4K file under the same load takes 1.68 (cold 3.73)"
+  },
+  {
+   "tab": "join",
+   "operation": "Add 3 clips at once: JoinViewModel.AddFilesAsync probes each for its chip (323 -> 620), then RefreshCompatAsync (327) -> JoinEngine.CheckCompatibilityAsync probes every clip again (433 -> JoinEngine.cs:86) = 6 sequential probes",
+   "fixture": "4k",
+   "seconds": 1.69,
+   "runs": 3,
+   "cpu_note": "night",
+   "notes": "1.57-2.88. One at a time: #1 0.50, #2 0.73, #3 1.18. Remove and reorder also re-probe every clip (JoinViewModel.cs:338/378)"
+  },
+  {
+   "tab": "join",
+   "operation": "Add 3 clips at once",
+   "fixture": "1080",
+   "seconds": 0.46,
+   "runs": 3,
+   "cpu_note": "night",
+   "notes": "0.46-0.68"
+  },
+  {
+   "tab": "join",
+   "operation": "JoinEngine.JoinAsync, 3 parts = CheckCompatibilityAsync (JoinEngine.cs:136 -> 86) + SumDurationsAsync (143 -> 246) = 6 more probes, then concat -f concat -safe 0 -map 0 -c copy (JoinArgsBuilder.cs:38-45), then move",
+   "fixture": "4k",
+   "seconds": 3.83,
+   "runs": 3,
+   "cpu_note": "night",
+   "notes": "2.82-4.48. Compat and probes 1.38-2.22, concat 1.37-2.25, finalize up to 0.65; cold 3.06"
+  },
+  {
+   "tab": "join",
+   "operation": "JoinEngine.JoinAsync, 3 parts",
+   "fixture": "1080",
+   "seconds": 0.99,
+   "runs": 3,
+   "cpu_note": "night",
+   "notes": "0.91-1.18 (probes 0.46-0.51, concat 0.38-0.70); cold 0.94"
+  },
+  {
+   "tab": "join",
+   "operation": "JoinEngine.JoinAsync, 3 parts of the 10-min file",
+   "fixture": "4k10m",
+   "seconds": 8.26,
+   "runs": 3,
+   "cpu_note": "today, load",
+   "notes": "8.08-9.40 (probes 2.26-2.32, concat 5.41-6.74); cold 12.23. The 2-min 4K file under the same load takes 4.31"
+  },
+  {
+   "tab": "bulk",
+   "operation": "Bulk add 3 rows: BulkCutViewModel.AddFilesAsync probes each row sequentially (1389/1407), then StartKeyframeScanAsync under a 3-wide gate (1418, gate 173), then 64px intro/outro chips under a 3-wide gate (178); the 200 ms debounce is not included",
+   "fixture": "4k",
+   "seconds": 2.87,
+   "runs": 1,
+   "cpu_note": "night",
+   "notes": "All probed 0.87, all runnable (keyframes) 1.93, chips drawn 2.87. Cold: 1.22 / 2.51 / 3.41. One row: 0.32 / 1.09 / 1.66"
+  },
+  {
+   "tab": "bulk",
+   "operation": "Bulk add 3 rows",
+   "fixture": "1080",
+   "seconds": 1.45,
+   "runs": 1,
+   "cpu_note": "today, load",
+   "notes": "0.59 / 0.99 / 1.45; cold 1.26 / 1.75 / 2.28"
+  },
+  {
+   "tab": "bulk",
+   "operation": "BulkTrimEngine.RunAsync Lossless (intro 10.5 s, outro 100.3 s); rows run sequentially (BulkTrimEngine.cs:188)",
+   "fixture": "4k",
+   "seconds": 1.22,
+   "runs": 2,
+   "cpu_note": "night",
+   "notes": "x1 1.20-1.25; x3 4.32"
+  },
+  {
+   "tab": "bulk",
+   "operation": "BulkTrimEngine.RunAsync Lossless",
+   "fixture": "1080",
+   "seconds": 0.76,
+   "runs": 2,
+   "cpu_note": "today, load",
+   "notes": "x1 0.70-0.83; x3 2.55"
+  },
+  {
+   "tab": "bulk",
+   "operation": "BulkTrimEngine.RunAsync Exact = SmartCutEngine: probe, keyframes, head re-encode, tail copy, concat (SmartCutEngine.cs:78-160)",
+   "fixture": "4k",
+   "seconds": 6.81,
+   "runs": 2,
+   "cpu_note": "night",
+   "notes": "x1 6.45-7.17; x3 21.37 (sequential)"
+  },
+  {
+   "tab": "bulk",
+   "operation": "BulkTrimEngine.RunAsync Exact",
+   "fixture": "1080",
+   "seconds": 3.04,
+   "runs": 2,
+   "cpu_note": "today, load",
+   "notes": "x1 3.02-3.06; x3 8.87"
+  },
+  {
+   "tab": "bulk",
+   "operation": "Exact head re-encode, as built by SmartCutArgsBuilder.HeadReencode: -y -i in -ss S -t D -map 0 -c:v libx264 -pix_fmt yuv420p -s WxH -c:a aac -ar 48000 -ac 2 (output seek, SmartCutArgsBuilder.cs:113-119), intro at 10.5 s",
+   "fixture": "4k",
+   "seconds": 4.8,
+   "runs": 3,
+   "cpu_note": "night",
+   "notes": "4.28-5.50. Reads 97.5 MB. Tail copy 0.41-0.65, concat 0.34-0.69"
+  },
+  {
+   "tab": "bulk",
+   "operation": "Exact head re-encode, intro at 104.5 s",
+   "fixture": "4k",
+   "seconds": 22.83,
+   "runs": 2,
+   "cpu_note": "night (30.0-30.2 today under load)",
+   "notes": "Reads 772 MB = 89% of the file. Cost grows with intro position (about 0.19 s per second of start): the output -ss decodes everything from the file start, not from the previous keyframe as the comment at SmartCutArgsBuilder.cs:91-93 claims"
+  },
+  {
+   "tab": "bulk",
+   "operation": "Exact head re-encode, intro at 540.5 s of the 10-min 4K file",
+   "fixture": "4k10m",
+   "seconds": 130.7,
+   "runs": 1,
+   "cpu_note": "today, load",
+   "notes": "The night slope predicted about 106 s. The same frames with input seek take 4.4-4.7 s"
+  },
+  {
+   "tab": "bulk",
+   "operation": "Exact head re-encode, intro at 10.5 s / 104.5 s",
+   "fixture": "1080",
+   "seconds": 1.26,
+   "runs": 1,
+   "cpu_note": "night",
+   "notes": "@104.5: 5.13 s (night); today 1.91 / 7.14"
+  },
+  {
+   "tab": "bulk",
+   "operation": "Exact head re-encode, libx265 default, intro at 10.5 s / 44.5 s",
+   "fixture": "hevc",
+   "seconds": 6.07,
+   "runs": 1,
+   "cpu_note": "night",
+   "notes": "@44.5: 12.67 night, 19.9-20.5 today. Reads 23% / 79% of the file"
+  },
+  {
+   "tab": "bulk",
+   "operation": "Exact head re-encode, intro at 12.5 s (head 7.5 s = 225 frames)",
+   "fixture": "g10",
+   "seconds": 13.08,
+   "runs": 1,
+   "cpu_note": "night (18.8-19.1 today)",
+   "notes": "@44.5: 16.04 night"
+  }
+ ],
+ "alternatives": [
+  {
+   "operation": "Exact head re-encode @104.5 s",
+   "fixture": "4k",
+   "variant": "-ss 104.5 BEFORE -i (input seek, accurate_seek default), same libx264 default args",
+   "seconds": 4.94,
+   "baseline_seconds": 30.21,
+   "output_equivalent": "Yes. Same run, both under load. 45 packets / 1.500 s each. Head-vs-SOURCE PSNR 41.9 dB for both (frame-aligned compare of source [104.5, +1.5)), identical 8.5 MB size. At @10.5 (night run) the input-seek head was PSNR 99 (identical) against the current head"
+  },
+  {
+   "operation": "Exact head re-encode @540.5 s, 10-min file",
+   "fixture": "4k10m",
+   "variant": "input seek, same libx264 default args",
+   "seconds": 4.65,
+   "baseline_seconds": 130.7,
+   "output_equivalent": "Yes. 45 packets / 1.533 s, PSNR vs source 39.6 dB for both, same 9.1 MB size, final 1785 packets, joint decodes clean. The cost no longer depends on the cut position (28x faster here)"
+  },
+  {
+   "operation": "Exact head re-encode @104.5 s",
+   "fixture": "4k",
+   "variant": "input seek + libx264 -preset veryfast",
+   "seconds": 2.16,
+   "baseline_seconds": 30.21,
+   "output_equivalent": "Same frames, different encode: 45 packets, frame-aligned PSNR vs source 40.7 dB (current 41.9), 6.3 MB. Final has the expected 465 packets"
+  },
+  {
+   "operation": "Exact head re-encode @104.5 s",
+   "fixture": "4k",
+   "variant": "input seek + libx264 -preset ultrafast",
+   "seconds": 1.47,
+   "baseline_seconds": 30.21,
+   "output_equivalent": "Same frames, different encode: 45 packets, 44.5 dB vs source, head 16.6 MB (vs 8.5 MB), joint decodes clean"
+  },
+  {
+   "operation": "Exact head re-encode @104.5 s",
+   "fixture": "4k",
+   "variant": "input seek + h264_nvenc -preset p4 -rc vbr -cq 19 -b:v 0",
+   "seconds": 1.52,
+   "baseline_seconds": 30.21,
+   "output_equivalent": "Same frames, different encode: 45 packets, 45.7 dB vs source, 17.2 MB. Same joint behaviour as current"
+  },
+  {
+   "operation": "Exact head re-encode @104.5 s",
+   "fixture": "4k",
+   "variant": "-hwaccel cuda + input seek + h264_nvenc p4 cq19",
+   "seconds": 1.45,
+   "baseline_seconds": 30.21,
+   "output_equivalent": "Same frames, different encode: 45 packets, 45.7 dB. At @10.5 the same variant takes 1.29-1.37 against current 6.65-6.86 (same run)"
+  },
+  {
+   "operation": "Exact head re-encode @540.5 s, 10-min file",
+   "fixture": "4k10m",
+   "variant": "input seek + h264_nvenc p4 cq19 (veryfast 1.99-2.21, ultrafast 1.36-1.67, cuda+nvenc 1.28-1.53)",
+   "seconds": 1.47,
+   "baseline_seconds": 130.7,
+   "output_equivalent": "Same frames, different encode: 45 packets, 41.3 dB vs source (current 39.6), joints clean"
+  },
+  {
+   "operation": "Exact head re-encode @44.5 s",
+   "fixture": "hevc",
+   "variant": "input seek, same libx265 default (veryfast 4.43-5.37, ultrafast 2.39-3.17, hevc_nvenc 1.25-1.64, cuda+hevc_nvenc 1.14-1.28)",
+   "seconds": 6.77,
+   "baseline_seconds": 20.26,
+   "output_equivalent": "Head yes: 45 packets, 39.8 dB vs source for both. BUT every HEVC final, the current engine path included, is corrupt after the joint (300+ decoder errors, frame md5s differ from the source, tail PSNR 11-15 dB). The output takes the libx265 head's hev1 extradata (2497 B) instead of the source's hvc1 (130 B). With hevc_nvenc there are fewer errors (12-14), but the output is still corrupt. This is a correctness bug, outside the perf question"
+  },
+  {
+   "operation": "Exact head re-encode @12.5 s (10 s GOP: 225-frame head)",
+   "fixture": "g10",
+   "variant": "input seek same preset / ultrafast / h264_nvenc / cuda+nvenc",
+   "seconds": 4.46,
+   "baseline_seconds": 18.98,
+   "output_equivalent": "225 packets / 7.5 s each. Input seek alone gains nothing this early (18.25 s, 41.7 dB, identical); the encode dominates. Ultrafast 4.86-5.15 (44.2 dB, 93 MB head), nvenc 5.2-5.6 (44.5 dB), cuda+nvenc 3.96-4.48. Joints decode clean"
+  },
+  {
+   "operation": "Keyframe scan",
+   "fixture": "4k",
+   "variant": "managed MP4 moov index read (stss/stts/ctts/elst; t187-bench/Mp4Index.cs) instead of ffprobe -show_packets",
+   "seconds": 0.003,
+   "baseline_seconds": 0.736,
+   "output_equivalent": "Yes: IDENTICAL keyframe lists on 4k, 1080, hevc and g10 (cold 0.006 s). Reads 0.1 MB instead of 865 MB (100% of the file). Works for mp4/mov only, so ffprobe stays as the fallback"
+  },
+  {
+   "operation": "Keyframe scan",
+   "fixture": "4k",
+   "variant": "same ffprobe packet scan + -nofind_stream_info",
+   "seconds": 0.554,
+   "baseline_seconds": 0.793,
+   "output_equivalent": "Yes, identical list (g10: 0.338 vs 0.592; 1080: 0.131 vs 0.187; hevc no gain)"
+  },
+  {
+   "operation": "Keyframe scan",
+   "fixture": "4k",
+   "variant": "-threads 1 / CSV output instead of JSON",
+   "seconds": 0.708,
+   "baseline_seconds": 0.736,
+   "output_equivalent": "Identical list; no meaningful gain"
+  },
+  {
+   "operation": "Keyframe scan",
+   "fixture": "4k",
+   "variant": "-skip_frame nokey frame scan (the MediaProbe.cs:293 fallback)",
+   "seconds": 7.01,
+   "baseline_seconds": 0.736,
+   "output_equivalent": "Identical list, but 10x slower (it decodes)"
+  },
+  {
+   "operation": "Keyframe scan",
+   "fixture": "4k",
+   "variant": "ffmpeg -discard nokey -map 0:v -c copy -f framecrc",
+   "seconds": 0.36,
+   "baseline_seconds": 0.736,
+   "output_equivalent": "Not verified: 61 packets vs 60 keyframes. Reads 198 MB (23%)"
+  },
+  {
+   "operation": "ProbeAsync",
+   "fixture": "4k",
+   "variant": "add -skip_frame nokey",
+   "seconds": 0.229,
+   "baseline_seconds": 0.287,
+   "output_equivalent": "Yes, every mapped MediaInfo field identical (g10 0.231 vs 0.343; 1080 0.083 vs 0.142)"
+  },
+  {
+   "operation": "ProbeAsync",
+   "fixture": "4k",
+   "variant": "add -nofind_stream_info",
+   "seconds": 0.034,
+   "baseline_seconds": 0.281,
+   "output_equivalent": "NO: pix_fmt and format duration go missing, and CompatChecker / SmartCut use pix_fmt"
+  },
+  {
+   "operation": "ProbeAsync",
+   "fixture": "4k",
+   "variant": "-threads 1 / -analyzeduration 0",
+   "seconds": 0.273,
+   "baseline_seconds": 0.287,
+   "output_equivalent": "Identical fields; no gain"
+  },
+  {
+   "operation": "Thumbnail 160px @60 s (on keyframe)",
+   "fixture": "4k",
+   "variant": "add -nofind_stream_info before -i",
+   "seconds": 0.252,
+   "baseline_seconds": 0.496,
+   "output_equivalent": "Yes, PSNR 99 (identical picture). g10 @30: 0.216 vs 0.480; 1080: 0.103 vs 0.167; HEVC no change"
+  },
+  {
+   "operation": "Thumbnail 160px @61 s (1 s into GOP)",
+   "fixture": "4k",
+   "variant": "add -nofind_stream_info",
+   "seconds": 0.377,
+   "baseline_seconds": 0.624,
+   "output_equivalent": "Yes, PSNR 99 (g10 @39: 1.56 vs 1.76)"
+  },
+  {
+   "operation": "Thumbnail 160px @61 s",
+   "fixture": "4k",
+   "variant": "-hwaccel cuda (d3d11va 0.720, dxva2 0.789)",
+   "seconds": 0.663,
+   "baseline_seconds": 0.643,
+   "output_equivalent": "Yes, PSNR 99, but no gain for H.264"
+  },
+  {
+   "operation": "Thumbnail 160px @31 s",
+   "fixture": "hevc",
+   "variant": "-hwaccel cuda",
+   "seconds": 0.344,
+   "baseline_seconds": 0.457,
+   "output_equivalent": "Yes, PSNR 99"
+  },
+  {
+   "operation": "Thumbnail 160px @61 s",
+   "fixture": "4k",
+   "variant": "scale flags=fast_bilinear / cuda+scale_cuda",
+   "seconds": 0.627,
+   "baseline_seconds": 0.643,
+   "output_equivalent": "NO, PSNR 20 / 27 dB (a different-looking picture), and no real gain"
+  },
+  {
+   "operation": "Thumbnail 160px @39 s (9 s into a 10 s GOP)",
+   "fixture": "g10",
+   "variant": "-skip_frame nokey (or -noaccurate_seek)",
+   "seconds": 0.559,
+   "baseline_seconds": 1.932,
+   "output_equivalent": "NO: it returns the NEXT keyframe (PSNR 99 vs the keyframe at 40 s, 30.7 dB vs the exact frame)"
+  },
+  {
+   "operation": "Thumbnail 160px @61 s",
+   "fixture": "4k",
+   "variant": "-threads 1 / -thread_type slice",
+   "seconds": 1.289,
+   "baseline_seconds": 0.643,
+   "output_equivalent": "Identical picture, but 2x slower"
+  },
+  {
+   "operation": "Waveform",
+   "fixture": "4k",
+   "variant": "add -nofind_stream_info",
+   "seconds": 0.115,
+   "baseline_seconds": 0.358,
+   "output_equivalent": "Yes, PCM byte-identical (g10 0.077 vs 0.337; 1080 0.113 vs 0.183)"
+  },
+  {
+   "operation": "Waveform",
+   "fixture": "4k",
+   "variant": "-map 0:a:0 -vn -sn -dn / -threads 1",
+   "seconds": 0.583,
+   "baseline_seconds": 0.537,
+   "output_equivalent": "PCM identical; no gain (today, under load)"
+  },
+  {
+   "operation": "Join concat of 3 parts",
+   "fixture": "4k",
+   "variant": "concat -auto_convert 0",
+   "seconds": 2.097,
+   "baseline_seconds": 2.323,
+   "output_equivalent": "NO: packet streamhash differs, so rejected"
+  },
+  {
+   "operation": "Join concat of 3 parts",
+   "fixture": "4k",
+   "variant": "reference: ffmpeg -c copy of the same bytes as ONE file",
+   "seconds": 1.296,
+   "baseline_seconds": 2.323,
+   "output_equivalent": "Reference only. It shows about 1 s of per-part overhead in the concat. Inferred: each part's own stream-info probe"
+  },
+  {
+   "operation": "Decode 300 frames from 20 s (proxy for the FFME preview)",
+   "fixture": "4k",
+   "variant": "-hwaccel cuda (d3d11va 2.60, d3d11va+scale1080 2.34, software+scale1080 3.39)",
+   "seconds": 2.02,
+   "baseline_seconds": 3.17,
+   "output_equivalent": "Throughput only. Software decode gives 95 fps (3.2x realtime), cuda 149 fps. FFME already passes HW devices plus a 1080p scale filter (FfmeMediaPlayer.cs:511-514, 523-532)"
+  }
+ ],
+ "ranked_hotspots": [
+  "1. Bulk Cut 'Exact' precision (SmartCutEngine head re-encode). 4K: 6.45-7.17 s per file at intro 10.5 s; x3 = 21.4 s, run sequentially (BulkTrimEngine.cs:188). 1080: 3.0 s per file (under load). The head alone takes 4.3-5.5 s at intro 10.5 (1080: 1.26), 22.8 s at intro 104.5 (1080: 5.13), and 130.7 s at intro 540.5 of a 10-min 4K file. The cost grows with intro position because SmartCutArgsBuilder.cs:113-119 uses OUTPUT -ss, which decodes from the file start (89% of the file read at 104.5). Input seek gives identical frames in 4.4-5.3 s at any position. With veryfast/NVENC: 1.4-2.2 s. HEVC 4K: 20 s at intro 44.5 vs 6.8 s input seek, and the HEVC output is corrupt after the joint (separate correctness bug).",
+  "2. Join run (JoinEngine.JoinAsync, 3 parts): 4K 2.8-4.5 s vs 1080 0.9-1.2 s; three parts of the 10-min file 8.1-9.4 s (under load). 1.4-2.2 s of it is 6 sequential, uncached ProbeAsync calls (CheckCompatibility at JoinEngine.cs:86 plus SumDurations at :246, 0.27-0.30 s each on 4K H.264 vs 0.10 at 1080). The concat itself takes 1.4-2.3 s vs 0.86-1.47 s for a one-file copy of the same bytes. Adding clips costs 1.6-2.9 s for 3 clips (6 more probes) vs 0.46-0.68 at 1080, and every remove or reorder re-probes all clips.",
+  "3. Hover / scrub thumbnails (Split timeline hover, Bulk chips and profile): 0.50-0.63 s per grab plus a 60 ms debounce at 4K vs 0.17-0.21 s at 1080 (3x). A 10-position sweep takes 5.45 s vs 1.86 s. On 4K with a 10 s GOP, a mid-GOP grab takes 1.74-2.03 s. About 0.25 s of every 4K H.264 grab is find_stream_info (-nofind_stream_info: 0.25/0.38 s, identical picture).",
+  "4. Bulk add rows (3 x 4K): runnable after the keyframe scans at 1.93 s (cold 2.51), chips drawn at 2.87 s (cold 3.41). 1080 under load: 0.99 / 1.45 s. Bulk Lossless run: x1 1.20-1.25 s, x3 4.32 s vs 1080 0.70-0.83 / 2.55 (under load).",
+  "5. Split LOAD until Split is enabled (the keyframe scan, which reads 100% of the file): 4K 0.95-1.05 s (cold 1.33) vs 1080 0.30-0.32 (cold 0.42). On the 10-min 4.5 GB file: 4.8-5.4 s (1.73 for the 2-min file under the same load). The preview can open after the probe: 0.27 s (1080: 0.10). Waveform 0.64-0.70 s runs in parallel. Inferred: on the box's 5400-rpm HDDs a cold 4.5 GB file needs about 24-30 s of read before Split is enabled. A moov-index keyframe read gives the identical list in 0.003-0.006 s from 0.1 MB.",
+  "6. Split export (3 lossless parts): 4K 1.08-1.64 s vs 1080 0.33-0.35; 10-min 4K 5.1-6.0 s (under load). The ffmpeg step takes 0.74-0.78 s, the same as a raw whole-file ffmpeg -c copy (0.86-1.47 s) on the same disk. The only extra is the re-probe at SplitEngine.cs:121 (0.27-0.35 s). VERDICT: split export is AT the IO floor. On this machine and these fixtures the slow feel is not the export. It comes from the 4K costs around it: the full-file keyframe read at load (and the HDD, if the user's files live there), the 3x slower thumbnails and preview, the ~0.25 s H.264 find_stream_info tax on every ffmpeg/ffprobe call, the probe repeated 6-12 times per join, and above all the Bulk Exact cut."
+ ],
+ "notes": "VERIFIED vs INFERRED. Everything with a number was measured with the harness. The harness drives the real Core services (MediaProbe, FfmpegThumbnailService, FfmpegWaveformService, SplitEngine, JoinEngine, BulkTrimEngine, SmartCutEngine builders) through the app's own FfmpegRunner/FfprobeRunner, in the call order the view models use (cited file:line). Only synthetic fixtures were used. No user files, no GUI, no %APPDATA%/%LOCALAPPDATA%. The repo's git status is clean (only normal Core bin/obj were built). INFERRED, not measured: HDD timings (rules kept me off the F:-J: HDDs; estimate = bytes read / ~150-190 MB/s). Not reproduced: FFME Player.Open and real preview scrubbing. ffmpeg decode throughput stands in for them. My fixtures are 1-10 min long. Real footage is often longer, so costs that grow with file size scale with it. Verified from 2 min to 10 min under the same load: keyframe scan 1.29 -> 2.9 s, LOAD 1.73 -> 5.0 s, split 1.68 -> 5.5 s, join 4.3 -> 8.6 s, Exact head at a late intro 30 s -> 131 s.\n\nWHY 4K COSTS MORE (verified). (a) Every ffmpeg and ffprobe call on 4K H.264 pays about 0.24 s of single-threaded find_stream_info decode: probe 0.27 vs 0.035 with -nofind_stream_info, and HEVC 4K is only 0.035 to begin with. ProbeAsync has no cache (MediaProbe.cs:78-147). So the cost repeats: split prepare (SplitEngine.cs:121), each Join chip, compat and SumDurations (4 probes per clip over add plus run), Bulk row add plus the Exact engine re-probe (SmartCutEngine.cs:78, KeptMiddleRequestBuilder.cs:39). (b) The keyframe scan reads 100% of the file, every byte (GetProcessIoCounters), even though the cache keeps it once per file. (c) The Exact head uses output seek, so the decode grows with cut position. (d) Pixel-bound work (thumbnail decode, Exact encode) scales about 3-4x from 1080 to 4K, which is expected.\n\nCORRECTNESS FINDINGS, found while checking equivalence; out of perf scope, all variants affected equally. 1) HEVC Exact output is corrupt after the head/tail joint in the current engine path. The concat output keeps the libx265 head's hev1 extradata, and the tail's slices (whose parameter sets live only in the source hvc1 extradata, per trace_headers) decode with 250-316 errors ('alignment_bit_equal_to_one=0', 'Too many refs'), frame md5s that differ from the source, and tail PSNR 11-15 dB. Evidence file: t187-fixtures/work/smart2-final-current-hevc-10.5.mp4. H.264 survives because the concat/mov path inserts SPS+PPS in-band before the tail IDR (the decoded frames after the joint are md5-identical to the source). 2) In H.264 Exact outputs, TailCopy (-ss before -i, -c copy, -avoid_negative_ts make_zero) gives the tail a video start_time of 0.080 s against audio at 0.000. In the final, the first tail frame lands at 1.6 s instead of 1.5 s, and about 80 ms of audio overlaps at the joint (verified with frame md5s and ffprobe). 3) The comment at SmartCutArgsBuilder.cs:91-93 says the output seek 'decodes from the previous keyframe ... bounded by one GOP'. Measured: it decodes from the file start.\n\nMEASUREMENT CONDITIONS. The night runs were quiet and repeatable. The 2026-10-04 runs were made while other sessions kept 6-15 of 20 logical cores busy, which inflated CPU-bound timings about 1.6x (the same-load 2-min re-run quantifies it). Within-run comparisons hold. Cross-run 4K-vs-1080 ratios for Bulk compare night 4K with loaded 1080, so they understate the 4K gap.\n\nHARNESS. Build with DOTNET_ROOT=D:/_env_storeage/dotnet and that folder first on PATH: 'dotnet build -c Release' in t187-bench. Run bin/Release/net8.0/T187Bench.exe with one of: 'floor' | 'core [4k 1080 hevc g10 4k10m] [probe kf wf thumb load split join bulk smart]' | 'alt [io probe kf thumb smart join wf decode nofsi thumbframe]' | 'alt smart2 [4k104 hevc10 hevc44 4k10cuda g10 4k10m540]'. Results append to t187-bench/results/timings.jsonl (677 rows) and notes.txt. Filter with 'python show.py <fx|-> <substring|-> [tab]'. Run logs: results/run-4k-smart-bulk.log, run-smart2-hevc-g10.log, run-smart2-4k10m.log. Source files: Infra.cs (paths, fixtures, the app's runners, ColdCopy via unbuffered write-through), CoreScenarios.cs, Alternatives.cs, Smart2.cs, Mp4Index.cs (managed moov keyframe reader), IoMeter.cs (bytes read/written per process). Fixtures stay in t187-fixtures. I deleted regenerable outputs, keeping split/join outputs for the 2-min fixtures and the smart2 final files as evidence."
+}
