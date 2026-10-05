@@ -117,7 +117,8 @@ public sealed class SplitEngine : ISplitEngine
 
         // --- Probe the input for duration + keyframes (via T-003, which uses T-002). ---
         // T-093: ProbeAsync is a metadata-only query (-show_streams/-show_format, no packet or frame
-        // decode) so it is cheap; it is NOT the heavy cost this ticket targets and is left as-is.
+        // decode). T-193: it is also cached per file version by MediaProbe, so after the load's probe of the
+        // same unchanged file this is a cache hit and Preparing starts no ffprobe for it.
         var probeResult = await _probe.ProbeAsync(req.InputPath, ct).ConfigureAwait(false);
         if (probeResult is not ProbeResult.ProbeSucceeded ok)
         {

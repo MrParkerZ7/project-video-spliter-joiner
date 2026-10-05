@@ -139,7 +139,8 @@ public sealed class JoinEngine : IJoinEngine
             return JoinResult.Refused(report);
         }
 
-        // Compatible: gather the summed duration for progress (best-effort; probe again cheaply).
+        // Compatible: gather the summed duration for progress (best-effort). T-193: each ProbeAsync here re-reads
+        // the pre-flight's result from MediaProbe's cache; a clip that changed since probes again and may fail.
         var totalDuration = await SumDurationsAsync(req.InputPaths, ct).ConfigureAwait(false);
 
         var outFull = Path.GetFullPath(req.OutputPath);

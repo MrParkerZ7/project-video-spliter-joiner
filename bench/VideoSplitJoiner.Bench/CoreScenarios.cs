@@ -266,8 +266,17 @@ internal static class CoreScenarios
     }
 
     /// <summary>
+    /// The note of a stretch that starts only ffprobe: its run count, read from the job's process count (each run
+    /// also starts a conhost, so one run counts as 2 — see the README's "How it measures").
+    /// </summary>
+    private static string FfprobeRuns(Usage u) =>
+        string.Create(CultureInfo.InvariantCulture, $"{u.Processes / 2.0:0.#} ffprobe run{(u.Processes == 2 ? string.Empty : "s")} (processes / 2)");
+
+    /// <summary>
     /// SplitViewModel.RunSplitAsync (SplitViewModel.cs:1360-1412): all parts selected → null selection → segment muxer.
-    /// The probe's keyframe cache is warm (the load already scanned) unless mode == cold. <c>work/split-&lt;key&gt;</c>
+    /// The warm runs use a probe the load already used (its metadata probe and its keyframe scan, on the one shared
+    /// MediaProbe the app wires), so the engine's own probe is whatever the app would pay; the cold run starts from a
+    /// fresh probe. <c>work/split-&lt;key&gt;</c>
     /// holds exactly the full split's parts (the join scenario and <c>alt join</c> read them); the part-2-only run
     /// writes to <c>work/split-&lt;key&gt;-sel</c> and the cold run to <c>work/split-cold-&lt;key&gt;</c>. With
     /// <paramref name="full"/> false (only <c>join</c> was asked) just the full split runs, to make the parts.
@@ -308,7 +317,8 @@ internal static class CoreScenarios
         for (var i = 1; i <= runs; i++)
         {
             var probe = c.NewProbe();
-            await probe.GetKeyframesAsync(fx.Path); // the load already did this in the app
+            await probe.ProbeAsync(fx.Path); // the load already did this in the app (its gate) ...
+            await probe.GetKeyframesAsync(fx.Path); // ... and this (its background index)
             var res = await One(fx.Path, probe, null, outDir, "warm", i, "SplitEngine.SplitAsync 3 parts (segment muxer)");
             produced = res.Segments.Select(sg => c.Root.Resolve(sg.Path)).ToList();
             if (i == 1 && full)
@@ -330,6 +340,7 @@ internal static class CoreScenarios
             for (var i = 1; i <= runs; i++)
             {
                 var probe = c.NewProbe();
+                await probe.ProbeAsync(fx.Path);
                 await probe.GetKeyframesAsync(fx.Path);
                 await One(fx.Path, probe, new[] { 2 }, selDir, "warm", i, "SplitEngine.SplitAsync part 2 only (per-segment)");
             }
@@ -426,7 +437,7 @@ internal static class CoreScenarios
         var outPath = Path.Combine(c.Work, $"join-{fx.Key}{Path.GetExtension(fx.Path)}");
 
         // JoinViewModel.AddFilesAsync (JoinViewModel.cs:283-328): probe each new clip for the chip, then RefreshCompatAsync
-        // → JoinEngine.CheckCompatibilityAsync probes EVERY clip again (JoinEngine.cs:83-96).
+        // → JoinEngine.CheckCompatibilityAsync probes EVERY clip again (JoinEngine.cs:83-96) — MediaProbe cache hits since T-193.
         for (var i = 1; i <= runs; i++)
         {
             var probe = c.NewProbe();
@@ -440,7 +451,10 @@ internal static class CoreScenarios
 
                 await eng.CheckCompatibilityAsync(parts);
             });
-            c.Results.Add("join", "ADD 3 clips at once (3 chip probes + compat = 6 probes)", fx.Key, "warm", i, s, u);
+            // The op names the calls, which every build makes; how many ffprobe runs they cost goes in the note (T-193's
+            // cache turns 6 into 3). Until T-193 this op was "ADD 3 clips at once (3 chip probes + compat = 6 probes)";
+            // `show --op "ADD 3 clips at once"` matches both labels.
+            c.Results.Add("join", "ADD 3 clips at once (3 chip ProbeAsync + compat over 3)", fx.Key, "warm", i, s, u, FfprobeRuns(u));
         }
 
         // Adding the clips one at a time: add #k = 1 chip probe + (k>=2 ? compat over k clips : 0).
@@ -459,14 +473,22 @@ internal static class CoreScenarios
                         await eng.CheckCompatibilityAsync(list.ToList());
                     }
                 });
-                c.Results.Add("join", $"ADD clip #{list.Count} (one at a time)", fx.Key, "warm", 1, s, u);
+                c.Results.Add("join", $"ADD clip #{list.Count} (one at a time)", fx.Key, "warm", 1, s, u, FfprobeRuns(u));
             }
         }
 
-        // JoinViewModel run → JoinEngine.JoinAsync: compat (N probes) + SumDurations (N probes) + concat -c copy + move.
+        // JoinViewModel run → JoinEngine.JoinAsync: compat (N ProbeAsync calls) + SumDurations (N calls) + concat -c copy + move.
+        // The run follows the adds on the same probe (untimed here), as the app's one shared MediaProbe does.
         for (var i = 1; i <= runs; i++)
         {
-            var eng = new JoinEngine(c.Ffmpeg, c.NewProbe(), c.Log);
+            var probe = c.NewProbe();
+            var eng = new JoinEngine(c.Ffmpeg, probe, c.Log);
+            foreach (var p in parts)
+            {
+                await probe.ProbeAsync(p);
+            }
+
+            await eng.CheckCompatibilityAsync(parts);
             var stages = new List<(string Stage, double T)>();
             var mark = JobAccounting.Mark();
             var sw = Stopwatch.StartNew();
@@ -631,12 +653,16 @@ internal static class CoreScenarios
         c.Results.Add("bulk", $"ADD {files.Count} row(s): all intro/outro chips drawn", fx.Key, mode, 1, tAll, u);
     }
 
-    /// <summary>BulkCutViewModel run (BulkCutViewModel.cs:2737-2750) → BulkTrimEngine.RunAsync. Keyframes warm (row add scanned).</summary>
+    /// <summary>
+    /// BulkCutViewModel run (BulkCutViewModel.cs:2737-2750) → BulkTrimEngine.RunAsync. Each row was probed and scanned on
+    /// the same probe when it was added (untimed here), as the app's one shared MediaProbe does.
+    /// </summary>
     public static async Task BulkRun(BenchContext c, Fixture fx, IReadOnlyList<string> files, CutPrecision precision, string mode, int run)
     {
         var probe = c.NewProbe();
         foreach (var f in files)
         {
+            await probe.ProbeAsync(f);
             await probe.GetKeyframesAsync(f);
         }
 

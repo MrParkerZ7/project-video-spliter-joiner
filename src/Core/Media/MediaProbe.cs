@@ -15,7 +15,9 @@ public interface IMediaProbe
     /// <summary>
     /// Probe <paramref name="path"/> for its container, duration, and streams. A corrupt or
     /// non-media file returns <see cref="ProbeResult.ProbeFailed"/> — never throws for a bad
-    /// file. Cancellation still surfaces as <see cref="OperationCanceledException"/>.
+    /// file. Cancellation still surfaces as <see cref="OperationCanceledException"/>. A successful
+    /// result is cached keyed by (path, file mtime, file length), like the keyframes, so a repeat
+    /// call on an unchanged file runs no second ffprobe (T-193); failures are never cached.
     /// </summary>
     Task<ProbeResult> ProbeAsync(string path, CancellationToken ct = default);
 
@@ -52,6 +54,13 @@ public sealed class MediaProbe : IMediaProbe
     private readonly IFfprobeRunner _ffprobe;
     private readonly ConcurrentDictionary<string, IReadOnlyList<TimeSpan>> _keyframeCache = new();
 
+    // T-193: successful metadata probes, keyed exactly like _keyframeCache (BuildCacheKey: full path | mtime ticks |
+    // length), so Join, Split and Bulk Cut stop re-running ffprobe for a file they already probed. Success only: a
+    // ProbeFailed or a cancellation is never stored, so a retry probes again. No in-flight dedup (none of the callers
+    // probes one file twice at once; two simultaneous calls would each run ffprobe and store equal results). The
+    // MediaInfo record is immutable (IReadOnlyList streams), so callers can share the cached instance.
+    private readonly ConcurrentDictionary<string, ProbeResult.ProbeSucceeded> _probeCache = new();
+
     // T-093: in-flight dedup. A keyframe scan for a given file (keyed exactly like _keyframeCache)
     // registers its running Task here so a SECOND concurrent caller for the same key awaits the
     // SAME scan instead of launching a duplicate ffprobe pass. The shared scan runs on an
@@ -85,6 +94,19 @@ public sealed class MediaProbe : IMediaProbe
         if (!File.Exists(path))
         {
             return ProbeResult.Failure($"File does not exist: '{path}'.");
+        }
+
+        // T-193: the lookup comes after both guards, so an empty path or a missing file is answered without the cache
+        // (a cached entry never masks a deleted file). The key is read before ffprobe runs, so a file that changes
+        // during the probe is cached under its old version and the next call probes again. A file that vanishes
+        // between the guard and the key read has no key: it is probed uncached, as before the cache existed.
+        // A cancelled token still throws on a cache hit, as it did when every call reached ffprobe (I8), so the
+        // only change the cache makes is the ffprobe process it saves.
+        var hasKey = TryBuildCacheKey(path, out var cacheKey);
+        if (hasKey && _probeCache.TryGetValue(cacheKey, out var cached))
+        {
+            ct.ThrowIfCancellationRequested();
+            return cached;
         }
 
         var args = FfmpegArgs.ForFfprobe()
@@ -143,7 +165,13 @@ public sealed class MediaProbe : IMediaProbe
         var container = root.Format?.FormatName ?? "unknown";
 
         var info2 = new MediaInfo(duration, container, video.AsReadOnly(), audio.AsReadOnly());
-        return ProbeResult.Success(info2);
+        var success = new ProbeResult.ProbeSucceeded(info2);
+        if (hasKey)
+        {
+            _probeCache[cacheKey] = success; // success only — every failure path above returned before this line
+        }
+
+        return success;
     }
 
     /// <inheritdoc />
@@ -420,6 +448,26 @@ public sealed class MediaProbe : IMediaProbe
         var mtime = info.LastWriteTimeUtc.Ticks;
         var length = info.Length;
         return string.Create(CultureInfo.InvariantCulture, $"{full}|{mtime}|{length}");
+    }
+
+    /// <summary>
+    /// <see cref="BuildCacheKey"/> that never throws (T-193): false when the file's metadata cannot be read — it was
+    /// deleted after the caller's <see cref="File.Exists(string)"/> check, or the path cannot be resolved — so
+    /// <see cref="ProbeAsync"/> keeps its never-throws-for-a-bad-file contract and probes uncached instead.
+    /// </summary>
+    internal static bool TryBuildCacheKey(string path, out string key)
+    {
+        try
+        {
+            key = BuildCacheKey(path);
+            return true;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException
+                                       or NotSupportedException or System.Security.SecurityException)
+        {
+            key = string.Empty;
+            return false;
+        }
     }
 
     private static bool TryParseSeconds(string? raw, out TimeSpan value)
