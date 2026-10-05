@@ -9,9 +9,17 @@ namespace VideoSplitJoiner.Core.Thumbnails;
 /// Default <see cref="IThumbnailService"/>: extracts a single frame at a bucketed time to a temp jpg via
 /// the ffmpeg CLI, with a bounded (LRU) time-bucket cache and best-effort (never-throws) semantics.
 ///
-/// <para><b>ffmpeg args (fast, keyframe-accurate seek):</b> <c>-ss &lt;t&gt;</c> BEFORE <c>-i &lt;input&gt;</c>,
-/// then <c>-frames:v 1 -vf scale=&lt;width&gt;:-1 -y &lt;temp.jpg&gt;</c>. Input-seek keeps it near-instant;
-/// keyframe accuracy is fine for a hover preview.</para>
+/// <para><b>ffmpeg args (fast, frame-accurate seek):</b> <c>-ss &lt;t&gt;</c> BEFORE <c>-i &lt;input&gt;</c>,
+/// then <c>-frames:v 1 -vf scale=&lt;width&gt;:-1 -y &lt;temp.jpg&gt;</c>. The input seek jumps to the keyframe
+/// before <c>t</c> and decodes from there to <c>t</c> itself, so the picture is the frame at the (bucketed) time,
+/// not the keyframe (measured on MP4, MOV and MKV; an MPEG-TS source can land on the next keyframe instead).</para>
+///
+/// <para><b>The stream-info pass stays, on every input (T-195):</b> unlike the waveform, the grab never carries
+/// <see cref="StreamInfoSkip.Flag"/>. Skipping that pass also leaves ffmpeg without the format start time an input
+/// <c>-ss</c> counts from, so on an MP4/MOV whose start time is not 0 the grab would exit 0 with the wrong frame. The
+/// first part of the app's own lossless split of an H.264 B-frame + AAC MP4 is such a file (it starts at about
+/// 0.043 s, and a skipping grab came back one frame early). Skipping it only when the probed start time is 0 is a
+/// follow-up ticket (SPEC-005 I27).</para>
 ///
 /// <para><b>Cache:</b> keyed by <c>(inputPath, bucket, width)</c> where <c>bucket</c> is the requested time
 /// floored to a configurable granularity (default 1s). A cached temp file for that bucket AT THAT WIDTH is

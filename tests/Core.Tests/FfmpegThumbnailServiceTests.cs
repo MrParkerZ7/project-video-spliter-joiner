@@ -57,6 +57,10 @@ public class FfmpegThumbnailServiceTests : IDisposable
         ssIndex.Should().BeGreaterThanOrEqualTo(0);
         iIndex.Should().BeGreaterThan(ssIndex, "-ss must precede -i for fast seek");
 
+        // SPEC-005#I27 (T-195): the grab keeps ffmpeg's stream-info pass, on an MP4 too, so -ss counts from the
+        // format start time.
+        tokens.Should().NotContain("-nofind_stream_info");
+
         // Single frame + scale filter + overwrite.
         tokens.Should().ContainInConsecutiveOrder("-frames:v", "1");
         tokens.Should().ContainInConsecutiveOrder("-vf", "scale=160:-1");

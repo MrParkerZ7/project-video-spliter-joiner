@@ -15,7 +15,7 @@ numbering order. The index reflects the **actual** records present.
 | [0003](0003-cancel-safety.md) | Cancel safety — temp-then-move + refuse-don't-corrupt | Accepted |
 | [0004](0004-ffme-over-mediaelement.md) | FFME (native ffmpeg) preview player over WPF MediaElement | Accepted |
 | [0005](0005-async-seek-state-machine.md) | Async-seek state machine — hold, coalesce-throttle, click dedupe | Accepted |
-| [0006](0006-thumbnail-grab-approach.md) | Scrub-bar hover thumbnails via a second ffmpeg-CLI grab, not FFME frame captures | Accepted |
+| [0006](0006-thumbnail-grab-approach.md) | Scrub-bar hover thumbnails via a second ffmpeg-CLI grab, not FFME frame captures | Accepted — amended by T-179 (the cache key carries the width) and T-195 (the seek is frame-accurate; the grab keeps the stream-info pass the waveform skips on MP4/MOV) |
 | [0007](0007-hand-rolled-mvvm.md) | Hand-rolled MVVM — no CommunityToolkit.Mvvm, view models WPF-free for headless test | Accepted |
 | [0008](0008-custom-windowchrome-caption.md) | Custom WindowChrome dark/gold caption with WM_GETMINMAXINFO taskbar clamp | Accepted |
 | [0009](0009-two-path-keyframe-scan.md) | Two-path keyframe scan — demux packets primary, decode fallback, cache | Accepted |

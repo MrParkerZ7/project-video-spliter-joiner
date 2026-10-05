@@ -10,11 +10,17 @@ namespace VideoSplitJoiner.Core.Waveform;
 /// ffmpeg CLI, reduces it to a normalized 0..1 peak array (max-abs per bucket), and caches the result with
 /// a bounded (LRU) cache + best-effort (never-throws) semantics.
 ///
-/// <para><b>ffmpeg args:</b> <c>-i &lt;input&gt; -ac 1 -ar &lt;lowRate&gt; -f s16le -y &lt;temp.pcm&gt;</c> — a mono
+/// <para><b>ffmpeg args:</b> <c>[-nofind_stream_info] -i &lt;input&gt; -vn -ac 1 -ar &lt;lowRate&gt; -f s16le -y &lt;temp.pcm&gt;</c> — a mono
 /// mixdown at a low sample rate (default 4000 Hz) written as raw little-endian Int16 PCM. Mono + low-rate keeps
 /// the temp tiny and is plenty of resolution for a waveform. <b>Temp file, not piped</b> — <see cref="FfmpegRunner"/>
 /// reads stdout as UTF-8 text, so raw PCM bytes MUST go through a temp file (the exact constraint that shaped the
 /// thumbnail service).</para>
+///
+/// <para><b>No stream-info decode on MP4/MOV (T-195):</b> for a <c>.mp4</c>/<c>.m4v</c>/<c>.mov</c> input
+/// <see cref="StreamInfoSkip.Flag"/> goes immediately before <c>-i</c>; a flagged run that fails, or exits 0 with no
+/// file or a PCM under one sample, is retried once without it (never when cancelled), and nothing is remembered. The
+/// skip also loses the format start time, which only a seek uses: this run does not seek (PCM byte-identical, on files
+/// that start after 0 too), while the frame grab does, so the grab keeps the pass (SPEC-005 I27).</para>
 ///
 /// <para><b>Bucketing/normalization:</b> the temp PCM is read as Int16 LE samples, split into <c>buckets</c>
 /// contiguous windows, the max absolute amplitude of each window is taken, then normalized to 0..1 by dividing
@@ -135,23 +141,22 @@ public sealed class FfmpegWaveformService : IWaveformService
                 Directory.CreateDirectory(dir);
             }
 
-            var args = BuildArgs(inputPath, _sampleRateHz, tempPath);
+            // T-195: MP4/MOV skips the stream-info decode; one retry without it when that run yields no PCM.
+            var skipStreamInfo = StreamInfoSkip.IsIsoBmffExtension(inputPath);
+            var pcm = await ExtractPcmAsync(inputPath, tempPath, skipStreamInfo, ct).ConfigureAwait(false);
 
-            ct.ThrowIfCancellationRequested();
-            var result = await _runner.RunAsync(args, totalDuration: null, progress: null, ct: ct)
-                .ConfigureAwait(false);
-
-            // ffmpeg failed, or produced nothing → best-effort null (do NOT cache).
-            if (!result.Success || !File.Exists(tempPath))
+            if (skipStreamInfo && (pcm is null || pcm.Length < 2))
             {
-                return null;
+                // A cancelled extraction is never retried. The retry is judged on its own output, never on a PCM the
+                // failed run left behind.
+                ct.ThrowIfCancellationRequested();
+                TryDeleteFile(tempPath);
+                pcm = await ExtractPcmAsync(inputPath, tempPath, skipStreamInfo: false, ct).ConfigureAwait(false);
             }
 
-            ct.ThrowIfCancellationRequested();
-            var pcm = await ReadAllBytesAsync(tempPath, ct).ConfigureAwait(false);
-
-            // Empty / sub-sample PCM (no audio track, silent-but-empty stream) → hide the band.
-            if (pcm.Length < 2)
+            // ffmpeg failed, produced nothing, or produced empty / sub-sample PCM (no audio track) → best-effort
+            // null, never cached, and the App hides the band.
+            if (pcm is null || pcm.Length < 2)
             {
                 return null;
             }
@@ -221,11 +226,27 @@ public sealed class FfmpegWaveformService : IWaveformService
     }
 
     /// <summary>
-    /// Build the extraction args: mono mixdown at a low sample rate, raw little-endian Int16 PCM to a temp file.
-    /// Exposed <c>internal</c> so a unit test can assert the exact token order/values with no ffmpeg run.
+    /// Build the extraction args for a first attempt: mono mixdown at a low sample rate, raw little-endian Int16 PCM
+    /// to a temp file, with <see cref="StreamInfoSkip.Flag"/> immediately before <c>-i</c> when the input is MP4/MOV
+    /// (T-195). Exposed <c>internal</c> so a unit test can assert the exact token order/values with no ffmpeg run.
     /// </summary>
     internal static FfmpegArgs BuildArgs(string inputPath, int sampleRateHz, string tempPath) =>
-        FfmpegArgs.ForFfmpeg()
+        BuildArgs(inputPath, sampleRateHz, tempPath, StreamInfoSkip.IsIsoBmffExtension(inputPath));
+
+    /// <summary>
+    /// Build the extraction args with the stream-info skip chosen by the caller:
+    /// <c>[-nofind_stream_info] -i &lt;input&gt; -vn -ac 1 -ar &lt;rate&gt; -f s16le -y &lt;temp.pcm&gt;</c>. Without the
+    /// skip these are exactly the pre-T-195 tokens (the retry, and every input outside MP4/MOV).
+    /// </summary>
+    internal static FfmpegArgs BuildArgs(string inputPath, int sampleRateHz, string tempPath, bool skipStreamInfo)
+    {
+        var args = FfmpegArgs.ForFfmpeg();
+        if (skipStreamInfo)
+        {
+            args.Raw(StreamInfoSkip.Flag);
+        }
+
+        return args
             .Input(inputPath)
             .Raw("-vn") // drop video: we only want the audio stream
             .Raw("-ac", "1")
@@ -233,6 +254,28 @@ public sealed class FfmpegWaveformService : IWaveformService
             .Raw("-f", "s16le")
             .Raw("-y")
             .Output(tempPath);
+    }
+
+    /// <summary>
+    /// Run one extraction and read its PCM back: <c>null</c> when ffmpeg failed or wrote no file, else the bytes
+    /// (possibly empty — the caller decides). A cancellation propagates as <see cref="OperationCanceledException"/>.
+    /// </summary>
+    private async Task<byte[]?> ExtractPcmAsync(string inputPath, string tempPath, bool skipStreamInfo, CancellationToken ct)
+    {
+        var args = BuildArgs(inputPath, _sampleRateHz, tempPath, skipStreamInfo);
+
+        ct.ThrowIfCancellationRequested();
+        var result = await _runner.RunAsync(args, totalDuration: null, progress: null, ct: ct)
+            .ConfigureAwait(false);
+
+        if (!result.Success || !File.Exists(tempPath))
+        {
+            return null;
+        }
+
+        ct.ThrowIfCancellationRequested();
+        return await ReadAllBytesAsync(tempPath, ct).ConfigureAwait(false);
+    }
 
     /// <summary>
     /// Reduce raw Int16-LE PCM bytes to a normalized 0..1 peak array of length <paramref name="buckets"/>
@@ -397,6 +440,21 @@ public sealed class FfmpegWaveformService : IWaveformService
 
                 node = next;
             }
+        }
+    }
+
+    private static void TryDeleteFile(string path)
+    {
+        try
+        {
+            if (File.Exists(path))
+            {
+                File.Delete(path);
+            }
+        }
+        catch
+        {
+            // Best-effort: a leftover that cannot be deleted is overwritten by the retry's -y.
         }
     }
 

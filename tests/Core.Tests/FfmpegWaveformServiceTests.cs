@@ -26,10 +26,13 @@ public class FfmpegWaveformServiceTests : IDisposable
         TryDelete(_inputDir);
     }
 
-    private string MakeInput()
+    // The default MP4 input takes the T-195 flagged extraction. A test that counts the runs of a FAILING extraction
+    // passes a non-ISO name (clip.mkv): on an MP4 a failure also costs the one retry, which StreamInfoSkipTests pins
+    // (SPEC-006 I24), while these tests keep pinning the single-run failure path unchanged.
+    private string MakeInput(string name = "clip.mp4")
     {
         Directory.CreateDirectory(_inputDir);
-        var input = Path.Combine(_inputDir, "clip.mp4");
+        var input = Path.Combine(_inputDir, name);
         File.WriteAllText(input, "placeholder");
         return input;
     }
@@ -70,6 +73,9 @@ public class FfmpegWaveformServiceTests : IDisposable
         var iIndex = tokens.IndexOf("-i");
         iIndex.Should().BeGreaterThanOrEqualTo(0);
         tokens[iIndex + 1].Should().Be(input);
+
+        // T-195 (SPEC-006#I3): an MP4 input skips the stream-info decode — the flag sits immediately before -i.
+        tokens[iIndex - 1].Should().Be("-nofind_stream_info");
 
         // Mono + low sample rate + raw signed 16-bit LE PCM + overwrite.
         tokens.Should().ContainInConsecutiveOrder("-ac", "1");
@@ -265,7 +271,7 @@ public class FfmpegWaveformServiceTests : IDisposable
     [Fact]
     public async Task GetPeaksAsync_EmptyPcm_NoAudio_ReturnsNull()
     {
-        var input = MakeInput();
+        var input = MakeInput("clip.mkv"); // one run per failing extraction (see MakeInput)
         // Exit 0 but writes an EMPTY pcm file (no audio track) → null, and NOT cached.
         var runner = new WritingPcmRunner(Array.Empty<byte>());
         var svc = NewService(runner);
@@ -293,7 +299,7 @@ public class FfmpegWaveformServiceTests : IDisposable
     [Fact]
     public async Task GetPeaksAsync_FfmpegFailure_ReturnsNull_NoThrow_NotCached()
     {
-        var input = MakeInput();
+        var input = MakeInput("clip.mkv"); // one run per failing extraction (see MakeInput)
         var runner = new FailingPcmRunner();
         var svc = NewService(runner);
 
@@ -477,6 +483,7 @@ public class FfmpegWaveformServiceTests : IDisposable
         var tokens = args.ToList().ToList();
 
         tokens.IndexOf("-i").Should().BeLessThan(tokens.IndexOf("-f"));
+        tokens[tokens.IndexOf("-i") - 1].Should().Be("-nofind_stream_info", "an .mp4 input skips the stream-info decode (T-195)");
         tokens[^1].Should().Be("/tmp/out.pcm");
         tokens[tokens.IndexOf("-ar") + 1].Should().Be(4000.ToString(CultureInfo.InvariantCulture));
     }

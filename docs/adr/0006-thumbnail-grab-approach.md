@@ -6,6 +6,19 @@ Accepted. Amended by T-179 (2026-09-25) — the cache key and the temp file name
 width (`<bucketMs>_w<width>.jpg`), so one second at two widths is two files; see SPEC-005 I6/I8/I26. The
 `(inputPath, bucket)` key described below let a 640px profile capture be handed a 64px row chip's frame.
 
+Amended by T-195 (2026-10-05, G-059) — the grab **keeps** ffmpeg's stream-info pass on every input, MP4/MOV
+included: it does not take the `-nofind_stream_info` the waveform now uses on MP4/MOV (SPEC-006 I3), and its args stay
+exactly the ones below (SPEC-005 I2/I27). Skipping the pass also leaves ffmpeg without the file's format start time,
+which an input `-ss` counts from, so on an MP4/MOV whose start time is not 0 a skipping grab exits 0 with another frame
+and no retry can tell. The first part of the app's own lossless split of an H.264 B-frame + AAC MP4 is such a file: it
+starts at 0.043 s, and a skipping grab came back one frame early (and the first frame on an `-output_ts_offset 10`
+file). Skipping the pass only when the probed format start time is exactly 0 is a follow-up ticket. Also corrected
+here: on MP4, MOV and MKV the input seek is **frame-accurate, not
+keyframe-accurate** — ffmpeg decodes from the keyframe before `-ss` to the requested time — so the *Decision* and the
+*Keyframe-accurate, not exact* consequence below overstate the error: the picture is the frame at the bucketed time,
+and what grows with the GOP is the cost of the decode from the previous keyframe. (An MPEG-TS source was measured
+landing on the next keyframe instead.)
+
 ## Context
 
 The Split screen needs a hover preview on the scrub bar: as the cursor sweeps the
