@@ -689,7 +689,9 @@ public sealed class BulkItemThumbnailTests
     {
         var (row, thumbs, probe, pump) = ExactScanningRowUnderThePump();
         using var pumpScope = pump;
+#pragma warning disable xUnit1031 // kept synchronous by design (T-221): the test drains its PumpContext and asserts on this one thread
         row.InFlightGrabs.Wait(TimeSpan.FromSeconds(30)).Should().BeTrue();
+#pragma warning restore xUnit1031
         pump.PumpSettled();
         row.IntroThumbnailPath.Should().Be("frame-11.jpg", "precondition: under Exact the chip shows the requested cut");
         var before = thumbs.Requests.Count;
@@ -710,7 +712,9 @@ public sealed class BulkItemThumbnailTests
     {
         var (row, _, probe, pump) = ExactScanningRowUnderThePump();
         using var pumpScope = pump;
+#pragma warning disable xUnit1031 // kept synchronous by design (T-221): the test drains its PumpContext and asserts on this one thread
         row.InFlightGrabs.Wait(TimeSpan.FromSeconds(30)).Should().BeTrue();
+#pragma warning restore xUnit1031
         // Deliberately NOT pumped: the finished grab's result is still queued when the flip cancels it.
 
         row.SetExactCut(false);

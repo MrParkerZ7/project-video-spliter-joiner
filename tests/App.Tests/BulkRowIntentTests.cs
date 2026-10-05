@@ -428,11 +428,11 @@ public sealed class BulkRowIntentTests
         row.ExclusionReason.Should().BeNull("nothing is out of range once the handle has been snapped back inside");
 
         var scansBefore = probe.GetKeyframesCallCount;
-        row.InFlightGrabs.Wait(TimeSpan.FromSeconds(30)).Should().BeTrue();
+        await row.InFlightGrabs.WaitAsync(TimeSpan.FromSeconds(30)); // a stuck grab fails the test with a TimeoutException
         var grabsBefore = thumbs.Requests.Count;
 
         vm.ExactCut = true; // the engine now cuts at the requested 90s of a 60s file
-        row.InFlightGrabs.Wait(TimeSpan.FromSeconds(30)).Should().BeTrue();
+        await row.InFlightGrabs.WaitAsync(TimeSpan.FromSeconds(30));
 
         row.IsValidCut.Should().BeFalse("the kept span would end 30s past the end of the source");
         row.IsNoOpTrim.Should().BeFalse("the intro is a real 10s trim, so this is not the no-op case");
@@ -783,11 +783,11 @@ public sealed class BulkRowIntentTests
         var raised = new List<string>();
         row.PropertyChanged += (_, e) => raised.Add(e.PropertyName ?? string.Empty);
         var scansBefore = probe.GetKeyframesCallCount;
-        row.InFlightGrabs.Wait(TimeSpan.FromSeconds(30)).Should().BeTrue();
+        await row.InFlightGrabs.WaitAsync(TimeSpan.FromSeconds(30)); // a stuck grab fails the test with a TimeoutException
         var grabsBefore = thumbs.Requests.Count;
 
         vm.ExactCut = true;
-        row.InFlightGrabs.Wait(TimeSpan.FromSeconds(30)).Should().BeTrue();
+        await row.InFlightGrabs.WaitAsync(TimeSpan.FromSeconds(30));
 
         raised.Should().Contain(nameof(BulkItemViewModel.IsEnabled));
         raised.Should().Contain(nameof(BulkItemViewModel.ExclusionReason));

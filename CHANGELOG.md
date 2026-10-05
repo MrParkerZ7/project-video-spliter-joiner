@@ -178,6 +178,13 @@ goal; `0.1.0` is the first end-to-end, shippable cut.
 - The build is back to **zero warnings** (it had drifted to 5): two unreachable-null warnings in the ffmpeg
   integration tests, a test declared `async` with nothing to await, and a `#pragma` placed one line too
   low to cover the events it was suppressing.
+- …and it had drifted again, this time out of sight: an ordinary rebuild showed no warnings, but a full one
+  (`--no-incremental`) showed six, all the same analyzer complaint about tests that block on a frame grab. An
+  incremental build skips the projects that have not changed and does not repeat their warnings, so the six
+  only appeared when that test project was recompiled. Four of the waits are now awaited. The other two are
+  kept blocking by design — those tests drive their message pump by hand, one step at a time on one thread —
+  and each says so in a suppression that covers that one line. Each of the six waits still fails its test
+  when the grab it waits for never finishes, checked by making the fake grab hang (T-221).
 - Two guards for bugs that hide behind a green suite. **Every screen that can take a disposer is now
   checked to actually receive one** from the app's composition root — the Delete-original feature once
   shipped completely inert because that one argument was missing, with every unit test passing, and only

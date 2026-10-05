@@ -20,7 +20,9 @@ dotnet build -c Release          # 0-warning build is the bar
 dotnet run --project src/App     # launch the app
 dotnet test                      # full suite (App + Core)
 ```
-- **Zero warnings** is enforced by convention (Core builds with warnings-as-errors).
+- **Zero warnings** is enforced by convention (Core builds with warnings-as-errors). Check it with a full rebuild,
+  `dotnet build -c Release --no-incremental`: an incremental build skips the projects that have not changed and does
+  not repeat their warnings, so it can report 0 while the code still holds some (T-221).
 - The suite is **xUnit + FluentAssertions**. `CoreIsUiFreeTests` fails the build if `src/Core` ever references WPF —
   Core must stay UI-free.
 - **ffmpeg-dependent integration tests** find the binaries via `FfmpegTestBinaries` (`tests/Core.Tests`), searching in
