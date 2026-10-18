@@ -9,7 +9,7 @@ Accepted.
 The app is a dark, gold-accented WPF shell — the design tokens are a near-black
 window background (`BgColor #FF0D0F13`) and a gold primary accent
 (`AccentColor #FFE0A83A`), merged app-wide from `src/App/Themes/Tokens.xaml`
-(see `docs/adr/0004-ffme-over-mediaelement.md` for the sibling theming decisions).
+(see `docs/architect/adr/0004-ffme-over-mediaelement.md` for the sibling theming decisions).
 The default Win32 non-client caption is painted by the OS: a light/system-colored
 title bar with system min/max/close buttons that does not honor the app's theme and
 sits jarringly above an otherwise fully dark surface.
@@ -116,4 +116,4 @@ Concretely:
 ## Update — 2026-09-12: the theming pointer
 
 The theming pointer in the Context above names ADR 0004, which records no theming decisions; theming is
-specified in `docs/specs/SPEC-015-app-shell-theming.md`.
+specified in `docs/product/specs/SPEC-015-app-shell-theming.md`.

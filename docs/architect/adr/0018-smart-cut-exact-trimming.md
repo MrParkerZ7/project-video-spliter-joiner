@@ -89,7 +89,7 @@ keyframe-snapped stream copy remains the default for every batch.
   is not 0 fall back to the lossless cut. The join reuses `JoinArgsBuilder.ConcatCopy` rather than a second concat
   implementation. That is one encode + one copy + one concat — three invocations for a `HeadReencode`, one
   for a `FullReencode`, never one per GOP (recorded as invariants I40–I48 in
-  [SPEC-001](../specs/SPEC-001-stream-copy-split.md)). Every intermediate lives in a
+  [SPEC-001](../../product/specs/SPEC-001-stream-copy-split.md)). Every intermediate lives in a
   `.vsj-smartcut-<guid>` temp dir swept in a `finally`, and the result is moved into place only once it
   exists — the same temp-then-move contract `SplitEngine` holds ([ADR 0003](0003-cancel-safety.md)).
 

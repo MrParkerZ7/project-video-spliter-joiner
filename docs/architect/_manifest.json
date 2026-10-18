@@ -1,0 +1,911 @@
+{
+  "_description": "Docs group manifest: every document in this group, how it relates to other documents and which application code it describes. Written by develop-docs-engine.py; do not edit by hand.",
+  "docs": {
+    "ARCHITECTURE.md": {
+      "code": [
+        {
+          "path": "src/App/Fonts/",
+          "rel": "implemented-by"
+        }
+      ],
+      "kind": "architecture",
+      "relates": [],
+      "status": "current",
+      "tickets": [],
+      "title": "VideoSplitJoiner — Architecture",
+      "verified": {
+        "app_commit": "7e228bec1dcb5b0bf6355eb0b032279719bd5782",
+        "date": "2026-10-18"
+      }
+    },
+    "adr/0001-stream-copy-only.md": {
+      "code": [
+        {
+          "path": "src/Core/Split/SplitArgsBuilder.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/Core/Join/JoinArgsBuilder.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/Core/Split/SplitEngine.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/Core/Join/JoinEngine.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/Core/Join/CompatChecker.cs",
+          "rel": "implemented-by"
+        }
+      ],
+      "id": "0001",
+      "kind": "adr",
+      "relates": [],
+      "status": "frozen",
+      "tickets": [],
+      "title": "ADR 0001: Lossless stream-copy invariant (+ keyframe-snap & join-compat consequences, runtime-enforced denylist)",
+      "verified": {
+        "app_commit": "ef27dd88fe3f25ea9317a4eb635aff01de27e37f",
+        "date": "2026-08-22"
+      }
+    },
+    "adr/0002-error-model.md": {
+      "code": [
+        {
+          "path": "src/Core/Ffmpeg/FfmpegResult.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/Core/Ffmpeg/FfprobeRunner.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/Core/Ffmpeg/FfmpegExceptions.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/Core/Media/MediaProbe.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/Core/Media/ProbeResult.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/Core/Join/JoinEngine.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/Core/Join/JoinResult.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/Core/Split/SplitException.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/Core/Split/SplitResult.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/Core/Errors/ErrorLogWriter.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/Core/Thumbnails/FfmpegThumbnailService.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/Core/Errors/UserFacingError.cs",
+          "rel": "implemented-by"
+        }
+      ],
+      "id": "0002",
+      "kind": "adr",
+      "relates": [],
+      "status": "frozen",
+      "tickets": [],
+      "title": "ADR 0002: A per-subsystem error contract, not one uniform strategy",
+      "verified": {
+        "app_commit": "ef27dd88fe3f25ea9317a4eb635aff01de27e37f",
+        "date": "2026-08-22"
+      }
+    },
+    "adr/0003-cancel-safety.md": {
+      "code": [
+        {
+          "path": "src/Core/Split/SplitEngine.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/Core/Join/JoinEngine.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/Core/Join/JoinResult.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/Core/Split/SplitException.cs",
+          "rel": "implemented-by"
+        }
+      ],
+      "id": "0003",
+      "kind": "adr",
+      "relates": [],
+      "status": "frozen",
+      "tickets": [],
+      "title": "ADR 0003: Cancel safety — temp-then-move + refuse-don't-corrupt",
+      "verified": {
+        "app_commit": "ef27dd88fe3f25ea9317a4eb635aff01de27e37f",
+        "date": "2026-08-22"
+      }
+    },
+    "adr/0004-ffme-over-mediaelement.md": {
+      "code": [
+        {
+          "path": "src/App/Media/IMediaPlayer.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/App/VideoSplitJoiner.App.csproj",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/App/Media/FfmeMediaPlayer.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "packaging/fetch-ffmpeg-shared.ps1",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/App/App.xaml.cs",
+          "rel": "implemented-by"
+        }
+      ],
+      "id": "0004",
+      "kind": "adr",
+      "relates": [],
+      "status": "frozen",
+      "tickets": [],
+      "title": "ADR 0004: FFME (native ffmpeg) preview player over WPF MediaElement",
+      "verified": {
+        "app_commit": "ef27dd88fe3f25ea9317a4eb635aff01de27e37f",
+        "date": "2026-08-22"
+      }
+    },
+    "adr/0005-async-seek-state-machine.md": {
+      "code": [
+        {
+          "path": "src/App/Media/FfmeMediaPlayer.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/App/ViewModels/PlayerViewModel.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/App/Views/PlayerView.xaml",
+          "rel": "implemented-by"
+        }
+      ],
+      "id": "0005",
+      "kind": "adr",
+      "relates": [],
+      "status": "frozen",
+      "tickets": [],
+      "title": "ADR 0005: Async-seek state machine — hold, coalesce-throttle, click dedupe",
+      "verified": {
+        "app_commit": "ef27dd88fe3f25ea9317a4eb635aff01de27e37f",
+        "date": "2026-08-22"
+      }
+    },
+    "adr/0006-thumbnail-grab-approach.md": {
+      "code": [
+        {
+          "path": "src/Core/Ffmpeg/FfmpegRunner.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/Core/Thumbnails/IThumbnailService.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/Core/Thumbnails/FfmpegThumbnailService.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/App/ViewModels/ThumbnailPreviewViewModel.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/App/Views/Converters.cs",
+          "rel": "implemented-by"
+        }
+      ],
+      "id": "0006",
+      "kind": "adr",
+      "relates": [],
+      "status": "frozen",
+      "tickets": [],
+      "title": "ADR 0006: Scrub-bar hover thumbnails via a second ffmpeg-CLI grab, not FFME frame captures",
+      "verified": {
+        "app_commit": "69e5b080d357a63d9409e9d0bc99b2b63b1c86f0",
+        "date": "2026-10-06"
+      }
+    },
+    "adr/0007-hand-rolled-mvvm.md": {
+      "code": [
+        {
+          "path": "src/Core/",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/App/",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/App/ViewModels/",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/App/VideoSplitJoiner.App.csproj",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/App/ViewModels/ObservableObject.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "tests/Core.Tests/CoreIsUiFreeTests.cs",
+          "rel": "tested-by"
+        },
+        {
+          "path": "src/App/",
+          "rel": "implemented-by"
+        }
+      ],
+      "id": "0007",
+      "kind": "adr",
+      "relates": [],
+      "status": "frozen",
+      "tickets": [],
+      "title": "ADR 0007: Hand-rolled MVVM — no CommunityToolkit.Mvvm, view models WPF-free for headless test",
+      "verified": {
+        "app_commit": "ef27dd88fe3f25ea9317a4eb635aff01de27e37f",
+        "date": "2026-08-22"
+      }
+    },
+    "adr/0008-custom-windowchrome-caption.md": {
+      "code": [
+        {
+          "path": "src/App/Themes/Tokens.xaml",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/App/Themes/Controls.xaml",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/App/Views/WindowStateConverters.cs",
+          "rel": "implemented-by"
+        }
+      ],
+      "id": "0008",
+      "kind": "adr",
+      "relates": [],
+      "status": "frozen",
+      "tickets": [],
+      "title": "ADR 0008: Custom WindowChrome dark/gold caption with WM_GETMINMAXINFO taskbar clamp",
+      "verified": {
+        "app_commit": "b51296edbc43a1e833a54aeeac40e274c10932c5",
+        "date": "2026-09-12"
+      }
+    },
+    "adr/0009-two-path-keyframe-scan.md": {
+      "code": [
+        {
+          "path": "src/Core/Media/MediaProbe.cs",
+          "rel": "implemented-by"
+        }
+      ],
+      "id": "0009",
+      "kind": "adr",
+      "relates": [],
+      "status": "frozen",
+      "tickets": [],
+      "title": "ADR 0009: Two-path keyframe scan — demux packets primary, decode fallback, cache",
+      "verified": {
+        "app_commit": "ef27dd88fe3f25ea9317a4eb635aff01de27e37f",
+        "date": "2026-08-22"
+      }
+    },
+    "adr/0010-shared-ffmpeg-bundling.md": {
+      "code": [
+        {
+          "path": "src/Core/Ffmpeg/",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/App/Media/FfmeMediaPlayer.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "dist/publish/ffmpeg/",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "packaging/fetch-ffmpeg-shared.ps1",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "tests/App.Tests/FfmpegInitProbeTests.cs",
+          "rel": "tested-by"
+        },
+        {
+          "path": "ffmpeg-shared/README.md",
+          "rel": "implemented-by"
+        }
+      ],
+      "id": "0010",
+      "kind": "adr",
+      "relates": [],
+      "status": "frozen",
+      "tickets": [],
+      "title": "ADR 0010: Shared (not static) ffmpeg build, gitignored, dual-consumer, ABI-pinned 7.x",
+      "verified": {
+        "app_commit": "ef27dd88fe3f25ea9317a4eb635aff01de27e37f",
+        "date": "2026-08-22"
+      }
+    },
+    "adr/0011-single-file-publish-no-trim.md": {
+      "code": [
+        {
+          "path": "src/App/VideoSplitJoiner.App.csproj",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/Core/Ffmpeg/FfmpegBinaryLocator.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/App/Themes/Tokens.xaml",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "packaging/package.ps1",
+          "rel": "implemented-by"
+        }
+      ],
+      "id": "0011",
+      "kind": "adr",
+      "relates": [],
+      "status": "frozen",
+      "tickets": [],
+      "title": "ADR 0011: Self-contained single-file win-x64 + ReadyToRun, PublishTrimmed banned",
+      "verified": {
+        "app_commit": "ef27dd88fe3f25ea9317a4eb635aff01de27e37f",
+        "date": "2026-08-22"
+      }
+    },
+    "adr/0012-gpl-lgpl-licensing-fork.md": {
+      "code": [
+        {
+          "path": "packaging/fetch-ffmpeg-shared.ps1",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/App/App.xaml.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/Core/",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/App/",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/Core/",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/App/",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/Core/",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/App/",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/App/ViewModels/MainViewModel.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/Core/Split/SmartCutArgsBuilder.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/Core/",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/App/",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/Core/Split/SmartCutEngine.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/Core/Bulk/BulkTrimEngine.cs",
+          "rel": "implemented-by"
+        }
+      ],
+      "id": "0012",
+      "kind": "adr",
+      "relates": [],
+      "status": "frozen",
+      "tickets": [],
+      "title": "ADR 0012: GPL-by-default ffmpeg, LGPL escape via `-FfmpegSource`",
+      "verified": {
+        "app_commit": "2f33f6e0abeef42fcbe976481cd1e7dcb2f9809a",
+        "date": "2026-10-05"
+      }
+    },
+    "adr/0013-off-path-portable-dotnet.md": {
+      "code": [
+        {
+          "path": "packaging/package.ps1",
+          "rel": "implemented-by"
+        }
+      ],
+      "id": "0013",
+      "kind": "adr",
+      "relates": [],
+      "status": "frozen",
+      "tickets": [],
+      "title": "ADR 0013: Absolute dotnet path baked into packaging",
+      "verified": {
+        "app_commit": "b51296edbc43a1e833a54aeeac40e274c10932c5",
+        "date": "2026-09-12"
+      }
+    },
+    "adr/0014-no-ci-yet.md": {
+      "code": [
+        {
+          "path": "tests/Core.Tests/",
+          "rel": "tested-by"
+        },
+        {
+          "path": "tests/App.Tests/",
+          "rel": "tested-by"
+        },
+        {
+          "path": "tests/Core.Tests/CoreIsUiFreeTests.cs",
+          "rel": "tested-by"
+        },
+        {
+          "path": "src/Core/VideoSplitJoiner.Core.csproj",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "packaging/fetch-ffmpeg-shared.ps1",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "packaging/package.ps1",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "tests/Core.Tests/FfmpegTestBinaries.cs",
+          "rel": "tested-by"
+        }
+      ],
+      "id": "0014",
+      "kind": "adr",
+      "relates": [],
+      "status": "frozen",
+      "tickets": [],
+      "title": "ADR 0014: Deferred CI gate despite 517 tests + CoreIsUiFree guard",
+      "verified": {
+        "app_commit": "b51296edbc43a1e833a54aeeac40e274c10932c5",
+        "date": "2026-09-12"
+      }
+    },
+    "adr/0015-bulk-trim-reuses-split-single-segment.md": {
+      "code": [
+        {
+          "path": "src/Core/Bulk/BulkTrimEngine.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/Core/Split/KeptSegmentSelector.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/Core/Bulk/",
+          "rel": "implemented-by"
+        }
+      ],
+      "id": "0015",
+      "kind": "adr",
+      "relates": [],
+      "status": "frozen",
+      "tickets": [],
+      "title": "ADR 0015: Batch intro/outro trim reuses SplitEngine's single-segment path — no second ffmpeg code path",
+      "verified": {
+        "app_commit": "0b9e3ae76008bd00ea71e216afd89369fa61bc0a",
+        "date": "2026-09-26"
+      }
+    },
+    "adr/0016-shared-bulk-preview-player-and-cut-profiles.md": {
+      "code": [],
+      "id": "0016",
+      "kind": "adr",
+      "relates": [],
+      "status": "frozen",
+      "tickets": [],
+      "title": "ADR 0016: One shared Bulk Cut preview player bound to the selected row (not per-row) + cut profiles persisted in AppSettings",
+      "verified": {
+        "app_commit": "29385f64394d93e97619dd499fd621033ff16f30",
+        "date": "2026-08-22"
+      }
+    },
+    "adr/0017-output-mode-replace-original.md": {
+      "code": [
+        {
+          "path": "src/Core/Io/OriginalReplacer.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/Core/Split/SplitEngine.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/Core/Bulk/BulkTrimEngine.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/App/ViewModels/BulkCutViewModel.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/App/Io/ShellRecycleBin.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/App/Io/RecycleBinOriginalDisposer.cs",
+          "rel": "implemented-by"
+        }
+      ],
+      "id": "0017",
+      "kind": "adr",
+      "relates": [],
+      "status": "frozen",
+      "tickets": [],
+      "title": "ADR 0017: \"Replace originals\" is a separate OutputMode axis, not a fourth CollisionPolicy — produced, verified in full, then replaced in place through a Recycle-Bin backup",
+      "verified": {
+        "app_commit": "b51296edbc43a1e833a54aeeac40e274c10932c5",
+        "date": "2026-09-12"
+      }
+    },
+    "adr/0018-smart-cut-exact-trimming.md": {
+      "code": [
+        {
+          "path": "src/Core/Media/MediaProbe.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/Core/Split/SmartCutEngine.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/Core/Split/SmartCutPlanner.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/Core/Split/SmartCutArgsBuilder.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/Core/Bulk/BulkTrimEngine.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/Core/Bulk/CutPrecision.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/Core/Io/OriginalReplacer.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/Core/Split/SplitEngine.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/App/ViewModels/MainViewModel.cs",
+          "rel": "implemented-by"
+        }
+      ],
+      "id": "0018",
+      "kind": "adr",
+      "relates": [],
+      "status": "frozen",
+      "tickets": [],
+      "title": "ADR 0018: Frame-exact (\"smart\") cutting as a separate opt-in engine — re-encode one head GOP, copy the rest; stream copy stays the default",
+      "verified": {
+        "app_commit": "7e228bec1dcb5b0bf6355eb0b032279719bd5782",
+        "date": "2026-10-18"
+      }
+    },
+    "adr/0019-row-intent-vs-computed-eligibility.md": {
+      "code": [],
+      "id": "0019",
+      "kind": "adr",
+      "relates": [],
+      "status": "frozen",
+      "tickets": [],
+      "title": "ADR 0019: A Bulk Cut row's selection is TWO properties — a bindable user intent and a read-only computed eligibility; one property could not be both",
+      "verified": {
+        "app_commit": "9ebf00f51ffb6c7ff55606d2ca277fa613f1c037",
+        "date": "2026-08-30"
+      }
+    },
+    "adr/0020-unsafe-for-ffme-input-stream.md": {
+      "code": [
+        {
+          "path": "src/App/Media/FileMediaInputStream.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/App/Media/MediaSourceUri.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/App/Media/FfmeMediaPlayer.cs",
+          "rel": "implemented-by"
+        }
+      ],
+      "id": "0020",
+      "kind": "adr",
+      "relates": [],
+      "status": "frozen",
+      "tickets": [],
+      "title": "ADR 0020: Allow unsafe blocks in the app, to open files whose path cannot be a URI",
+      "verified": {
+        "app_commit": "a5891627c58295ab6bfe758ea1c83c94807cfb58",
+        "date": "2026-08-30"
+      }
+    },
+    "adr/0021-profiles-survive-reinstall-via-backup-file.md": {
+      "code": [
+        {
+          "path": "packaging/VideoSplitJoiner.iss",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/App/ViewModels/BulkCutViewModel.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/App/Io/ImageNormalizer.cs",
+          "rel": "implemented-by"
+        }
+      ],
+      "id": "0021",
+      "kind": "adr",
+      "relates": [],
+      "status": "frozen",
+      "tickets": [],
+      "title": "ADR 0021: Profiles survive reinstall by not being touched — and travel by backup file, not by migration",
+      "verified": {
+        "app_commit": "b51296edbc43a1e833a54aeeac40e274c10932c5",
+        "date": "2026-09-12"
+      }
+    },
+    "adr/0022-silent-shell-recycle-over-vb-fileio.md": {
+      "code": [],
+      "id": "0022",
+      "kind": "adr",
+      "relates": [],
+      "status": "frozen",
+      "tickets": [],
+      "title": "ADR 0022: Bin files through the shell API directly, not through VB's FileIO helper",
+      "verified": {
+        "app_commit": "29029f1f61b9139786b8d3bf4d6cfd5e85a831d5",
+        "date": "2026-09-03"
+      }
+    },
+    "adr/0023-refuse-at-the-cursor-not-in-words.md": {
+      "code": [],
+      "id": "0023",
+      "kind": "adr",
+      "relates": [],
+      "status": "frozen",
+      "tickets": [],
+      "title": "ADR 0023: A drag with nothing usable in it stays refused at the cursor, not accepted and then explained",
+      "verified": {
+        "app_commit": "1944c8f17aebdc0bae015305b2f1daab021e1e2f",
+        "date": "2026-09-04"
+      }
+    },
+    "adr/0024-per-screen-delete-eligibility.md": {
+      "code": [],
+      "id": "0024",
+      "kind": "adr",
+      "relates": [],
+      "status": "frozen",
+      "tickets": [],
+      "title": "ADR 0024: Delete-original eligibility is decided per screen, not by a shared abstraction",
+      "verified": {
+        "app_commit": "4a2e896c9c3661fd1f2321038188d4c225daaf9c",
+        "date": "2026-09-06"
+      }
+    },
+    "adr/README.md": {
+      "code": [],
+      "kind": "index",
+      "relates": [],
+      "status": "current",
+      "tickets": [],
+      "title": "Architecture Decision Records (ADRs)"
+    },
+    "design/D-001-vertical-monitor-mode.md": {
+      "code": [],
+      "id": "D-001",
+      "kind": "design",
+      "relates": [],
+      "status": "draft",
+      "tickets": [],
+      "title": "D-001 · Vertical-Monitor Mode",
+      "verified": {
+        "app_commit": "b51296edbc43a1e833a54aeeac40e274c10932c5",
+        "date": "2026-09-12"
+      }
+    },
+    "design/D-002-audio-waveform.md": {
+      "code": [
+        {
+          "path": "src/Core/",
+          "rel": "implemented-by"
+        }
+      ],
+      "id": "D-002",
+      "kind": "design",
+      "relates": [],
+      "status": "draft",
+      "tickets": [],
+      "title": "D-002 · Audio Waveform Above the Timeline",
+      "verified": {
+        "app_commit": "b51296edbc43a1e833a54aeeac40e274c10932c5",
+        "date": "2026-09-12"
+      }
+    },
+    "design/D-003-split-panel-5050.md": {
+      "code": [],
+      "id": "D-003",
+      "kind": "design",
+      "relates": [],
+      "status": "draft",
+      "tickets": [],
+      "title": "D-003 · Split Tool-Panel — Position on the Add-cut line; Cut markers + Parts 50/50 vertical",
+      "verified": {
+        "app_commit": "b51296edbc43a1e833a54aeeac40e274c10932c5",
+        "date": "2026-09-12"
+      }
+    },
+    "design/D-004/README.md": {
+      "code": [],
+      "id": "D-004",
+      "kind": "design",
+      "relates": [],
+      "status": "draft",
+      "tickets": [
+        "G-036",
+        "T-094",
+        "T-095",
+        "T-096",
+        "T-097",
+        "T-098"
+      ],
+      "title": "D-004 — Bulk Cut tab (batch intro + optional-outro trim)",
+      "verified": {
+        "app_commit": "b51296edbc43a1e833a54aeeac40e274c10932c5",
+        "date": "2026-09-12"
+      }
+    },
+    "design/D-004/core-flow.md": {
+      "code": [],
+      "kind": "design",
+      "relates": [],
+      "status": "draft",
+      "tickets": [],
+      "title": "D-004 · core flow — batch run, validation, edge matrix",
+      "verified": {
+        "app_commit": "0aff583704d05d4bca6ecb68ae5f530b0980c463",
+        "date": "2026-08-21"
+      }
+    },
+    "design/D-005/README.md": {
+      "code": [],
+      "id": "D-005",
+      "kind": "design",
+      "relates": [],
+      "status": "draft",
+      "tickets": [
+        "G-057",
+        "T-173",
+        "T-174"
+      ],
+      "title": "D-005 — Apply a cut before the snap",
+      "verified": {
+        "app_commit": "bc1af2a85fe76a982f092208fce46355fc28f601",
+        "date": "2026-09-13"
+      }
+    },
+    "design/references/2026-07-18_redesign-standalone.html": {
+      "code": [],
+      "kind": "design",
+      "relates": [],
+      "status": "draft",
+      "tickets": [],
+      "title": "2026-07-18_redesign-standalone.html",
+      "verified": {
+        "app_commit": "490f5a9c523c1e6baab2127c61dbcb484f450a48",
+        "date": "2026-07-18"
+      }
+    },
+    "design/references/T-187-bench/README.md": {
+      "code": [
+        {
+          "path": "bench/VideoSplitJoiner.Bench/",
+          "rel": "implemented-by"
+        }
+      ],
+      "kind": "design",
+      "relates": [],
+      "status": "draft",
+      "tickets": [],
+      "title": "T-187 bench prototype (reference copy)",
+      "verified": {
+        "app_commit": "bd06844ce8461b8816117e6a521ea5b8aa4ef08b",
+        "date": "2026-10-04"
+      }
+    },
+    "standards/_index.md": {
+      "code": [],
+      "kind": "index",
+      "relates": [],
+      "status": "current",
+      "tickets": [],
+      "title": "Standards Index"
+    },
+    "standards/feature-spec-structure.md": {
+      "code": [],
+      "kind": "standard",
+      "relates": [],
+      "status": "current",
+      "tickets": [],
+      "title": "Standard: Feature-Spec Structure (living specs)",
+      "verified": {
+        "app_commit": "7a3c27cb7c32999e1192444cc0a45c1573ff215f",
+        "date": "2026-08-22"
+      }
+    }
+  },
+  "group": "architect",
+  "maintained": true,
+  "owner": "solution-architect",
+  "schema": "docs-group/1"
+}

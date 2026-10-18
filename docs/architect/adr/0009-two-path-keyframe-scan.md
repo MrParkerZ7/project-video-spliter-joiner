@@ -6,7 +6,7 @@ Accepted.
 
 ## Context
 
-Every split is a lossless `-c copy` cut (see `docs/ARCHITECTURE.md`), so a cut can
+Every split is a lossless `-c copy` cut (see `docs/architect/ARCHITECTURE.md`), so a cut can
 only land cleanly on a **keyframe** boundary. To let the user drop a cut anywhere and
 snap it to a copyable edge, `MediaProbe.GetKeyframesAsync`
 (`src/Core/Media/MediaProbe.cs`) must build the full list of video keyframe timestamps

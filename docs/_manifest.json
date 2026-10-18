@@ -1,0 +1,26 @@
+{
+  "_description": "Docs repo root manifest. Written by develop-docs-engine.py; do not edit by hand.",
+  "app": {
+    "code_root": "..",
+    "name": "project-video-spliter-joiner",
+    "project_path": "",
+    "remote": "https://github.com/MrParkerZ7/project-video-spliter-joiner.git"
+  },
+  "groups": [
+    "requirement",
+    "product",
+    "architect",
+    "operations",
+    "quality",
+    "legal",
+    "demo"
+  ],
+  "layout": 2,
+  "legacy_history": {},
+  "repo": {
+    "branch": "main",
+    "name": "project-video-spliter-joiner-documentation",
+    "remote": "https://github.com/MrParkerZ7/project-video-spliter-joiner-documentation.git"
+  },
+  "schema": "docs-root/1"
+}

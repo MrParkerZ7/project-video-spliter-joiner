@@ -1,11 +1,11 @@
 # D-005 — Apply a cut before the snap
 
-> → spec: [SPEC-007](../../specs/SPEC-007-cut-profiles.md) · [SPEC-011](../../specs/SPEC-011-bulk-cut-screen.md)
+> → spec: [SPEC-007](../../../product/specs/SPEC-007-cut-profiles.md) · [SPEC-011](../../../product/specs/SPEC-011-bulk-cut-screen.md)
 > (amended at build — this folder stays historical intent; the specs are the maintained contract)
 >
 > Status: **confirmed** (opened 2026-09-13 via `todo-design`; sealed the same day via `todo-design-done`) · refines
-> [D-004](../D-004/README.md) · amends [SPEC-007](../../specs/SPEC-007-cut-profiles.md) ·
-> [SPEC-011](../../specs/SPEC-011-bulk-cut-screen.md) · sequence:
+> [D-004](../D-004/README.md) · amends [SPEC-007](../../../product/specs/SPEC-007-cut-profiles.md) ·
+> [SPEC-011](../../../product/specs/SPEC-011-bulk-cut-screen.md) · sequence:
 > [`./apply-before-snap-sequence.drawio`](./apply-before-snap-sequence.drawio)
 
 ---

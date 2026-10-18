@@ -9,7 +9,7 @@ using Xunit;
 namespace VideoSplitJoiner.App.Tests;
 
 /// <summary>
-/// T-153 — `docs/specs/_index.md` must not drift away from the specs it indexes.
+/// T-153 — `docs/product/specs/_index.md` must not drift away from the specs it indexes.
 ///
 /// <para>It had, in <b>both directions</b>: the table claimed 633 documented invariants against a real
 /// 680, SPEC-011 said 102 and had 121, SPEC-007 said 72 and had 94 — while SPEC-014 said 35 and had only
@@ -54,7 +54,7 @@ public sealed class SpecIndexFreshnessTests
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
         while (dir is not null)
         {
-            var candidate = Path.Combine(dir.FullName, "docs", "specs");
+            var candidate = Path.Combine(dir.FullName, "docs", "product", "specs");
             if (Directory.Exists(candidate) && File.Exists(Path.Combine(candidate, "_index.md")))
             {
                 return candidate;
@@ -100,7 +100,7 @@ public sealed class SpecIndexFreshnessTests
     }
 
     /// <summary>
-    /// Every ADR on disk must appear in <c>docs/adr/README.md</c>.
+    /// Every ADR on disk must appear in <c>docs/architect/adr/README.md</c>.
     ///
     /// <para>Found the hard way: ADR-0021 was written, committed, and never indexed — and nobody noticed
     /// until ADR-0022 tried to slot in beneath it. An unindexed decision record is one nobody finds when
@@ -169,8 +169,8 @@ public sealed class SpecIndexFreshnessTests
         }
 
         drift.Should().BeEmpty(
-            "docs/specs/_index.md must be recounted when invariants are added or removed — it drifted " +
-            "47 out of step before anything noticed:" + Environment.NewLine +
+            "docs/" +
+            "product/specs/_index.md must be recounted when invariants are added or removed — it drifted /47 out of step before anything noticed:" + Environment.NewLine +
             string.Join(Environment.NewLine, drift));
     }
 

@@ -321,7 +321,7 @@ thumbnails, batch-wide apply) alongside the fixes.
 **First published release.** The app is feature-complete for its original vision: split, join, and
 bulk-trim video **losslessly** (ffmpeg stream-copy, keyframe-snapped — no re-encode, no quality loss),
 with a full in-app preview player and a themed desktop shell. 922 automated tests green; 98% of the
-documented spec invariants are covered (`docs/specs/`).
+documented spec invariants are covered (`docs/product/specs/`).
 
 > Sections below detail the preview-player era (G-002 → G-016). The scope added after that, shipped
 > across G-017 → G-040, is summarised here:
@@ -378,7 +378,7 @@ re-encode — the player only previews; every cut continues to keyframe-snap thr
   middle segment: rows funnel through the existing `ISplitEngine.SplitAsync` per-segment `-c copy` path
   (kept-index resolved by `KeptSegmentSelector`), orchestrated by a new UI-free Core `BulkTrimEngine`
   (sequential batch loop, collision policy, disk pre-flight, ledger) that the WPF-free `BulkCutViewModel` /
-  `BulkItemViewModel` delegate to. See [ADR 0015](docs/adr/0015-bulk-trim-reuses-split-single-segment.md).
+  `BulkItemViewModel` delegate to. See [ADR 0015](docs/architect/adr/0015-bulk-trim-reuses-split-single-segment.md).
 - **Bulk Cut — preview player, jog controls, and reusable cut profiles (G-037)** — the Bulk Cut tab gains
   an **in-app preview player**: click a row and it plays in a **shared preview pane** at the top of the
   tab (one decoder for the whole list, **reusing the Split screen's player** — transport, scrub,
@@ -394,7 +394,7 @@ re-encode — the player only previews; every cut continues to keyframe-snap thr
   M now invalid" note; **Delete** removes it. There is **no new player or ffmpeg path** — the pane reuses
   `PlayerView` and the set-at-playhead gestures re-snap through the existing cut path; the `CutProfile`
   model is a WPF-free Core record persisted by `IAppSettings`. See
-  [ADR 0016](docs/adr/0016-shared-bulk-preview-player-and-cut-profiles.md).
+  [ADR 0016](docs/architect/adr/0016-shared-bulk-preview-player-and-cut-profiles.md).
 - **Bulk Cut — profile thumbnails + per-row cut-point frame previews (G-038)** — cut profiles now carry an
   **optional thumbnail**: **Save current as…** auto-captures the **frame at the row's intro-end** as the
   profile's default thumbnail, **Upload image…** overrides it with your own picture, and **Clear** removes it;
@@ -561,7 +561,7 @@ re-encode — the player only previews; every cut continues to keyframe-snap thr
   reliably every time**: the per-row *apply cut points to all* and the profile *Apply → all* buttons
   used to go stale after their first use; they now re-enable deterministically on every change (an
   app-wide `RelayCommand` notification fix) and each re-apply re-reads the **current** source. See
-  [ADR 0016](docs/adr/0016-shared-bulk-preview-player-and-cut-profiles.md).
+  [ADR 0016](docs/architect/adr/0016-shared-bulk-preview-player-and-cut-profiles.md).
 - **Custom themed window frame (G-018)** — the default light Windows title bar is replaced by a custom
   **dark title bar** (WindowChrome) matching the theme: the app title with a gold accent on the left,
   and themed minimize / maximize-restore / close caption buttons (close hovers red) on the right. The

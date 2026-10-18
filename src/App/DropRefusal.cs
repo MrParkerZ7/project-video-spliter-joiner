@@ -13,7 +13,7 @@ namespace VideoSplitJoiner.App;
 /// remaining criterion on T-154 is literally <i>"same silence"</i>. Mirroring the Bulk implementation
 /// by hand into two more view-models would have produced three copies of the pluralisation, three
 /// slightly different sentences, and — on the evidence of how the counts in
-/// <c>docs/specs/_index.md</c> drifted — three things to keep in step forever. The wording lives here
+/// <c>docs/product/specs/_index.md</c> drifted — three things to keep in step forever. The wording lives here
 /// once instead, so a user moving between tabs reads the same sentence for the same event.</para>
 ///
 /// <para>What each screen refuses is genuinely different, which is why this exposes clauses rather

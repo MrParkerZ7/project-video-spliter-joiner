@@ -3,7 +3,7 @@
 > Design record — a switchable **portrait/vertical layout** for the video splitter/joiner, so the UI
 > suits a vertical monitor instead of only the current horizontal two-column design.
 > Status: **confirmed** (sealed 2026-07-19 via `todo-design-done`). Board artifact: `docs/todo/D-001.md`.
-> → spec: [SPEC-015](../specs/SPEC-015-app-shell-theming.md) (the layout axis) · [SPEC-009](../specs/SPEC-009-app-settings.md) (the persisted layout mode)
+> → spec: [SPEC-015](../../product/specs/SPEC-015-app-shell-theming.md) (the layout axis) · [SPEC-009](../../product/specs/SPEC-009-app-settings.md) (the persisted layout mode)
 
 ## 1. Problem / motivation
 Both screens are built for a **landscape** monitor — a 3-column Grid (`SplitView.xaml` / `JoinView.xaml`:

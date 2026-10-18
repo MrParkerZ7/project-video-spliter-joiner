@@ -1,14 +1,14 @@
 # Standard: Feature-Spec Structure (living specs)
 
-The `docs/specs/` layer is the app's **living-spec contract**: one spec per feature, stating the feature's
+The `docs/product/specs/` layer is the app's **living-spec contract**: one spec per feature, stating the feature's
 **current behavior + invariants** in code-grounded terms, with each automated test traceable back to the
 invariant it verifies (`serves-spec:`). Specs are the source `todo-automate` derives test cases from.
 
 ## Structure
 
-- **Shape:** flat — `docs/specs/SPEC-NNN-<slug>.md` (one file per feature; `NNN` zero-padded, ids stable).
-- **Index:** `docs/specs/_index.md` lists every spec (id · slug · area · one-line) + this `## Structure` declaration.
-- **Template:** `docs/specs/_TEMPLATE.md` — the section skeleton every spec follows.
+- **Shape:** flat — `docs/product/specs/SPEC-NNN-<slug>.md` (one file per feature; `NNN` zero-padded, ids stable).
+- **Index:** `docs/product/specs/_index.md` lists every spec (id · slug · area · one-line) + this `## Structure` declaration.
+- **Template:** `docs/product/specs/_TEMPLATE.md` — the section skeleton every spec follows.
 
 ## Required sections (every SPEC-NNN)
 

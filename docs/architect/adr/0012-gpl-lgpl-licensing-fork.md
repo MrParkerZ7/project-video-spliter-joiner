@@ -122,5 +122,5 @@ Separately, the `<Version>0.1.0` target named in the Decision is no longer the c
 *Related:* ADR 0010 (shared, gitignored, ABI-pinned ffmpeg bundling — introduced the
 `-FfmpegSource` seam this decision hangs on) and ADR 0011 (self-contained single-file
 distribution — the artifact this license attaches to). The lossless `-c copy` stream-copy
-contract that keeps the ffmpeg coupling loose is recorded in `docs/ARCHITECTURE.md` and
+contract that keeps the ffmpeg coupling loose is recorded in `docs/architect/ARCHITECTURE.md` and
 relied on by ADR 0009's keyframe-snap.

@@ -1,0 +1,1535 @@
+{
+  "_description": "Docs group manifest: every document in this group, how it relates to other documents and which application code it describes. Written by develop-docs-engine.py; do not edit by hand.",
+  "docs": {
+    "GLOSSARY.md": {
+      "code": [],
+      "kind": "glossary",
+      "relates": [],
+      "status": "current",
+      "tickets": [],
+      "title": "Glossary",
+      "verified": {
+        "app_commit": "14df40857ecea6dcfd99cf28e2a3ef7d7fe382e4",
+        "date": "2026-09-26"
+      }
+    },
+    "OVERVIEW.md": {
+      "code": [],
+      "kind": "overview",
+      "relates": [],
+      "status": "current",
+      "tickets": [],
+      "title": "Documentation",
+      "verified": {
+        "app_commit": "b51296edbc43a1e833a54aeeac40e274c10932c5",
+        "date": "2026-09-12"
+      }
+    },
+    "ROADMAP.md": {
+      "code": [
+        {
+          "path": "packaging/VideoSplitJoiner.iss",
+          "rel": "implemented-by"
+        }
+      ],
+      "kind": "roadmap",
+      "relates": [],
+      "status": "current",
+      "tickets": [],
+      "title": "Roadmap",
+      "verified": {
+        "app_commit": "14df40857ecea6dcfd99cf28e2a3ef7d7fe382e4",
+        "date": "2026-09-26"
+      }
+    },
+    "guide/USER_GUIDE.md": {
+      "code": [],
+      "kind": "guide",
+      "relates": [],
+      "status": "current",
+      "tickets": [],
+      "title": "VideoSplitJoiner — User Guide",
+      "verified": {
+        "app_commit": "14df40857ecea6dcfd99cf28e2a3ef7d7fe382e4",
+        "date": "2026-09-26"
+      }
+    },
+    "specs/SPEC-001-stream-copy-split.md": {
+      "code": [
+        {
+          "path": "src/Core/Split/SplitEngine.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/Core/Split/SplitArgsBuilder.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/Core/Split/SplitPlan.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/Core/Split/SplitRequest.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/Core/Split/SplitResult.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/Core/Split/SplitSegment.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/Core/Split/SplitException.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/Core/Split/SmartCutEngine.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/Core/Split/SmartCutPlanner.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/Core/Split/SmartCutArgsBuilder.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/Core/Split/PartProgress.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/Core/Io/OriginalReplacer.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "tests/Core.Tests/PartMappingTests.cs",
+          "rel": "tested-by"
+        },
+        {
+          "path": "tests/Core.Tests/SplitEnginePartProgressTests.cs",
+          "rel": "tested-by"
+        },
+        {
+          "path": "tests/Core.Tests/SmartCutJointIntegrityTests.cs",
+          "rel": "tested-by"
+        },
+        {
+          "path": "tests/Core.Tests/HevcExactFallbackTests.cs",
+          "rel": "tested-by"
+        },
+        {
+          "path": "tests/Core.Tests/LosslessBoundaryIntegrationTests.cs",
+          "rel": "tested-by"
+        },
+        {
+          "path": "tests/Core.Tests/LosslessBoundaryTests.cs",
+          "rel": "tested-by"
+        },
+        {
+          "path": "src/App/ViewModels/BulkCutViewModel.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/App/ViewModels/BulkItemViewModel.cs",
+          "rel": "implemented-by"
+        }
+      ],
+      "id": "SPEC-001",
+      "kind": "feature-spec",
+      "relates": [
+        {
+          "rel": "designed-in",
+          "to": "D-004"
+        },
+        {
+          "rel": "see-also",
+          "to": "SPEC-002"
+        },
+        {
+          "rel": "see-also",
+          "to": "SPEC-003"
+        }
+      ],
+      "status": "current",
+      "tickets": [
+        "T-189",
+        "T-190",
+        "T-191",
+        "T-192",
+        "T-197",
+        "T-201",
+        "T-202",
+        "T-203",
+        "T-219",
+        "T-220",
+        "T-222",
+        "T-223",
+        "T-224",
+        "T-225",
+        "T-233",
+        "T-234"
+      ],
+      "title": "What",
+      "verified": {
+        "app_commit": "7e228bec1dcb5b0bf6355eb0b032279719bd5782",
+        "date": "2026-10-18"
+      }
+    },
+    "specs/SPEC-002-bulk-trim-engine.md": {
+      "code": [
+        {
+          "path": "src/Core/Split/KeptSegmentSelector.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/Core/Bulk/BulkTrimEngine.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/Core/Bulk/KeptMiddleRequestBuilder.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/Core/Bulk/BulkTrimItem.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/Core/Bulk/BulkTrimItemResult.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/Core/Bulk/BatchResult.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/Core/Bulk/BatchOutcome.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/Core/Bulk/ItemOutcome.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/Core/Bulk/CollisionPolicy.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/Core/Bulk/BulkTrimOptions.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/Core/Bulk/BulkTrimProgress.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/Core/Bulk/NoOpTrimException.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/Core/Io/IDiskSpaceProbe.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/Core/Bulk/IBulkTrimEngine.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/Core/Bulk/IBulkTrimRequestBuilder.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/Core/Bulk/OutputMode.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/Core/Bulk/CutPrecision.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/Core/Io/IOriginalDisposer.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/Core/Io/OriginalReplacer.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/Core/Split/SplitEngine.cs",
+          "rel": "implemented-by"
+        }
+      ],
+      "id": "SPEC-002",
+      "kind": "feature-spec",
+      "relates": [
+        {
+          "rel": "designed-in",
+          "to": "D-004"
+        },
+        {
+          "rel": "see-also",
+          "to": "SPEC-001"
+        },
+        {
+          "rel": "see-also",
+          "to": "SPEC-011"
+        }
+      ],
+      "status": "current",
+      "tickets": [
+        "T-204"
+      ],
+      "title": "What",
+      "verified": {
+        "app_commit": "2f33f6e0abeef42fcbe976481cd1e7dcb2f9809a",
+        "date": "2026-10-05"
+      }
+    },
+    "specs/SPEC-003-join-concat.md": {
+      "code": [
+        {
+          "path": "src/Core/Join/JoinEngine.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/Core/Join/JoinRequest.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/Core/Join/JoinResult.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/Core/Join/CompatChecker.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/Core/Join/CompatReport.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/Core/Join/JoinArgsBuilder.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/Core/Join/Mismatch.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "tests/Core.Tests/JoinEngineUnitTests.cs",
+          "rel": "tested-by"
+        },
+        {
+          "path": "tests/App.Tests/StagedStatusWiringTests.cs",
+          "rel": "tested-by"
+        }
+      ],
+      "id": "SPEC-003",
+      "kind": "feature-spec",
+      "relates": [
+        {
+          "rel": "see-also",
+          "to": "SPEC-001"
+        },
+        {
+          "rel": "see-also",
+          "to": "SPEC-012"
+        }
+      ],
+      "status": "current",
+      "tickets": [
+        "T-209",
+        "T-210"
+      ],
+      "title": "What",
+      "verified": {
+        "app_commit": "b51296edbc43a1e833a54aeeac40e274c10932c5",
+        "date": "2026-09-12"
+      }
+    },
+    "specs/SPEC-004-media-probe.md": {
+      "code": [
+        {
+          "path": "src/Core/Media/MediaProbe.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/Core/Media/KeyframeSnap.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/Core/Media/ProbeResult.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/Core/Media/MediaInfo.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/Core/Media/StreamInfo.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/Core/Media/FfprobeJson.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "tests/Core.Tests/MediaProbeSnapTests.cs",
+          "rel": "tested-by"
+        },
+        {
+          "path": "tests/App.Tests/JoinProbeOnceTests.cs",
+          "rel": "tested-by"
+        },
+        {
+          "path": "bench/README.md",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "bench/VideoSplitJoiner.Bench/CoreScenarios.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/Core/Bulk/KeptMiddleRequestBuilder.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/Core/Join/JoinEngine.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/Core/Split/SplitEngine.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "tests/Core.Tests/MediaProbeProbeCacheTests.cs",
+          "rel": "tested-by"
+        },
+        {
+          "path": "tests/Core.Tests/ProbeOnceAcrossEnginesTests.cs",
+          "rel": "tested-by"
+        }
+      ],
+      "id": "SPEC-004",
+      "kind": "feature-spec",
+      "relates": [
+        {
+          "rel": "see-also",
+          "to": "SPEC-001"
+        },
+        {
+          "rel": "see-also",
+          "to": "SPEC-017"
+        }
+      ],
+      "status": "current",
+      "tickets": [
+        "T-193",
+        "T-194",
+        "T-198",
+        "T-199",
+        "T-200",
+        "T-211",
+        "T-212",
+        "T-216"
+      ],
+      "title": "What",
+      "verified": {
+        "app_commit": "7e228bec1dcb5b0bf6355eb0b032279719bd5782",
+        "date": "2026-10-18"
+      }
+    },
+    "specs/SPEC-005-thumbnail-service.md": {
+      "code": [
+        {
+          "path": "src/Core/Thumbnails/IThumbnailService.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/Core/Thumbnails/FfmpegThumbnailService.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "tests/Core.Tests/FfmpegThumbnailServiceTests.cs",
+          "rel": "tested-by"
+        },
+        {
+          "path": "tests/Core.Tests/FfmpegThumbnailServiceIntegrationTests.cs",
+          "rel": "tested-by"
+        },
+        {
+          "path": "tests/Core.Tests/StreamInfoSkipTests.cs",
+          "rel": "tested-by"
+        },
+        {
+          "path": "tests/Core.Tests/StreamInfoSkipIntegrationTests.cs",
+          "rel": "tested-by"
+        },
+        {
+          "path": "src/Core/Ffmpeg/StreamInfoSkip.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/Core/Waveform/FfmpegWaveformService.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "tests/Core.Tests/FfmpegWaveformServiceTests.cs",
+          "rel": "tested-by"
+        }
+      ],
+      "id": "SPEC-005",
+      "kind": "feature-spec",
+      "relates": [],
+      "status": "current",
+      "tickets": [
+        "T-179",
+        "T-195",
+        "T-196",
+        "T-208",
+        "T-217",
+        "T-226",
+        "T-227",
+        "T-228",
+        "T-229"
+      ],
+      "title": "What",
+      "verified": {
+        "app_commit": "69e5b080d357a63d9409e9d0bc99b2b63b1c86f0",
+        "date": "2026-10-06"
+      }
+    },
+    "specs/SPEC-006-waveform-service.md": {
+      "code": [
+        {
+          "path": "src/Core/Waveform/IWaveformService.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/Core/Waveform/FfmpegWaveformService.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/Core/Ffmpeg/StreamInfoSkip.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "tests/Core.Tests/FfmpegWaveformServiceTests.cs",
+          "rel": "tested-by"
+        },
+        {
+          "path": "tests/Core.Tests/StreamInfoSkipTests.cs",
+          "rel": "tested-by"
+        },
+        {
+          "path": "tests/Core.Tests/StreamInfoSkipIntegrationTests.cs",
+          "rel": "tested-by"
+        }
+      ],
+      "id": "SPEC-006",
+      "kind": "feature-spec",
+      "relates": [
+        {
+          "rel": "designed-in",
+          "to": "D-002"
+        },
+        {
+          "rel": "see-also",
+          "to": "SPEC-014"
+        }
+      ],
+      "status": "current",
+      "tickets": [
+        "T-206"
+      ],
+      "title": "What",
+      "verified": {
+        "app_commit": "69e5b080d357a63d9409e9d0bc99b2b63b1c86f0",
+        "date": "2026-10-06"
+      }
+    },
+    "specs/SPEC-007-cut-profiles.md": {
+      "code": [
+        {
+          "path": "src/Core/Profiles/CutProfile.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/App/Settings/AppSettings.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/App/ViewModels/CutProfileApplier.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/App/Settings/ProfileThumbnailStore.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/App/Settings/ProfileBackup.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "packaging/VideoSplitJoiner.iss",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/App/ViewModels/BulkCutViewModel.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/App/ImageSignature.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/App/Io/ImageNormalizer.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/App/Views/BulkCutView.xaml",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/App/Views/Converters.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/App/Views/ProfilePreviewCard.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/App/ViewModels/OperationViewModel.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/App/Views/BulkCutView.xaml.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "tests/App.Tests/ApplyDuringScanTests.cs",
+          "rel": "tested-by"
+        },
+        {
+          "path": "tests/Core.Tests/CutProfileTests.cs",
+          "rel": "tested-by"
+        },
+        {
+          "path": "tests/App.Tests/CutProfilePersistenceTests.cs",
+          "rel": "tested-by"
+        },
+        {
+          "path": "tests/App.Tests/CutProfileApplierTests.cs",
+          "rel": "tested-by"
+        },
+        {
+          "path": "tests/App.Tests/ProfileThumbnailStoreTests.cs",
+          "rel": "tested-by"
+        },
+        {
+          "path": "tests/App.Tests/BulkCutProfileThumbnailTests.cs",
+          "rel": "tested-by"
+        }
+      ],
+      "id": "SPEC-007",
+      "kind": "feature-spec",
+      "relates": [
+        {
+          "rel": "designed-in",
+          "to": "D-005"
+        },
+        {
+          "rel": "see-also",
+          "to": "SPEC-008"
+        },
+        {
+          "rel": "see-also",
+          "to": "SPEC-011"
+        }
+      ],
+      "status": "current",
+      "tickets": [
+        "T-180",
+        "T-181",
+        "T-182"
+      ],
+      "title": "What",
+      "verified": {
+        "app_commit": "1c367c2fe09173124816128d044aae5cf1fe7fda",
+        "date": "2026-09-25"
+      }
+    },
+    "specs/SPEC-008-operation-progress-eta.md": {
+      "code": [
+        {
+          "path": "src/App/ViewModels/OperationViewModel.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/App/ViewModels/EtaEstimator.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/App/ViewModels/OperationState.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/Core/Ffmpeg/OperationStatus.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "tests/App.Tests/EtaEstimatorTests.cs",
+          "rel": "tested-by"
+        },
+        {
+          "path": "tests/App.Tests/TaskbarProgressStateTests.cs",
+          "rel": "tested-by"
+        },
+        {
+          "path": "tests/App.Tests/OperationLifecycleSurfaceTests.cs",
+          "rel": "tested-by"
+        },
+        {
+          "path": "tests/App.Tests/OperationProgressVisibilityTests.cs",
+          "rel": "tested-by"
+        },
+        {
+          "path": "tests/App.Tests/StagedStatusWiringTests.cs",
+          "rel": "tested-by"
+        },
+        {
+          "path": "tests/App.Tests/OperationViewModelTests.cs",
+          "rel": "tested-by"
+        },
+        {
+          "path": "tests/App.Tests/BulkCutProfileThumbnailTests.cs",
+          "rel": "tested-by"
+        }
+      ],
+      "id": "SPEC-008",
+      "kind": "feature-spec",
+      "relates": [
+        {
+          "rel": "see-also",
+          "to": "SPEC-007"
+        }
+      ],
+      "status": "current",
+      "tickets": [],
+      "title": "What",
+      "verified": {
+        "app_commit": "ab1e0341d116356e6251e921ff9218f886d777d4",
+        "date": "2026-09-12"
+      }
+    },
+    "specs/SPEC-009-app-settings.md": {
+      "code": [
+        {
+          "path": "src/App/Settings/AppSettings.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/App/Settings/IAppSettings.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/Core/Profiles/CutProfile.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "tests/App.Tests/AppSettingsTests.cs",
+          "rel": "tested-by"
+        }
+      ],
+      "id": "SPEC-009",
+      "kind": "feature-spec",
+      "relates": [
+        {
+          "rel": "designed-in",
+          "to": "D-001"
+        },
+        {
+          "rel": "designed-in",
+          "to": "D-004"
+        },
+        {
+          "rel": "see-also",
+          "to": "SPEC-007"
+        },
+        {
+          "rel": "see-also",
+          "to": "SPEC-011"
+        },
+        {
+          "rel": "see-also",
+          "to": "SPEC-015"
+        }
+      ],
+      "status": "current",
+      "tickets": [],
+      "title": "What",
+      "verified": {
+        "app_commit": "0b9e3ae76008bd00ea71e216afd89369fa61bc0a",
+        "date": "2026-09-26"
+      }
+    },
+    "specs/SPEC-010-split-screen.md": {
+      "code": [
+        {
+          "path": "src/App/ViewModels/SplitViewModel.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/App/ViewModels/CutMarkerViewModel.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/App/ViewModels/SplitSegmentViewModel.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/App/DropRefusal.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/App/VideoFileFilter.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/App/DropDiagnostics.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/App/Io/FileFacts.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/App/Io/ShellRecycleBin.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/App/Io/FileLockOwner.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/App/ViewModels/OperationViewModel.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/App/ViewModels/PlayerViewModel.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/Core/Split/SplitRequest.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/Core/Split/PartProgress.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "tests/App.Tests/SplitViewModelPartProgressTests.cs",
+          "rel": "tested-by"
+        }
+      ],
+      "id": "SPEC-010",
+      "kind": "feature-spec",
+      "relates": [
+        {
+          "rel": "see-also",
+          "to": "SPEC-001"
+        },
+        {
+          "rel": "see-also",
+          "to": "SPEC-004"
+        },
+        {
+          "rel": "see-also",
+          "to": "SPEC-008"
+        },
+        {
+          "rel": "see-also",
+          "to": "SPEC-011"
+        },
+        {
+          "rel": "see-also",
+          "to": "SPEC-014"
+        }
+      ],
+      "status": "current",
+      "tickets": [],
+      "title": "What",
+      "verified": {
+        "app_commit": "ab1e0341d116356e6251e921ff9218f886d777d4",
+        "date": "2026-09-12"
+      }
+    },
+    "specs/SPEC-011-bulk-cut-screen.md": {
+      "code": [
+        {
+          "path": "src/App/ViewModels/BulkCutViewModel.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/App/ViewModels/BulkItemViewModel.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/App/ViewModels/CutMarkerViewModel.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/App/ViewModels/CutTimeCommit.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/App/ViewModels/CutProfileApplier.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/App/ViewModels/RelayCommand.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/App/ViewModels/MainViewModel.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/App/Views/BulkCutView.xaml",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/App/Views/BulkCutView.xaml.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/App/Io/ShellRecycleBin.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/App/Io/FileLockOwner.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/App/Io/FileFacts.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/App/DropRefusal.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/App/VideoFileFilter.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/App/DropDiagnostics.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "tests/App.Tests/BulkItemThumbnailTests.cs",
+          "rel": "tested-by"
+        },
+        {
+          "path": "tests/App.Tests/BulkSpecGapTests.cs",
+          "rel": "tested-by"
+        },
+        {
+          "path": "tests/App.Tests/BulkCutApplyToAllReactivationTests.cs",
+          "rel": "tested-by"
+        },
+        {
+          "path": "tests/App.Tests/AppSettingsTests.cs",
+          "rel": "tested-by"
+        },
+        {
+          "path": "tests/App.Tests/BulkCutViewModelDebouncedPreviewTests.cs",
+          "rel": "tested-by"
+        }
+      ],
+      "id": "SPEC-011",
+      "kind": "feature-spec",
+      "relates": [
+        {
+          "rel": "designed-in",
+          "to": "D-004"
+        },
+        {
+          "rel": "designed-in",
+          "to": "D-005"
+        },
+        {
+          "rel": "see-also",
+          "to": "SPEC-001"
+        },
+        {
+          "rel": "see-also",
+          "to": "SPEC-002"
+        },
+        {
+          "rel": "see-also",
+          "to": "SPEC-005"
+        },
+        {
+          "rel": "see-also",
+          "to": "SPEC-007"
+        },
+        {
+          "rel": "see-also",
+          "to": "SPEC-009"
+        },
+        {
+          "rel": "see-also",
+          "to": "SPEC-015"
+        }
+      ],
+      "status": "current",
+      "tickets": [
+        "T-185",
+        "T-186",
+        "T-218"
+      ],
+      "title": "What",
+      "verified": {
+        "app_commit": "2f33f6e0abeef42fcbe976481cd1e7dcb2f9809a",
+        "date": "2026-10-05"
+      }
+    },
+    "specs/SPEC-012-join-screen.md": {
+      "code": [
+        {
+          "path": "src/App/ViewModels/JoinViewModel.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/App/ViewModels/JoinItemViewModel.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/App/DropRefusal.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/App/VideoFileFilter.cs",
+          "rel": "implemented-by"
+        }
+      ],
+      "id": "SPEC-012",
+      "kind": "feature-spec",
+      "relates": [
+        {
+          "rel": "see-also",
+          "to": "SPEC-003"
+        },
+        {
+          "rel": "see-also",
+          "to": "SPEC-008"
+        },
+        {
+          "rel": "see-also",
+          "to": "SPEC-010"
+        }
+      ],
+      "status": "current",
+      "tickets": [
+        "T-215"
+      ],
+      "title": "What",
+      "verified": {
+        "app_commit": "b51296edbc43a1e833a54aeeac40e274c10932c5",
+        "date": "2026-09-12"
+      }
+    },
+    "specs/SPEC-013-preview-player.md": {
+      "code": [
+        {
+          "path": "src/App/ViewModels/PlayerViewModel.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/App/ViewModels/ThumbnailPreviewViewModel.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/App/ViewModels/NullThumbnailService.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/App/Media/FfmeMediaPlayer.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/App/Media/MediaReopenGuard.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/App/Media/IMediaPlayer.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/App/Media/MediaSourceUri.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/App/Media/FileMediaInputStream.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/App/Media/PreviewScale.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "tests/Core.Tests/SplitArgsInvariantTests.cs",
+          "rel": "tested-by"
+        },
+        {
+          "path": "tests/App.Tests/PlayerViewModelTests.cs",
+          "rel": "tested-by"
+        },
+        {
+          "path": "tests/App.Tests/MediaReopenGuardTests.cs",
+          "rel": "tested-by"
+        },
+        {
+          "path": "tests/App.Tests/MediaSourceUriTests.cs",
+          "rel": "tested-by"
+        },
+        {
+          "path": "tests/App.Tests/FileMediaInputStreamTests.cs",
+          "rel": "tested-by"
+        },
+        {
+          "path": "tests/App.Tests/ThumbnailPreviewViewModelTests.cs",
+          "rel": "tested-by"
+        },
+        {
+          "path": "tests/App.Tests/PreviewScaleTests.cs",
+          "rel": "tested-by"
+        }
+      ],
+      "id": "SPEC-013",
+      "kind": "feature-spec",
+      "relates": [
+        {
+          "rel": "see-also",
+          "to": "SPEC-001"
+        },
+        {
+          "rel": "see-also",
+          "to": "SPEC-003"
+        },
+        {
+          "rel": "see-also",
+          "to": "SPEC-005"
+        }
+      ],
+      "status": "current",
+      "tickets": [
+        "T-213"
+      ],
+      "title": "What",
+      "verified": {
+        "app_commit": "ab1e0341d116356e6251e921ff9218f886d777d4",
+        "date": "2026-09-12"
+      }
+    },
+    "specs/SPEC-014-timeline.md": {
+      "code": [
+        {
+          "path": "src/App/ViewModels/TimelineMath.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/App/ViewModels/BulkScrubMath.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/App/ViewModels/TimelineViewModel.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/App/ViewModels/TimelineTick.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/App/ViewModels/WaveformViewModel.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/App/ViewModels/SplitViewModel.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/App/ViewModels/NullWaveformService.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/App/Views/TimelineView.xaml.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/App/Views/BulkRowScrubView.xaml.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/App/ViewModels/BulkItemViewModel.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/App/ViewModels/CutMarkerViewModel.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "tests/App.Tests/TimelineTests.cs",
+          "rel": "tested-by"
+        }
+      ],
+      "id": "SPEC-014",
+      "kind": "feature-spec",
+      "relates": [
+        {
+          "rel": "designed-in",
+          "to": "D-001"
+        },
+        {
+          "rel": "designed-in",
+          "to": "D-002"
+        },
+        {
+          "rel": "designed-in",
+          "to": "D-004"
+        },
+        {
+          "rel": "see-also",
+          "to": "SPEC-004"
+        },
+        {
+          "rel": "see-also",
+          "to": "SPEC-006"
+        },
+        {
+          "rel": "see-also",
+          "to": "SPEC-010"
+        },
+        {
+          "rel": "see-also",
+          "to": "SPEC-013"
+        }
+      ],
+      "status": "current",
+      "tickets": [],
+      "title": "What",
+      "verified": {
+        "app_commit": "ab1e0341d116356e6251e921ff9218f886d777d4",
+        "date": "2026-09-12"
+      }
+    },
+    "specs/SPEC-015-app-shell-theming.md": {
+      "code": [
+        {
+          "path": "src/App/ViewModels/MainViewModel.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/App/Views/MainWindow.xaml",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/App/Views/MainWindow.xaml.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/App/ViewModels/WindowChromeMath.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/App/ViewModels/CrashReport.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/App/Views/OrientedSplitPanel.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/App/Views/Converters.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/App/Views/WindowStateConverters.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/App/Themes/Tokens.xaml",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/App/Themes/Controls.xaml",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/App/App.xaml",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/App/App.xaml.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/Core/Errors/ErrorLogWriter.cs",
+          "rel": "implemented-by"
+        }
+      ],
+      "id": "SPEC-015",
+      "kind": "feature-spec",
+      "relates": [
+        {
+          "rel": "designed-in",
+          "to": "D-001"
+        },
+        {
+          "rel": "designed-in",
+          "to": "D-003"
+        },
+        {
+          "rel": "designed-in",
+          "to": "D-004"
+        },
+        {
+          "rel": "see-also",
+          "to": "SPEC-008"
+        },
+        {
+          "rel": "see-also",
+          "to": "SPEC-009"
+        },
+        {
+          "rel": "see-also",
+          "to": "SPEC-010"
+        },
+        {
+          "rel": "see-also",
+          "to": "SPEC-011"
+        },
+        {
+          "rel": "see-also",
+          "to": "SPEC-012"
+        },
+        {
+          "rel": "see-also",
+          "to": "SPEC-016"
+        }
+      ],
+      "status": "current",
+      "tickets": [],
+      "title": "What",
+      "verified": {
+        "app_commit": "ab1e0341d116356e6251e921ff9218f886d777d4",
+        "date": "2026-09-12"
+      }
+    },
+    "specs/SPEC-016-error-reporting.md": {
+      "code": [
+        {
+          "path": "src/Core/Errors/ErrorCategory.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/Core/Errors/FfmpegErrorMapper.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/Core/Errors/UserFacingError.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/Core/Errors/ErrorLogWriter.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/App/Views/ErrorActions.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "tests/Core.Tests/FfmpegErrorMapperTests.cs",
+          "rel": "tested-by"
+        },
+        {
+          "path": "tests/Core.Tests/UserFacingErrorTests.cs",
+          "rel": "tested-by"
+        },
+        {
+          "path": "tests/Core.Tests/ErrorLogWriterTests.cs",
+          "rel": "tested-by"
+        },
+        {
+          "path": "tests/Core.Tests/SplitEngineUnitTests.cs",
+          "rel": "tested-by"
+        },
+        {
+          "path": "tests/Core.Tests/JoinEngineUnitTests.cs",
+          "rel": "tested-by"
+        },
+        {
+          "path": "tests/App.Tests/SplitViewModelTests.cs",
+          "rel": "tested-by"
+        },
+        {
+          "path": "tests/App.Tests/JoinViewModelTests.cs",
+          "rel": "tested-by"
+        }
+      ],
+      "id": "SPEC-016",
+      "kind": "feature-spec",
+      "relates": [
+        {
+          "rel": "see-also",
+          "to": "SPEC-001"
+        },
+        {
+          "rel": "see-also",
+          "to": "SPEC-002"
+        },
+        {
+          "rel": "see-also",
+          "to": "SPEC-003"
+        },
+        {
+          "rel": "see-also",
+          "to": "SPEC-008"
+        },
+        {
+          "rel": "see-also",
+          "to": "SPEC-013"
+        },
+        {
+          "rel": "see-also",
+          "to": "SPEC-015"
+        },
+        {
+          "rel": "see-also",
+          "to": "SPEC-017"
+        }
+      ],
+      "status": "current",
+      "tickets": [],
+      "title": "What",
+      "verified": {
+        "app_commit": "ab1e0341d116356e6251e921ff9218f886d777d4",
+        "date": "2026-09-12"
+      }
+    },
+    "specs/SPEC-017-ffmpeg-process.md": {
+      "code": [
+        {
+          "path": "src/Core/Ffmpeg/FfmpegArgs.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/Core/Ffmpeg/FfmpegBinaryLocator.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/Core/Ffmpeg/FfmpegRunner.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/Core/Ffmpeg/FfprobeRunner.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/Core/Ffmpeg/FfmpegProgress.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/Core/Ffmpeg/RollingTail.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/Core/Ffmpeg/FfmpegResult.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/Core/Ffmpeg/FfmpegExceptions.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "src/Core/Errors/FfmpegErrorMapper.cs",
+          "rel": "implemented-by"
+        },
+        {
+          "path": "tests/Core.Tests/FfmpegArgsTests.cs",
+          "rel": "tested-by"
+        }
+      ],
+      "id": "SPEC-017",
+      "kind": "feature-spec",
+      "relates": [
+        {
+          "rel": "see-also",
+          "to": "SPEC-001"
+        },
+        {
+          "rel": "see-also",
+          "to": "SPEC-003"
+        },
+        {
+          "rel": "see-also",
+          "to": "SPEC-004"
+        },
+        {
+          "rel": "see-also",
+          "to": "SPEC-005"
+        },
+        {
+          "rel": "see-also",
+          "to": "SPEC-006"
+        },
+        {
+          "rel": "see-also",
+          "to": "SPEC-008"
+        }
+      ],
+      "status": "current",
+      "tickets": [],
+      "title": "What",
+      "verified": {
+        "app_commit": "ab1e0341d116356e6251e921ff9218f886d777d4",
+        "date": "2026-09-12"
+      }
+    },
+    "specs/_GAPS.md": {
+      "code": [],
+      "kind": "other",
+      "relates": [],
+      "status": "current",
+      "tickets": [],
+      "title": "Deferred spec-coverage gaps (todo-automate)",
+      "verified": {
+        "app_commit": "b51296edbc43a1e833a54aeeac40e274c10932c5",
+        "date": "2026-09-12"
+      }
+    },
+    "specs/_TEMPLATE.md": {
+      "code": [],
+      "kind": "template",
+      "relates": [],
+      "status": "current",
+      "tickets": [],
+      "title": "What"
+    },
+    "specs/_index.md": {
+      "code": [],
+      "kind": "index",
+      "relates": [],
+      "status": "current",
+      "tickets": [],
+      "title": "Feature Specs — Index"
+    }
+  },
+  "group": "product",
+  "maintained": true,
+  "owner": "product-owner",
+  "schema": "docs-group/1"
+}

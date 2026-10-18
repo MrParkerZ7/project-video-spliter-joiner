@@ -188,7 +188,7 @@ executable, so there is nothing else to install. That one folder serves **both**
 shared `avcodec-*` / `avformat-*` / … DLLs that FFME P/Invoke-loads) **and** the split/join engine
 (`ffmpeg.exe` / `ffprobe.exe`). The app resolves the DLLs (via `Library.FFmpegDirectory`) and the
 exes (via `FfmpegBinaryLocator`) from that folder automatically; see
-[Architecture → binary resolution](docs/ARCHITECTURE.md#binary-resolution).
+[Architecture → binary resolution](docs/architect/ARCHITECTURE.md#binary-resolution).
 
 > The bundled FFmpeg in the developer distributable is a **GPL** build. See
 > [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) before redistributing publicly — an LGPL build
@@ -238,16 +238,16 @@ falls back to the "preview unavailable" banner.
 
 ## Documentation
 
-- **[Docs portal](docs/README.md)** — the full documentation index (guides · architecture · ADRs · designs · specs · standards).
-- [User Guide](docs/USER_GUIDE.md) — step-by-step for Split, the preview player, hover-thumbnail
+- **[Docs portal](docs/product/OVERVIEW.md)** — the full documentation index (guides · architecture · ADRs · designs · specs · standards).
+- [User Guide](docs/product/guide/USER_GUIDE.md) — step-by-step for Split, the preview player, hover-thumbnail
   scrubbing, per-part / taskbar progress, operation outcomes, Join, and Bulk Cut.
-- [Architecture](docs/ARCHITECTURE.md) — layering, engine contracts, binary resolution, MVVM shape,
+- [Architecture](docs/architect/ARCHITECTURE.md) — layering, engine contracts, binary resolution, MVVM shape,
   and the theming / two-column-layout / progress subsystems.
-- [Architecture decisions (ADRs)](docs/adr/) — the "why" behind key choices (e.g.
-  [FFME over MediaElement](docs/adr/0004-ffme-over-mediaelement.md)).
-- [Feature specs](docs/specs/_index.md) — the living-spec layer (numbered invariants, `serves-spec:` test traceability).
-- [Developer guide](docs/DEV.md) — build · test · conventions. [Glossary](docs/GLOSSARY.md) — domain terms.
-  [Roadmap](docs/ROADMAP.md) — shipped + future.
+- [Architecture decisions (ADRs)](docs/architect/adr/) — the "why" behind key choices (e.g.
+  [FFME over MediaElement](docs/architect/adr/0004-ffme-over-mediaelement.md)).
+- [Feature specs](docs/product/specs/_index.md) — the living-spec layer (numbered invariants, `serves-spec:` test traceability).
+- [Developer guide](docs/operations/DEV.md) — build · test · conventions. [Glossary](docs/product/GLOSSARY.md) — domain terms.
+  [Roadmap](docs/product/ROADMAP.md) — shipped + future.
 - [Dev setup / build from source](#build-from-source) — the .NET 8 SDK path, the
   `packaging/fetch-ffmpeg-shared.ps1` bootstrap, and `packaging/package.ps1` for the distributable.
 - [Changelog](CHANGELOG.md) — release history.

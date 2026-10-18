@@ -1,7 +1,7 @@
 # CLAUDE.md — VideoSplitJoiner
 
 A .NET 8 WPF app that splits and joins video **without re-encoding**. See [README](README.md),
-[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), and [docs/USER_GUIDE.md](docs/USER_GUIDE.md).
+[docs/architect/ARCHITECTURE.md](docs/architect/ARCHITECTURE.md), and [docs/product/guide/USER_GUIDE.md](docs/product/guide/USER_GUIDE.md).
 
 ## Layout
 
@@ -23,7 +23,7 @@ A .NET 8 WPF app that splits and joins video **without re-encoding**. See [READM
   reference token brushes (`AccentBrush` gold, `SurfaceBrush`, `TextPrimaryBrush`, …) as `StaticResource`
   — do not add hardcoded hex/`Colors.*` in a view (a code-behind converter that can't use `StaticResource`
   is the only exception, and it uses the same token color values). Gold `AccentBrush` = primary actions /
-  timeline pins / playhead / focus. The redesign reference is `docs/design/references/`.
+  timeline pins / playhead / focus. The redesign reference is `docs/architect/design/references/`.
 - **Typography is IBM Plex, bundled — not system fonts (G-019).** `IBM Plex Mono` (primary/mono readouts,
   `MonoFontFamily`) + `IBM Plex Sans` (`SansFontFamily`) ship as `Resource` TTFs in `src/App/Fonts/`
   (SIL OFL-1.1 — see `THIRD-PARTY-NOTICES.md`) and are referenced via pack URI with system fallbacks
@@ -51,7 +51,7 @@ A .NET 8 WPF app that splits and joins video **without re-encoding**. See [READM
   placement + the `GridSplitter` orientation on `IsVertical`) — **one instance of each region, no duplicated markup**.
   Split ratios are remembered **per-axis** (`HorizontalSplitRatio`/`VerticalSplitRatio`). Don't re-duplicate region
   markup per mode or tie layout to a hardcoded axis; put new content inside the panel's two regions, or nest another
-  `OrientedSplitPanel` (as Split's Cut-markers ‖ Parts pair does, T-091). See `docs/design/D-001-vertical-monitor-mode.md`.
+  `OrientedSplitPanel` (as Split's Cut-markers ‖ Parts pair does, T-091). See `docs/architect/design/D-001-vertical-monitor-mode.md`.
 - **Scrollbars are themed app-wide (G-027).** An implicit `ScrollBar` style (no `x:Key`) lives in
   `Themes/Controls.xaml` — thin, dark track, rounded `BorderStrong` thumb that goes `AccentBrush` gold on
   hover/drag, both orientations. Don't reintroduce the default light Windows scrollbar or per-view overrides.

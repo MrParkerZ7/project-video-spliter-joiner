@@ -7,7 +7,7 @@ Accepted.
 ## Context
 
 The in-app video preview must play **exactly what the engine can cut**. Every
-split/join is a lossless stream copy (`ffmpeg -c copy`, see `docs/ARCHITECTURE.md`),
+split/join is a lossless stream copy (`ffmpeg -c copy`, see `docs/architect/ARCHITECTURE.md`),
 so the app happily cuts HEVC, MKV, 4K, and many exotic container/codec combinations.
 The original preview used WPF's built-in `MediaElement`, backed by Windows Media
 Foundation. Media Foundation decodes a **narrower** set of codecs/containers than the

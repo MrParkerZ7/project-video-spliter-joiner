@@ -17,7 +17,7 @@ wall-clock time (T-137).
   `FfmpegArgs`, like the app. Bytes read come from a Windows job object instead (below).
 
 It was ported from the T-187 prototype, whose reference copy stays in
-[`docs/design/references/T-187-bench/`](../docs/design/references/T-187-bench/) as the evidence record:
+[`docs/architect/design/references/T-187-bench/`](../docs/architect/design/references/T-187-bench/) as the evidence record:
 `CoreScenarios.cs`, `Alternatives.cs`, `Smart2.cs`, the results writer and `show.py`'s filter. Not ported:
 `IoMeter.cs` (it started processes itself; the job object replaces it) and `Mp4Index.cs` (T-194 builds the
 production sample-table reader in Core, and the bench then times it through `MediaProbe`).

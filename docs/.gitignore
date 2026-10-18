@@ -1,0 +1,46 @@
+# docs repo ignore rules - written by develop-docs-engine.py (DOCS_LAYOUT § 9.1 step 5)
+# generated board views
+todo/_board.md
+todo/_local-status.md
+todo/.drain-lock
+# the migration ledger (never tracked)
+/.docs-migration.json
+# app ignore rules that applied inside docs/ (re-rooted)
+dist/
+ffmpeg-shared/
+bin/
+obj/
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+[Aa][Rr][Mm]/
+[Aa][Rr][Mm]64/
+[Bb]in/
+[Oo]bj/
+.vs/
+.idea/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+*.userprefs
+[Bb]uild[Ll]og.*
+*.binlog
+*.nupkg
+*.snupkg
+**/packages/*
+!**/packages/build/
+project.lock.json
+project.fragment.lock.json
+artifacts/
+[Tt]est[Rr]esult*/
+*.trx
+*.coverage
+*.coveragexml
+coverage*.json
+coverage*.xml
+coverage*.info
+.DS_Store
+Thumbs.db
+publish/

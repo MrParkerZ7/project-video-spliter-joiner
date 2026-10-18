@@ -6,7 +6,7 @@ Domain and codebase terms used across VideoSplitJoiner's docs, specs, and code.
 - **Stream-copy (`-c copy`)** — remuxing the source's encoded packets into a new file **without re-encoding**. Near-instant
   and lossless (bytes are reproduced), so it's resolution-independent (4K stays fast). The app's core promise and the
   default for every cut; the one opt-in exception is Bulk Cut's **Exact cut** (below). See
-  [adr/0001-stream-copy-only.md](adr/0001-stream-copy-only.md), [specs/SPEC-001-stream-copy-split.md](specs/SPEC-001-stream-copy-split.md).
+  [../architect/adr/0001-stream-copy-only.md](../architect/adr/0001-stream-copy-only.md), [specs/SPEC-001-stream-copy-split.md](specs/SPEC-001-stream-copy-split.md).
 - **Keyframe (I-frame)** — a self-contained frame the decoder can start from. Stream-copy can only cut cleanly on a keyframe.
 - **Keyframe-snap** — moving a requested cut point to the **nearest keyframe** so the `-c copy` boundary is clean. The
   displayed *snapped* time is the real cut; the signed offset is the *snap delta*. See `MediaProbe.SnapToNearestKeyframe`.
@@ -14,9 +14,9 @@ Domain and codebase terms used across VideoSplitJoiner's docs, specs, and code.
 - **GOP (Group of Pictures)** — the span between keyframes. A **coarse GOP** (keyframes far apart) means snapping can move a
   cut noticeably; the app surfaces a coarse-GOP warning.
 - **ffmpeg / ffprobe** — the bundled CLI binaries. `ffmpeg` does the copy/cut; `ffprobe` reads duration + keyframes. Bundled
-  app-locally (no PATH dependency) — see [adr/0010-shared-ffmpeg-bundling.md](adr/0010-shared-ffmpeg-bundling.md).
+  app-locally (no PATH dependency) — see [../architect/adr/0010-shared-ffmpeg-bundling.md](../architect/adr/0010-shared-ffmpeg-bundling.md).
 - **FFME (FFmpeg MediaElement)** — the WPF media-player control used for the in-app preview, chosen over the stock
-  `MediaElement`. See [adr/0004-ffme-over-mediaelement.md](adr/0004-ffme-over-mediaelement.md).
+  `MediaElement`. See [../architect/adr/0004-ffme-over-mediaelement.md](../architect/adr/0004-ffme-over-mediaelement.md).
 - **Segment muxer vs per-segment** — two extraction paths: the single-pass `-f segment` muxer (all parts at once) vs a
   per-part `-ss/-to -c copy` run (a selected subset). A **bulk trim** uses the per-segment path for its one kept part.
 
@@ -24,7 +24,7 @@ Domain and codebase terms used across VideoSplitJoiner's docs, specs, and code.
 - **Split** — cut one video into contiguous segments at chosen (keyframe-snapped) cut points.
 - **Join** — concatenate compatible clips into one output (stream-copy where compatible).
 - **Bulk Cut** — batch-trim the **intro** (and optional **outro**) off many videos at once, keeping the middle of each.
-  A bulk trim *is a Split that keeps exactly one middle segment*. See [adr/0015-bulk-trim-reuses-split-single-segment.md](adr/0015-bulk-trim-reuses-split-single-segment.md).
+  A bulk trim *is a Split that keeps exactly one middle segment*. See [../architect/adr/0015-bulk-trim-reuses-split-single-segment.md](../architect/adr/0015-bulk-trim-reuses-split-single-segment.md).
 - **Intro-end / outro-start** — the two cut points on a Bulk row: drop the leading `[0 → intro-end]` and (optional) trailing
   `[outro-start → EOF]`, keep the middle `[intro-end → outro-start | EOF]`. Rendered as a gold + blue dual-handle scrub bar.
 - **Kept-segment / kept-middle** — the one segment a bulk trim keeps. `KeptSegmentSelector` resolves which planned part it is.
@@ -37,20 +37,20 @@ Domain and codebase terms used across VideoSplitJoiner's docs, specs, and code.
   launches since T-186. **Lossless** (default) snaps
   each cut to a keyframe and stream-copies every byte. **Exact cut** honours the requested time by re-encoding only the
   leading fragment up to the next keyframe (the whole range, if it ends before one) and stream-copying the rest
-  (`SmartCutEngine`, the "smart cut"); a source with no encoder mapped for its codecs is cut Lossless instead. See [adr/0018-smart-cut-exact-trimming.md](adr/0018-smart-cut-exact-trimming.md).
+  (`SmartCutEngine`, the "smart cut"); a source with no encoder mapped for its codecs is cut Lossless instead. See [../architect/adr/0018-smart-cut-exact-trimming.md](../architect/adr/0018-smart-cut-exact-trimming.md).
 - **Replace originals (`OutputMode`)** — Bulk Cut's opt-in destructive output (`OutputMode.ReplaceOriginal`): each
   row's result is produced in a temp file and replaces that row's source only once it is verified complete, so a row
   that fails or is cancelled keeps its original (rows that already finished have been replaced); the replaced original
   goes to the Recycle Bin. Collision policy is ignored in this mode. The default, `OutputMode.NewFile`, writes a new `_trimmed` file beside the source. See
-  [adr/0017-output-mode-replace-original.md](adr/0017-output-mode-replace-original.md).
+  [../architect/adr/0017-output-mode-replace-original.md](../architect/adr/0017-output-mode-replace-original.md).
 - **Delete originals / auto-delete / empty bin** — reclaiming space after a run. **Delete originals** (Bulk Cut) and
   **Delete original** (Split) send the source to the Recycle Bin, never a permanent delete, through the
   `IOriginalDisposer` seam (`RecycleBinOriginalDisposer` in the app). Bulk Cut offers it per finished row whose output is
   on disk and non-empty; Split only when **every** part it produced is on disk and non-empty. **Auto-delete** does the
   same automatically after a clean run (off by default, remembered separately per screen); **and empty bin**, which can
   only be armed on top of auto-delete and asks first, then empties the whole Recycle Bin — files other programs binned
-  included. See [adr/0022-silent-shell-recycle-over-vb-fileio.md](adr/0022-silent-shell-recycle-over-vb-fileio.md),
-  [adr/0024-per-screen-delete-eligibility.md](adr/0024-per-screen-delete-eligibility.md).
+  included. See [../architect/adr/0022-silent-shell-recycle-over-vb-fileio.md](../architect/adr/0022-silent-shell-recycle-over-vb-fileio.md),
+  [../architect/adr/0024-per-screen-delete-eligibility.md](../architect/adr/0024-per-screen-delete-eligibility.md).
 - **Auto-clear list** — Bulk Cut's *tidy up after a clean batch* option (`AutoClearAfterRun`, T-171, reworked by
   T-185): once a batch completes with no failures, every row it finished leaves the list while the run's report stays
   on screen and says what the rows used to — originals still on disk, videos not cut exactly. A row stays only when
@@ -60,7 +60,7 @@ Domain and codebase terms used across VideoSplitJoiner's docs, specs, and code.
   the only thing the checkbox binds to, and also the target set apply-to-all and a profile's *Apply to all* write to.
   `IsEnabled` is read-only computed **eligibility** — intent AND not auto-excluded (unreadable file, nothing to trim
   yet, an invalid cut, or its original already deleted) — and is what the batch runs on. A ticked-but-excluded row
-  stays ticked and shows its `ExclusionReason`. See [adr/0019-row-intent-vs-computed-eligibility.md](adr/0019-row-intent-vs-computed-eligibility.md).
+  stays ticked and shows its `ExclusionReason`. See [../architect/adr/0019-row-intent-vs-computed-eligibility.md](../architect/adr/0019-row-intent-vs-computed-eligibility.md).
 - **Cut profile** — a saved, reusable `{ name, intro-from-start, outro-from-end?, optional thumbnail }` applied to rows for
   same-series batches. See [specs/SPEC-007-cut-profiles.md](specs/SPEC-007-cut-profiles.md).
 - **Profiles bar / profile chip** — Bulk Cut's full-width list of saved profiles (`ProfileBar`), one picture-and-name
@@ -86,23 +86,23 @@ Domain and codebase terms used across VideoSplitJoiner's docs, specs, and code.
 - **Profile backup** — *Back up…* / *Restore…*: every profile, pictures included inline, in one file
   (`ProfileBackup`). Restoring is planned first, so a corrupt, empty or newer-format file changes nothing, and it is additive:
   profiles you already have are overwritten only if you confirm. See
-  [adr/0021-profiles-survive-reinstall-via-backup-file.md](adr/0021-profiles-survive-reinstall-via-backup-file.md).
+  [../architect/adr/0021-profiles-survive-reinstall-via-backup-file.md](../architect/adr/0021-profiles-survive-reinstall-via-backup-file.md).
 - **Accept list** — the video extensions `VideoFileFilter` recognises. It decides what a drop accepts and also builds
   the file pickers' *Video files* filter (`VideoFileFilter.DialogFilter`), so the two cannot disagree.
 - **Drop refusal** — `DropRefusal`: the one vocabulary all three screens use to say what part of an accepted drop did
   not arrive and why (not a video, a folder, already in the list, dropped twice, other videos skipped on Split). A
   drag with no recognised video is refused at the cursor instead and never reaches it. See
-  [adr/0023-refuse-at-the-cursor-not-in-words.md](adr/0023-refuse-at-the-cursor-not-in-words.md).
+  [../architect/adr/0023-refuse-at-the-cursor-not-in-words.md](../architect/adr/0023-refuse-at-the-cursor-not-in-words.md).
 - **AutoSuffix** — the default output-collision policy: a pre-existing `name_trimmed.ext` becomes `name_trimmed_2.ext` (never clobbers the source).
 - **Cut marker** — a snap-aware cut point VM (`CutMarkerViewModel`) exposing requested vs snapped time + the delta.
 
 ## Codebase
 - **WPF-free VM** — a view-model built only from `ObservableObject`/`RelayCommand` + Core/BCL types (no `PresentationFramework`
   reference), so it's unit-testable headlessly. Core stays WPF-free (guarded by `CoreIsUiFreeTests`). Hand-rolled MVVM — no
-  toolkit. See [adr/0007-hand-rolled-mvvm.md](adr/0007-hand-rolled-mvvm.md).
+  toolkit. See [../architect/adr/0007-hand-rolled-mvvm.md](../architect/adr/0007-hand-rolled-mvvm.md).
 - **OrientedSplitPanel** — a `Grid` subclass that flips rows↔columns (+ splitter orientation) on `IsVertical`, driving the
   vertical/horizontal layout modes.
 - **`serves-spec:`** — a test trait/comment tying an automated test back to the `SPEC-NNN` invariant it verifies (living-spec traceability).
-- **Living spec** — a `docs/specs/SPEC-NNN` file stating a feature's current behavior as numbered, testable invariants;
+- **Living spec** — a `docs/product/specs/SPEC-NNN` file stating a feature's current behavior as numbered, testable invariants;
   the source `todo-automate` derives test cases from.
 - **Case-Coverage Matrix** — the testing bar beyond line %: Required-Success · Required-Fail · Optional · boundary cases.

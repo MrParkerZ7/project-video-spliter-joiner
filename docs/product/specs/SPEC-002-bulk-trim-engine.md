@@ -340,14 +340,14 @@ the lossless route uses.
   between the backup and the move-in.
 
 ## Links
-- Design: D-004 (`docs/design/D-004/README.md`, `docs/design/D-004/core-flow.md`)
+- Design: D-004 (`docs/architect/design/D-004/README.md`, `docs/architect/design/D-004/core-flow.md`)
 - Goals: G-036 (Build the Bulk Cut tab; tasks T-094→T-098); G-041 (make keyframe snapping visible + the
   opt-in replace-original output mode; tasks T-121→T-123); G-042 (frame-exact "Exact cut"; tasks T-124/T-125,
   and T-130 — routing the exact path through the same safe swap so it may write over originals); G-059 (4K fast
   and correct — T-189: an HEVC source falls back from Exact, and a fall-back row the lossless pass skips as a no-op
   keeps its fallback warning, I18/I29/I50/I51 amended)
-- ADR: 0015 — bulk trim reuses Split single-segment (`docs/adr/0015-bulk-trim-reuses-split-single-segment.md`);
-  0018 — frame-exact cutting as a separate opt-in engine (`docs/adr/0018-smart-cut-exact-trimming.md`)
+- ADR: 0015 — bulk trim reuses Split single-segment (`docs/architect/adr/0015-bulk-trim-reuses-split-single-segment.md`);
+  0018 — frame-exact cutting as a separate opt-in engine (`docs/architect/adr/0018-smart-cut-exact-trimming.md`)
 - Related specs: SPEC-001 (the `-c copy` / temp-then-move / planner contract this feature reuses, plus its
   frame-exact `SmartCutEngine` section — the engine `CutPrecision.Exact` routes to); SPEC-011 (the Bulk Cut
   app layer: the preview player, cut profiles, the Replace-originals + Exact-cut surfaces and the counted

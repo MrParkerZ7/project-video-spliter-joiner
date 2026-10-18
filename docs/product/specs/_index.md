@@ -1,11 +1,11 @@
 # Feature Specs — Index
 
-Living-spec layer per [../standards/feature-spec-structure.md](../standards/feature-spec-structure.md).
+Living-spec layer per [../../architect/standards/feature-spec-structure.md](../../architect/standards/feature-spec-structure.md).
 One spec per feature; numbered invariants are the source `todo-automate` derives test cases from.
 
 ## Structure
-- **Shape:** flat `docs/specs/SPEC-NNN-<slug>.md` (ids stable).
-- **Template:** [_TEMPLATE.md](_TEMPLATE.md) · **Standard:** [../standards/feature-spec-structure.md](../standards/feature-spec-structure.md)
+- **Shape:** flat `docs/product/specs/SPEC-NNN-<slug>.md` (ids stable).
+- **Template:** [_TEMPLATE.md](_TEMPLATE.md) · **Standard:** [../../architect/standards/feature-spec-structure.md](../../architect/standards/feature-spec-structure.md)
 - **Deferred gaps** (view-only / native / needs-refactor): [_GAPS.md](_GAPS.md) → tracked by T-105.
 
 ## Specs
