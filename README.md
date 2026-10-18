@@ -204,6 +204,10 @@ The .NET 8 SDK in this environment lives at `D:\_env_storeage\dotnet` and is **n
 invoke it by full path (or add it to PATH yourself):
 
 ```powershell
+# Dev setup: clone the documentation repo into docs/ (a separate, nested repo - see Documentation below).
+# The spec-index tests read docs/product/specs/ and fail without it.
+git clone https://github.com/MrParkerZ7/project-video-spliter-joiner-documentation.git docs
+
 # Dev setup: fetch the ffmpeg SHARED build (shared DLLs for the preview + ffmpeg/ffprobe exes for
 # the engine) into ffmpeg-shared/. Needed to run the app with a working preview and to package.
 powershell -File packaging/fetch-ffmpeg-shared.ps1
@@ -241,6 +245,20 @@ falls back to the "preview unavailable" banner.
   with the exact reason so you can fix the offending clip rather than getting a silently broken file.
 
 ## Documentation
+
+The documentation lives in its **own repository**,
+[`project-video-spliter-joiner-documentation`](https://github.com/MrParkerZ7/project-video-spliter-joiner-documentation)
+(private), **nested at `docs/`** and ignored by this repo (`/docs/` in `.gitignore`). A fresh clone of this repo
+has no `docs/`, so the links below do not resolve until the docs repo is cloned into it:
+
+```bash
+# from the root of this repo, right after cloning it
+git clone https://github.com/MrParkerZ7/project-video-spliter-joiner-documentation.git docs
+```
+
+`docs/` keeps its own git history: commit and push documentation changes inside it, not from this repo, and
+keep it up to date with `git -C docs pull`. Do not run `git clean -ffdx` or `git reset --hard` from this repo's
+root without first checking `docs/` for work that is not pushed.
 
 - **[Docs portal](docs/product/OVERVIEW.md)** — the full documentation index (guides · architecture · ADRs · designs · specs · standards).
 - [User Guide](docs/product/guide/USER_GUIDE.md) — step-by-step for Split, the preview player, hover-thumbnail

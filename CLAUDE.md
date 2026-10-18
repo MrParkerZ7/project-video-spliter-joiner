@@ -1,7 +1,7 @@
 # CLAUDE.md — VideoSplitJoiner
 
 A .NET 8 WPF app that splits and joins video **without re-encoding**. See [README](README.md),
-[docs/architect/ARCHITECTURE.md](docs/architect/ARCHITECTURE.md), and [docs/product/guide/USER_GUIDE.md](docs/product/guide/USER_GUIDE.md).
+[docs/architect/ARCHITECTURE.md](docs/architect/ARCHITECTURE.md), and [docs/product/guide/USER_GUIDE.md](docs/product/guide/USER_GUIDE.md). **`docs/` is a separate nested git repo** (`project-video-spliter-joiner-documentation`, ignored by this one): after a fresh clone run `git clone https://github.com/MrParkerZ7/project-video-spliter-joiner-documentation.git docs` from the repo root (or `soft-migrate-docs`, which attaches it) — the `docs/` links here and the spec-index tests need it, and docs changes are committed in `docs/`, not in this repo.
 
 ## Layout
 
