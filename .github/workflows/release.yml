@@ -35,6 +35,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Check out the docs repo (docs layout v2)
+        uses: actions/checkout@v4
+        with:
+          repository: MrParkerZ7/project-video-spliter-joiner-documentation
+          path: docs
+          token: ${{ secrets.DOCS_REPO_TOKEN }}
       - name: Resolve version
         id: ver
         shell: pwsh
