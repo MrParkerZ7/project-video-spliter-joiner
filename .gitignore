@@ -53,3 +53,5 @@ coverage*.info
 .DS_Store
 Thumbs.db
 publish/
+# the docs repo (docs layout v2) is its own git repo
+/docs/

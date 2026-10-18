@@ -1,3 +1,7 @@
+---
+project: develop
+domain: solution
+---
 # VideoSplitJoiner
 
 A fast Windows desktop app for **splitting** and **joining** video files **without re-encoding**.
@@ -258,3 +262,16 @@ falls back to the "preview unavailable" banner.
 This product uses **FFmpeg** (https://ffmpeg.org), bundled as external `ffmpeg.exe` / `ffprobe.exe`
 processes. See [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) for the full attribution and the
 GPL/LGPL licensing note.
+
+## Docs
+
+Docs layout v2 (the prompt master's shared/project-types/DOCS_LAYOUT.md) - written by develop-docs-engine.py, never by hand.
+
+| Field | Value |
+|-------|-------|
+| Layout | 2 |
+| Repo | project-video-spliter-joiner-documentation |
+| Remote | https://github.com/MrParkerZ7/project-video-spliter-joiner-documentation.git |
+| Branch | main |
+| Path | docs |
+
