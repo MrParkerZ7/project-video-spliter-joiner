@@ -8,6 +8,20 @@ goal; `0.1.0` is the first end-to-end, shippable cut.
 ## [Unreleased]
 
 ### Fixed
+- **A split part now starts on the keyframe the plan shows.** On a video with B-frames — what x264, x265 and OBS
+  write by default — every part of a full split ended one keyframe interval late: cuts at 3 s and 6 s on a video
+  with a keyframe every second gave parts of 4, 3 and 3 seconds instead of 3, 3 and 4, and a short clip whose last
+  cut landed on its final keyframe failed to split at all (*fewer segments than planned*). The same happened to a
+  video whose picture starts a few milliseconds after its sound, such as one the app's own Join wrote. On `.ts`,
+  `.m2ts` and `.mts` files, whose timestamps start about 1.4 s in, a split of selected parts and every lossless Bulk
+  Cut row started one keyframe interval late, and a part from the start ran about 1.4 s past its end. Every part now
+  starts on its planned keyframe, checked frame by frame against the source, and the split is still a pure copy:
+  only the times ffmpeg is told to cut at changed. Two limits stay: on a video with B-frames, a part that has an end
+  can keep two or three frames past it (T-220); and on a `.ts`, `.m2ts` or `.mts` file, a cut placed near its very start
+  (before its first keyframe or closer to it than to the next one) snaps to the file's first keyframe and is kept as an empty first part, so a full split still
+  starts the second part one keyframe interval late. Files from earlier versions are valid, but a boundary may sit one
+  keyframe interval from where the plan showed it; re-split or re-cut from the original if the exact boundary
+  matters.
 - **Bulk Cut's options now all remember how you left them.** *Overwrite existing output*, *Exact cut* and *Replace
   originals* reset to off every time the app started, while the other options at the bottom kept their setting.
   All of them are remembered now. Replace originals still asks before every batch, and while *Overwrite* is on the

@@ -250,7 +250,9 @@ public sealed class StreamInfoSkipIntegrationTests : IDisposable
             _dir, "bframes.mp4", 12, 30, "-c:v", "libx264", "-g", "60", "-keyint_min", "60", "-sc_threshold", "0", "-bf", "2");
 
         var pattern = Path.Combine(_dir, "part%03d.mp4");
-        await RunAsync(SplitArgsBuilder.SegmentMuxer(src, new[] { TimeSpan.FromSeconds(4), TimeSpan.FromSeconds(8) }, pattern));
+        // The app's half-frame -segment_time_delta at 30 fps since T-219 (SplitEngine.HalfFrameDelta).
+        await RunAsync(SplitArgsBuilder.SegmentMuxer(
+            src, new[] { TimeSpan.FromSeconds(4), TimeSpan.FromSeconds(8) }, pattern, SplitEngine.HalfFrameDelta(30)));
         var firstPart = Path.Combine(_dir, "part000.mp4");
 
         var offset = Path.Combine(_dir, "offset10.mov");

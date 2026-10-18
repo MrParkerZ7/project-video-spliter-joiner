@@ -191,9 +191,11 @@ public sealed class SplitEngine : ISplitEngine
             // T-049 routing: the full contiguous set → the single-pass segment muxer (unchanged fast
             // path). A strict SUBSET → the per-segment -ss/-to copy path, one ffmpeg run per selected
             // part, so ONLY the chosen ranges are written.
+            // T-219: both paths convert the plan's source timestamps to ffmpeg's time base from the probe made above
+            // (the muxer by the video stream's start, the per-segment seek by the format's start_time).
             var produced = isFullSet
-                ? await ExtractAllViaSegmentMuxer(req, plan, duration, tempDir, progress, partProgress, ct).ConfigureAwait(false)
-                : await ExtractSelectedPerSegment(req, selected, plan.Segments.Count, fileDuration, tempDir, progress, partProgress, ct).ConfigureAwait(false);
+                ? await ExtractAllViaSegmentMuxer(req, plan, ok.Info, duration, tempDir, progress, partProgress, ct).ConfigureAwait(false)
+                : await ExtractSelectedPerSegment(req, selected, plan.Segments.Count, fileDuration, ok.Info.StartTime, tempDir, progress, partProgress, ct).ConfigureAwait(false);
 
             // T-044: ffmpeg finished — entering the finalize phase (temp→move + verify each segment).
             status?.Report(new OperationStatus("Finalizing"));
@@ -270,13 +272,18 @@ public sealed class SplitEngine : ISplitEngine
     }
 
     /// <summary>
-    /// The full-set fast path (unchanged behaviour): one single-pass segment-muxer command writes
-    /// every contiguous part into <paramref name="tempDir"/> as part000, part001, … which are then
-    /// mapped in plan order onto the planned destinations.
+    /// The full-set fast path: one single-pass segment-muxer command writes every contiguous part into
+    /// <paramref name="tempDir"/> as part000, part001, … which are then mapped in plan order onto the planned
+    /// destinations. T-219: the boundaries are handed to the muxer in its own time base
+    /// (<see cref="ToMuxerSegmentTimes"/>) with a half-frame tolerance (<see cref="HalfFrameDelta"/>), so on a
+    /// B-frame source or one whose video does not start at 0 every part starts on its planned keyframe. The one
+    /// exception (SPEC-001 I66): a cut the planner kept on the first keyframe of a source whose video starts after 0
+    /// converts to 0, which the muxer does not cut at, so it cuts at the next keyframe.
     /// </summary>
     private async Task<IReadOnlyList<(PlannedSegment Planned, string TempFile)>> ExtractAllViaSegmentMuxer(
         SplitRequest req,
         SplitPlan plan,
+        MediaInfo info,
         TimeSpan duration,
         string tempDir,
         IProgress<double>? progress,
@@ -286,7 +293,14 @@ public sealed class SplitEngine : ISplitEngine
         var ext = GetOutputExtension(req);
         var tempPattern = Path.Combine(tempDir, "part%03d" + ext);
 
-        var args = SplitArgsBuilder.SegmentMuxer(req.InputPath, plan.InteriorSnappedCuts, tempPattern);
+        // ONE converted list feeds both the muxer's -segment_times and the per-part progress boundaries below: the
+        // runner's time= counts output time from 0, which is the muxer's time base too (on a TS the unconverted list
+        // would flip the per-part rows about 1.4 s late).
+        var video = info.VideoStreams.Count > 0 ? info.VideoStreams[0] : null;
+        var segmentTimes = ToMuxerSegmentTimes(plan.InteriorSnappedCuts, video?.StartTime ?? info.StartTime);
+        var delta = HalfFrameDelta(video?.FrameRate);
+
+        var args = SplitArgsBuilder.SegmentMuxer(req.InputPath, segmentTimes, tempPattern, delta);
         AssertCopyInvariant(args);
 
         // T-069: the muxer stays a SINGLE ffmpeg pass. The runner reports one monotonic overall
@@ -294,7 +308,7 @@ public sealed class SplitEngine : ISplitEngine
         // Wrap the overall reporter so each fraction both drives the overall bar (forwarded verbatim)
         // AND is mapped through the pure PartAt(time, boundaries, duration) function to a PartProgress.
         var partCount = plan.Segments.Count;
-        var boundaries = plan.InteriorSnappedCuts;
+        var boundaries = segmentTimes;
         IProgress<double>? runnerProgress = progress is null && partProgress is null
             ? null
             : new SyncProgress<double>(fraction =>
@@ -325,18 +339,59 @@ public sealed class SplitEngine : ISplitEngine
     }
 
     /// <summary>
+    /// T-219: the plan's interior keyframe times (source timestamps) in the segment muxer's time base. The muxer counts
+    /// <c>-segment_times</c> from the first packet of its reference stream, the first video stream, so each boundary
+    /// is <c>keyframe − videoStart</c> (clamped at zero). <paramref name="videoStart"/> is the video stream's probed
+    /// <c>start_time</c> — 0 on an ordinary MP4 (so the list is unchanged), 1.47 s on the test suite's TS, 0.021-0.023 s
+    /// on an MP4 or MKV made by a <c>-c copy</c> remux or concat — and the format's start when the stream has none.
+    /// The format's start is not the right base: it is the earliest stream's, and on a TS the audio starts first.
+    /// </summary>
+    internal static IReadOnlyList<TimeSpan> ToMuxerSegmentTimes(IReadOnlyList<TimeSpan> interiorSnappedCuts, TimeSpan videoStart)
+    {
+        ArgumentNullException.ThrowIfNull(interiorSnappedCuts);
+
+        var times = new List<TimeSpan>(interiorSnappedCuts.Count);
+        foreach (var cut in interiorSnappedCuts)
+        {
+            var t = cut - videoStart;
+            times.Add(t < TimeSpan.Zero ? TimeSpan.Zero : t);
+        }
+
+        return times.AsReadOnly();
+    }
+
+    /// <summary>
+    /// T-219: the segment muxer's <c>-segment_time_delta</c> — half the source's frame duration,
+    /// <c>1 / (2 × frameRate)</c> (0.016683 s at 30000/1001, 0.016667 s at 30, 0.02 s at 25), ffmpeg's documented
+    /// recipe for the option. A null, zero, negative or non-finite <paramref name="frameRate"/> (unknown) gives
+    /// <see cref="TimeSpan.Zero"/>: no token, the pre-T-219 command.
+    /// </summary>
+    internal static TimeSpan HalfFrameDelta(double? frameRate)
+    {
+        if (frameRate is not { } fps || !double.IsFinite(fps) || fps <= 0)
+        {
+            return TimeSpan.Zero;
+        }
+
+        return TimeSpan.FromSeconds(1.0 / (2.0 * fps));
+    }
+
+    /// <summary>
     /// The subset path (T-049): run the per-segment <c>-ss/-to -c copy</c> command once per SELECTED
     /// part, writing ONLY those ranges. Each temp file is named by the part's ORIGINAL 1-based index
     /// (e.g. <c>part002.mp4</c> for a selected middle part) so the identity is preserved through the
     /// move onto the planned destination. The plan's LAST part omits <c>-to</c> and runs to end of
     /// file; interior parts pass an explicit <c>-to == SnappedEnd</c>. Progress is reported coarsely
-    /// across the selected parts. The copy invariant is asserted on every command.
+    /// across the selected parts. The copy invariant is asserted on every command. T-219: each seek is converted from
+    /// the plan's source timestamps by <paramref name="sourceStartTime"/> (the probe's format <c>start_time</c>), the
+    /// time base of ffmpeg's input <c>-ss</c>.
     /// </summary>
     private async Task<IReadOnlyList<(PlannedSegment Planned, string TempFile)>> ExtractSelectedPerSegment(
         SplitRequest req,
         IReadOnlyList<SelectedSegment> selected,
         int planPartCount,
         TimeSpan fileDuration,
+        TimeSpan sourceStartTime,
         string tempDir,
         IProgress<double>? progress,
         IProgress<PartProgress>? partProgress,
@@ -357,9 +412,15 @@ public sealed class SplitEngine : ISplitEngine
             // parts pass their explicit snapped end. Either way the boundaries are keyframe-snapped so
             // the -c copy is clean.
             TimeSpan? end = sel.IsFinalPart ? null : planned.SnappedEnd;
-            var reportedDuration = (end ?? fileDuration) - planned.SnappedStart;
 
-            var args = SplitArgsBuilder.PerSegment(req.InputPath, planned.SnappedStart, end, tempFile);
+            // The run's length for its progress fraction, in the same time base as the seek (T-219): from the seek
+            // point (the planned start, or the file's own start when the plan starts before it) to the end — for the
+            // final part the file's last timestamp, start_time + duration. With a zero start_time this is today's
+            // (end ?? duration) − start.
+            var seekPoint = planned.SnappedStart < sourceStartTime ? sourceStartTime : planned.SnappedStart;
+            var reportedDuration = (end ?? sourceStartTime + fileDuration) - seekPoint;
+
+            var args = SplitArgsBuilder.PerSegment(req.InputPath, planned.SnappedStart, end, sourceStartTime, tempFile);
             AssertCopyInvariant(args);
 
             // T-069: per-part progress is NATURAL here — one ffmpeg run == one part. Wrap this run's

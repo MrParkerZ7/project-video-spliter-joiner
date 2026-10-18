@@ -164,7 +164,10 @@ public sealed class MediaProbe : IMediaProbe
         var duration = ResolveDuration(root.Format?.Duration, streamDurations);
         var container = root.Format?.FormatName ?? "unknown";
 
-        var info2 = new MediaInfo(duration, container, video.AsReadOnly(), audio.AsReadOnly());
+        // T-219: the time base of ffmpeg's input -ss (an offset from format.start_time); zero when absent or unparsable.
+        var startTime = TryParseSeconds(root.Format?.StartTime, out var st) ? st : TimeSpan.Zero;
+
+        var info2 = new MediaInfo(duration, container, video.AsReadOnly(), audio.AsReadOnly(), startTime);
         var success = new ProbeResult.ProbeSucceeded(info2);
         if (hasKey)
         {
@@ -409,6 +412,7 @@ public sealed class MediaProbe : IMediaProbe
     private static StreamInfo MapStream(FfprobeStream s)
     {
         int? sampleRate = TryParseInt(s.SampleRate, out var sr) ? sr : null;
+        TimeSpan? startTime = TryParseSeconds(s.StartTime, out var st) ? st : null;
         return new StreamInfo(
             Index: s.Index,
             CodecName: s.CodecName ?? "unknown",
@@ -418,7 +422,47 @@ public sealed class MediaProbe : IMediaProbe
             PixFmt: s.PixFmt,
             SampleRate: sampleRate,
             Channels: s.Channels,
-            TimeBase: s.TimeBase);
+            TimeBase: s.TimeBase,
+            AvgFrameRate: ParseFrameRate(s.AvgFrameRate),
+            RFrameRate: ParseFrameRate(s.RFrameRate),
+            StartTime: startTime);
+    }
+
+    /// <summary>
+    /// Parse an ffprobe frame-rate rational (<c>"30000/1001"</c> → 29.97003, <c>"30/1"</c> → 30, a bare <c>"25"</c> →
+    /// 25) to frames per second (T-219). Null when absent, <c>N/A</c>, unparsable, not finite, or with a zero or
+    /// negative part — <c>"0/0"</c> is what ffprobe prints for an audio stream or an unknown rate.
+    /// </summary>
+    internal static double? ParseFrameRate(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw) || raw == "N/A")
+        {
+            return null;
+        }
+
+        double fps;
+        var slash = raw.IndexOf('/');
+        if (slash < 0)
+        {
+            if (!double.TryParse(raw, NumberStyles.Float, CultureInfo.InvariantCulture, out fps))
+            {
+                return null;
+            }
+        }
+        else
+        {
+            if (!double.TryParse(raw.AsSpan(0, slash), NumberStyles.Float, CultureInfo.InvariantCulture, out var num)
+                || !double.TryParse(raw.AsSpan(slash + 1), NumberStyles.Float, CultureInfo.InvariantCulture, out var den)
+                || num <= 0
+                || den <= 0)
+            {
+                return null;
+            }
+
+            fps = num / den;
+        }
+
+        return double.IsFinite(fps) && fps > 0 ? fps : null;
     }
 
     private static TimeSpan ResolveDuration(string? formatDuration, IReadOnlyList<TimeSpan> streamDurations)

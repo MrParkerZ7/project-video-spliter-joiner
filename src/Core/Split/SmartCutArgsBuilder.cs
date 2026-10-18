@@ -185,8 +185,11 @@ public static class SmartCutArgsBuilder
     /// <summary>
     /// The copyable tail: <c>[start, end)</c> as a pure stream copy. Identical in shape to
     /// <see cref="SplitArgsBuilder.PerSegment"/> — the tail is exactly what the lossless path
-    /// would have produced, so 99%+ of the output is untouched bytes.
+    /// would have produced on a source whose <c>start_time</c> is 0, so 99%+ of the output is untouched bytes.
+    /// <para>It passes a zero source start time (T-219): Exact still assumes a zero <c>start_time</c>. T-190 (not built
+    /// yet) makes a source whose start time is not zero fall back to the lossless cut, which converts its seek, and
+    /// deletes <c>TailCopy</c>.</para>
     /// </summary>
     public static FfmpegArgs TailCopy(string inputPath, TimeSpan start, TimeSpan? end, string outputPath)
-        => SplitArgsBuilder.PerSegment(inputPath, start, end, outputPath);
+        => SplitArgsBuilder.PerSegment(inputPath, start, end, TimeSpan.Zero, outputPath);
 }

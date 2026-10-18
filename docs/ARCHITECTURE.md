@@ -146,12 +146,18 @@ copy-only.
   builds contiguous segments `[0..s1],[s1..s2],…,[sN..end]`. **Selected-segment routing (T-049):** when
   `SelectedSegmentIndices` is `null` (the default) or selects the **full** set, extraction is a
   **single stream-copy pass** through FFmpeg's **segment muxer** (`-map 0 -c copy -f segment
-  -segment_times … -reset_timestamps 1`) — the fast path, unchanged. When a strict **subset** is
+  -segment_times … [-segment_time_delta <half a frame>] -reset_timestamps 1`; the delta only when the video frame
+  rate is known) — the fast path. When a strict **subset** is
   selected, the engine instead runs the **per-segment `-ss/-to -c copy` path** — one ffmpeg run per
   chosen part — so only the wanted ranges are written (unselected parts cost no time/disk). Each part
   keeps its **original 1-based index** in the filename (a selected middle part is still `_part02`); the
   plan's final part omits `-to` (runs to EOF) while interior parts pass an explicit `-to == snapped
   end`. An empty (non-null) selection is an invalid request; out-of-range indices are ignored.
+  **Time base (T-219):** cut times are source timestamps, so the engine converts them where ffmpeg's time base
+  starts: the muxer's `-segment_times` are each keyframe minus the video stream's `start_time` (the muxer counts
+  from the first video packet), and the per-segment `-ss` is the keyframe minus the format `start_time` (ffmpeg's
+  input `-ss` counts from it). Both are 0 on an ordinary MP4; on an MPEG-TS they are about 1.4 s, which used to
+  move every lossless cut one GOP late (SPEC-001 I66/I67).
 - **Staged status (T-044):** the engine takes an optional `IProgress<OperationStatus>` and reports each
   real phase as it enters it — **Preparing → Splitting (N parts) → Finalizing → Done** — so the UI's
   status line tracks the actual work, never a timer. This is separate from the numeric
@@ -220,7 +226,9 @@ re-encode branch.
   `libvpx-vp9`, `aac` → `aac`, `mp3` → `libmp3lame`, …); a codec that is not in it makes
   **`TryResolveEncoders` return a *reason*** instead of a guess, because a mismatched encoder surfaces
   as a corrupt or failed concat. The tail is not a second implementation — `TailCopy` delegates to
-  `SplitArgsBuilder.PerSegment`, so it is the very command the lossless path would have run.
+  `SplitArgsBuilder.PerSegment`, so it is the very command the lossless path would have run on a source whose
+  `start_time` is 0 (it passes a zero start time; until T-190 makes any other source fall back, an Exact cut of a TS keeps that
+  offset).
 - **`SmartCutEngine` — head-encode → tail-copy → concat.** It probes, fetches keyframes, and plans;
   a `PureCopy` plan **and** an unresolvable codec both return `SmartCutResult` with **`FellBack = true`
   and a `FallbackReason`**, writing nothing and handing the range back to the caller's lossless path

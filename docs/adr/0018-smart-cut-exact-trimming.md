@@ -5,7 +5,9 @@
 Accepted. Updated 2026-09-11 — `Exact` + "Replace originals" now goes through the shared replace
 machinery (T-130), and its H.264 encoder is GPL-only — see § Update. Amended by T-189 — HEVC sources fall back to
 the lossless cut: the concat demuxer converts parameter sets in-band for H.264 only, so an HEVC joint decodes
-against the head's configuration (see § (d)/(e)).
+against the head's configuration (see § (d)/(e)). Amended by T-219 — the lossless path now converts its seek from
+source timestamps to ffmpeg's offset from the format `start_time`, while the tail leg still passes a zero start
+time, so the tail equals the lossless command only on a source whose `start_time` is 0 (see § (c)).
 
 ## Context
 
@@ -81,7 +83,10 @@ keyframe-snapped stream copy remains the default for every batch.
   which decodes from the previous keyframe and starts the output on the exact requested frame — the decode
   cost is accepted because it is bounded by one GOP. The tail is not a new command at all: `TailCopy`
   **delegates to `SplitArgsBuilder.PerSegment`**, so the remainder is byte-for-byte what the lossless path
-  would have written. The join reuses `JoinArgsBuilder.ConcatCopy` rather than a second concat
+  would have written. Since T-219 that holds on a source whose `start_time` is 0: `PerSegment` takes the source's
+  start time and seeks to `keyframe − start_time` (ffmpeg's input `-ss` counts from it, SPEC-001 I16), and
+  `TailCopy` passes zero, because Exact still assumes a zero `start_time`; T-190 (not built yet) makes a source whose `start_time`
+  is not 0 fall back to the lossless cut. The join reuses `JoinArgsBuilder.ConcatCopy` rather than a second concat
   implementation. That is one encode + one copy + one concat — three invocations for a `HeadReencode`, one
   for a `FullReencode`, never one per GOP (recorded as invariants I40–I48 in
   [SPEC-001](../specs/SPEC-001-stream-copy-split.md)). Every intermediate lives in a

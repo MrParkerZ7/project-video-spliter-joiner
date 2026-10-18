@@ -245,7 +245,7 @@ internal static class Alternatives
             await Rec("keyframes packet scan (MediaProbe.cs:253)", new[] { "-select_streams", "v:0", "-show_packets", "-show_entries", "packet=pts_time,dts_time,flags", "-print_format", "json", "-i", fx.Path }, true);
             await Rec("waveform (FfmpegWaveformService.cs:227)", new[] { "-i", fx.Path, "-vn", "-ac", "1", "-ar", "4000", "-f", "s16le", "-y", Path.Combine(tmp, "a.pcm") }, false);
             await Rec($"thumbnail 160px @{fx.ThumbMidGop}s (FfmpegThumbnailService.cs:207)", new[] { "-ss", fx.ThumbMidGop.ToString(CultureInfo.InvariantCulture), "-i", fx.Path, "-frames:v", "1", "-vf", "scale=160:-1", "-y", Path.Combine(tmp, "t.jpg") }, false);
-            var seg = SplitArgsBuilder.SegmentMuxer(fx.Path, new[] { TimeSpan.FromSeconds(Math.Round(fx.Cuts[0] / fx.Gop) * fx.Gop), TimeSpan.FromSeconds(Math.Round(fx.Cuts[1] / fx.Gop) * fx.Gop) }, Path.Combine(tmp, "part%03d" + Path.GetExtension(fx.Path)));
+            var seg = SplitArgsBuilder.SegmentMuxer(fx.Path, new[] { TimeSpan.FromSeconds(Math.Round(fx.Cuts[0] / fx.Gop) * fx.Gop), TimeSpan.FromSeconds(Math.Round(fx.Cuts[1] / fx.Gop) * fx.Gop) }, Path.Combine(tmp, "part%03d" + Path.GetExtension(fx.Path)), TimeSpan.Zero); // the T-187 raw command, kept for comparability
             await Rec("split segment muxer 3 parts (SplitArgsBuilder.cs:47)", seg.ToList().Skip(2).ToArray(), false);
 
             var probe = c.NewProbe();

@@ -12,10 +12,10 @@ One spec per feature; numbered invariants are the source `todo-automate` derives
 
 | Spec | Slug | Area | Invariants | Covered | Gaps | What |
 |------|------|------|:--:|:--:|:--:|------|
-| [SPEC-001](SPEC-001-stream-copy-split.md) | stream-copy-split | core | 64 | ? | ? | Stream-copy split engine |
+| [SPEC-001](SPEC-001-stream-copy-split.md) | stream-copy-split | core | 66 | ? | ? | Stream-copy split engine |
 | [SPEC-002](SPEC-002-bulk-trim-engine.md) | bulk-trim-engine | core | 60 | ? | ? | Bulk trim engine (keep one middle segment) |
 | [SPEC-003](SPEC-003-join-concat.md) | join-concat | core | 31 | 30 | 1 | Join / concat engine |
-| [SPEC-004](SPEC-004-media-probe.md) | media-probe | core | 36 | ? | ? | Media probe — duration, keyframes, snapping |
+| [SPEC-004](SPEC-004-media-probe.md) | media-probe | core | 39 | ? | ? | Media probe — duration, keyframes, snapping |
 | [SPEC-005](SPEC-005-thumbnail-service.md) | thumbnail-service | core | 27 | ? | ? | Thumbnail service |
 | [SPEC-006](SPEC-006-waveform-service.md) | waveform-service | core | 24 | ? | ? | Audio waveform service |
 | [SPEC-007](SPEC-007-cut-profiles.md) | cut-profiles | core | 118 | ? | ? | Cut profiles — model, persistence, apply |
@@ -29,7 +29,7 @@ One spec per feature; numbered invariants are the source `todo-automate` derives
 | [SPEC-015](SPEC-015-app-shell-theming.md) | app-shell-theming | ui | 28 | 24 | 4 | App shell — window chrome, layout modes, theming, crash safety |
 | [SPEC-016](SPEC-016-error-reporting.md) | error-reporting | core | 53 | ? | ? | Error reporting — classification, copyable text, per-run log |
 | [SPEC-017](SPEC-017-ffmpeg-process.md) | ffmpeg-process | core | 54 | ? | ? | ffmpeg / ffprobe process layer |
-| **TOTAL** | | | **1014** | **see note** | **see note** | |
+| **TOTAL** | | | **1019** | **see note** | **see note** | |
 
 **Invariant counts recounted mechanically 2026-09-02** (T-153) — they had drifted **in both
 directions** and are now generated from the spec files rather than hand-incremented:
@@ -41,7 +41,7 @@ directions** and are now generated from the spec files rather than hand-incremen
   - SPEC-014: listed 35, actually 30 (-5) — **this one was wrong**: 35 was right; the recount could not see
     five qualified labels (see the 2026-09-11 entry below)
 
-Total documented invariants: **1014** (633 before the 09-02 recount, 680 at that recount, +21 from
+Total documented invariants: **1019** (633 before the 09-02 recount, 680 at that recount, +21 from
 T-154/T-155/T-156 documented the same day, +22 on 09-04 from T-154's Split/Join half — SPEC-010 +8,
 SPEC-012 +9, SPEC-011 +5; +4 more from T-157 — SPEC-010 +3, SPEC-008 +1; +3 on 09-05 from T-160 —
 SPEC-011 I145-I147, the two-row footer; +5 from T-161 — SPEC-007 I95-I99, the scrollable profile bar; +9 from T-162 — SPEC-010 I52-I60, delete-original on Split; +7 from T-163 — SPEC-010 I61-I67, the auto layer;
@@ -78,7 +78,13 @@ I16 amended in place; SPEC-004's `Covered`/`Gaps` cells drop to `?` under the ru
 `-nofind_stream_info`, so `-ss` counts from the format start time), and SPEC-006 I24, a flagged MP4/MOV waveform run that
 fails is retried once without `-nofind_stream_info` (SPEC-005 § What/Why and I2 and SPEC-006 § What/Scope, I3, I9-I13
 amended in place, the line references in both updated; SPEC-006's `Covered`/`Gaps` cells drop to `?` under the
-rule below, since its count moved)).
+rule below, since its count moved);
++5 on 2026-10-18 from T-219 — SPEC-001 I66, every lossless part starts on its planned keyframe (and a segment-muxer
+part, or a part that runs to the end, holds exactly its planned frames), but for a cut on the first keyframe of a
+source whose video starts after 0, and I67, the engine converts the plan's
+keyframe times to each path's time base with a half-frame `-segment_time_delta`; SPEC-004 I37-I39, the format and
+stream start times and the frame rates (SPEC-001 § Scope, I14, I16, I17, I44, I58 and SPEC-004 § Scope and I6 amended
+in place; both specs' `Covered`/`Gaps` cells were already `?`)).
 
 **The headline and the TOTAL row are enforced, not maintained (T-166).**
 `TheTotalRowEqualsTheSumOfTheSpecRows` and `ThePlainEnglishHeadlineEqualsTheSameSum` check both against

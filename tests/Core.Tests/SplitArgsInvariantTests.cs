@@ -19,7 +19,8 @@ public class SplitArgsInvariantTests
     [Fact]
     public void SegmentMuxer_Command_ContainsCopy_AndNoEncoderFlag()
     {
-        var args = SplitArgsBuilder.SegmentMuxer(@"C:\in.mp4", Cuts, @"C:\out\part%03d.mp4");
+        // T-219 contract change: SegmentMuxer takes the half-frame delta; the copy assertions are unchanged.
+        var args = SplitArgsBuilder.SegmentMuxer(@"C:\in.mp4", Cuts, @"C:\out\part%03d.mp4", TimeSpan.FromSeconds(1.0 / 60));
         var tokens = args.ToList();
 
         tokens.Should().Contain("copy");
@@ -44,7 +45,7 @@ public class SplitArgsInvariantTests
     {
         // T-035: mpegts/.ts inputs go through the SAME builder — the copy invariant must hold for
         // the .ts path exactly as for mp4 (no mpegts-specific re-encode ever leaks in).
-        var args = SplitArgsBuilder.SegmentMuxer(@"F:\broadcast\映像.ts", Cuts, @"F:\out\part%03d.ts");
+        var args = SplitArgsBuilder.SegmentMuxer(@"F:\broadcast\映像.ts", Cuts, @"F:\out\part%03d.ts", TimeSpan.FromSeconds(1.0 / 60));
         var tokens = args.ToList();
 
         tokens.Should().Contain("copy");
@@ -62,8 +63,9 @@ public class SplitArgsInvariantTests
     [Fact]
     public void PerSegmentFallback_Command_ContainsCopy_AndNoEncoderFlag()
     {
+        // T-219 contract change: PerSegment takes the source start time; the copy assertions are unchanged.
         var args = SplitArgsBuilder.PerSegment(
-            @"C:\in.mp4", TimeSpan.FromSeconds(3), TimeSpan.FromSeconds(6), @"C:\out\seg.mp4");
+            @"C:\in.mp4", TimeSpan.FromSeconds(3), TimeSpan.FromSeconds(6), TimeSpan.FromSeconds(1.445333), @"C:\out\seg.mp4");
         var tokens = args.ToList();
 
         tokens.Should().Contain("copy");
@@ -82,7 +84,7 @@ public class SplitArgsInvariantTests
     [Fact]
     public void PerSegmentFallback_ToEndOfFile_OmitsTo()
     {
-        var args = SplitArgsBuilder.PerSegment(@"C:\in.mp4", TimeSpan.FromSeconds(6), null, @"C:\out\seg.mp4");
+        var args = SplitArgsBuilder.PerSegment(@"C:\in.mp4", TimeSpan.FromSeconds(6), null, TimeSpan.Zero, @"C:\out\seg.mp4");
         var tokens = args.ToList();
 
         tokens.Should().NotContain("-to");
@@ -112,7 +114,7 @@ public class SplitArgsInvariantTests
     [Fact]
     public void SegmentMuxer_ZeroInteriorCuts_Throws()
     {
-        var act = () => SplitArgsBuilder.SegmentMuxer(@"C:\in.mp4", Array.Empty<TimeSpan>(), @"C:\out\part%03d.mp4");
+        var act = () => SplitArgsBuilder.SegmentMuxer(@"C:\in.mp4", Array.Empty<TimeSpan>(), @"C:\out\part%03d.mp4", TimeSpan.Zero);
         act.Should().Throw<SplitException>().WithMessage("*at least one interior cut time*");
     }
 
@@ -122,7 +124,7 @@ public class SplitArgsInvariantTests
     public void PerSegment_PlacesSsBeforeInput()
     {
         var tokens = SplitArgsBuilder.PerSegment(
-            @"C:\in.mp4", TimeSpan.FromSeconds(3), TimeSpan.FromSeconds(6), @"C:\out\seg.mp4").ToList().ToList();
+            @"C:\in.mp4", TimeSpan.FromSeconds(3), TimeSpan.FromSeconds(6), TimeSpan.Zero, @"C:\out\seg.mp4").ToList().ToList();
 
         var ss = tokens.IndexOf("-ss");
         var i = tokens.IndexOf("-i");
@@ -137,7 +139,7 @@ public class SplitArgsInvariantTests
     public void PerSegment_To_IsDurationRelativeToSeek_NotAbsoluteEnd()
     {
         var tokens = SplitArgsBuilder.PerSegment(
-            @"C:\in.mp4", TimeSpan.FromSeconds(3), TimeSpan.FromSeconds(6), @"C:\out\seg.mp4").ToList().ToList();
+            @"C:\in.mp4", TimeSpan.FromSeconds(3), TimeSpan.FromSeconds(6), TimeSpan.Zero, @"C:\out\seg.mp4").ToList().ToList();
 
         var to = tokens.IndexOf("-to");
         to.Should().BeGreaterThanOrEqualTo(0);
@@ -150,7 +152,7 @@ public class SplitArgsInvariantTests
     public void PerSegment_EndBeforeStart_ClampsToZeroDuration()
     {
         var tokens = SplitArgsBuilder.PerSegment(
-            @"C:\in.mp4", TimeSpan.FromSeconds(6), TimeSpan.FromSeconds(3), @"C:\out\seg.mp4").ToList().ToList();
+            @"C:\in.mp4", TimeSpan.FromSeconds(6), TimeSpan.FromSeconds(3), TimeSpan.Zero, @"C:\out\seg.mp4").ToList().ToList();
 
         var to = tokens.IndexOf("-to");
         to.Should().BeGreaterThanOrEqualTo(0);
@@ -166,7 +168,7 @@ public class SplitArgsInvariantTests
     public void PerSegment_MapsAllStreams_AndZeroesNegativeTimestamps()
     {
         var tokens = SplitArgsBuilder.PerSegment(
-            @"C:\in.mp4", TimeSpan.FromSeconds(3), TimeSpan.FromSeconds(6), @"C:\out\seg.mp4").ToList().ToList();
+            @"C:\in.mp4", TimeSpan.FromSeconds(3), TimeSpan.FromSeconds(6), TimeSpan.Zero, @"C:\out\seg.mp4").ToList().ToList();
 
         var map = tokens.IndexOf("-map");
         map.Should().BeGreaterThanOrEqualTo(0);

@@ -17,7 +17,7 @@ sources:
   - src/Core/Split/SmartCutArgsBuilder.cs
   - src/Core/Split/PartProgress.cs
 serves-goal: [G-001, G-005, G-042, G-059]
-updated: 2026-10-05
+updated: 2026-10-18
 ---
 
 ## What
@@ -40,8 +40,8 @@ that keeps the operation lossless, cancel-safe, and honest about what it wrote.
 
 ## Scope
 **In:** The `-c copy` keyframe-snapped split — cut-point planning (`SplitPlanner`: sort / drop / merge /
-snap rules), the segment-muxer vs per-segment extraction routing, `SplitArgsBuilder` ffmpeg-command shape
-and the copy invariant (`SatisfiesCopyInvariant` / `ForbiddenEncoderTokens`), segment selection
+snap rules), the segment-muxer vs per-segment extraction routing, `SplitArgsBuilder` ffmpeg-command shape,
+the time base of each path's cut arguments (T-219, I66–I67) and the copy invariant (`SatisfiesCopyInvariant` / `ForbiddenEncoderTokens`), segment selection
 (`SelectedSegmentIndices`), overwrite refusal, disk pre-flight, temp-then-move cancel-safety, request-shape
 validation, ffmpeg-failure mapping, output naming, and the `SplitResult` / `SplitSegment` contract; and the
 separate frame-exact engine (`SmartCutPlanner` / `SmartCutArgsBuilder` / `SmartCutEngine`, T-124, I40–I48 and
@@ -95,15 +95,26 @@ It is specified in SPEC-002 I40–I44, with the frame-exact caller at I56–I60 
 
 ### Command building — `SplitArgsBuilder`
 - **I14** — `SegmentMuxer` builds `-y -i <in> -map 0 -c copy -f segment -segment_times <cuts>
-  -reset_timestamps 1 <pattern>`: it contains a bare `copy` token, `-map 0`, `-f segment`, `-segment_times`,
-  and none of `ForbiddenEncoderTokens`.
+  [-segment_time_delta <d>] -reset_timestamps 1 <pattern>`: it contains a bare `copy` token, `-map 0`, `-f segment`,
+  `-segment_times`, and none of `ForbiddenEncoderTokens`. `-segment_time_delta` follows the segment times only when
+  the `segmentTimeDelta` it is given is above zero, formatted by `ToFfmpegSeconds`; `TimeSpan.Zero` emits the
+  pre-T-219 command, and a negative delta throws `ArgumentOutOfRangeException` (T-219). The builder passes `<cuts>`
+  and `d` through unchanged; the engine computes both (I67).
 - **I15** — `SegmentMuxer` called with zero interior cuts → `SplitException`
   ("Segment muxer needs at least one interior cut time").
 - **I16** — `PerSegment` places `-ss` BEFORE `-i` (an input-side seek), so the input timeline resets to
-  zero at the seek point.
-- **I17** — `PerSegment` with a non-null `end` emits `-to == (end − start)` — a DURATION relative to the
+  zero at the seek point. Its `start` and `end` are source timestamps (keyframe times), but ffmpeg's input `-ss` is
+  an offset from the format `start_time`, so it emits `-ss max(0, start − sourceStartTime)` (T-219): `-ss 4.021334`
+  for the keyframe at 5.466667 s of a TS whose `start_time` is 1.445333 s. A start before the file's own start clamps
+  to `-ss 0`, the file's start. A zero `sourceStartTime` emits the pre-T-219 tokens; a negative one (an MP4 whose
+  edit list starts before 0) adds its magnitude, since ffmpeg seeks to the offset plus `start_time`.
+- **I17** — `PerSegment` with a non-null `end` emits `-to == (end − seek point)` — a DURATION relative to the
   `-ss` seek, clamped to `>= 0` — NOT the absolute source end (emitting the absolute end would over-run
-  by `start`).
+  by `start`). The seek point is `start` when the seek is not clamped, so `-to == end − start` as before T-219; when
+  it is clamped it is the file's start (`sourceStartTime`), so a part planned from 0 on a TS ends at its planned
+  keyframe instead of running `start_time` (about 1.4 s) past it. Under stream copy `-to` acts on decoding
+  timestamps, so on a B-frame source a part that has an end keeps the next keyframe and the frame or two coded
+  after it (T-220, I66).
 - **I18** — `PerSegment` with `end == null` OMITS `-to` entirely (the part runs to end of file).
 - **I19** — `PerSegment` emits `-map 0 -c copy -avoid_negative_ts make_zero`, a bare `copy` token, and no
   encoder tokens.
@@ -128,6 +139,53 @@ It is specified in SPEC-002 I40–I44, with the frame-exact caller at I56–I60 
   ("None of the selected segment indices fall within the planned parts…").
 - **I28** — The plan's FINAL selected part omits `-to` (extracts to EOF via `IsFinalPart`); interior
   selected parts pass an explicit `-to == SnappedEnd`.
+
+### Where a lossless part starts — the cut's time base (T-219)
+
+The plan's times are source timestamps: the keyframe list's own pts, which on an MPEG-TS start about 1.4 s in. The
+two ffmpeg paths count time from different origins, so the engine converts at the one place where ffmpeg's time base
+starts, and the planner, the keyframe ticks and the player keep source pts.
+
+- **I66** — **Lossless boundary.** Every lossless part starts on its planned keyframe: its first decoded frame is
+  md5-identical to the source's frame at `SnappedStart`, on B-frame sources (H.264 and HEVC) and on sources whose
+  `start_time` is not zero (`.ts`, and an MP4 whose video starts after its audio). A segment-muxer part, and a
+  per-segment part that runs to the end of the file, also holds exactly the source's frames in
+  `[SnappedStart, SnappedEnd)` (to the end for the last). A per-segment part that has an end may keep frames past
+  that end on a B-frame source, the next keyframe and the frame or two coded after it, because stream copy applies
+  `-to` to decoding timestamps (T-220). **One exception, not fixed by T-219:** a cut that snaps to the first keyframe
+  of a source whose video starts after 0 (any cut before the TS's first keyframe or nearer to it than to the second,
+  which is the first ~2.5 s on the test TS's 2 s GOP; its first keyframe is about 1.47 s in) is kept by the planner, since I7 drops only a snapped time `<= 0`, so the plan has an empty part 1. Its
+  converted muxer time is 0 (I67), which the segment muxer does not cut at (libavformat `segment.c`, n7.1, does not
+  end a part that holds no video (reference-stream) packet yet), so it cuts at the next keyframe instead: on the test TS `-segment_times 0,4` writes 60/60/180 frames against the
+  plan's empty/120/180, and part 2 starts one GOP late. The planner change that drops such a cut (a snapped time
+  `<= keyframes[0]`, amending I7) is the follow-up T-233, filed by T-219. Measured with the bundled ffmpeg n7.1.5 on synthetic fixtures (frames
+  against the plan): the `MediaFixtures` B-frame recipe split at 3 s and 6 s, 120/90/90 before T-219 and 90/90/120
+  after, first frames 0/90/180; HEVC 180/120/60 → 120/120/120; a 10 s GOP 300/300/300 after (the shipped code threw
+  "got fewer segments than planned" there, and on a 3 s clip whose last cut snaps to its final keyframe, which now
+  splits 30/30/30); a TS full split 120/60/120 → 60/60/180, and the same on its MP4 remux (format start 0, video
+  start 0.023 s); a TS final subset part 120 frames from source frame 180 → 180 from frame 120; a TS interior part from frame 120 → from frame 60 (62 frames against 60, the T-220 overrun);
+  a TS part planned from 0, 106 frames → 63 against 60; a Bulk Cut lossless row on the TS, kept middle from frame
+  120 → from frame 60. On the bench's 4K fixtures (`bench core 4k 4k10m split`) 960/1200/1440 → 900/1200/1500, and
+  4560/7500/5940 → 4500/7500/6000 on `4k10m`, whose video starts 0.021 s after its audio. The `-bf 0` control and the
+  B-frame recipe's final subset part were right before and after. The check is the test helper `LosslessBoundary` (`framemd5` with `-copyts`, so the source frames keep the
+  keyframe list's time base, and `-count_frames`), through `FfmpegRunner`/`FfprobeRunner`.
+- **I67** — The engine hands each path the plan's keyframe times in that path's time base, from the probe it already
+  makes in Preparing (no new probe; after T-193 a cache hit). **Full set:** the segment muxer counts
+  `-segment_times` from the first packet of the first video stream and starts a part at the first keyframe whose pts
+  is at or after `time + that first pts − delta`, comparing in microseconds (libavformat `segment.c`, n7.1). So
+  `ToMuxerSegmentTimes` passes each interior cut minus the first video stream's `StartTime` (the format `StartTime`
+  when the stream has none, or when the file has no video stream), clamped at zero — not minus the format start, which
+  is the earliest stream's (on the test TS the audio starts at 1.443444 s and the video at 1.466667 s) — and
+  `HalfFrameDelta` passes `1 / (2 × FrameRate)` of that stream as `-segment_time_delta` (0.016683 s at 30000/1001,
+  0.016667 s at 30, 0.02 s at 25). Half a frame absorbs the microsecond rounding that made every boundary of a
+  B-frame source land on the next keyframe (on the `MediaFixtures` recipe the muxer's first video pts is two frames,
+  0.066667 s, after zero, and the keyframe at 3 s arrives as 3.0666666 s against a target of 3.066667 s), and it
+  cannot reach an earlier keyframe, since keyframes are at least one frame apart. An unknown, non-positive or
+  non-finite frame rate, or no video stream, gives no delta token. The same converted list is the `PartMapping.PartAt` boundaries of the per-part channel (I58). **Subset:**
+  each `PerSegment` call gets the format `StartTime` (ffmpeg's input `-ss` counts from it, I16), and the run's
+  progress length is measured from its seek point: `SnappedEnd − max(SnappedStart, StartTime)`, or
+  `StartTime + Duration − max(SnappedStart, StartTime)` for the final part. On a source whose start times are zero
+  every command and length is the pre-T-219 one, apart from the delta token.
 
 ### Safety, validation & failure mapping — `SplitEngine`
 - **I29** — With `Overwrite == false`, an existing SELECTED output file → `SplitException`
@@ -199,7 +257,9 @@ one ffmpeg pass.
 - **I58** — Turning per-part progress on does **not** cost an extra pass: the muxer path stays a **single**
   ffmpeg run and derives each sample from the overall fraction it already receives —
   `time = fraction × duration`, then `PartMapping.PartAt` (`ExtractAllViaSegmentMuxer`, the
-  `SyncProgress<double>` wrapper). Nothing is re-extracted or re-probed.
+  `SyncProgress<double>` wrapper). Nothing is re-extracted or re-probed. The boundaries are the converted
+  `-segment_times` list, the same instance (I67): the runner's `time=` counts output time from 0, so on a TS the
+  plan's unconverted times would move each part's rows about 1.4 s late.
 - **I59** — That wrapper forwards each fraction **verbatim** to the overall `progress` channel before
   deriving the part sample, so the overall bar reads the same with per-part reporting on or off
   (`progress?.Report(fraction)` precedes the derivation). *Not asserted — the T-069 engine test passes
@@ -224,7 +284,9 @@ one ffmpeg pass.
 ## Links
 - Design: — (no D-NNN for the v1.0 core; goal G-001) · related D-004 (bulk cut reuses this engine via `KeptSegmentSelector`)
 - Goals: G-001 (ship v1.0 stream-copy splitter) · G-005 (fast 4K split — copy is resolution-independent) ·
-  G-059 (4K fast and correct — T-189: HEVC Exact falls back, the joint-integrity invariant I65)
+  G-059 (4K fast and correct — T-189: HEVC Exact falls back, the joint-integrity invariant I65; T-219: every
+  lossless part starts on its planned keyframe, I66–I67, except a cut on the first keyframe of a source whose video
+  starts after 0 (T-233) and the end overrun of a part that has an end (T-220))
 - Related specs: SPEC-002 (bulk-trim-engine) — reuses this engine's per-segment path; SPEC-003 (join-concat) — sibling copy operation
 - Key code: `src/Core/Split/SplitEngine.cs` · `SplitArgsBuilder.cs` · `SplitPlan.cs` (`SplitPlanner`) ·
   `SplitRequest.cs` · `SplitResult.cs` · `SplitSegment.cs` · `SplitException.cs` · per-part progress:
@@ -234,7 +296,12 @@ one ffmpeg pass.
   I51–I56) · `tests/Core.Tests/SplitEnginePartProgressTests.cs` (both paths' emission, I50 · I58 · I60 ·
   I61 · I62) · frame-exact joint integrity and the HEVC fallback (I45 · I46 · I65, T-189) —
   `tests/Core.Tests/SmartCutJointIntegrityTests.cs` (the check, its line filter, the H.264 baseline, the HEVC repro) ·
-  `tests/Core.Tests/HevcExactFallbackTests.cs` (the gate, zero ffmpeg runs, the batch's lossless cut and warning)
+  `tests/Core.Tests/HevcExactFallbackTests.cs` (the gate, zero ffmpeg runs, the batch's lossless cut and warning) ·
+  the lossless boundary (I14 · I16 · I17 · I66 · I67, T-219) — `tests/Core.Tests/LosslessBoundaryIntegrationTests.cs`
+  (each part's first frame and frame count on real ffmpeg: B-frame H.264, HEVC, a 10 s GOP, a 3 s clip, a TS, its
+  MP4 remux, the `-bf 0` control, a TS Bulk Cut row) with its helper `LosslessBoundary.cs` ·
+  `tests/Core.Tests/LosslessBoundaryTests.cs` (the args, the conversions, the per-part boundaries on a TS, the
+  subset run lengths)
 
 ## Frame-exact ("smart") cutting — SmartCutEngine (T-124, epic G-042)
 
@@ -251,7 +318,9 @@ unchanged, and nothing below alters them. Frame-exact cutting is a SEPARATE engi
 - **I43** — `Start` is honoured EXACTLY; the planner never moves the user's requested time.
 - **I44** — The head command uses an OUTPUT seek (`-ss` AFTER `-i`) so the fragment begins on the exact
   requested frame; the tail command is `SplitArgsBuilder.PerSegment`, i.e. byte-identical to what the
-  lossless path would have produced.
+  lossless path would have produced on a source whose `start_time` is 0. `TailCopy` passes a zero source start time
+  (T-219): Exact still assumes a zero `start_time`, and T-190 (not built yet) makes a source whose `start_time` is not 0 fall back to
+  the lossless cut, which converts its seek (I16, I67).
 - **I45** — The head is encoded with parameters read from the source's own probe (video codec→encoder,
   pixel format, resolution; audio codec→encoder, sample rate, channels) so the concat demuxer accepts
   the join. The encoder map no longer holds `hevc`/`h265` (T-189): the concat output takes its codec configuration

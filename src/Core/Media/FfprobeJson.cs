@@ -22,6 +22,10 @@ internal sealed class FfprobeFormat
 
     [JsonPropertyName("duration")]
     public string? Duration { get; set; }
+
+    // T-219: the earliest stream's first timestamp (seconds, as a string); about 1.4 on an MPEG-TS.
+    [JsonPropertyName("start_time")]
+    public string? StartTime { get; set; }
 }
 
 internal sealed class FfprobeStream
@@ -56,6 +60,16 @@ internal sealed class FfprobeStream
 
     [JsonPropertyName("duration")]
     public string? Duration { get; set; }
+
+    // T-219: rationals as ffprobe prints them ("30000/1001", "0/0" for audio) and the stream's first timestamp.
+    [JsonPropertyName("avg_frame_rate")]
+    public string? AvgFrameRate { get; set; }
+
+    [JsonPropertyName("r_frame_rate")]
+    public string? RFrameRate { get; set; }
+
+    [JsonPropertyName("start_time")]
+    public string? StartTime { get; set; }
 }
 
 /// <summary>DTO for the <c>-show_frames</c>/<c>-show_entries frame=pts_time</c> keyframe payload.</summary>

@@ -246,9 +246,9 @@ public sealed class StreamInfoSkipTests : IDisposable
 
         var all = new[]
         {
-            SplitArgsBuilder.SegmentMuxer(input, new[] { TimeSpan.FromSeconds(5) }, @"C:\out\part%03d.mp4").ToList(),
-            SplitArgsBuilder.PerSegment(input, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(5), @"C:\out\p2.mp4").ToList(),
-            SplitArgsBuilder.PerSegment(input, TimeSpan.FromSeconds(2), null, @"C:\out\p3.mp4").ToList(),
+            SplitArgsBuilder.SegmentMuxer(input, new[] { TimeSpan.FromSeconds(5) }, @"C:\out\part%03d.mp4", TimeSpan.FromSeconds(1.0 / 60)).ToList(),
+            SplitArgsBuilder.PerSegment(input, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(5), TimeSpan.Zero, @"C:\out\p2.mp4").ToList(),
+            SplitArgsBuilder.PerSegment(input, TimeSpan.FromSeconds(2), null, TimeSpan.Zero, @"C:\out\p3.mp4").ToList(),
             SmartCutArgsBuilder.TailCopy(input, TimeSpan.FromSeconds(4), null, @"C:\out\tail.mp4").ToList(),
             JoinArgsBuilder.ConcatCopy(@"C:\tmp\concat.txt", @"C:\out\joined.mp4").ToList(),
         };
