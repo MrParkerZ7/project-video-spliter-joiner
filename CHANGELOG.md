@@ -8,6 +8,20 @@ goal; `0.1.0` is the first end-to-end, shippable cut.
 ## [Unreleased]
 
 ### Fixed
+- **An Exact cut now keeps its joint in time, and is written once.** With **Exact cut** on, the part of the video after
+  the re-encoded start landed about 75–80 ms late on a video with B-frames: the first kept frame sat two to three frames
+  after the re-encoded part ended, the kept video started after its audio, and a full decode of the result could print
+  `non monotonically increasing dts` lines. The kept part is now read from the source in the same pass that joins it to
+  the re-encoded start, so an Exact cut is one ffmpeg run fewer and the kept bytes are written once instead of twice
+  (on 4K test videos, 634 MiB less written for a kept middle of a 2-minute video and 3.98 GiB less for one of a
+  10-minute video). Checked frame by frame and on the timestamps, on a B-frame H.264 video with a 2 s and a 10 s keyframe
+  interval, for a cut from the start point to the end and for a kept middle: the first kept frame lands where it
+  should, the audio runs on across the joint, and a full decode prints nothing. `.ts`, `.m2ts` and `.mts` files, and any
+  other file whose timestamps do not start at zero, can no longer be cut exactly this way (the old way overlapped
+  the two parts by about 1.4 s): they are cut on the nearest keyframe, the row says why before you press Run, and the
+  Exact note names the three extensions. Two limits stay: a cut point that is not on a frame of the video leaves the
+  re-encoded start up to one frame (33 ms at 30 fps) off the kept part, and on an `.mkv` the joint is 21 ms early; neither
+  loses or repeats a frame. HEVC still falls back to the nearest keyframe, as before.
 - **A split part now starts on the keyframe the plan shows.** On a video with B-frames — what x264, x265 and OBS
   write by default — every part of a full split ended one keyframe interval late: cuts at 3 s and 6 s on a video
   with a keyframe every second gave parts of 4, 3 and 3 seconds instead of 3, 3 and 4, and a short clip whose last

@@ -237,7 +237,8 @@ public sealed class StreamInfoSkipTests : IDisposable
         ffprobe.Commands[0].Should().NotContain(Flag);
     }
 
-    // SPEC-006#I3 — the split, join and Exact-tail/concat copy runs never carry the flag, for an MP4 input too.
+    // SPEC-006#I3 — the split, join and Exact-concat copy runs never carry the flag, for an MP4 input too (T-190: the Exact
+    // kept part is read by the concat itself, there is no tail run any more; the concat is JoinArgsBuilder.ConcatCopy below).
     [Trait("serves-spec", "SPEC-006")]
     [Fact]
     public void CopyArgs_Mp4Input_CarryNoFlag()
@@ -249,7 +250,6 @@ public sealed class StreamInfoSkipTests : IDisposable
             SplitArgsBuilder.SegmentMuxer(input, new[] { TimeSpan.FromSeconds(5) }, @"C:\out\part%03d.mp4", TimeSpan.FromSeconds(1.0 / 60)).ToList(),
             SplitArgsBuilder.PerSegment(input, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(5), TimeSpan.Zero, @"C:\out\p2.mp4").ToList(),
             SplitArgsBuilder.PerSegment(input, TimeSpan.FromSeconds(2), null, TimeSpan.Zero, @"C:\out\p3.mp4").ToList(),
-            SmartCutArgsBuilder.TailCopy(input, TimeSpan.FromSeconds(4), null, @"C:\out\tail.mp4").ToList(),
             JoinArgsBuilder.ConcatCopy(@"C:\tmp\concat.txt", @"C:\out\joined.mp4").ToList(),
         };
 

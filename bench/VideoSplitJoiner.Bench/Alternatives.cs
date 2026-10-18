@@ -560,21 +560,19 @@ internal static class Alternatives
                             eq = $"head {cnt.Frames} frames {cnt.Duration:0.000}s (ref {baseCount.Frames}/{baseCount.Duration:0.000}) | PSNR vs current head {psnr:0.0} dB";
                         }
 
-                        // Build the full exact output the engine would ship (tail copy + concat via the engine's builders).
-                        var tail = Path.Combine(dir, "tail" + Path.GetExtension(fx.Path));
+                        // Build the full exact output the engine would ship (the head, then one concat that reads the source
+                        // itself from the boundary keyframe, via the engine's builders - T-190).
                         var final = Path.Combine(dir, "final" + Path.GetExtension(fx.Path));
-                        await c.Ffmpeg.RunAsync(SmartCutArgsBuilder.TailCopy(fx.Path, headEnd, null, tail));
                         var list = Path.Combine(dir, "list.txt");
-                        await File.WriteAllTextAsync(list, JoinArgsBuilder.RenderConcatList(new[] { head, tail }));
+                        await File.WriteAllTextAsync(list, SmartCutArgsBuilder.RenderJointList(head, headEnd - plan.Start, fx.Path, headEnd, null));
                         await c.Ffmpeg.RunAsync(JoinArgsBuilder.ConcatCopy(list, final));
                         var fc = await CountFrames(c, final);
                         var expectFrames = (int)Math.Round((fx.Duration - start) * 30);
                         eq += $" | final {fc.Frames} frames (expect ~{expectFrames}) {fc.Duration:0.000}s | {await DecodeErrors(c, final)}";
-                        Io.TryDelete(tail);
                         Io.TryDelete(final);
                     }
 
-                    c.Results.Add("alt-smart", $"exact head @{start}s: {name}", fx.Key, "warm", runs, tm.Median, tm.MedianUsage, $"runs {Fmt(tm.All)} | {eq}");
+                    c.Results.Add("alt-smart",$"exact head @{start}s: {name}", fx.Key, "warm", runs, tm.Median, tm.MedianUsage, $"runs {Fmt(tm.All)} | {eq}");
                 }
 
                 Io.TryDelete(dir);

@@ -1,4 +1,5 @@
 using VideoSplitJoiner.Core.Ffmpeg;
+using VideoSplitJoiner.Core.Join;
 using VideoSplitJoiner.Core.Media;
 
 namespace VideoSplitJoiner.Core.Split;
@@ -7,10 +8,13 @@ namespace VideoSplitJoiner.Core.Split;
 /// Builds the ffmpeg commands for frame-exact ("smart") cutting (T-124, epic G-042).
 ///
 /// <para>The head fragment is the ONLY thing re-encoded, and it must come out compatible enough with
-/// the stream-copied tail for the concat demuxer to join them — same codec, pixel format, resolution
-/// and audio shape. Those parameters are read from the source's own probe result rather than assumed,
+/// the source's own packets that follow it for the concat demuxer to join them — same codec, pixel format,
+/// resolution and audio shape. Those parameters are read from the source's own probe result rather than assumed,
 /// and a codec this builder cannot map to an encoder is reported so the caller can fall back to the
 /// lossless cut instead of producing a file that fails (or silently corrupts) at concat time.</para>
+///
+/// <para>The kept part is never written to a file of its own (T-190): the concat reads the source itself from the
+/// boundary keyframe (<see cref="RenderJointList"/>), so the kept bytes are written once and the joint lands on time.</para>
 /// </summary>
 public static class SmartCutArgsBuilder
 {
@@ -61,6 +65,20 @@ public static class SmartCutArgsBuilder
     private const string HevcUnsupportedReason = "frame-exact cutting is not supported for HEVC/H.265 video yet";
 
     /// <summary>
+    /// Why Exact refuses a source whose format <c>start_time</c> is not zero (T-190), in the words the Bulk Cut row and the
+    /// run's warning show. No parentheses: the row warning wraps the reason in its own (T-189's copy rule).
+    /// </summary>
+    internal const string NonZeroStartTimeReason =
+        "frame-exact cutting is not supported yet for .ts, .m2ts and .mts files or other files whose timestamps do not start at zero";
+
+    /// <summary>
+    /// A format <c>start_time</c> within this of zero counts as zero (T-190). Exact assumes the probe's keyframe times and
+    /// ffmpeg's <c>-ss</c> offsets coincide, which holds only when the format starts at 0; a millisecond is the mp4/mkv
+    /// timestamp rounding, an MPEG-TS starts near 1.4 s and a negative composition offset about -21 ms.
+    /// </summary>
+    internal static readonly TimeSpan StartTimeTolerance = TimeSpan.FromMilliseconds(1);
+
+    /// <summary>
     /// Resolve the encoders needed to reproduce <paramref name="info"/>'s streams, or explain why this
     /// source cannot be smart-cut. A null result means the caller MUST fall back to the lossless cut —
     /// never guess an encoder, because a mismatch surfaces as a corrupt or failed concat.
@@ -75,6 +93,17 @@ public static class SmartCutArgsBuilder
         videoEncoder = null;
         audioEncoder = null;
         reason = null;
+
+        // The time base (T-190). Keyframe times and the concat demuxer's inpoint are absolute source timestamps, but the
+        // head's -ss is an offset from the format start_time: with a start_time that is not zero (MPEG-TS and AVCHD start
+        // near 1.4 s, a negative one is real too) the head and the kept part would overlap by it. Checked on the absolute
+        // value, first, because it holds for every codec. The video stream's own start is NOT read: a file whose video
+        // starts one AAC frame after its audio (the app's own Join output) joins correctly (SPEC-001 I68).
+        if (info.StartTime.Duration() > StartTimeTolerance)
+        {
+            reason = NonZeroStartTimeReason;
+            return false;
+        }
 
         if (info.HasVideo)
         {
@@ -183,13 +212,44 @@ public static class SmartCutArgsBuilder
     }
 
     /// <summary>
-    /// The copyable tail: <c>[start, end)</c> as a pure stream copy. Identical in shape to
-    /// <see cref="SplitArgsBuilder.PerSegment"/> — the tail is exactly what the lossless path
-    /// would have produced on a source whose <c>start_time</c> is 0, so 99%+ of the output is untouched bytes.
-    /// <para>It passes a zero source start time (T-219): Exact still assumes a zero <c>start_time</c>. T-190 (not built
-    /// yet) makes a source whose start time is not zero fall back to the lossless cut, which converts its seek, and
-    /// deletes <c>TailCopy</c>.</para>
+    /// The concat list of the joint (T-190): the re-encoded head, then the SOURCE ITSELF from the boundary keyframe.
+    ///
+    /// <code>
+    /// file '&lt;head&gt;'
+    /// duration &lt;HeadEnd − Start&gt;
+    /// file '&lt;source&gt;'
+    /// inpoint &lt;HeadEnd&gt;
+    /// outpoint &lt;End&gt;          (only when the kept range has an end)
+    /// </code>
+    ///
+    /// <para><c>HeadEnd</c> is by construction a keyframe (SPEC-001 I41), so the demuxer's seek to <c>inpoint</c> lands on it
+    /// and no frame before it is copied; <c>inpoint</c> and <c>outpoint</c> are absolute source timestamps, the time base of
+    /// the probe's keyframe list. The head's <c>duration</c> is exactly <paramref name="headDuration"/>
+    /// (<c>HeadEnd − Start</c>), whatever the head's AAC priming or padding makes its container duration, which fixes where
+    /// the source leg starts. Seconds are formatted by <see cref="SplitPlanner.ToFfmpegSeconds"/> and paths are quoted by
+    /// <see cref="JoinArgsBuilder.QuoteConcatPath"/>, the way Join's own list is; Join's <c>RenderConcatList</c> is
+    /// untouched. The command that reads it is the unchanged <see cref="JoinArgsBuilder.ConcatCopy"/>, so it still
+    /// satisfies <see cref="JoinArgsBuilder.SatisfiesCopyInvariant"/>.</para>
     /// </summary>
-    public static FfmpegArgs TailCopy(string inputPath, TimeSpan start, TimeSpan? end, string outputPath)
-        => SplitArgsBuilder.PerSegment(inputPath, start, end, TimeSpan.Zero, outputPath);
+    public static string RenderJointList(
+        string headPath, TimeSpan headDuration, string sourcePath, TimeSpan headEnd, TimeSpan? end)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(headPath);
+        ArgumentException.ThrowIfNullOrWhiteSpace(sourcePath);
+
+        var lines = new List<string>(5)
+        {
+            $"file {JoinArgsBuilder.QuoteConcatPath(Path.GetFullPath(headPath))}",
+            $"duration {SplitPlanner.ToFfmpegSeconds(headDuration)}",
+            $"file {JoinArgsBuilder.QuoteConcatPath(Path.GetFullPath(sourcePath))}",
+            $"inpoint {SplitPlanner.ToFfmpegSeconds(headEnd)}",
+        };
+
+        if (end is { } e)
+        {
+            lines.Add($"outpoint {SplitPlanner.ToFfmpegSeconds(e)}");
+        }
+
+        return string.Join("\n", lines) + "\n";
+    }
 }

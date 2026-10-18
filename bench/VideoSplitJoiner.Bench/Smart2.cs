@@ -132,25 +132,23 @@ internal static class Smart2
                 {
                     var hc = await CountPackets(c, head);
                     var vsSrc = DPsnr(await c.RunFfmpeg("-i", head, "-ss", sStart, "-t", sDur, "-i", fx.Path, "-lavfi", "[0:v][1:v]psnr", "-f", "null", "-"));
-                    var tail = Path.Combine(dir, "tail" + Path.GetExtension(fx.Path));
                     var final = Path.Combine(dir, "final" + Path.GetExtension(fx.Path));
-                    await c.Ffmpeg.RunAsync(SmartCutArgsBuilder.TailCopy(fx.Path, headEnd, null, tail));
-                    var tailStarts = await StreamStarts(c, tail);
+                    // T-190: the engine's second run reads the source itself from the boundary keyframe; there is no tail file.
                     var list = Path.Combine(dir, "list.txt");
-                    await File.WriteAllTextAsync(list, JoinArgsBuilder.RenderConcatList(new[] { head, tail }));
+                    await File.WriteAllTextAsync(list, SmartCutArgsBuilder.RenderJointList(head, dur, fx.Path, headEnd, null));
                     await c.Ffmpeg.RunAsync(JoinArgsBuilder.ConcatCopy(list, final));
+                    var finalStarts = await StreamStarts(c, final);
                     var fc = await CountPackets(c, final);
                     var tailPsnr = DPsnr(await c.RunFfmpeg("-ss", sDur, "-t", "2", "-i", final, "-ss", sHeadEnd, "-t", "2", "-i", fx.Path, "-lavfi", "[0:v][1:v]psnr", "-f", "null", "-"));
                     var (_, dr) = await c.RunFfmpeg("-v", "error", "-t", F(dur.TotalSeconds + 3), "-i", final, "-f", "null", "-");
                     var errs = dr.StdErrTail.Where(l => !string.IsNullOrWhiteSpace(l)).ToList();
                     var expectFinal = (int)Math.Round((fx.Duration - start) * fps);
-                    eq = $"head {hc.Packets} pkts (expect {expectHead}) {F(hc.Duration)}s | head vs SOURCE [{sStart},+{sDur}) PSNR {vsSrc:0.0} dB | final {fc.Packets} pkts (expect ~{expectFinal}) {F(fc.Duration)}s | tail 2s vs source PSNR {tailPsnr:0.0} dB | tail starts {tailStarts} | joint decode: {(errs.Count == 0 ? "clean" : errs.Count + " line(s): " + errs[0])} | head {new FileInfo(head).Length / 1e6:0.0}MB";
+                    eq = $"head {hc.Packets} pkts (expect {expectHead}) {F(hc.Duration)}s | head vs SOURCE [{sStart},+{sDur}) PSNR {vsSrc:0.0} dB | final {fc.Packets} pkts (expect ~{expectFinal}) {F(fc.Duration)}s | tail 2s vs source PSNR {tailPsnr:0.0} dB | final starts {finalStarts} | joint decode: {(errs.Count == 0 ? "clean" : errs.Count + " line(s): " + errs[0])} | head {new FileInfo(head).Length / 1e6:0.0}MB";
                     if (vi == 0)
                     {
                         File.Copy(final, Path.Combine(c.Work, $"smart2-final-current-{fx.Key}-{start.ToString(CultureInfo.InvariantCulture)}{Path.GetExtension(fx.Path)}"), true);
                     }
 
-                    Io.TryDelete(tail);
                     Io.TryDelete(final);
                 }
 

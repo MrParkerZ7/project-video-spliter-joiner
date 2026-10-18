@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using FluentAssertions;
 using VideoSplitJoiner.Core.Ffmpeg;
+using VideoSplitJoiner.Core.Join;
 using VideoSplitJoiner.Core.Media;
 using VideoSplitJoiner.Core.Split;
 using Xunit;
@@ -136,16 +137,26 @@ public sealed class SmartCutTests
             "the seek must come after the input for a frame-exact start");
     }
 
+    // SPEC-001#I44 (T-190) - the kept part is no longer copied into a tail file: the concat reads the SOURCE itself from the
+    // boundary keyframe. So the concat is the only copy run, it is a pure stream copy with no encoder token, and the second
+    // `file` entry of its list is the source. (This replaces TailCopy_IsStillAPureStreamCopy_NoEncoderLeaksIn: TailCopy is gone.)
     [Trait("serves-spec", "SPEC-001")]
     [Fact]
-    public void TailCopy_IsStillAPureStreamCopy_NoEncoderLeaksIn()
+    public void TheJointConcat_IsAPureStreamCopy_AndItsSecondFileIsTheSource()
     {
-        var args = SmartCutArgsBuilder.TailCopy(
-            @"C:\v\clip.mp4", TimeSpan.FromSeconds(8), null, @"C:\v\tail.mp4").ToList();
+        var concat = JoinArgsBuilder.ConcatCopy(@"C:\v\concat.txt", @"C:\v\final.mp4").ToList();
 
-        args.Should().Contain("copy");
-        SplitArgsBuilder.SatisfiesCopyInvariant(args).Should().BeTrue(
-            "the tail is exactly what the lossless path would have produced");
+        concat.Should().Contain("copy");
+        JoinArgsBuilder.SatisfiesCopyInvariant(concat).Should().BeTrue(
+            "the concat that joins the head to the source carries no encoder token");
+
+        var list = SmartCutArgsBuilder.RenderJointList(
+            @"C:\v\head.mp4", TimeSpan.FromSeconds(3), @"C:\v\clip.mp4", TimeSpan.FromSeconds(8), null);
+        var files = list.Split('\n').Where(l => l.StartsWith("file ", StringComparison.Ordinal)).ToList();
+
+        files.Should().HaveCount(2);
+        files[1].Should().Be("file '" + Path.GetFullPath(@"C:\v\clip.mp4") + "'", "the kept part is the source itself, from the keyframe");
+        list.Should().NotContain("tail", "there is no tail file any more");
     }
 
     // ---- The fallback: never guess an encoder --------------------------------------------------
@@ -283,12 +294,12 @@ public sealed class SmartCutTests
         }
     }
 
-    // SPEC-001#I48 — a HeadReencode is EXACTLY three ffmpeg invocations (head encode, tail copy,
-    // concat), never one per GOP. Each pass is pinned by identity so a re-ordering or an extra pass is
-    // caught, not just the count.
+    // SPEC-001#I48 (T-190: two runs, was three) - a HeadReencode is EXACTLY two ffmpeg invocations (head encode, then the
+    // concat that reads the SOURCE from the boundary keyframe), never one per GOP and never a tail copy. Each run is pinned
+    // by identity so a re-ordering or an extra pass is caught, not just the count.
     [Trait("serves-spec", "SPEC-001")]
     [Fact]
-    public async Task SmartCutEngine_HeadReencode_RunsExactlyThreeFfmpegInvocations()
+    public async Task SmartCutEngine_HeadReencode_RunsExactlyTwoFfmpegInvocations()
     {
         var dir = Path.Combine(Path.GetTempPath(), "vsj-smarthead-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(dir);
@@ -298,13 +309,14 @@ public sealed class SmartCutTests
 
         try
         {
-            var runner = new RecordingFakeRunner();
+            var runner = new ListCapturingRunner();
+            var progress = new RecordedProgress();
             var engine = new SmartCutEngine(runner, new StreamedFakeProbe(H264Aac(), Grid4s()));
 
-            var result = await engine.CutAsync(input, TimeSpan.FromSeconds(5), null, outputPath);
+            var result = await engine.CutAsync(input, TimeSpan.FromSeconds(5), null, outputPath, progress);
 
-            runner.Commands.Should().HaveCount(3,
-                "a head re-encode is head + tail + concat and NOTHING else — never one pass per GOP");
+            runner.Commands.Should().HaveCount(2,
+                "a head re-encode is the head encode and the concat and NOTHING else - no tail copy, never one pass per GOP");
 
             // 1. The head fragment: re-encoded, starting at EXACTLY the requested 5s, bounded to 3s.
             var head = runner.Commands[0].ToList();
@@ -316,18 +328,22 @@ public sealed class SmartCutTests
             headT.Should().BeGreaterThanOrEqualTo(0);
             head[headT + 1].Should().Be("3", "the re-encode is bounded by one GOP (5s to the 8s keyframe)");
 
-            // 2. The tail: a pure stream copy from the boundary keyframe to EOF.
-            var tail = runner.Commands[1].ToList();
-            SplitArgsBuilder.SatisfiesCopyInvariant(tail).Should().BeTrue();
-            var tailSs = tail.IndexOf("-ss");
-            tailSs.Should().BeGreaterThanOrEqualTo(0);
-            tail[tailSs + 1].Should().Be("8", "the copyable tail begins at the next keyframe");
-            tail.Should().NotContain("-to");
-
-            // 3. The concat: also a stream copy, never a second encode.
-            var concat = runner.Commands[2].ToList();
+            // 2. The concat: a stream copy (never a second encode) of [head, the source from the boundary keyframe].
+            var concat = runner.Commands[1].ToList();
             concat.Should().Contain("concat");
-            SplitArgsBuilder.SatisfiesCopyInvariant(concat).Should().BeTrue();
+            JoinArgsBuilder.SatisfiesCopyInvariant(concat).Should().BeTrue();
+            runner.Commands.SelectMany(c => c).Should().NotContain(t => t.Contains("tail.", StringComparison.Ordinal),
+                "no run names a tail output: the kept part is written once, into the final");
+
+            runner.Lists.Should().ContainSingle();
+            var list = runner.Lists[0].Split('\n', StringSplitOptions.RemoveEmptyEntries);
+            list.Should().HaveCount(4, "head, its duration, the source, its inpoint - and no outpoint for an open-ended cut");
+            list[0].Should().StartWith("file '").And.EndWith("head.mp4'");
+            list[1].Should().Be("duration 3", "HeadEnd - Start fixes where the source leg starts");
+            list[2].Should().Be("file '" + Path.GetFullPath(input) + "'", "the second entry is the source");
+            list[3].Should().Be("inpoint 8", "the kept part begins at the boundary keyframe");
+
+            progress.Values.Should().Equal(new[] { 0.5, 1.0 }, "two steps: after the head, after the concat");
 
             result.Strategy.Should().Be(SmartCutStrategy.HeadReencode);
             result.FellBack.Should().BeFalse("h264/aac resolve to encoders, so the exact route is available");
@@ -341,6 +357,14 @@ public sealed class SmartCutTests
         {
             try { Directory.Delete(dir, recursive: true); } catch { /* best-effort */ }
         }
+    }
+
+    /// <summary>Records each reported fraction synchronously, in order (<see cref="Progress{T}"/> would post to a context).</summary>
+    private sealed class RecordedProgress : IProgress<double>
+    {
+        public List<double> Values { get; } = new();
+
+        public void Report(double value) => Values.Add(value);
     }
 
     // SPEC-001#I48 (the other half) — a FullReencode is EXACTLY ONE invocation: with no copyable tail

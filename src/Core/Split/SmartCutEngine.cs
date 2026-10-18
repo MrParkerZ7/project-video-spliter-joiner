@@ -40,8 +40,15 @@ public interface ISmartCutEngine
 
 /// <summary>
 /// Default <see cref="ISmartCutEngine"/>. Re-encodes only the head fragment (requested start → next
-/// keyframe), stream-copies the remainder, and concatenates the two — so the cut is frame-exact while
+/// keyframe) and joins it to the source's own packets from that keyframe on — so the cut is frame-exact while
 /// 99%+ of the output stays untouched bytes.
+///
+/// <para><b>Two ffmpeg runs for a head re-encode (T-190):</b> the head encode, then one concat that reads
+/// <c>[head, the source itself with inpoint/outpoint]</c> (<see cref="SmartCutArgsBuilder.RenderJointList"/>). The kept
+/// part is never copied into a file of its own first, so it is written once, and the joint lands on its boundary frame
+/// with no audio overlap. A source whose format <c>start_time</c> is not zero is a FALLBACK
+/// (<see cref="SmartCutArgsBuilder.TryResolveEncoders"/>): its keyframe times and the head's <c>-ss</c> offsets would not
+/// coincide.</para>
 ///
 /// <para>Every intermediate lands in a temp dir that is swept in a <c>finally</c>, and the final file is
 /// only moved into place once it exists — the same cancel-safety contract <see cref="SplitEngine"/>
@@ -138,23 +145,14 @@ public sealed class SmartCutEngine : ISmartCutEngine
                 return new SmartCutResult(outputPath, plan.Strategy, false, null, plan.ReencodedDuration);
             }
 
-            // --- 3. The copyable tail: everything from the boundary keyframe on, untouched bytes. ---
-            var tailPath = Path.Combine(tempDir, "tail" + ext);
-            var tailArgs = SmartCutArgsBuilder.TailCopy(inputPath, plan.HeadEnd!.Value, plan.End, tailPath);
-
-            var tailRun = await _runner.RunAsync(tailArgs, null, null, ct).ConfigureAwait(false);
-            if (tailRun.ExitCode != 0 || !File.Exists(tailPath))
-            {
-                throw new SplitException(
-                    $"Exact cut failed while copying the remainder of '{Path.GetFileName(inputPath)}'.");
-            }
-
-            progress?.Report(0.8);
-
-            // --- 4. Concat head + tail (stream copy - reuses the Join builder, no second impl). ---
+            // --- 3. One concat: the head, then the SOURCE ITSELF from the boundary keyframe (stream copy - reuses the
+            //        Join builder's command, no second impl). The kept bytes are written once, into the final. ---
+            var headEndTime = plan.HeadEnd!.Value;
             var listPath = Path.Combine(tempDir, "concat.txt");
             await File.WriteAllTextAsync(
-                listPath, JoinArgsBuilder.RenderConcatList(new[] { headPath, tailPath }), ct).ConfigureAwait(false);
+                listPath,
+                SmartCutArgsBuilder.RenderJointList(headPath, headEndTime - plan.Start, inputPath, headEndTime, plan.End),
+                ct).ConfigureAwait(false);
 
             var concatArgs = JoinArgsBuilder.ConcatCopy(listPath, finalTemp);
             var concatRun = await _runner.RunAsync(concatArgs, null, null, ct).ConfigureAwait(false);

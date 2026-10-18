@@ -59,6 +59,11 @@ internal static class SmartCutJointIntegrity
     /// <param name="MismatchedFrames">Compared frames whose md5 differs from the source's.</param>
     /// <param name="FirstMismatch">Index (from the joint) of the first differing frame, or -1.</param>
     /// <param name="ErrorLines">The decode's error lines, for the test output.</param>
+    /// <param name="AllowedOverrunFrames">
+    /// For a cut with an end (T-190): how many frames past <c>End</c> the final's tail may hold — the source's
+    /// <c>has_b_frames</c>, because the concat demuxer's <c>outpoint</c> is a decoding timestamp (T-220). Zero for an
+    /// open-ended cut, where the tails must have the same length.
+    /// </param>
     internal sealed record Report(
         int DecoderErrorLines,
         int AllErrorLines,
@@ -68,24 +73,31 @@ internal static class SmartCutJointIntegrity
         int ComparedFrames,
         int MismatchedFrames,
         int FirstMismatch,
-        IReadOnlyList<string> ErrorLines)
+        IReadOnlyList<string> ErrorLines,
+        int AllowedOverrunFrames = 0)
     {
         /// <summary>
         /// Zero decoder and demuxer errors, the final's tail as long as the source's (the same number of frames from the
-        /// joint on — SPEC-001 I65), and every frame from the joint on identical to the source's.
+        /// joint on — SPEC-001 I65; for a cut with an end, up to <see cref="AllowedOverrunFrames"/> longer), and every
+        /// frame from the joint on identical to the source's.
         /// </summary>
         public bool Passes =>
             DecoderErrorLines == 0 && TailLengthsMatch && ComparedFrames > 0 && MismatchedFrames == 0;
 
-        /// <summary>The final and the source have the same number of video frames from the joint on.</summary>
-        public bool TailLengthsMatch => FinalTailFrames == SourceTailFrames;
+        /// <summary>
+        /// The final and the source have the same number of video frames from the joint on; with an end, the final may
+        /// hold up to <see cref="AllowedOverrunFrames"/> more (the overrun past <c>End</c>), never fewer.
+        /// </summary>
+        public bool TailLengthsMatch =>
+            FinalTailFrames >= SourceTailFrames && FinalTailFrames - SourceTailFrames <= AllowedOverrunFrames;
 
         /// <summary>One line for a test's output and a ticket's Build log.</summary>
         public string Describe() => string.Create(
             CultureInfo.InvariantCulture,
             $"decoder/demuxer errors {DecoderErrorLines} (all error lines {AllErrorLines}, [null @ lines {NullMuxerLines}); "
             + $"frames from the joint: final {FinalTailFrames}, source {SourceTailFrames}"
-            + $"{(TailLengthsMatch ? string.Empty : " (the tails differ in length)")}, compared {ComparedFrames}, "
+            + $"{(TailLengthsMatch ? string.Empty : " (the tails differ in length)")}"
+            + $"{(AllowedOverrunFrames > 0 ? $" (overrun allowed {AllowedOverrunFrames}, held {FinalTailFrames - SourceTailFrames})" : string.Empty)}, compared {ComparedFrames}, "
             + $"mismatched {MismatchedFrames}{(FirstMismatch >= 0 ? $" (first at {FirstMismatch})" : string.Empty)}");
     }
 
@@ -100,8 +112,18 @@ internal static class SmartCutJointIntegrity
             return false;
         }
 
+        // ffmpeg prints "    Last message repeated 37 times" (untagged) after a line it has just repeated; it counts the
+        // line before it, whichever that was, so it is no error of its own (T-189's review note, taken by T-190).
+        if (RepeatedLine.IsMatch(line))
+        {
+            return false;
+        }
+
         return !IsNullMuxerLine(line);
     }
+
+    /// <summary>ffmpeg's untagged repeat counter line: <c>Last message repeated 37 times</c>.</summary>
+    private static readonly Regex RepeatedLine = new(@"^\s*Last message repeated \d+ times?\s*$", RegexOptions.Compiled);
 
     /// <summary>True when <paramref name="line"/> was printed by the null muxer itself (T-190's timing lines).</summary>
     internal static bool IsNullMuxerLine(string line)
@@ -122,9 +144,21 @@ internal static class SmartCutJointIntegrity
     /// <paramref name="start"/> and whose copied part begins at the keyframe <paramref name="headEnd"/>. Intermediate
     /// <c>framemd5</c> files go to <paramref name="workDir"/>. Needs the bundled ffmpeg — callers check
     /// <see cref="FfmpegTestBinaries"/> first.
+    ///
+    /// <para><b>A cut with an end (T-190).</b> With <paramref name="end"/> set, the source's frames compared are those in
+    /// <c>[HeadEnd, End)</c>, and the final may hold up to <paramref name="allowedOverrunFrames"/> frames past them (the
+    /// source's <c>has_b_frames</c>: the concat demuxer's <c>outpoint</c> is a decoding timestamp, so the part keeps the
+    /// reorder depth past <c>End</c> — T-220). Those overrun frames are not the source's next frames in order and are not
+    /// compared.</para>
+    ///
+    /// <para><b>The joint by count (T-190).</b> With <paramref name="headFrames"/> (the head's frame count, read from the head
+    /// the engine wrote) the final's tail is the frames from that index on, in presentation order, instead of the frames
+    /// presented at or after <c>HeadEnd − Start</c>: this check is about WHICH frames follow the joint, so a joint that is a
+    /// few milliseconds off in time (<see cref="SmartCutJointTiming"/> measures that) cannot move a frame in or out of the tail.</para>
     /// </summary>
     public static async Task<Report> CheckAsync(
-        string finalPath, string sourcePath, TimeSpan start, TimeSpan headEnd, string workDir, CancellationToken ct = default)
+        string finalPath, string sourcePath, TimeSpan start, TimeSpan headEnd, string workDir, CancellationToken ct = default,
+        TimeSpan? end = null, int allowedOverrunFrames = 0, int? headFrames = null)
     {
         Directory.CreateDirectory(workDir);
         var runner = Runner();
@@ -144,12 +178,15 @@ internal static class SmartCutJointIntegrity
         // timestamps, which -copyts keeps in the probe's time base — the base HeadEnd is in.
         var headLength = (headEnd - start).TotalSeconds;
         var finalOrigin = finalFrames.Count > 0 ? finalFrames[0].Seconds : 0.0;
-        var finalTail = finalFrames
-            .Where(f => f.Seconds - finalOrigin >= headLength - HalfFrame(finalFrames))
+        var finalTail = (headFrames is { } n
+                ? finalFrames.Skip(n)
+                : finalFrames.Where(f => f.Seconds - finalOrigin >= headLength - HalfFrame(finalFrames)))
             .Select(f => f.Hash)
             .ToList();
+        var sourceHalf = HalfFrame(sourceFrames);
         var sourceTail = sourceFrames
-            .Where(f => f.Seconds >= headEnd.TotalSeconds - HalfFrame(sourceFrames))
+            .Where(f => f.Seconds >= headEnd.TotalSeconds - sourceHalf
+                && (end is not { } e || f.Seconds < e.TotalSeconds - sourceHalf))
             .Select(f => f.Hash)
             .ToList();
 
@@ -170,7 +207,7 @@ internal static class SmartCutJointIntegrity
 
         return new Report(
             decoderErrors, lines.Count, nullMuxer, finalTail.Count, sourceTail.Count, compared, mismatched, firstMismatch,
-            lines);
+            lines, allowedOverrunFrames);
     }
 
     /// <summary>

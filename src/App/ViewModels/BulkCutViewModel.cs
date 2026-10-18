@@ -568,12 +568,14 @@ public sealed class BulkCutViewModel : ObservableObject
     }
 
     /// <summary>
-    /// Plain-language statement of the active precision, so the trade-off is never hidden. Exact names its exception
-    /// (T-189): HEVC sources fall back to the keyframe-snapped lossless cut, and each such row says so before Run.
+    /// Plain-language statement of the active precision, so the trade-off is never hidden. Exact names its exceptions
+    /// (T-189, T-190): HEVC sources and the transport-stream extensions <c>.ts</c> / <c>.m2ts</c> / <c>.mts</c>
+    /// (<see cref="VideoFileFilter"/>) fall back to the keyframe-snapped lossless cut, and each such row says so before Run;
+    /// any other file whose timestamps do not start at zero falls back with the row's own reason.
     /// </summary>
     public string PrecisionNote =>
         _exactCut
-            ? "Exact — cuts land where you set them (re-encodes ~1s per cut; HEVC video still snaps to keyframes)"
+            ? "Exact — cuts land where you set them (re-encodes ~1s per cut; HEVC, .ts, .m2ts and .mts video still snap to keyframes)"
             : "Lossless — cuts snap to the nearest keyframe (instant, no quality loss)";
 
     /// <summary>The footer's plain-language statement of where output goes - it must never lie.</summary>

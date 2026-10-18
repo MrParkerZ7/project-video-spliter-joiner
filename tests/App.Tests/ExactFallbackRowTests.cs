@@ -32,6 +32,12 @@ public sealed class ExactFallbackRowTests : IDisposable
     private static readonly string HevcNote =
         $"{BulkTrimEngine.ExactFallbackPrefix} ({HevcReason}) - cut snapped to the nearest keyframe";
 
+    private const string StartTimeReason =
+        "frame-exact cutting is not supported yet for .ts, .m2ts and .mts files or other files whose timestamps do not start at zero";
+
+    private static readonly string StartTimeNote =
+        $"{BulkTrimEngine.ExactFallbackPrefix} ({StartTimeReason}) - cut snapped to the nearest keyframe";
+
     private readonly string _dir = Path.Combine(Path.GetTempPath(), "vsj-t189-" + Guid.NewGuid().ToString("N"));
 
     public void Dispose()
@@ -509,17 +515,82 @@ public sealed class ExactFallbackRowTests : IDisposable
         (row.Warning ?? string.Empty).Should().NotContain(BulkTrimEngine.ExactFallbackPrefix);
     }
 
-    // serves-spec: SPEC-011#I90 — the mode's own promise names the exception.
+    // serves-spec: SPEC-011#I90 — the mode's own promise names its exceptions: HEVC (T-189) and the transport-stream
+    // extensions .ts / .m2ts / .mts (T-190), the files whose timestamps do not start at zero.
     [Trait("serves-spec", "SPEC-011")]
     [Fact]
-    public void PrecisionNote_InExact_NamesTheHevcException()
+    public void PrecisionNote_InExact_NamesTheHevcAndTransportStreamExceptions()
     {
         var (vm, _, _, _) = Build();
 
         vm.ExactCut = true;
 
         vm.PrecisionNote.Should().Be(
-            "Exact — cuts land where you set them (re-encodes ~1s per cut; HEVC video still snaps to keyframes)");
+            "Exact — cuts land where you set them (re-encodes ~1s per cut; HEVC, .ts, .m2ts and .mts video still snap to keyframes)");
+        vm.PrecisionNote.Should().Contain(".ts").And.Contain(".m2ts").And.Contain(".mts");
+        VideoFileFilter.AcceptVideoFiles(new[] { "clip.ts", "clip.m2ts", "clip.mts" }).Should().HaveCount(3,
+            "the extensions the note names are ones the picker and the drop accept");
+    }
+
+    // serves-spec: SPEC-011#I164 / SPEC-011#I90 — a row whose source does not start at zero (an MPEG-TS, an AVCHD .mts) in Exact
+    // behaves as Lossless and says why BEFORE Run, in the run's own words (T-190). The gate is the engine's
+    // (SmartCutArgsBuilder.TryResolveEncoders), so the row and the run never disagree.
+    [Trait("serves-spec", "SPEC-011")]
+    [Fact]
+    public async Task ARowWhoseSourceDoesNotStartAtZero_InExact_ShowsTheSnappedCut_AndTheReason_BeforeRun()
+    {
+        var (vm, probe, thumbs, _) = Build();
+        vm.ExactCut = true;
+        var path = MakeVideo("camera.mts");
+        probe.SetStartTime(path, S(1.445));
+        var row = await AddAsync(vm, probe, path, "h264");
+
+        row.IntroEnd.Requested = S(11); // a 10/12 tie on the 2 s grid → snaps to the earlier 10 s
+        Settle(row);
+
+        row.ExactUnavailableReason.Should().Be(StartTimeReason);
+        row.ExactCutApplies.Should().BeFalse();
+        row.IntroEnd.Snapped.Should().Be(S(10));
+        row.IntroEnd.HasSnapNote.Should().BeTrue("the run cuts at the keyframe, so the row says so");
+        row.KeptDuration.Should().Be(S(50), "eligibility and the kept length come from Snapped: 60 − 10");
+        RequestedTimes(thumbs, path).Last().Should().Be(S(10), "the chip shows the frame the run cuts at");
+        RequestedTimes(thumbs, path).Should().NotContain(S(11), "the row never shows a Requested cut it will not make");
+        row.Warning.Should().Contain(StartTimeNote, "the reason is stated before Run, in the run's own words");
+    }
+
+    // serves-spec: SPEC-011#I164 — a file that starts within 1 ms of zero (an ordinary MP4/MKV, 0.5 ms of rounding either way)
+    // is a real Exact row.
+    [Trait("serves-spec", "SPEC-011")]
+    [Theory]
+    [InlineData(0.0)]
+    [InlineData(0.0005)]
+    [InlineData(-0.0005)]
+    public async Task ARowWhoseSourceStartsAtZero_InExact_IsUnchanged(double startSeconds)
+    {
+        var (vm, probe, _, _) = Build();
+        vm.ExactCut = true;
+        var path = MakeVideo("clip.mp4");
+        probe.SetStartTime(path, S(startSeconds));
+        var row = await AddAsync(vm, probe, path, "h264");
+
+        row.ExactUnavailableReason.Should().BeNull();
+        row.ExactCutApplies.Should().BeTrue();
+        (row.Warning ?? string.Empty).Should().NotContain(BulkTrimEngine.ExactFallbackPrefix);
+    }
+
+    // serves-spec: SPEC-011#I164 — the Lossless tab is untouched by the time base: no reason, no note.
+    [Trait("serves-spec", "SPEC-011")]
+    [Fact]
+    public async Task ARowWhoseSourceDoesNotStartAtZero_InLossless_CarriesNoExactNote()
+    {
+        var (vm, probe, _, _) = Build();
+        var path = MakeVideo("camera.mts");
+        probe.SetStartTime(path, S(1.445));
+        var row = await AddAsync(vm, probe, path, "h264");
+
+        row.IntroEnd.Requested = S(11);
+
+        (row.Warning ?? string.Empty).Should().NotContain(BulkTrimEngine.ExactFallbackPrefix);
     }
 
     // ---- The engine's own sentence --------------------------------------------------------------------------

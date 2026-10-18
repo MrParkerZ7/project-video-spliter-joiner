@@ -136,6 +136,12 @@ public sealed class SmartCutJointIntegrityTests : IDisposable
                 "[vist#0:0/hevc @ 0000020a] [dec:hevc @ 0000020b] Error submitting packet to decoder: Invalid data found")
             .Should().BeTrue("ffmpeg 7's decoder-thread wrapper is still a decoder line");
         SmartCutJointIntegrity.IsDecoderOrDemuxerError("   ").Should().BeFalse();
+
+        // T-190: the untagged repeat counter belongs to the line before it, whichever line that was - it is no error of its own.
+        SmartCutJointIntegrity.IsDecoderOrDemuxerError("    Last message repeated 37 times").Should().BeFalse();
+        SmartCutJointIntegrity.IsDecoderOrDemuxerError("Last message repeated 1 times").Should().BeFalse();
+        SmartCutJointIntegrity.IsDecoderOrDemuxerError("[h264 @ 0x1] Last message repeated 3 times")
+            .Should().BeTrue("a tagged line is a decoder line, whatever it says");
         SmartCutJointIntegrity.IsNullMuxerLine("[null @ 0x1] x").Should().BeTrue();
         SmartCutJointIntegrity.IsNullMuxerLine("[h264 @ 0x1] x").Should().BeFalse();
     }

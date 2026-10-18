@@ -691,8 +691,9 @@ internal static class CoreScenarios
     // ---------------------------------------------------------------- Exact cut (SmartCutEngine)
 
     /// <summary>
-    /// The <c>smart</c> scenario: at each of the fixture's named cut positions, SmartCutEngine's three ffmpeg runs
-    /// (the engine's own public builders: head re-encode, tail copy, concat), then the head variants (input seek,
+    /// The <c>smart</c> scenario: at each of the fixture's named cut positions, SmartCutEngine's two ffmpeg runs
+    /// (the engine's own public builders: head re-encode, then the concat of the head and the source itself; the tail
+    /// copy it used to run before T-190 is gone), then the head variants (input seek,
     /// presets, NVENC) on the same span, one run each. The first position keeps the fixture's outro; later ones
     /// cut to the end, as the prototype did.
     /// </summary>
@@ -711,7 +712,7 @@ internal static class CoreScenarios
         }
     }
 
-    /// <summary>SmartCutEngine.CutAsync broken into its three ffmpeg runs, using the engine's own public builders.</summary>
+    /// <summary>SmartCutEngine.CutAsync broken into its two ffmpeg runs (head encode, concat), using the engine's own public builders.</summary>
     public static async Task<SmartHeads.Span?> SmartCutSteps(BenchContext c, Fixture fx, double start, double? end, string tag)
     {
         var probe = c.NewProbe();
@@ -735,7 +736,6 @@ internal static class CoreScenarios
         {
             var ext = Path.GetExtension(fx.Path);
             var head = Path.Combine(dir, "head" + ext);
-            var tail = Path.Combine(dir, "tail" + ext);
             var final = Path.Combine(dir, "final" + ext);
             var headEnd = plan.HeadEnd ?? plan.End ?? info.Duration;
             var headArgs = SmartCutArgsBuilder.HeadReencode(fx.Path, plan.Start, headEnd, info, v!, a, head);
@@ -749,15 +749,14 @@ internal static class CoreScenarios
                 return span;
             }
 
-            var tailArgs = SmartCutArgsBuilder.TailCopy(fx.Path, plan.HeadEnd.Value, plan.End, tail);
-            FfmpegResult? tr = null;
-            var (tTail, tu) = await Meter.Run(async () => tr = await c.Ffmpeg.RunAsync(tailArgs));
-            c.Results.Add("bulk", $"  Exact {tag}: tail -c copy [{plan.HeadEnd.Value.TotalSeconds}s..{end}]", fx.Key, "warm", 1, tTail, tu, $"exit {tr!.ExitCode}");
+            // T-190: the engine's second run reads the source itself from the boundary keyframe; there is no tail file.
             var list = Path.Combine(dir, "concat.txt");
-            await File.WriteAllTextAsync(list, JoinArgsBuilder.RenderConcatList(new[] { head, tail }));
+            await File.WriteAllTextAsync(
+                list, SmartCutArgsBuilder.RenderJointList(head, plan.HeadEnd.Value - plan.Start, fx.Path, plan.HeadEnd.Value, plan.End));
             FfmpegResult? cr = null;
             var (tCat, cu) = await Meter.Run(async () => cr = await c.Ffmpeg.RunAsync(JoinArgsBuilder.ConcatCopy(list, final)));
-            c.Results.Add("bulk", $"  Exact {tag}: concat head+tail -c copy", fx.Key, "warm", 1, tCat, cu, $"exit {cr!.ExitCode}");
+            c.Results.Add("bulk", $"  Exact {tag}: concat head + source from {plan.HeadEnd.Value.TotalSeconds}s -c copy", fx.Key, "warm", 1, tCat, cu,
+                $"exit {cr!.ExitCode}; final {(File.Exists(final) ? new FileInfo(final).Length / 1e6 : 0):0.0} MB written");
             return span;
         }
         finally

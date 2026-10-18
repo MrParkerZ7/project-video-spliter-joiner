@@ -59,6 +59,12 @@ internal sealed class BulkFakeProbe : IMediaProbe
                 ? Array.Empty<StreamInfo>()
                 : new[] { new StreamInfo(1, audioCodec, "audio", null, null, null, 48000, 2, "1/48000") });
 
+    /// <summary>Per-path format <c>start_time</c> (T-190). Missing path ⇒ zero, like an ordinary MP4.</summary>
+    public Dictionary<string, TimeSpan> StartTimeByPath { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Report <paramref name="startTime"/> as the format <c>start_time</c> of <paramref name="path"/> (an MPEG-TS starts near 1.4 s).</summary>
+    public void SetStartTime(string path, TimeSpan startTime) => StartTimeByPath[path] = startTime;
+
     public IReadOnlyList<TimeSpan> DefaultKeyframes { get; set; } = Array.Empty<TimeSpan>();
 
     /// <summary>When a scan enters for a gated path it awaits this gate — set to hold scans open.</summary>
@@ -105,7 +111,7 @@ internal sealed class BulkFakeProbe : IMediaProbe
         var (video, audio) = StreamsByPath.TryGetValue(path, out var streams)
             ? streams
             : (DefaultVideoStreams, DefaultAudioStreams);
-        var info = new MediaInfo(duration, "mp4", video, audio);
+        var info = new MediaInfo(duration, "mp4", video, audio, StartTimeByPath.TryGetValue(path, out var startTime) ? startTime : TimeSpan.Zero);
         return Task.FromResult(ProbeResult.Success(info));
     }
 
