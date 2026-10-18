@@ -169,8 +169,8 @@ public sealed class SpecIndexFreshnessTests
         }
 
         drift.Should().BeEmpty(
-            "docs/" +
-            "product/specs/_index.md must be recounted when invariants are added or removed — it drifted /47 out of step before anything noticed:" + Environment.NewLine +
+            "docs/product/specs/_index.md must be recounted when invariants are added or removed — it drifted " +
+            "47 out of step before anything noticed:" + Environment.NewLine +
             string.Join(Environment.NewLine, drift));
     }
 
