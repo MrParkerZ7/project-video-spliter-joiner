@@ -44,7 +44,7 @@ public interface IMediaProbe
 }
 
 /// <inheritdoc cref="IMediaProbe" />
-public sealed class MediaProbe : IMediaProbe
+public sealed class MediaProbe : IMediaProbe, IVideoFrameProbe
 {
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -352,6 +352,110 @@ public sealed class MediaProbe : IMediaProbe
         }
 
         return times.ToList().AsReadOnly();
+    }
+
+    /// <summary>How far past the requested time <see cref="FirstVideoFrameAtOrAfterAsync"/> reads for a frame.</summary>
+    private static readonly TimeSpan FrameSearchWindow = TimeSpan.FromSeconds(2);
+
+    /// <summary>A frame this close before the requested time counts as at it (a timestamp is printed to six decimals).</summary>
+    internal static readonly TimeSpan FrameTimeTolerance = TimeSpan.FromMilliseconds(1);
+
+    /// <inheritdoc />
+    public async Task<TimeSpan?> FirstVideoFrameAtOrAfterAsync(string path, TimeSpan time, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(path) || !File.Exists(path) || time < TimeSpan.Zero)
+        {
+            return null;
+        }
+
+        // -read_intervals START%END (both absolute: a "+" END would count from the first packet read, which is the keyframe
+        // BEFORE START). ffprobe seeks back to that keyframe, so packets before START are listed too; the filter below drops
+        // them. Packet times only, no decoding.
+        var interval = string.Create(
+            CultureInfo.InvariantCulture, $"{time.TotalSeconds:0.######}%{(time + FrameSearchWindow).TotalSeconds:0.######}");
+        var args = FfmpegArgs.ForFfprobe()
+            .Raw(
+                "-v", "error",
+                "-select_streams", "v:0",
+                "-read_intervals", interval,
+                "-show_entries", "packet=pts_time",
+                "-print_format", "json")
+            .Input(path);
+
+        string json;
+        try
+        {
+            json = await _ffprobe.RunJsonAsync(args, ct).ConfigureAwait(false);
+        }
+        catch (FfprobeException)
+        {
+            return null;
+        }
+
+        var root = JsonDeserialize<FfprobePacketsRoot>(json);
+        TimeSpan? first = null;
+        if (root?.Packets is not null)
+        {
+            foreach (var p in root.Packets)
+            {
+                if (TryParseSeconds(p.PtsTime, out var t) && t >= time - FrameTimeTolerance && (first is null || t < first))
+                {
+                    first = t;
+                }
+            }
+        }
+
+        return first;
+    }
+
+    /// <inheritdoc />
+    public async Task<int?> CountVideoPacketsAsync(string path, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
+        {
+            return null;
+        }
+
+        var args = FfmpegArgs.ForFfprobe()
+            .Raw(
+                "-v", "error",
+                "-select_streams", "v:0",
+                "-count_packets",
+                "-show_entries", "stream=nb_read_packets",
+                "-print_format", "json")
+            .Input(path);
+
+        string json;
+        try
+        {
+            json = await _ffprobe.RunJsonAsync(args, ct).ConfigureAwait(false);
+        }
+        catch (FfprobeException)
+        {
+            return null;
+        }
+
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            if (!doc.RootElement.TryGetProperty("streams", out var streams) || streams.ValueKind != JsonValueKind.Array)
+            {
+                return null;
+            }
+
+            if (streams.GetArrayLength() == 0)
+            {
+                return 0; // no video stream
+            }
+
+            return TryParseInt(streams[0].TryGetProperty("nb_read_packets", out var n) ? n.GetString() : null, out var count)
+                ? count
+                : null;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
     }
 
     /// <summary>

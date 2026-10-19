@@ -724,12 +724,20 @@ internal static class CoreScenarios
 
         var info = ok.Info;
         var kf = await probe.GetKeyframesAsync(fx.Path);
-        var plan = SmartCutPlanner.Plan(S(start), end is { } e ? S(e) : null, kf);
         if (!SmartCutArgsBuilder.TryResolveEncoders(info, out var v, out var a, out var why))
         {
             c.Results.Note($"smart {fx.Key}: no encoder ({why})");
             return null;
         }
+
+        // T-190: the engine starts the cut on the first source frame at or after the request, found with one bounded ffprobe
+        // read before it plans; its cost is its own row.
+        TimeSpan? firstFrame = null;
+        var (tSnap, snapUsage) = await Meter.Run(async () => firstFrame = await probe.FirstVideoFrameAtOrAfterAsync(fx.Path, S(start)));
+        c.Results.Add("bulk", $"  Exact {tag}: frame snap (ffprobe -read_intervals, one bounded read)", fx.Key, "warm", 1, tSnap, snapUsage,
+            $"first frame at or after {start}s: {firstFrame?.TotalSeconds.ToString("0.######", CultureInfo.InvariantCulture) ?? "none"}s");
+        var effectiveStart = firstFrame is { } ff && ff != S(start) && (end is not { } endLimit || ff < S(endLimit)) ? ff : S(start);
+        var plan = SmartCutPlanner.Plan(effectiveStart, end is { } e ? S(e) : null, kf);
 
         var dir = c.NewTempDir("smart");
         try
@@ -744,6 +752,12 @@ internal static class CoreScenarios
             c.Results.Add("bulk", $"  Exact {tag}: head re-encode [{start}s..{headEnd.TotalSeconds}s] ({v}, output -ss)", fx.Key, "warm", 1, tHead, hu,
                 $"exit {hr!.ExitCode}; read {100.0 * hu.ReadBytes / new FileInfo(fx.Path).Length:0}% of the file; args: {string.Join(' ', headArgs.ToList().Skip(2)).Replace(fx.Path, "<in>", StringComparison.Ordinal).Replace(head, "<head>", StringComparison.Ordinal)}");
             var span = new SmartHeads.Span(info, plan.Start, headEnd, v!, a);
+
+            // T-190: the engine checks that the head it wrote holds a video frame.
+            int? headPackets = null;
+            var (tCount, countUsage) = await Meter.Run(async () => headPackets = await probe.CountVideoPacketsAsync(head));
+            c.Results.Add("bulk", $"  Exact {tag}: head frame check (ffprobe -count_packets)", fx.Key, "warm", 1, tCount, countUsage,
+                $"{headPackets?.ToString(CultureInfo.InvariantCulture) ?? "?"} video packets in the head");
             if (plan.HeadEnd is null)
             {
                 return span;

@@ -64,6 +64,12 @@ internal static class SmartCutJointIntegrity
     /// <c>has_b_frames</c>, because the concat demuxer's <c>outpoint</c> is a decoding timestamp (T-220). Zero for an
     /// open-ended cut, where the tails must have the same length.
     /// </param>
+    /// <param name="HeadFrames">The head's frame count, when the caller gave it (T-190): the tail is then taken by index.</param>
+    /// <param name="ExpectedHeadFrames">
+    /// The frames the head should hold: one per source frame of <c>[Start, HeadEnd)</c> (<c>round((HeadEnd − Start) × fps)</c>,
+    /// the source's own frame rate). Checked because taking the tail by index would otherwise count a repeated frame at the
+    /// joint into the head, where the md5 comparison cannot see it (T-190 review).
+    /// </param>
     internal sealed record Report(
         int DecoderErrorLines,
         int AllErrorLines,
@@ -74,7 +80,9 @@ internal static class SmartCutJointIntegrity
         int MismatchedFrames,
         int FirstMismatch,
         IReadOnlyList<string> ErrorLines,
-        int AllowedOverrunFrames = 0)
+        int AllowedOverrunFrames = 0,
+        int? HeadFrames = null,
+        int? ExpectedHeadFrames = null)
     {
         /// <summary>
         /// Zero decoder and demuxer errors, the final's tail as long as the source's (the same number of frames from the
@@ -82,7 +90,10 @@ internal static class SmartCutJointIntegrity
         /// frame from the joint on identical to the source's.
         /// </summary>
         public bool Passes =>
-            DecoderErrorLines == 0 && TailLengthsMatch && ComparedFrames > 0 && MismatchedFrames == 0;
+            DecoderErrorLines == 0 && TailLengthsMatch && HeadFramesMatch && ComparedFrames > 0 && MismatchedFrames == 0;
+
+        /// <summary>The head holds one frame per source frame of its range (always true when the caller did not give its count).</summary>
+        public bool HeadFramesMatch => HeadFrames is null || ExpectedHeadFrames is null || HeadFrames == ExpectedHeadFrames;
 
         /// <summary>
         /// The final and the source have the same number of video frames from the joint on; with an end, the final may
@@ -97,7 +108,8 @@ internal static class SmartCutJointIntegrity
             $"decoder/demuxer errors {DecoderErrorLines} (all error lines {AllErrorLines}, [null @ lines {NullMuxerLines}); "
             + $"frames from the joint: final {FinalTailFrames}, source {SourceTailFrames}"
             + $"{(TailLengthsMatch ? string.Empty : " (the tails differ in length)")}"
-            + $"{(AllowedOverrunFrames > 0 ? $" (overrun allowed {AllowedOverrunFrames}, held {FinalTailFrames - SourceTailFrames})" : string.Empty)}, compared {ComparedFrames}, "
+            + $"{(AllowedOverrunFrames > 0 ? $" (overrun allowed {AllowedOverrunFrames}, held {FinalTailFrames - SourceTailFrames})" : string.Empty)}"
+            + $"{(HeadFramesMatch ? string.Empty : $" (the head holds {HeadFrames} frames, the source has {ExpectedHeadFrames} in its range)")}, compared {ComparedFrames}, "
             + $"mismatched {MismatchedFrames}{(FirstMismatch >= 0 ? $" (first at {FirstMismatch})" : string.Empty)}");
     }
 
@@ -150,6 +162,9 @@ internal static class SmartCutJointIntegrity
     /// source's <c>has_b_frames</c>: the concat demuxer's <c>outpoint</c> is a decoding timestamp, so the part keeps the
     /// reorder depth past <c>End</c> — T-220). Those overrun frames are not the source's next frames in order and are not
     /// compared.</para>
+    ///
+    /// <para><b>The start is the EFFECTIVE start</b> (SPEC-001 I43): the first source video frame at or after the requested
+    /// one, which is where the head begins.</para>
     ///
     /// <para><b>The joint by count (T-190).</b> With <paramref name="headFrames"/> (the head's frame count, read from the head
     /// the engine wrote) the final's tail is the frames from that index on, in presentation order, instead of the frames
@@ -205,9 +220,13 @@ internal static class SmartCutJointIntegrity
             }
         }
 
+        var expectedHead = headFrames is null
+            ? (int?)null
+            : (int)Math.Round((headEnd - start).TotalSeconds / (2 * sourceHalf));
+
         return new Report(
             decoderErrors, lines.Count, nullMuxer, finalTail.Count, sourceTail.Count, compared, mismatched, firstMismatch,
-            lines, allowedOverrunFrames);
+            lines, allowedOverrunFrames, headFrames, expectedHead);
     }
 
     /// <summary>

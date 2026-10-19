@@ -7,6 +7,7 @@ using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Media;
 using FluentAssertions;
+using VideoSplitJoiner.App.ViewModels;
 using VideoSplitJoiner.App.Views;
 using Xunit;
 
@@ -758,6 +759,55 @@ public sealed class BulkCutViewLayoutTests
     // screen's layout suite could share them. They could NOT be copied - Application is a process-wide
     // singleton pinned to its creating thread and the themes hold unfrozen Freezables, so a second STA
     // worker fails with "cannot access Freezable across threads".
+
+    /// <summary>
+    /// T-190 review — the Exact note names six file types and is long (130 characters). It sits in the footer's WrapPanel;
+    /// a WrapPanel moves a child to the next line when it does not fit but never shrinks it, so a TextBlock that does not
+    /// wrap and is wider than the footer is CLIPPED. Laid out at every window size, in Exact, the note must end inside the
+    /// window.
+    /// </summary>
+    [Trait("serves-spec", "SPEC-011")]
+    [Fact]
+    public void TheExactPrecisionNote_StaysInsideTheWindow_AtEveryRealisticWindowSize()
+    {
+        var failures = new List<string>();
+        var measured = new List<string>();
+
+        OnSta(() =>
+        {
+            foreach (var (w, h) in Sizes)
+            {
+                var view = new BulkCutView { DataContext = new NoteHolder(BulkCutViewModel.ExactPrecisionNote) };
+                LayOut(view, w, h);
+
+                var note = Find<TextBlock>(view, "PrecisionNoteText");
+                if (note is null)
+                {
+                    failures.Add($"{w}x{h}: PrecisionNoteText not found — the footer's shape changed");
+                    continue;
+                }
+
+                var left = note.TranslatePoint(new Point(0, 0), view).X;
+                var right = left + note.ActualWidth;
+                measured.Add($"{w}x{h}: note x={left:0}..{right:0}, {note.ActualHeight:0} px high");
+                if (note.Text != BulkCutViewModel.ExactPrecisionNote)
+                {
+                    failures.Add($"{w}x{h}: the note is not bound ('{note.Text}')");
+                }
+
+                if (right > w + 1)
+                {
+                    failures.Add($"{w}x{h}: the Exact note ends at x={right:0}, past the {w:0}px window — it is clipped");
+                }
+            }
+        });
+
+        failures.Should().BeEmpty(
+            "the Exact note must wrap rather than run off the window:" + Environment.NewLine
+            + string.Join(Environment.NewLine, failures) + Environment.NewLine + string.Join(Environment.NewLine, measured));
+    }
+
+    private sealed record NoteHolder(string PrecisionNote);
 
     private static void OnSta(Action body) => StaViewHarness.OnSta(body);
 

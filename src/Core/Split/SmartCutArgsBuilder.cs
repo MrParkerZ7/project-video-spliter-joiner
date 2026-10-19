@@ -72,6 +72,21 @@ public static class SmartCutArgsBuilder
         "frame-exact cutting is not supported yet for .ts, .m2ts and .mts files or other files whose timestamps do not start at zero";
 
     /// <summary>
+    /// Why Exact refuses a Matroska or WebM source (T-190, second pass). Measured with the engine's own commands, AFTER the
+    /// frame snap, on the bench <c>mkv</c> fixture's shape (format start 0, video 21 ms late) at Starts on and off its frame
+    /// grid (10.5, 10.518, 10.531, 3.3, 25.5 s): no frame lost or repeated, but at every one of them the joint was 21 ms early
+    /// (-0.63 frames), 4-5 audio packets did not increase (one AAC frame of overlap) and a full decode printed 3-4 lines. The
+    /// head file is Matroska too and starts at -21 ms (the AAC encoder's priming packet, which an MP4 head hides in an edit
+    /// list and starts at 0), so the concat shifts the head 21 ms against the copied part; the Start is not the cause. No
+    /// small fix held (the head with <c>-avoid_negative_ts make_zero</c>, an <c>inpoint 0</c> on the head entry, an
+    /// <c>asetpts</c> or <c>aresample</c> filter, an MP4 head: the joint, the audio or the decode stayed wrong or got worse),
+    /// and almost every ffmpeg-made Matroska/WebM file starts below zero anyway (h264+aac .mkv -0.021 s, h264+opus .mkv and
+    /// vp9+opus .webm -0.007 s), so the file types are named here instead of leaving the user a reason about timestamps. No
+    /// parentheses (the row warning wraps the reason in its own).
+    /// </summary>
+    internal const string MatroskaUnsupportedReason = "frame-exact cutting is not supported yet for .mkv and .webm files";
+
+    /// <summary>
     /// A format <c>start_time</c> within this of zero counts as zero (T-190). Exact assumes the probe's keyframe times and
     /// ffmpeg's <c>-ss</c> offsets coincide, which holds only when the format starts at 0; a millisecond is the mp4/mkv
     /// timestamp rounding, an MPEG-TS starts near 1.4 s and a negative composition offset about -21 ms.
@@ -94,12 +109,18 @@ public static class SmartCutArgsBuilder
         audioEncoder = null;
         reason = null;
 
+        // ffprobe names both .mkv and .webm "matroska,webm". Such a file is refused at the end (MatroskaUnsupportedReason), after
+        // the codecs: a codec Exact cannot reproduce is reported as itself.
+        var matroska = info.Container.Contains("matroska", StringComparison.OrdinalIgnoreCase);
+
         // The time base (T-190). Keyframe times and the concat demuxer's inpoint are absolute source timestamps, but the
         // head's -ss is an offset from the format start_time: with a start_time that is not zero (MPEG-TS and AVCHD start
         // near 1.4 s, a negative one is real too) the head and the kept part would overlap by it. Checked on the absolute
         // value, first, because it holds for every codec. The video stream's own start is NOT read: a file whose video
-        // starts one AAC frame after its audio (the app's own Join output) joins correctly (SPEC-001 I68).
-        if (info.StartTime.Duration() > StartTimeTolerance)
+        // starts one AAC frame after its audio (the app's own Join output) joins correctly (SPEC-001 I68). A Matroska/WebM
+        // file is left to the container reason below, which names its file type: an ffmpeg-made one starts below zero
+        // (-21 ms) and would otherwise be told about timestamps.
+        if (!matroska && info.StartTime.Duration() > StartTimeTolerance)
         {
             reason = NonZeroStartTimeReason;
             return false;
@@ -138,6 +159,15 @@ public static class SmartCutArgsBuilder
         if (!info.HasVideo && !info.HasAudio)
         {
             reason = "the source has no video or audio streams";
+            return false;
+        }
+
+        // The container (T-190, second pass). See MatroskaUnsupportedReason.
+        if (matroska)
+        {
+            videoEncoder = null;
+            audioEncoder = null;
+            reason = MatroskaUnsupportedReason;
             return false;
         }
 

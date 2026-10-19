@@ -1345,9 +1345,13 @@
                               Content="Exact cut"
                               IsChecked="{Binding ExactCut, Mode=TwoWay}"
                               ToolTip="Cut exactly where you set the handles instead of snapping to the nearest keyframe. Re-encodes about a second of video per cut; the rest is still copied untouched." />
-                    <TextBlock Text="{Binding PrecisionNote}"
+                    <!-- T-190: the note names six file types (792 px unwrapped at this size), so it WRAPS: a WrapPanel moves a
+                         child to the next line but never shrinks it, and a TextBlock wider than the footer is clipped. -->
+                    <TextBlock x:Name="PrecisionNoteText"
+                               Text="{Binding PrecisionNote}"
                                Margin="8,0,0,0"
                                VerticalAlignment="Center"
+                               TextWrapping="Wrap"
                                Foreground="{StaticResource TextMutedBrush}"
                                FontSize="{StaticResource FontSizeSmall}" />
 

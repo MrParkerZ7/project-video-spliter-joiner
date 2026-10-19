@@ -519,16 +519,16 @@ public sealed class ExactFallbackRowTests : IDisposable
     // extensions .ts / .m2ts / .mts (T-190), the files whose timestamps do not start at zero.
     [Trait("serves-spec", "SPEC-011")]
     [Fact]
-    public void PrecisionNote_InExact_NamesTheHevcAndTransportStreamExceptions()
+    public void PrecisionNote_InExact_NamesTheHevcMatroskaWebmAndTransportStreamExceptions()
     {
         var (vm, _, _, _) = Build();
 
         vm.ExactCut = true;
 
         vm.PrecisionNote.Should().Be(
-            "Exact — cuts land where you set them (re-encodes ~1s per cut; HEVC, .ts, .m2ts and .mts video still snap to keyframes)");
-        vm.PrecisionNote.Should().Contain(".ts").And.Contain(".m2ts").And.Contain(".mts");
-        VideoFileFilter.AcceptVideoFiles(new[] { "clip.ts", "clip.m2ts", "clip.mts" }).Should().HaveCount(3,
+            "Exact — cuts land where you set them (re-encodes ~1s per cut; HEVC, .mkv, .webm, .ts, .m2ts and .mts video still snap to keyframes)");
+        vm.PrecisionNote.Should().Contain(".mkv").And.Contain(".webm").And.Contain(".ts").And.Contain(".m2ts").And.Contain(".mts");
+        VideoFileFilter.AcceptVideoFiles(new[] { "clip.mkv", "clip.webm", "clip.ts", "clip.m2ts", "clip.mts" }).Should().HaveCount(5,
             "the extensions the note names are ones the picker and the drop accept");
     }
 

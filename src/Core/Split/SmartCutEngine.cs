@@ -10,22 +10,30 @@ namespace VideoSplitJoiner.Core.Split;
 /// <param name="FellBack">True when exact cutting was unavailable and the caller should use the lossless path.</param>
 /// <param name="FallbackReason">Why exact cutting was unavailable (null unless <paramref name="FellBack"/>).</param>
 /// <param name="ReencodedDuration">How much video was re-encoded — the cost actually paid.</param>
+/// <param name="EffectiveStart">
+/// Where the produced file really starts in the source (T-190): the requested start moved up to the first source video
+/// frame at or after it, so at most one frame later (33 ms at 30 fps) and equal to the request when it already sat on a
+/// frame or the source cannot be asked. Null unless a file was produced. A caller that shows the cut time (T-196) reads
+/// this, not the time it asked for.
+/// </param>
 public sealed record SmartCutResult(
     string? OutputPath,
     SmartCutStrategy Strategy,
     bool FellBack,
     string? FallbackReason,
-    TimeSpan ReencodedDuration);
+    TimeSpan ReencodedDuration,
+    TimeSpan? EffectiveStart = null);
 
 /// <summary>
-/// Frame-exact cutting (T-124, epic G-042): produce <c>[start, end)</c> starting at EXACTLY the
-/// requested time rather than at the nearest keyframe.
+/// Frame-exact cutting (T-124, epic G-042): produce <c>[start, end)</c> starting at the requested time, to the frame,
+/// rather than at the nearest keyframe.
 /// </summary>
 public interface ISmartCutEngine
 {
     /// <summary>
     /// Cut <paramref name="inputPath"/> from <paramref name="start"/> to <paramref name="end"/> (null =
-    /// end of file) into <paramref name="outputPath"/>, honouring <paramref name="start"/> exactly.
+    /// end of file) into <paramref name="outputPath"/>, starting at the first video frame at or after <paramref name="start"/>
+    /// (<see cref="SmartCutResult.EffectiveStart"/>; the request itself when it sits on a frame).
     /// Returns a result whose <c>FellBack</c> flag tells the caller exact cutting was not possible for
     /// this source — the caller then runs the ordinary lossless cut rather than shipping a bad file.
     /// </summary>
@@ -46,9 +54,16 @@ public interface ISmartCutEngine
 /// <para><b>Two ffmpeg runs for a head re-encode (T-190):</b> the head encode, then one concat that reads
 /// <c>[head, the source itself with inpoint/outpoint]</c> (<see cref="SmartCutArgsBuilder.RenderJointList"/>). The kept
 /// part is never copied into a file of its own first, so it is written once, and the joint lands on its boundary frame
-/// with no audio overlap. A source whose format <c>start_time</c> is not zero is a FALLBACK
+/// with no audio overlap. A source whose format <c>start_time</c> is not zero, or that is Matroska/WebM, is a FALLBACK
 /// (<see cref="SmartCutArgsBuilder.TryResolveEncoders"/>): its keyframe times and the head's <c>-ss</c> offsets would not
-/// coincide.</para>
+/// coincide, or the head's own timestamps would shift against the copied part.</para>
+///
+/// <para><b>The start is snapped to a frame (T-190, SPEC-001 I43).</b> The cut starts at the first source video frame at or
+/// after the requested time, found before the plan is made, so the head's frames sit on the same grid as the copied part's.
+/// A Start between two frames used to leave the head's frames on the encoder's 1/fps grid counted from the Start: the joint
+/// 33 ms early with a muxer timestamp line, or one repeated frame. The head the engine wrote is also checked for a video
+/// frame: a head with none would make the concat drop the source's video, and a cut that loses the video is a fall back,
+/// not a result.</para>
 ///
 /// <para>Every intermediate lands in a temp dir that is swept in a <c>finally</c>, and the final file is
 /// only moved into place once it exists — the same cancel-safety contract <see cref="SplitEngine"/>
@@ -58,11 +73,13 @@ public sealed class SmartCutEngine : ISmartCutEngine
 {
     private readonly IFfmpegRunner _runner;
     private readonly IMediaProbe _probe;
+    private readonly IVideoFrameProbe? _frames;
 
     public SmartCutEngine(IFfmpegRunner runner, IMediaProbe probe)
     {
         _runner = runner ?? throw new ArgumentNullException(nameof(runner));
         _probe = probe ?? throw new ArgumentNullException(nameof(probe));
+        _frames = probe as IVideoFrameProbe; // MediaProbe is one; a probe that is not leaves the frame snap and the head check off
     }
 
     /// <inheritdoc />
@@ -107,6 +124,26 @@ public sealed class SmartCutEngine : ISmartCutEngine
             return new SmartCutResult(null, plan.Strategy, FellBack: true, why, TimeSpan.Zero);
         }
 
+        // T-190: start ON a frame. The first source video frame at or after the request (a frame within a millisecond before
+        // it counts as at it) becomes the start BEFORE the head is built, so the head's frame grid is the copied part's.
+        // The plan is made again from it: a start within a frame of a keyframe becomes PureCopy (the lossless cut is exact
+        // there), and one between the last frame and the end of the range stays as it was. Asked only now, so a source Exact
+        // refuses costs no ffprobe.
+        if (_frames is not null && ok.Info.HasVideo
+            && await _frames.FirstVideoFrameAtOrAfterAsync(inputPath, start, ct).ConfigureAwait(false) is { } firstFrame
+            && firstFrame != start
+            && (end is not { } endTime || firstFrame < endTime))
+        {
+            start = firstFrame;
+            plan = SmartCutPlanner.Plan(start, end, keyframes);
+            if (plan.Strategy == SmartCutStrategy.PureCopy)
+            {
+                return new SmartCutResult(null, plan.Strategy, FellBack: true,
+                    "the first frame at or after the requested time is a keyframe — the lossless cut is exact here",
+                    TimeSpan.Zero);
+            }
+        }
+
         var outDir = Path.GetDirectoryName(Path.GetFullPath(outputPath))
             ?? throw new SplitException($"Cannot resolve an output directory for '{outputPath}'.");
         Directory.CreateDirectory(outDir);
@@ -135,6 +172,16 @@ public sealed class SmartCutEngine : ISmartCutEngine
                     $"Exact cut failed while re-encoding the leading fragment of '{Path.GetFileName(inputPath)}'.");
             }
 
+            // A head with no video frame (the range holds none, or the encoder dropped them) would make the concat take its
+            // streams from an audio-only file and drop the source's video: the file would be Done and have no picture.
+            if (_frames is not null && ok.Info.HasVideo
+                && await _frames.CountVideoPacketsAsync(headPath, ct).ConfigureAwait(false) is 0)
+            {
+                return new SmartCutResult(null, plan.Strategy, FellBack: true,
+                    "no video frame lies in the part to re-encode, so the cut would have no picture",
+                    TimeSpan.Zero);
+            }
+
             progress?.Report(0.5);
 
             // --- 2. No copyable tail (request sits in the final GOP) -> the head IS the output. ---
@@ -142,7 +189,7 @@ public sealed class SmartCutEngine : ISmartCutEngine
             {
                 MoveIntoPlace(headPath, outputPath);
                 progress?.Report(1.0);
-                return new SmartCutResult(outputPath, plan.Strategy, false, null, plan.ReencodedDuration);
+                return new SmartCutResult(outputPath, plan.Strategy, false, null, plan.ReencodedDuration, plan.Start);
             }
 
             // --- 3. One concat: the head, then the SOURCE ITSELF from the boundary keyframe (stream copy - reuses the
@@ -165,7 +212,7 @@ public sealed class SmartCutEngine : ISmartCutEngine
             MoveIntoPlace(finalTemp, outputPath);
             progress?.Report(1.0);
 
-            return new SmartCutResult(outputPath, plan.Strategy, false, null, plan.ReencodedDuration);
+            return new SmartCutResult(outputPath, plan.Strategy, false, null, plan.ReencodedDuration, plan.Start);
         }
         finally
         {

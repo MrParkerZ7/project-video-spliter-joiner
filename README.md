@@ -110,8 +110,10 @@ never a silent window.
   the app. Tick **Exact cut** and each cut lands exactly where you set it instead: only the short
   fragment between your cut point and the next keyframe is re-encoded (roughly a second of video), and
   the rest of the file is still copied untouched, read straight from the source in one pass so the joint stays in time.
-  A source whose codecs cannot be reproduced, and a `.ts` / `.m2ts` / `.mts` file (its timestamps do not start at zero),
-  fall back to the ordinary lossless cut and say so on the row rather than guessing. It is verified by integration
+  The cut starts on the first video frame at or after the point you set (at most one frame later: 33 ms at
+  30 fps). A source whose codecs cannot be reproduced, HEVC, a `.mkv` / `.webm` file, a `.ts` / `.m2ts` / `.mts` file
+  and any other file whose timestamps do not start at zero fall back to the ordinary lossless cut and say so on the
+  row rather than guessing. It is verified by integration
   tests that run the real ffmpeg on a generated H.264/AAC clip, not only by unit tests. Lossless stream copy remains the default and the
   point of the app.
 - **Replace originals (optional, destructive)** — off by default. Turn it on and each trimmed result is

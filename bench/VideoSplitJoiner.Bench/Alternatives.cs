@@ -572,7 +572,7 @@ internal static class Alternatives
                         Io.TryDelete(final);
                     }
 
-                    c.Results.Add("alt-smart",$"exact head @{start}s: {name}", fx.Key, "warm", runs, tm.Median, tm.MedianUsage, $"runs {Fmt(tm.All)} | {eq}");
+                    c.Results.Add("alt-smart", $"exact head @{start}s: {name}", fx.Key, "warm", runs, tm.Median, tm.MedianUsage, $"runs {Fmt(tm.All)} | {eq}");
                 }
 
                 Io.TryDelete(dir);

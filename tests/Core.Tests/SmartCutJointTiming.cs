@@ -18,9 +18,9 @@ namespace VideoSplitJoiner.Core.Tests;
 /// concat-to-mp4 shifts every stream to make it non-negative, so the final's video does not start at 0 (about 21 ms in
 /// practice, T-190 § Design, <i>joint time base</i>). "Presented at <c>HeadEnd − Start</c>" therefore always means
 /// <b>relative to the final's first video frame</b>: a frame's pts minus the final video stream's <c>start_time</c>. It
-/// holds for a Start on the source's frame grid: the first head frame is then at Start itself. A Start off the grid
-/// leaves the head's frames on a grid up to one frame off the tail's (discovered by T-190, not fixed by it), so these
-/// checks are for on-grid Starts.</para>
+/// holds for the cut's EFFECTIVE start (SPEC-001 I43): the engine starts the cut on the first source video frame at or
+/// after the requested one, so the head's first frame is at that start and its frames sit on the copied part's grid. Callers
+/// pass the effective start, found from the source's own packets (<see cref="FirstFrameAtOrAfterAsync"/>).</para>
 /// </summary>
 internal static class SmartCutJointTiming
 {
@@ -148,6 +148,20 @@ internal static class SmartCutJointTiming
         return double.Parse(rate[1], CultureInfo.InvariantCulture) / double.Parse(rate[0], CultureInfo.InvariantCulture);
     }
 
+    /// <summary>
+    /// The presentation time of the first video frame of <paramref name="path"/> at or after <paramref name="time"/> (within
+    /// 1 ms, the engine's own tolerance), read from ALL the source's packets, not from the code under test: the oracle for
+    /// the effective start of an Exact cut (SPEC-001 I43).
+    /// </summary>
+    public static async Task<double> FirstFrameAtOrAfterAsync(string path, double time)
+    {
+        var pts = (await PacketsAsync(path, "v:0")).Select(p => p.Pts).Where(p => !double.IsNaN(p)).OrderBy(p => p);
+        return pts.First(p => p >= time - 0.001);
+    }
+
+    /// <summary>The number of video packets of <paramref name="path"/>; 0 when it has no video stream (an audio-only file).</summary>
+    public static async Task<int> VideoPacketCountAsync(string path) => (await PacketsAsync(path, "v:0")).Count;
+
     /// <summary>ffprobe's <c>format.start_time</c> (seconds).</summary>
     public static Task<double> FormatStartAsync(string path) => LosslessBoundary.FormatStartTimeAsync(path);
 
@@ -181,6 +195,7 @@ internal static class SmartCutJointTiming
         double FrameInterval,
         double AacFrame,
         int HeadFrames,
+        int ExpectedHeadFrames,
         double ExpectedJointRel,
         double JointAbs,
         double JointRel,
@@ -217,7 +232,7 @@ internal static class SmartCutJointTiming
 
         public string Describe() => string.Create(
             CultureInfo.InvariantCulture,
-            $"joint frame {HeadFrames}: rel {JointRel:0.000000} s (abs {JointAbs:0.000000}, final video starts {FinalVideoStart:0.000000}), "
+            $"joint frame {HeadFrames} (expected {ExpectedHeadFrames}): rel {JointRel:0.000000} s (abs {JointAbs:0.000000}, final video starts {FinalVideoStart:0.000000}), "
             + $"expected {ExpectedJointRel:0.000000} s ({JointOffsetFrames:+0.00;-0.00;0.00} frames); "
             + $"audio: first pts {AudioFirstPts:0.000000}, counted from {AudioStartAfterDrop:0.000000}, {AudioNotIncreasing} non-increasing, worst gap/overlap {AudioWorstGap * 1000:0.00} ms (AAC frame {AacFrame * 1000:0.00} ms); "
             + $"video span {OutVideoSpan:0.000} s ({OutVideoFrames} frames; source [Start, End) {RefVideoSpan:0.000} s, {RefVideoFrames} frames, overrun {OverrunFrames}), "
@@ -237,7 +252,7 @@ internal static class SmartCutJointTiming
         // --- the final ---
         var videoStart = await StreamStartAsync(finalPath, "v:0");
         var video = (await PacketsAsync(finalPath, "v:0")).OrderBy(p => p.Pts).ToList();
-        var frame = await FrameIntervalAsync(finalPath);
+        var frame = await FrameIntervalAsync(sourcePath); // the SOURCE's rate: a final with sub-frame offsets reports r_frame_rate 240
         headFrames.Should().BeLessThan(video.Count, "the joint frame must exist in the final");
 
         // Audio in file order: the order the player reads it in.
@@ -277,6 +292,7 @@ internal static class SmartCutJointTiming
             frame,
             aac,
             headFrames,
+            (int)Math.Round((headEnd - start).TotalSeconds / frame),
             (headEnd - start).TotalSeconds,
             video[headFrames].Pts,
             video[headFrames].Pts - videoStart,
