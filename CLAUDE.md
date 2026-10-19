@@ -138,11 +138,14 @@ A .NET 8 WPF app that splits and joins video **without re-encoding**. See [READM
   cancellable background task (`IsIndexingKeyframes` / `KeyframesReady`), a new load cancels the prior
   index (stale-guard), and a cut placed mid-index awaits the same in-flight scan (snap-before-ready).
   Don't re-block the load on the full scan or add a second keyframe scan pass.
-- **The keyframe scan is demux packet-flag, with a frame-scan fallback.** `MediaProbe.GetKeyframesAsync`
-  reads keyframe packets at the demux layer (`-show_packets`, keeping `K`-flag packets) — no frame
-  decode — and falls back to the decode-based `-skip_frame nokey` frame scan only when the packet
-  query is empty or throws. Keep both paths producing the same sorted-distinct output; don't drop the
-  fallback.
+- **The keyframe scan reads the container's sample table first (T-194).** `MediaProbe.GetKeyframesAsync` reads an
+  MP4/MOV file's `moov` sample table (`IsoBmffKeyframeIndex`: the `moov` and some box headers, never the media
+  data), checked against two short ffprobe packet windows at the ends of the file; then the demux packet-flag
+  scan (`-show_packets`, keeping `K`-flag packets), when the reader declines the file or a window disagrees; then
+  the decode-based `-skip_frame nokey` frame scan, only when the packet query is empty or throws. Keep all three
+  producing the same sorted-distinct output; don't drop the fallbacks. The reader declines anything it was not
+  checked against (a new shape needs its real-file row in `IsoBmffKeyframeIndexParityTests` first, ADR 0025), and a
+  `-read_intervals` with a start always carries an end (ffprobe's open-ended `start%` is not deterministic).
 - **Compatibility is refused, not fixed.** An incompatible join reports named mismatches and writes
   no output. Do not silently re-encode to reconcile mismatched clips.
 - **The preview player is behind `IMediaPlayer` (FFME impl).** The Split-screen preview transport

@@ -17,11 +17,13 @@ namespace VideoSplitJoiner.Core.Tests;
 public class MediaProbeKeyframePacketTests
 {
     private readonly MediaFixtures _fixtures;
+    private readonly SampleTableFixtures _samples;
     private readonly ITestOutputHelper _output;
 
-    public MediaProbeKeyframePacketTests(MediaFixtures fixtures, ITestOutputHelper output)
+    public MediaProbeKeyframePacketTests(MediaFixtures fixtures, SampleTableFixtures samples, ITestOutputHelper output)
     {
         _fixtures = fixtures;
+        _samples = samples;
         _output = output;
     }
 
@@ -65,8 +67,10 @@ public class MediaProbeKeyframePacketTests
             return;
         }
 
+        // T-194: an MP4 now takes the sample-table path (SPEC-004 I41), so the packet path is exercised on a Matroska remux of
+        // the same kind of fixture (10 s @ 30 fps, GOP 30, B-frames): no sample table, so the demux packet scan answers.
         var probe = MakeProbe();
-        var kf = await probe.GetKeyframesAsync(_fixtures.VideoOnlyPath);
+        var kf = await probe.GetKeyframesAsync(_samples.Matroska);
 
         // Fixture is 10s @ 30fps, GOP 30 (1s) → keyframes at ~0,1,2,…,10.
         probe.LastScanPath.Should().Be(KeyframeScanPath.Packets, "the fast demux path must be used when packets carry keyframe flags");

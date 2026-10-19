@@ -72,10 +72,25 @@ public sealed class MediaProbe : IMediaProbe, IVideoFrameProbe
 
     /// <summary>
     /// Which scan path the LAST <see cref="GetKeyframesAsync"/> call actually used. Internal —
-    /// exposed only so tests can assert the fast packet path ran (and that the fallback fires when
-    /// the packet query yields nothing). Not part of the public contract; not reset by cache hits.
+    /// exposed only so tests can assert the sample-table path ran, then the fast packet path (and
+    /// that each fallback fires when the one before it yields nothing). Not part of the public
+    /// contract; not reset by cache hits.
     /// </summary>
     internal KeyframeScanPath LastScanPath { get; private set; }
+
+    /// <summary>
+    /// Test seam (T-194): opens the file for the sample-table reader. The default is read-only and shares the file with writers and
+    /// deleters (<c>FileShare.ReadWrite | Delete</c>), so the read can never block a Replace-originals swap, a rename, a delete or
+    /// a file still being written.
+    /// </summary>
+    internal Func<string, Stream> OpenKeyframeSource { get; set; } = OpenForKeyframeIndex;
+
+    /// <summary>
+    /// Test seam (T-194): the sample-table reader. The default is <see cref="IsoBmffKeyframeIndex.TryRead(Func{Stream}, CancellationToken)"/>.
+    /// A test substitutes one that returns a list the file does not hold, to see the anchor refuse it.
+    /// </summary>
+    internal Func<Func<Stream>, CancellationToken, SampleTableKeyframes?> KeyframeIndexReader { get; set; } =
+        (open, ct) => IsoBmffKeyframeIndex.TryRead(open, ct);
 
     /// <summary>Create a probe over an existing ffprobe runner.</summary>
     public MediaProbe(IFfprobeRunner ffprobe)
@@ -224,23 +239,35 @@ public sealed class MediaProbe : IMediaProbe, IVideoFrameProbe
 
         try
         {
-            // Primary (T-031): read keyframe PACKETS at the demux level — no frame decoding, so the
+            // First (T-194): an MP4/MOV file lists its keyframes in its own sample table, which is read in a few
+            // milliseconds without touching the media data; two short ffprobe packet windows at the ends of the file then
+            // check the list against the demuxer. Anything the reader cannot prove, and any disagreement, leaves this null
+            // and the whole-file scan below runs exactly as it always did.
+            IReadOnlyList<TimeSpan>? result = await TryKeyframesFromSampleTableAsync(path).ConfigureAwait(false);
+            if (result is not null)
+            {
+                LastScanPath = KeyframeScanPath.Index;
+            }
+
+            // Then (T-031): read keyframe PACKETS at the demux level — no frame decoding, so the
             // scan is fast even on 4K clips. Fall back to the frame-decode scan if the packet query
             // fails or yields zero keyframes, so correctness never regresses. The shared scan is not
             // bound to a caller CT (CancellationToken.None) — see the dedup note on _inFlightScans.
-            IReadOnlyList<TimeSpan>? result = null;
-            try
+            if (result is null)
             {
-                var packetKeyframes = await ScanKeyframesFromPacketsAsync(path, CancellationToken.None).ConfigureAwait(false);
-                if (packetKeyframes.Count > 0)
+                try
                 {
-                    LastScanPath = KeyframeScanPath.Packets;
-                    result = packetKeyframes;
+                    var packetKeyframes = await ScanKeyframesFromPacketsAsync(path, CancellationToken.None).ConfigureAwait(false);
+                    if (packetKeyframes.Count > 0)
+                    {
+                        LastScanPath = KeyframeScanPath.Packets;
+                        result = packetKeyframes;
+                    }
                 }
-            }
-            catch (FfprobeException)
-            {
-                // Packet query failed outright — fall through to the frame scan below.
+                catch (FfprobeException)
+                {
+                    // Packet query failed outright — fall through to the frame scan below.
+                }
             }
 
             if (result is null)
@@ -281,17 +308,37 @@ public sealed class MediaProbe : IMediaProbe, IVideoFrameProbe
     /// </summary>
     private async Task<IReadOnlyList<TimeSpan>> ScanKeyframesFromPacketsAsync(string path, CancellationToken ct)
     {
+        var json = await _ffprobe.RunJsonAsync(PacketScanArgs(path), ct).ConfigureAwait(false);
+        var root = JsonDeserialize<FfprobePacketsRoot>(json);
+        return KeyframeTimes(root).ToList().AsReadOnly();
+    }
+
+    /// <summary>
+    /// The args of the packet query: the first video stream's packets with the time and flags the keyframe scan keeps. The whole-file
+    /// scan runs it as it is; the sample-table check (T-194) adds <c>-read_intervals</c>, and <c>-nofind_stream_info</c> because a
+    /// window of one GOP needs none of the stream probing ffprobe does first.
+    /// </summary>
+    private static FfmpegArgs PacketScanArgs(string path, string? readInterval = null)
+    {
         var args = FfmpegArgs.ForFfprobe()
             .Raw(
                 "-select_streams", "v:0",
                 "-show_packets",
                 "-show_entries", "packet=pts_time,dts_time,flags",
-                "-print_format", "json")
-            .Input(path);
+                "-print_format", "json");
+        if (readInterval is not null)
+        {
+            args.Raw("-read_intervals", readInterval, "-nofind_stream_info");
+        }
 
-        var json = await _ffprobe.RunJsonAsync(args, ct).ConfigureAwait(false);
-        var root = JsonDeserialize<FfprobePacketsRoot>(json);
+        return args.Input(path);
+    }
 
+    /// <summary>
+    /// The sorted, distinct times of the packets flagged as keyframes: <c>pts_time</c>, <c>dts_time</c> when a packet has no pts.
+    /// </summary>
+    private static SortedSet<TimeSpan> KeyframeTimes(FfprobePacketsRoot? root)
+    {
         var times = new SortedSet<TimeSpan>();
         if (root?.Packets is not null)
         {
@@ -310,7 +357,123 @@ public sealed class MediaProbe : IMediaProbe, IVideoFrameProbe
             }
         }
 
-        return times.ToList().AsReadOnly();
+        return times;
+    }
+
+    // ---- The sample-table path (T-194) ----------------------------------------------------------------------------------
+
+    /// <summary>How far past a keyframe the anchor windows reach: a window must hold the packet of the keyframe itself.</summary>
+    private static readonly TimeSpan AnchorMargin = TimeSpan.FromMilliseconds(1);
+
+    /// <summary>
+    /// The end of the tail window, in seconds: far past any file. An interval with a start and no end (<c>9.001%</c>) is not
+    /// deterministic in ffprobe (the bundled n7.1.5 listed no packet at all in 14-23 of 100 runs on one unchanged file, and in
+    /// none of 100 with an end; its debug log was the same in both cases, as if the unset end were read as garbage), so the
+    /// window states its end and still reads to the end of the file.
+    /// </summary>
+    private const string TailWindowEnd = "1000000000";
+
+    private static Stream OpenForKeyframeIndex(string path) =>
+        new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 4096, FileOptions.RandomAccess);
+
+    /// <summary>
+    /// The keyframes of an MP4/MOV file from its sample table, or null when the reader declines the file or ffprobe disagrees with
+    /// the table at either end. Inside the one shared scan of the file, so there is still one scan per file per key (T-093): the
+    /// reader runs here, then two short ffprobe packet windows — one from the start of the file to just past the second keyframe,
+    /// one from just past the last keyframe to the end — and the table is used only when both windows list exactly the keyframes
+    /// the table puts there (<see cref="AnchorAgrees"/>). They cost about a GOP each, bounded by the GOP, not by the file.
+    /// A failing window (a non-zero exit, output that is not JSON) is a disagreement; a cancellation or a missing ffprobe is
+    /// not, and escapes as it does from the packet scan.
+    /// </summary>
+    private async Task<IReadOnlyList<TimeSpan>?> TryKeyframesFromSampleTableAsync(string path)
+    {
+        var read = KeyframeIndexReader(() => OpenKeyframeSource(path), CancellationToken.None);
+        if (read is null || read.Keyframes.Count < 2)
+        {
+            return null;
+        }
+
+        var index = read.Keyframes;
+        var headEnd = index[1] + AnchorMargin;
+        var tailStart = index[^1] + AnchorMargin;
+        if (tailStart <= TimeSpan.Zero)
+        {
+            return null; // -read_intervals cannot start before zero
+        }
+
+        // Both windows run at once: each is mostly the start of an ffprobe process.
+        var head = ReadPacketWindowAsync(path, "%" + FormatInterval(headEnd));
+        var tail = ReadPacketWindowAsync(path, FormatInterval(tailStart) + "%" + TailWindowEnd);
+        try
+        {
+            await Task.WhenAll(head, tail).ConfigureAwait(false);
+        }
+        catch
+        {
+            // Each task is looked at on its own below, so that a failure of one window does not hide the other's.
+        }
+
+        var headWindow = await SettleAsync(head).ConfigureAwait(false);
+        var tailWindow = await SettleAsync(tail).ConfigureAwait(false);
+        return headWindow is not null && tailWindow is not null && AnchorAgrees(index, headWindow, tailWindow)
+            ? index
+            : null;
+    }
+
+    private static string FormatInterval(TimeSpan time) =>
+        time.TotalSeconds.ToString("0.######", CultureInfo.InvariantCulture);
+
+    /// <summary>What an anchor window listed: the time of its first packet, and the keyframes among its packets.</summary>
+    internal sealed record PacketWindow(TimeSpan? FirstTime, IReadOnlyList<TimeSpan> Keyframes);
+
+    private async Task<PacketWindow> ReadPacketWindowAsync(string path, string interval)
+    {
+        var json = await _ffprobe.RunJsonAsync(PacketScanArgs(path, interval), CancellationToken.None).ConfigureAwait(false);
+        var root = JsonDeserialize<FfprobePacketsRoot>(json);
+        TimeSpan? first = null;
+        if (root?.Packets is { Count: > 0 } packets && TryParseSeconds(packets[0].PtsTime ?? packets[0].DtsTime, out var firstTime))
+        {
+            first = firstTime;
+        }
+
+        return new PacketWindow(first, KeyframeTimes(root).ToList().AsReadOnly());
+    }
+
+    private static async Task<PacketWindow?> SettleAsync(Task<PacketWindow> window)
+    {
+        try
+        {
+            return await window.ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is FfprobeException or JsonException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// True when ffprobe's two windows list exactly the keyframes the sample table puts there, TimeSpan for TimeSpan (T-194).
+    /// <list type="bullet">
+    /// <item>The HEAD window starts at the beginning of the file and ends just past the second keyframe: it must list every
+    /// keyframe of the table before that end, and no other. There is no lower bound, so a keyframe the table has and ffprobe
+    /// does not list (one before an edit list's start, say) is a disagreement.</item>
+    /// <item>The TAIL window starts just past the last keyframe: ffprobe seeks back to the keyframe at or before the start and
+    /// lists every packet from there, so it must list every keyframe of the table from its FIRST packet on, and no other. A last
+    /// "keyframe" that is not one makes the seek land on the one before it, and the table then has an entry the window lacks.</item>
+    /// <item>Each window must list at least one keyframe.</item>
+    /// </list>
+    /// What the windows cannot see is an error in the middle of the table that leaves both ends right.
+    /// </summary>
+    internal static bool AnchorAgrees(IReadOnlyList<TimeSpan> index, PacketWindow head, PacketWindow tail)
+    {
+        if (index.Count < 2 || head.Keyframes.Count == 0 || tail.Keyframes.Count == 0 || tail.FirstTime is not { } tailFirst)
+        {
+            return false;
+        }
+
+        var headEnd = index[1] + AnchorMargin;
+        return head.Keyframes.SequenceEqual(index.Where(k => k < headEnd))
+               && tail.Keyframes.SequenceEqual(index.Where(k => k >= tailFirst));
     }
 
     /// <summary>
@@ -644,7 +807,8 @@ public sealed class MediaProbe : IMediaProbe, IVideoFrameProbe
         }
     }
 
-    private static bool TryParseSeconds(string? raw, out TimeSpan value)
+    /// <summary>A time printed in seconds (<c>pts_time</c>: a decimal with six places) as a TimeSpan; false for absent, N/A or not a finite number.</summary>
+    internal static bool TryParseSeconds(string? raw, out TimeSpan value)
     {
         value = TimeSpan.Zero;
         if (string.IsNullOrWhiteSpace(raw) || raw == "N/A")
@@ -679,13 +843,18 @@ public sealed class MediaProbe : IMediaProbe, IVideoFrameProbe
     private static T? JsonDeserialize<T>(string json) => JsonSerializer.Deserialize<T>(json, JsonOptions);
 }
 
-/// <summary>Which internal scan path <see cref="MediaProbe.GetKeyframesAsync"/> used (T-031).</summary>
+/// <summary>Which internal scan path <see cref="MediaProbe.GetKeyframesAsync"/> used (T-031, T-194).</summary>
 internal enum KeyframeScanPath
 {
     /// <summary>No scan performed yet this instance.</summary>
     None = 0,
 
-    /// <summary>Fast demux-level packet-flag scan (the T-031 primary path).</summary>
+    /// <summary>
+    /// The MP4/MOV sample table read by <see cref="IsoBmffKeyframeIndex"/> and checked by two short ffprobe packet windows (T-194).
+    /// </summary>
+    Index,
+
+    /// <summary>Demux-level packet-flag scan of the whole file (the T-031 path; the fallback of the sample table).</summary>
     Packets,
 
     /// <summary>Decode-level <c>-skip_frame nokey</c> fallback.</summary>

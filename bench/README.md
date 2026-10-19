@@ -19,8 +19,9 @@ wall-clock time (T-137).
 It was ported from the T-187 prototype, whose reference copy stays in
 [`docs/architect/design/references/T-187-bench/`](../docs/architect/design/references/T-187-bench/) as the evidence record:
 `CoreScenarios.cs`, `Alternatives.cs`, `Smart2.cs`, the results writer and `show.py`'s filter. Not ported:
-`IoMeter.cs` (it started processes itself; the job object replaces it) and `Mp4Index.cs` (T-194 builds the
-production sample-table reader in Core, and the bench then times it through `MediaProbe`).
+`IoMeter.cs` (it started processes itself; the job object replaces it) and `Mp4Index.cs` (T-194 built the
+production sample-table reader in Core, `IsoBmffKeyframeIndex`, and the `kf` scenario times it alone and through
+`MediaProbe`; Core makes its internals visible to the bench for that).
 
 ## Build and run
 
@@ -173,7 +174,7 @@ so it is exact on `4k10m` (4500/7500/6000) and `mkv` (900/1200/1500) as on the r
 | scenario | what it times |
 |---|---|
 | `probe` | `MediaProbe.ProbeAsync`, warm ×(runs+1) and cold |
-| `kf` | `MediaProbe.GetKeyframesAsync` (the packet scan) warm and cold, and the ffprobe process alone |
+| `kf` | `MediaProbe.GetKeyframesAsync` warm and cold (since T-194 an MP4/MOV answers from its sample table and two ffprobe windows; the note says which path ran and how much of the file was read), then the pieces: the sample-table reader alone (`IsoBmffKeyframeIndex`, with the bytes it counted, or why it declined), the two anchor windows alone (run at once), and the ffprobe `-show_packets` process alone (the whole-file scan: what the call did before T-194, and still does for an MKV or TS) |
 | `wf` | `FfmpegWaveformService.GetPeaksAsync(1800)` |
 | `thumb` | hover / Bulk chip / profile pictures on a keyframe and mid-GOP, a cache hit, a 10-bucket hover sweep, cold. Each row's note says where the service really seeked (`FfmpegThumbnailService` floors a request to its 1 s bucket, read back from the file it returns) and how far past the keyframe before it: on `4k10m` and `mkv` the "on keyframe" request at 300.021 s seeks to 300 s, 1.979 s past the keyframe at 298.021 s, so it decodes almost a whole GOP and is slower than the mid-GOP grab |
 | `load` | `SplitViewModel.LoadAsync`'s order: probe, then keyframes and waveform in parallel. A keyframe scan that throws is noted FAILED and a null waveform NULL on its line, never recorded as a plain time |

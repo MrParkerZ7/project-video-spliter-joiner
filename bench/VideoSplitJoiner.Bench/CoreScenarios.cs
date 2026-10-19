@@ -59,29 +59,64 @@ internal static class CoreScenarios
             var probe = c.NewProbe();
             IReadOnlyList<TimeSpan>? kf = null;
             var (s, u) = await Meter.Run(async () => kf = await probe.GetKeyframesAsync(fx.Path));
-            c.Results.Add("shared", "MediaProbe.GetKeyframesAsync (packet scan)", fx.Key, "warm", i, s, u,
-                $"{kf!.Count} keyframes, read {100.0 * u.ReadBytes / size:0}% of the file");
+            c.Results.Add("shared", "MediaProbe.GetKeyframesAsync", fx.Key, "warm", i, s, u,
+                $"{kf!.Count} keyframes via {probe.LastScanPath}, read {100.0 * u.ReadBytes / size:0.##}% of the file ({Io.Mb(u.ReadBytes)})");
         }
 
-        // Breakdown: the ffprobe process alone (same args as MediaProbe.cs:253-259) vs the whole call.
+        // Breakdown (T-194): the sample-table reader alone, the two anchor windows alone, and the ffprobe packet scan
+        // process alone (the shipped whole-file scan: what GetKeyframesAsync did before the sample table, and still does for
+        // a file the reader declines), each with the bytes it read.
+        SampleTableKeyframes? read = null;
+        string? declined = null;
+        var (rs, ru) = Meter.RunSync(() => read = IsoBmffKeyframeIndex.TryRead(() => OpenShared(fx.Path), out declined));
+        c.Results.Add("shared", "  sample-table reader alone (IsoBmffKeyframeIndex)", fx.Key, "warm", 1, rs, ru,
+            read is null ? $"declined: {declined}" : $"{read.Keyframes.Count} keyframes, the reader counted {read.BytesRead:N0} bytes");
+
+        if (read is not null)
+        {
+            var head = "%" + Interval(read.Keyframes[1] + TimeSpan.FromMilliseconds(1));
+            var tail = Interval(read.Keyframes[^1] + TimeSpan.FromMilliseconds(1)) + "%1000000000";
+            string[] headJson = { string.Empty }, tailJson = { string.Empty };
+            var (ws, wu) = await Meter.Run(async () =>
+            {
+                var h = c.RunFfprobe(WindowArgs(head, fx.Path));
+                var t = c.RunFfprobe(WindowArgs(tail, fx.Path));
+                headJson[0] = (await h).Out;
+                tailJson[0] = (await t).Out;
+            });
+            c.Results.Add("shared", "  anchor windows (2 ffprobe -read_intervals runs, at once)", fx.Key, "warm", 1, ws, wu,
+                $"head {headJson[0].Length / 1024.0:0.#}KB json, tail {tailJson[0].Length / 1024.0:0.#}KB json");
+        }
+
         var json = string.Empty;
         var (ps, pu) = await Meter.Run(async () => (_, json) = await c.RunFfprobe("-select_streams", "v:0", "-show_packets",
             "-show_entries", "packet=pts_time,dts_time,flags", "-print_format", "json", "-i", fx.Path));
-        c.Results.Add("shared", "  ffprobe -show_packets json (process only)", fx.Key, "warm", 1, ps, pu, $"stdout {json.Length / 1024.0:0}KB");
+        c.Results.Add("shared", "  ffprobe -show_packets json (process only)", fx.Key, "warm", 1, ps, pu, $"stdout {json.Length / 1024.0:0}KB; the whole-file scan, read {100.0 * pu.ReadBytes / size:0.##}% of the file");
 
         var cold = Io.ColdCopy(c, fx.Path, fx.Key);
         try
         {
             var probe = c.NewProbe();
             var (s, u) = await Meter.Run(() => probe.GetKeyframesAsync(cold));
-            c.Results.Add("shared", "MediaProbe.GetKeyframesAsync (packet scan)", fx.Key, "cold", 1, s, u,
-                $"read {100.0 * u.ReadBytes / size:0}% of the file");
+            c.Results.Add("shared", "MediaProbe.GetKeyframesAsync", fx.Key, "cold", 1, s, u,
+                $"via {probe.LastScanPath}, read {100.0 * u.ReadBytes / size:0.##}% of the file ({Io.Mb(u.ReadBytes)})");
         }
         finally
         {
             Io.TryDelete(cold);
         }
     }
+
+    /// <summary>Opens a fixture the way MediaProbe opens a file for the sample-table reader.</summary>
+    private static FileStream OpenShared(string path) =>
+        new(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 4096, FileOptions.RandomAccess);
+
+    private static string Interval(TimeSpan t) => t.TotalSeconds.ToString("0.######", CultureInfo.InvariantCulture);
+
+    /// <summary>The args of one anchor window (MediaProbe.PacketScanArgs with an interval).</summary>
+    private static string[] WindowArgs(string interval, string path) =>
+        new[] { "-select_streams", "v:0", "-show_packets", "-show_entries", "packet=pts_time,dts_time,flags", "-print_format", "json",
+                "-read_intervals", interval, "-nofind_stream_info", "-i", path };
 
     public static async Task Waveform(BenchContext c, Fixture fx, int runs)
     {

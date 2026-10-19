@@ -9,6 +9,8 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="VideoSplitJoiner.Core.Tests" />
+    <!-- The dev-only bench times the internal sample-table reader and the whole-file packet scan beside MediaProbe (T-194). -->
+    <InternalsVisibleTo Include="VideoSplitJoiner.Bench" />
   </ItemGroup>
 
 </Project>

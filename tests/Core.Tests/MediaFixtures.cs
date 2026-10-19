@@ -197,7 +197,7 @@ public sealed class MediaFixtures : IDisposable
 /// integration test classes.
 /// </summary>
 [CollectionDefinition(MediaFixturesCollection.Name)]
-public sealed class MediaFixturesCollection : ICollectionFixture<MediaFixtures>
+public sealed class MediaFixturesCollection : ICollectionFixture<MediaFixtures>, ICollectionFixture<SampleTableFixtures>
 {
     public const string Name = "media-fixtures";
 }
