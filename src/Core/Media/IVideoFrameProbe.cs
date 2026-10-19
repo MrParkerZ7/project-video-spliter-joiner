@@ -1,10 +1,10 @@
 namespace VideoSplitJoiner.Core.Media;
 
 /// <summary>
-/// The two frame-level questions the frame-exact cut asks of a source (T-190), kept apart from <see cref="IMediaProbe"/> so
-/// that probe stays the narrow seam every screen and fake already implements. <see cref="MediaProbe"/> implements both; an
-/// <see cref="IMediaProbe"/> that does not leaves <c>SmartCutEngine</c> without them (it then cuts at the requested time
-/// exactly as before, and does not check the head it wrote), never throws.
+/// The two frame-level questions the frame-exact cut asks of a source and of the head it re-encodes (T-190, T-191), kept apart
+/// from <see cref="IMediaProbe"/> so that probe stays the narrow seam every screen and fake already implements.
+/// <see cref="MediaProbe"/> implements both; an <see cref="IMediaProbe"/> that does not leaves <c>SmartCutEngine</c> without them
+/// (it then cuts at the requested time exactly as before, and does not check the head it wrote), never throws.
 /// </summary>
 public interface IVideoFrameProbe
 {
@@ -32,8 +32,19 @@ public interface IVideoFrameProbe
     Task<TimeSpan?> FirstVideoFrameAtOrAfterAsync(string path, TimeSpan time, CancellationToken ct = default);
 
     /// <summary>
-    /// The number of video packets in <paramref name="path"/> (0 for a file with no video stream), or null when it cannot be
-    /// read. A demux-level count, no decoding; used on the re-encoded head to refuse a head that lost the source's video.
+    /// The presentation times of the video frames of <paramref name="path"/> that lie in <c>[from, to)</c>, ascending (a frame
+    /// within 1 ms before <paramref name="from"/> counts as at it, one within 1 ms before <paramref name="to"/> as at it, so is
+    /// out): an empty list for a file with no video stream or no frame in the window, and null when the answer cannot be given
+    /// (the frame times of a packet cannot be told, as for <see cref="FirstVideoFrameAtOrAfterAsync"/>, or the file cannot be
+    /// read). A demux-level read like the first, whose cost is the GOP before <paramref name="from"/> and the window
+    /// to two seconds past <paramref name="to"/>: that last stretch is what puts the leading B-frames of an OPEN GOP in the answer,
+    /// because the key frame that ends the window is decoded before the frames displayed ahead of it.
+    ///
+    /// <para>Why the engine asks (T-191): the count of the frames a head HOLDS against the count of the source's frames in the
+    /// span it was cut from, and the time of its first frame, are the end-to-end check that a head is the frames it should be.
+    /// The input seek lands on the key frame by its decoding time; where that key frame has leading pictures that cannot be
+    /// decoded without the GOP before it (open GOP, MPEG-4 part 2 with B-frames) the head loses frames at its start or all of
+    /// them. A head that does not match is a fall back, never a Done.</para>
     /// </summary>
-    Task<int?> CountVideoPacketsAsync(string path, CancellationToken ct = default);
+    Task<IReadOnlyList<TimeSpan>?> GetVideoFrameTimesAsync(string path, TimeSpan from, TimeSpan to, CancellationToken ct = default);
 }

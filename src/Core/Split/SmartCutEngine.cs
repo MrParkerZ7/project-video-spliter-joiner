@@ -62,9 +62,10 @@ public interface ISmartCutEngine
 /// after the requested time (within a few frame intervals: a video gap is a fall back, <see cref="MaxSnapShift"/>), found
 /// before the plan is made, so the head's frames sit on the same grid as the copied part's.
 /// A Start between two frames used to leave the head's frames on the encoder's 1/fps grid counted from the Start: the joint
-/// 33 ms early with a muxer timestamp line, or one repeated frame. The head the engine wrote is also checked for a video
-/// frame: a head with none would make the concat drop the source's video, and a cut that loses the video is a fall back,
-/// not a result.</para>
+/// 33 ms early with a muxer timestamp line, or one repeated frame. The head the engine wrote is also checked against the
+/// source (T-191, SPEC-001 I46): it must hold as many video frames as the source has in the span it was cut from, the first
+/// at its time 0, and not none - a head with none would make the concat drop the source's video. A head that fails is a fall
+/// back to the lossless cut, not a result.</para>
 ///
 /// <para><b>The head seeks to its keyframe before it decodes (T-191, SPEC-001 I44).</b> <see cref="SmartCutArgsBuilder.HeadReencode"/>
 /// puts <c>-ss</c> before <c>-i</c>, so the decode starts at the keyframe before the start whatever the position in the file;
@@ -74,11 +75,11 @@ public interface ISmartCutEngine
 /// 1.0: the head encode into <c>[0, w)</c>, the concat into <c>[w, 1)</c>, with <c>w = h·k / (h·k + c)</c> from
 /// <see cref="SmartCutCost"/> (the same function the Bulk Cut batch weighs the row by). A <c>FullReencode</c> reports its one
 /// run across <c>[0, 1)</c>. The fraction never goes backwards, a run that reports nothing still ends at its slice's end, and
-/// 1.0 is reported once, after the output is in place — never by a cut that fails, is cancelled or falls back. The two
-/// ffprobe reads around the head (the frame snap before it, the head's packet count after it) carry no progress of their own
-/// and no weight: each is bounded by a GOP and costs a fraction of a second against a head of seconds (measured 0.06-0.15 s each
-/// on the bench's 4K fixtures against a head of 1.5-5 s), so the row sits at 0 while the snap is read, at or just below the end of
-/// the head's slice while the head is checked (a head that fails the check is handed back to the lossless cut, which the Bulk
+/// 1.0 is reported once, after the output is in place — never by a cut that fails, is cancelled or falls back. The ffprobe
+/// reads around the head (the frame snap before it, the head's frame times and the source's after it) carry no progress of
+/// their own and no weight: each is bounded by a GOP and costs a fraction of a second against a head of seconds (measured
+/// 0.06-0.15 s each on the bench's 4K fixtures against a head of 1.5-5 s), so the row sits at 0 while the snap is read, at or
+/// just below the end of the head's slice while the head is checked (a head that fails the check is handed back to the lossless cut, which the Bulk
 /// engine keeps from moving the row's bar back).</para>
 ///
 /// <para>Every intermediate lands in a temp dir that is swept in a <c>finally</c>, and the final file is
@@ -215,14 +216,12 @@ public sealed class SmartCutEngine : ISmartCutEngine
                     $"Exact cut failed while re-encoding the leading fragment of '{Path.GetFileName(inputPath)}'.");
             }
 
-            // A head with no video frame (the range holds none, or the encoder dropped them) would make the concat take its
-            // streams from an audio-only file and drop the source's video: the file would be Done and have no picture.
+            // The head must be the frames it should be (T-190: not empty; T-191: the source's own frames of [Start, HeadEnd), in
+            // number, starting on the first of them). A head that is not is a fall back, never a Done.
             if (_frames is not null && ok.Info.HasVideo
-                && await _frames.CountVideoPacketsAsync(headPath, ct).ConfigureAwait(false) is 0)
+                && await CheckHeadAsync(_frames, inputPath, headPath, plan.Start, headEnd, ok.Info, ct).ConfigureAwait(false) is { } whyNot)
             {
-                return new SmartCutResult(null, plan.Strategy, FellBack: true,
-                    "no video frame lies in the part to re-encode, so the cut would have no picture",
-                    TimeSpan.Zero);
+                return new SmartCutResult(null, plan.Strategy, FellBack: true, whyNot, TimeSpan.Zero);
             }
 
             // The head is verified: its slice is done, even when ffmpeg printed no time= for a run this short.
@@ -270,6 +269,63 @@ public sealed class SmartCutEngine : ISmartCutEngine
             TrySweep(tempDir);
         }
     }
+
+    /// <summary>
+    /// Why a head with no video frame is not used (T-190): the concat would take its streams from an audio-only file and drop
+    /// the source's video, and the file would be Done and have no picture. No parentheses (the row warning wraps the reason).
+    /// </summary>
+    internal const string NoPictureReason = "no video frame lies in the part to re-encode, so the cut would have no picture";
+
+    /// <summary>
+    /// Why a head that is not the source's frames is not used (T-191). No parentheses and no internal terms (the row warning
+    /// wraps the reason in its own parentheses and the user reads it).
+    /// </summary>
+    internal const string HeadNotFrameExactReason = "the cut cannot be made frame-exact for this video yet";
+
+    /// <summary>
+    /// The end-to-end check of the head the engine wrote (T-191, SPEC-001 I46): its frames against the source's. Null when the head
+    /// passes or the probe cannot say; otherwise the reason it is not used.
+    ///
+    /// <para>The input seek lands on the key frame before the Start by its DECODING time and decodes from there. Where that key
+    /// frame has leading pictures - B-frames displayed before it that need the GOP before it (an open GOP, MPEG-4 part 2 with
+    /// B-frames) - the decoder cannot output them, so a head that should hold the source's two frames of <c>[Start, HeadEnd)</c>
+    /// holds one, starting a frame late, or none, with exit code 0. (The output seek decoded from the start of the file and had
+    /// them.) So the head must hold exactly as many frames as the source has in the span it was cut from, the first at the head's
+    /// time 0. A count or a first frame that does not match - also a variable-frame-rate source ffmpeg retimed, whatever the
+    /// cause - is a fall back to the lossless cut. A head with none keeps its own reason (<see cref="NoPictureReason"/>).</para>
+    /// </summary>
+    private static async Task<string?> CheckHeadAsync(
+        IVideoFrameProbe frames, string sourcePath, string headPath, TimeSpan start, TimeSpan headEnd, MediaInfo info, CancellationToken ct)
+    {
+        // The head's whole file is the question, so the window runs a second past its length: a frame beyond it would be an extra
+        // frame (and an AVI head lists its last frame at the length itself, its times being decoding times).
+        var head = await frames.GetVideoFrameTimesAsync(headPath, TimeSpan.Zero, headEnd - start + HeadReadSlack, ct).ConfigureAwait(false);
+        if (head is null)
+        {
+            return null; // the head's frames cannot be told apart: not called wrong
+        }
+
+        if (head.Count == 0)
+        {
+            return NoPictureReason;
+        }
+
+        // Half a frame of the source's rate, at least 2 ms (the encoder's time base): the first frame of a head is at its time 0.
+        var rate = info.VideoStreams.Count > 0 ? info.VideoStreams[0].FrameRate : null;
+        var tolerance = rate is { } fps && double.IsFinite(fps) && fps > 0
+            ? TimeSpan.FromSeconds(Math.Max(0.5 / fps, 0.002))
+            : TimeSpan.FromSeconds(1d / 60);
+        if (head[0] > tolerance)
+        {
+            return HeadNotFrameExactReason;
+        }
+
+        var source = await frames.GetVideoFrameTimesAsync(sourcePath, start, headEnd, ct).ConfigureAwait(false);
+        return source is not null && source.Count != head.Count ? HeadNotFrameExactReason : null;
+    }
+
+    /// <summary>How far past its length the head is read for its frames (<see cref="CheckHeadAsync"/>).</summary>
+    private static readonly TimeSpan HeadReadSlack = TimeSpan.FromSeconds(1);
 
     /// <summary>How many frame intervals the start may move up to a frame (the next frame is normally under one away).</summary>
     internal const int SnapShiftFrames = 3;

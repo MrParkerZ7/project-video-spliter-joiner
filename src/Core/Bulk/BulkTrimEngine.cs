@@ -222,7 +222,9 @@ public sealed class BulkTrimEngine : IBulkTrimEngine
                 ? null
                 : new DelegateProgress<double>(local =>
                 {
-                    var clamped = Math.Max(Clamp01(local), rowHighWater);
+                    // A NaN says nothing new (Clamp01(NaN) is NaN and Math.Max(NaN, x) is NaN, which would freeze the row at NaN): the
+                    // row stays where it was.
+                    var clamped = double.IsNaN(local) ? rowHighWater : Math.Max(Clamp01(local), rowHighWater);
                     rowHighWater = clamped;
                     var overall = runnableTotal == 0 ? 0.0 : (baseDone + clamped) / runnableTotal;
                     progress.Report(new BulkTrimProgress(i, n, fileName, clamped, overall, BulkTrimPhase.Item));

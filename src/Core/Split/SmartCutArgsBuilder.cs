@@ -227,9 +227,14 @@ public static class SmartCutArgsBuilder
     /// The head fragment: <c>[start, end)</c> re-encoded to match the source so it can be concatenated
     /// with the source's own packets from the boundary keyframe. Uses an INPUT seek (<c>-ss</c> BEFORE <c>-i</c>, T-191): with
     /// ffmpeg's default <c>accurate_seek</c> the demuxer jumps to the keyframe before <c>start</c>, the decoder drops the frames
-    /// before it, and the fragment begins on the exact requested frame — the same frames an output seek gives (proven against
-    /// the old output-seek args, frame by frame) — so the decode is bounded by one GOP wherever in the file the cut is. The
-    /// output seek this replaced (<c>-ss</c> AFTER <c>-i</c>) decoded every frame from the start of the file up to <c>start</c>
+    /// before it, and the fragment begins on the exact requested frame, so the decode is bounded by one GOP wherever in the file
+    /// the cut is. For a CLOSED-GOP source those are the same frames an output seek gives (proven against the old output-seek
+    /// args, frame by frame, at Starts from 3 frames before a key frame to 3 after and everywhere else tried; the audio has the
+    /// same packets and first timestamp, its samples may differ by AAC quantisation). A source whose key frames have LEADING
+    /// pictures - B-frames displayed before the key frame that need the GOP before it: an open GOP, MPEG-4 part 2 with B-frames -
+    /// is not the same when the Start is a frame or two before a key frame: the seek lands on that key frame by its decoding time,
+    /// cannot decode those B-frames, and the head holds fewer frames, starting late, or none, with exit code 0.
+    /// <see cref="SmartCutEngine"/> compares the head with the source and falls back (SPEC-001 I46). The output seek this replaced (<c>-ss</c> AFTER <c>-i</c>) decoded every frame from the start of the file up to <c>start</c>
     /// and discarded it: measured by the bench <c>smart</c> scenario in one run, a 1.5 s head took 2.4 s (94 MB read) at an intro
     /// of 10.5 s, 14.5 s (769 MB, 89% of the file) at 104.5 s of the 2-minute 4K file and 66.5 s (3.9 GB, 91%) at 540.5 s of the
     /// 10-minute one, against 1.5 s, 1.5 s and 2.8 s (24 MB each) for the input seek. <c>-t</c> stays an output duration.

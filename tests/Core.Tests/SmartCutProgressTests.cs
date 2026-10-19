@@ -83,11 +83,13 @@ public sealed class SmartCutProgressTests : IDisposable
     {
         private readonly List<string> _events;
         private readonly int? _headPackets;
+        private readonly int? _sourceFrames;
 
-        public LoggingProbe(List<string> events, int? headPackets = 45)
+        public LoggingProbe(List<string> events, int? headPackets = 45, int? sourceFrames = -1)
         {
             _events = events;
             _headPackets = headPackets;
+            _sourceFrames = sourceFrames == -1 ? headPackets : sourceFrames; // by default the source holds as many frames as the head
         }
 
         public Task<ProbeResult> ProbeAsync(string path, CancellationToken ct = default) =>
@@ -107,10 +109,15 @@ public sealed class SmartCutProgressTests : IDisposable
             return Task.FromResult<TimeSpan?>(time); // the request is on a frame
         }
 
-        public Task<int?> CountVideoPacketsAsync(string path, CancellationToken ct = default)
+        public Task<IReadOnlyList<TimeSpan>?> GetVideoFrameTimesAsync(string path, TimeSpan from, TimeSpan to, CancellationToken ct = default)
         {
-            _events.Add("count");
-            return Task.FromResult(_headPackets);
+            // The engine reads its head ("head.<ext>") for its frames, then the source over the span the head was cut from.
+            var isHead = Path.GetFileName(path).StartsWith("head.", StringComparison.Ordinal);
+            _events.Add(isHead ? "count" : "source");
+            IReadOnlyList<TimeSpan>? times = (isHead ? _headPackets : _sourceFrames) is { } n
+                ? Enumerable.Range(0, n).Select(i => (isHead ? TimeSpan.Zero : from) + S(i / 30.0)).ToList()
+                : null;
+            return Task.FromResult(times);
         }
     }
 
@@ -479,7 +486,8 @@ public sealed class SmartCutProgressTests : IDisposable
         snap.Should().BeGreaterThanOrEqualTo(0);
         snap.Should().BeLessThan(head, "the frame snap is read before the head is built");
         events.Take(head).Should().NotContain(e => e.StartsWith("p:", StringComparison.Ordinal), "the row has reported nothing while the snap is read");
-        count.Should().BeGreaterThan(head).And.BeLessThan(concat, "the head's packet count is read after the head and before the concat");
+        count.Should().BeGreaterThan(head).And.BeLessThan(concat, "the head's frames are read after the head and before the concat");
+        events.IndexOf("source").Should().BeGreaterThan(count).And.BeLessThan(concat, "then the source's frames over the span the head was cut from, still before the concat");
 
         double Value(string e) => double.Parse(e[2..], System.Globalization.CultureInfo.InvariantCulture);
         events.Take(count).Where(e => e.StartsWith("p:", StringComparison.Ordinal)).Select(Value)
@@ -509,6 +517,26 @@ public sealed class SmartCutProgressTests : IDisposable
         runner.Commands.Should().ContainSingle("no concat after a head without a picture");
         spy.Values.Should().NotBeEmpty().And.OnlyContain(v => v <= w + 1e-12, "the bar only moved inside the head's slice");
         spy.Values.Should().NotContain(1.0);
+        File.Exists(Dest).Should().BeFalse();
+        Directory.GetDirectories(_dir, ".vsj-smartcut-*").Should().BeEmpty();
+    }
+
+    // serves-spec: SPEC-001#I69 / SPEC-001#I46 - the same for a head that is not the source's frames (T-191): the bar moved inside the
+    // head's slice, then the cut hands back - no 1.0, no concat, nothing left behind.
+    [Trait("serves-spec", "SPEC-001")]
+    [Fact]
+    public async Task AHeadThatIsNotTheSourcesFrames_FallsBackAfterTheHeadsProgress_AndReportsNoOne()
+    {
+        var w = W(5, null, Grid2s());
+        var events = new List<string>();
+        var runner = new ScriptedRunner(events, new RunScript(new[] { 0.5, 1.0 }));
+        var spy = new ProgressSpy(events);
+
+        var result = await CutAsync(runner, 5, null, spy, new LoggingProbe(events, headPackets: 29, sourceFrames: 30));
+
+        result.FellBack.Should().BeTrue();
+        runner.Commands.Should().ContainSingle("no concat after a head that is not the source's frames");
+        spy.Values.Should().NotBeEmpty().And.OnlyContain(v => v <= w + 1e-12, "the bar only moved inside the head's slice");
         File.Exists(Dest).Should().BeFalse();
         Directory.GetDirectories(_dir, ".vsj-smartcut-*").Should().BeEmpty();
     }
@@ -560,6 +588,54 @@ public sealed class SmartCutProgressTests : IDisposable
         fractions.Should().BeInAscendingOrder();
         fractions.Count(f => f is > 0 and < 1).Should().BeGreaterThanOrEqualTo(7, "four values in the head's slice, then the concat's");
         fractions[^1].Should().Be(1.0);
+    }
+
+    /// <summary>A lossless engine that reports a scripted row fraction sequence (a NaN among it) and writes the output.</summary>
+    private sealed class ScriptedFractionSplitEngine : ISplitEngine
+    {
+        private readonly double[] _fractions;
+
+        public ScriptedFractionSplitEngine(params double[] fractions) => _fractions = fractions;
+
+        public async Task<SplitResult> SplitAsync(
+            SplitRequest req,
+            IProgress<double>? progress = null,
+            CancellationToken ct = default,
+            IProgress<OperationStatus>? status = null,
+            IProgress<PartProgress>? partProgress = null)
+        {
+            foreach (var f in _fractions)
+            {
+                progress?.Report(f);
+            }
+
+            var outputPath = Path.Combine(req.OutputDir, req.NamingPattern);
+            Directory.CreateDirectory(req.OutputDir);
+            await File.WriteAllTextAsync(outputPath, "trimmed", ct).ConfigureAwait(false);
+            return new SplitResult(
+                new[] { new SplitSegment(outputPath, TimeSpan.Zero, TimeSpan.Zero, TimeSpan.Zero, TimeSpan.Zero) }, Array.Empty<string>());
+        }
+    }
+
+    // serves-spec: SPEC-002#I31 - a NaN fraction says nothing new: the row stays where it was. (Clamp01(NaN) is NaN and
+    // Math.Max(NaN, x) is NaN, so without the guard one NaN froze the row's high-water mark at NaN for the rest of the row.)
+    [Trait("serves-spec", "SPEC-002")]
+    [Fact]
+    public async Task ABulkRow_IgnoresANaNFraction_AndKeepsItsHighWaterMark()
+    {
+        var engine = new BulkTrimEngine(
+            new ScriptedFractionSplitEngine(0.4, double.NaN, 0.7, double.NaN, 1.0),
+            new FakeRequestBuilder(), new FakeDiskSpaceProbe(long.MaxValue));
+        var item = new BulkTrimItem(Placeholder("a.mp4"), S(5), null, Path.Combine(_dir, "a_trimmed.mp4"));
+        var rows = new List<BulkTrimProgress>();
+
+        await engine.RunAsync(new[] { item }, new BulkTrimOptions(), new SyncProgress<BulkTrimProgress>(rows.Add));
+
+        var fractions = rows.Where(r => r.Phase == BulkTrimPhase.Item && r.ItemIndex == 0).Select(r => r.ItemFraction).ToList();
+        fractions.Should().OnlyContain(f => !double.IsNaN(f), "no NaN reaches the row");
+        fractions.Should().BeInAscendingOrder();
+        fractions.Should().Contain(new[] { 0.4, 0.7, 1.0 }, "the real values still move the row");
+        rows.Where(r => r.Phase == BulkTrimPhase.Item).Select(r => r.OverallFraction).Should().OnlyContain(f => !double.IsNaN(f));
     }
 
     private sealed class SyncProgress<T> : IProgress<T>

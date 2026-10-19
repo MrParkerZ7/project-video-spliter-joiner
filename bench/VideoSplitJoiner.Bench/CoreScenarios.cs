@@ -753,11 +753,16 @@ internal static class CoreScenarios
                 $"exit {hr!.ExitCode}; read {100.0 * hu.ReadBytes / new FileInfo(fx.Path).Length:0}% of the file; args: {string.Join(' ', headArgs.ToList().Skip(2)).Replace(fx.Path, "<in>", StringComparison.Ordinal).Replace(head, "<head>", StringComparison.Ordinal)}");
             var span = new SmartHeads.Span(info, plan.Start, headEnd, v!, a);
 
-            // T-190: the engine checks that the head it wrote holds a video frame.
-            int? headPackets = null;
-            var (tCount, countUsage) = await Meter.Run(async () => headPackets = await probe.CountVideoPacketsAsync(head));
-            c.Results.Add("bulk", $"  Exact {tag}: head frame check (ffprobe -count_packets)", fx.Key, "warm", 1, tCount, countUsage,
-                $"{headPackets?.ToString(CultureInfo.InvariantCulture) ?? "?"} video packets in the head");
+            // T-190/T-191: the engine checks the head it wrote against the source: the head's frame times (a head with none is no
+            // picture; its first frame is at 0), then the source's frame times over the span the head was cut from (the count must match).
+            IReadOnlyList<TimeSpan>? headTimes = null;
+            var (tHeadRead, headReadUsage) = await Meter.Run(async () => headTimes = await probe.GetVideoFrameTimesAsync(head, TimeSpan.Zero, headEnd - plan.Start));
+            c.Results.Add("bulk", $"  Exact {tag}: head frame check, the head's frame times (ffprobe -read_intervals)", fx.Key, "warm", 1, tHeadRead, headReadUsage,
+                $"{headTimes?.Count.ToString(CultureInfo.InvariantCulture) ?? "?"} video frames in the head, first at {headTimes?.FirstOrDefault().TotalSeconds.ToString("0.######", CultureInfo.InvariantCulture) ?? "?"}s");
+            IReadOnlyList<TimeSpan>? sourceTimes = null;
+            var (tSourceRead, sourceReadUsage) = await Meter.Run(async () => sourceTimes = await probe.GetVideoFrameTimesAsync(fx.Path, plan.Start, headEnd));
+            c.Results.Add("bulk", $"  Exact {tag}: head frame check, the source's frame times over [Start, HeadEnd) (ffprobe -read_intervals)", fx.Key, "warm", 1, tSourceRead, sourceReadUsage,
+                $"{sourceTimes?.Count.ToString(CultureInfo.InvariantCulture) ?? "?"} source frames - {(sourceTimes is not null && headTimes is not null && sourceTimes.Count == headTimes.Count ? "the head holds them all" : "MISMATCH")}");
             if (plan.HeadEnd is null)
             {
                 return span;

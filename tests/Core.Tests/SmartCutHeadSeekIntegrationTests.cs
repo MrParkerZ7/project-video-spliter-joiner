@@ -15,23 +15,29 @@ namespace VideoSplitJoiner.Core.Tests;
 /// T-191 (G-059, SPEC-001 I44 / I69) - the head seeks to its keyframe before it decodes, on real media through the real ffmpeg.
 ///
 /// <para><b>The change under test.</b> <see cref="SmartCutArgsBuilder.HeadReencode"/> moved <c>-ss</c> before <c>-i</c>. ffmpeg's
-/// default <c>accurate_seek</c> starts the decode at the keyframe before the start and drops decoded frames until it, which is the
-/// frame set an output seek gives; it just does not decode (and throw away) everything before the cut. The first test proves "the
-/// same frames" instead of assuming it: for each shape, the new head and a reference head built in the test with the OLD argument
-/// order (same encoder, same settings, same machine) must decode to identical frame hashes at identical timestamps, the same
-/// count, the first frame at pts 0.</para>
+/// default <c>accurate_seek</c> starts the decode at the keyframe before the start and drops decoded frames until it; for a
+/// CLOSED-GOP source that is the frame set an output seek gives, it just does not decode (and throw away) everything before the
+/// cut. The first tests prove "the same frames" instead of assuming it: for each shape, the new head and a reference head built in
+/// the test with the OLD argument order (same encoder, same settings, same machine) must decode to identical frame hashes at
+/// identical timestamps, the same count, the first frame at pts 0, and the same audio packet count and first pts (the audio SAMPLES
+/// may differ by AAC quantisation: the seek lands the decoder one packet apart, so the re-encoded bytes are not always the same).
+/// A source with leading pictures (an open GOP, MPEG-4 part 2 with B-frames) is NOT identical when the Start is a frame or two
+/// before a key frame: the engine's head check catches that and falls back (<c>SmartCutLeadingPictureIntegrationTests</c>).</para>
 ///
 /// <para>The rest runs the whole engine on real media: the row's fraction while a cut deep into a long file runs, and a cut
 /// cancelled in the middle of its head.</para>
 /// </summary>
-public sealed class SmartCutHeadSeekIntegrationTests : IDisposable
+public sealed class SmartCutHeadSeekIntegrationTests : IDisposable, IClassFixture<SmartCutHeadSeekIntegrationTests.HeavyHeadSource>
 {
     private readonly ITestOutputHelper _output;
     private readonly string _dir;
 
-    public SmartCutHeadSeekIntegrationTests(ITestOutputHelper output)
+    private readonly HeavyHeadSource _heavy;
+
+    public SmartCutHeadSeekIntegrationTests(ITestOutputHelper output, HeavyHeadSource heavy)
     {
         _output = output;
+        _heavy = heavy;
         _dir = Path.Combine(Path.GetTempPath(), "vsj-t191i-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(_dir);
     }
@@ -107,16 +113,23 @@ public sealed class SmartCutHeadSeekIntegrationTests : IDisposable
     private async Task<int> AssertSameFramesAsync(string source, double requested, string label)
     {
         var effective = await FirstFrameAtOrAfterAsync(source, requested);
-        var probe = Probe();
-        var info = ((ProbeResult.ProbeSucceeded)await probe.ProbeAsync(source)).Info;
-        var keyframes = await probe.GetKeyframesAsync(source);
+        var keyframes = await Probe().GetKeyframesAsync(source);
         var plan = SmartCutPlanner.Plan(S(effective), null, keyframes);
         plan.Strategy.Should().Be(SmartCutStrategy.HeadReencode, "precondition: the start is mid-GOP with a keyframe after it");
+
+        return await AssertSameFramesBetweenAsync(source, requested, effective, plan.HeadEnd!.Value.TotalSeconds, label);
+    }
+
+    /// <summary>The same comparison for the head <c>[effective, headEnd)</c>, whatever the planner would make of it.</summary>
+    private async Task<int> AssertSameFramesBetweenAsync(string source, double requested, double effective, double headEnd, string label)
+    {
+        var probe = Probe();
+        var info = ((ProbeResult.ProbeSucceeded)await probe.ProbeAsync(source)).Info;
         SmartCutArgsBuilder.TryResolveEncoders(info, out var venc, out var aenc, out var why).Should().BeTrue(why);
 
         var inputSeekHead = Path.Combine(_dir, "head-input-seek.mp4");
         var outputSeekHead = Path.Combine(_dir, "head-output-seek.mp4");
-        var args = SmartCutArgsBuilder.HeadReencode(source, plan.Start, plan.HeadEnd!.Value, info, venc!, aenc, inputSeekHead);
+        var args = SmartCutArgsBuilder.HeadReencode(source, S(effective), S(headEnd), info, venc!, aenc, inputSeekHead);
         var tokens = args.ToList().ToList();
         tokens.Where(t => t == "-ss").Should().ContainSingle();
         tokens.IndexOf("-ss").Should().BeLessThan(tokens.IndexOf("-i"), "the new head seeks before its input");
@@ -133,22 +146,27 @@ public sealed class SmartCutHeadSeekIntegrationTests : IDisposable
 
         var fresh = await FrameHashesAsync(inputSeekHead);
         var shipped = await FrameHashesAsync(outputSeekHead);
-        _output.WriteLine($"{label}: Start {requested} -> effective {effective:0.######}, HeadEnd {plan.HeadEnd!.Value.TotalSeconds:0.######}: "
-            + $"{fresh.Count} frames (input seek) against {shipped.Count} (output seek); head {new FileInfo(inputSeekHead).Length} against {new FileInfo(outputSeekHead).Length} bytes; "
-            + $"first pts {(fresh.Count > 0 ? fresh[0].Pts : -1)} against {(shipped.Count > 0 ? shipped[0].Pts : -1)}");
+        var audioNew = await PacketsAsync(inputSeekHead, "a:0");
+        var audioOld = await PacketsAsync(outputSeekHead, "a:0");
+        _output.WriteLine($"{label}: Start {requested} -> effective {effective:0.######}, HeadEnd {headEnd:0.######}: "
+            + $"{fresh.Count} frames (input seek) against {shipped.Count} (output seek); "
+            + $"first pts {(fresh.Count > 0 ? fresh[0].Pts : -1)} against {(shipped.Count > 0 ? shipped[0].Pts : -1)}; "
+            + $"audio {audioNew.Count} packets from {audioNew[0].Pts:0.000000} against {audioOld.Count} from {audioOld[0].Pts:0.000000}; "
+            + $"head {new FileInfo(inputSeekHead).Length} against {new FileInfo(outputSeekHead).Length} bytes");
 
         using var scope = new AssertionScope(label);
         fresh.Should().NotBeEmpty();
         fresh.Count.Should().Be(shipped.Count, "the same number of frames");
         fresh[0].Pts.Should().Be(0, "the first frame is at pts 0");
         fresh.Should().Equal(shipped, "every frame has the same timestamp and the same hash as the output-seek head's");
-        fresh.Count.Should().Be((int)Math.Round((plan.HeadEnd.Value.TotalSeconds - effective) * 30), "one frame per source frame of [Start, HeadEnd)");
+        fresh.Count.Should().Be((int)Math.Round((headEnd - effective) * 30), "one frame per source frame of [Start, HeadEnd)");
 
-        // The audio rides along: same stream length to within one AAC frame (the seek lands on the same sample).
-        var audioNew = await PacketsAsync(inputSeekHead, "a:0");
-        var audioOld = await PacketsAsync(outputSeekHead, "a:0");
-        _output.WriteLine($"  audio: {audioNew.Count} packets from {audioNew[0].Pts:0.000000} against {audioOld.Count} from {audioOld[0].Pts:0.000000}");
-        Math.Abs(audioNew.Count - audioOld.Count).Should().BeLessThanOrEqualTo(1, "the same audio, to a packet");
+        // The audio: the same number of packets from the same first timestamp. Its SAMPLES are not asserted identical: the seeks
+        // leave the AAC encoder one packet apart in its history on some shapes (a Join-style source, a MOV with an empty edit, a late
+        // audio start), and the re-encoded quantisation then differs sporadically (up to 0.007 peak measured on a 46 ms tail), so the
+        // file sizes differ too. The count, the first pts and the gap-free run are what the joint depends on.
+        audioNew.Count.Should().Be(audioOld.Count, "the same number of audio packets");
+        audioNew[0].Pts.Should().Be(audioOld[0].Pts, "the same first audio timestamp");
         return fresh.Count;
     }
 
@@ -166,6 +184,36 @@ public sealed class SmartCutHeadSeekIntegrationTests : IDisposable
         var src = await MakeSourceAsync(_dir, $"g{gopFrames}.mp4", seconds, gopFrames);
 
         await AssertSameFramesAsync(src, start, $"GOP {gopFrames / 30} s");
+    }
+
+    // serves-spec: SPEC-001#I44 - the Starts around a key frame K, three frames before to three after: the closest a Start can
+    // get to a boundary the head is built against. On a closed-GOP source the head ends at the key frame after the Start (for a
+    // Start before K, K itself, so it is 1-3 frames long) and both seeks give the same frames, down to a one-frame head. (The planner
+    // would call K itself a pure copy and not re-encode; the head is built here anyway, to show the seek is not the difference.)
+    [Trait("serves-spec", "SPEC-001")]
+    [SkippableTheory]
+    [InlineData(60, 30, 8.0, -3)]
+    [InlineData(60, 30, 8.0, -2)]
+    [InlineData(60, 30, 8.0, -1)]
+    [InlineData(60, 30, 8.0, 0)]
+    [InlineData(60, 30, 8.0, 1)]
+    [InlineData(60, 30, 8.0, 2)]
+    [InlineData(60, 30, 8.0, 3)]
+    [InlineData(300, 45, 20.0, -3)]
+    [InlineData(300, 45, 20.0, -1)]
+    [InlineData(300, 45, 20.0, 0)]
+    [InlineData(300, 45, 20.0, 2)]
+    public async Task TheInputSeekHead_HoldsTheSameFrames_AroundAKeyframe(int gopFrames, double seconds, double keyframe, int framesFromKeyframe)
+    {
+        RequireBinaries();
+        var src = await MakeSourceAsync(_dir, $"g{gopFrames}.mp4", seconds, gopFrames);
+        var keyframes = await Probe().GetKeyframesAsync(src);
+        keyframes.Should().Contain(t => Math.Abs(t.TotalSeconds - keyframe) < 0.002, "precondition: the key frame is where the test says");
+        var start = keyframe + (framesFromKeyframe / 30.0);
+        var effective = await FirstFrameAtOrAfterAsync(src, start - 0.0005);
+        var headEnd = SmartCutPlanner.NextKeyframeAfter(S(effective), keyframes)!.Value.TotalSeconds;
+
+        await AssertSameFramesBetweenAsync(src, start, effective, headEnd, $"GOP {gopFrames / 30} s, K{framesFromKeyframe:+0;-0;+0}");
     }
 
     // serves-spec: SPEC-001#I44 - a Start BETWEEN two frames is moved up to the first frame by the engine (SPEC-001 I43); the head is
@@ -346,30 +394,95 @@ public sealed class SmartCutHeadSeekIntegrationTests : IDisposable
     private static async Task<TimeSpan> ProbeDurationAsync(string path) =>
         ((ProbeResult.ProbeSucceeded)await Probe().ProbeAsync(path)).Info.Duration;
 
-    /// <summary>A 720p, B-frame H.264 + AAC source with a 10 s GOP: a head that is slow enough to cancel in the middle of.</summary>
-    private async Task<string> MakeSlowHeadSourceAsync()
+    /// <summary>
+    /// A source whose head takes SEVERAL of ffmpeg's half-second status lines to re-encode (T-191): 720p of temporal noise (which x264
+    /// cannot shortcut), 30 fps, a 10 s GOP, 21 s long and about 250 MB, written ultrafast. A cut from 10.033333 s re-encodes 9.97 s
+    /// of it up to the keyframe at 20 s: about 4-5 s here, against the 0.1 s of the 320x240 fixtures. Made once per test class.
+    /// </summary>
+    public sealed class HeavyHeadSource : IDisposable
     {
-        var path = Path.Combine(_dir, "slow.mp4");
-        await RunAsync(FfmpegArgs.ForFfmpeg()
-            .Raw("-y", "-loglevel", "error")
-            .Raw("-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=30:duration=25")
-            .Raw("-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000:duration=25")
-            .Raw("-map", "0:v:0", "-map", "1:a:0")
-            .Raw("-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p", "-g", "300", "-keyint_min", "300", "-sc_threshold", "0", "-bf", "2")
-            .Raw("-c:a", "aac", "-b:a", "192000", "-ar", "48000", "-ac", "2", "-t", "25")
-            .Output(path), "the 720p source");
-        return path;
+        private readonly string _dir = Path.Combine(Path.GetTempPath(), "vsj-t191h-" + Guid.NewGuid().ToString("N"));
+        private string? _path;
+
+        public async Task<string> GetAsync()
+        {
+            if (_path is not null)
+            {
+                return _path;
+            }
+
+            Directory.CreateDirectory(_dir);
+            var path = Path.Combine(_dir, "heavy.mp4");
+            var run = await Runner().RunAsync(FfmpegArgs.ForFfmpeg()
+                .Raw("-y", "-loglevel", "error")
+                .Raw("-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=30:duration=21")
+                .Raw("-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000:duration=21")
+                .Raw("-vf", "noise=alls=25:allf=t")
+                .Raw("-map", "0:v:0", "-map", "1:a:0")
+                .Raw("-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-g", "300", "-keyint_min", "300", "-sc_threshold", "0", "-bf", "2")
+                .Raw("-c:a", "aac", "-b:a", "192000", "-ar", "48000", "-ac", "2", "-t", "21")
+                .Output(path));
+            run.ExitCode.Should().Be(0, "the heavy source must be produced first: " + run.StdErrText);
+            _path = path;
+            return path;
+        }
+
+        public void Dispose()
+        {
+            try { Directory.Delete(_dir, recursive: true); } catch { /* best-effort */ }
+        }
     }
 
-    // serves-spec: SPEC-001#I47 / SPEC-001#I69 - a cut cancelled in the MIDDLE of its head (the real runner kills the ffmpeg process tree):
-    // the cancel propagates, no destination file exists, the engine's temp dir is gone and no 1.0 was ever reported. The cancel is
-    // raised from the first progress report, so the head is genuinely running. A 10 s head of 720p video is long enough for that.
+    // serves-spec: SPEC-001#I69 - the REAL runner reports interim progress during a head: a 10 s head of 720p noise (4-5 s of ffmpeg)
+    // is long enough for several `time=` lines, and each lands inside the head's slice: strictly increasing, below the slice's end w,
+    // before the concat's values, the total told to the runner being the head's length. The 320x240 cuts above end before ffmpeg's
+    // first status line and only show [w, 0.999, 1.0]; this one shows the interim values the Bulk row bar moves on.
     [Trait("serves-spec", "SPEC-001")]
     [SkippableFact]
-    public async Task ACutCancelledInTheMiddleOfItsHead_LeavesNothingBehind_AndReportsNoOne()
+    public async Task AnExactCutWithALongHead_ReportsInterimProgress_FromTheRealRunner()
     {
         RequireBinaries();
-        var src = await MakeSlowHeadSourceAsync();
+        var src = await _heavy.GetAsync();
+        var dest = Path.Combine(_dir, "exact.mp4");
+        var totals = new TotalsRecordingRunner(new FfmpegRunner(Locator()));
+        var existedAtOne = new List<bool>();
+        var spy = new ProgressSpy(v =>
+        {
+            if (v >= 1.0)
+            {
+                existedAtOne.Add(File.Exists(dest));
+            }
+        });
+        var keyframes = await Probe().GetKeyframesAsync(src);
+        var plan = SmartCutPlanner.Plan(S(await FirstFrameAtOrAfterAsync(src, 10.033333)), null, keyframes);
+        plan.Strategy.Should().Be(SmartCutStrategy.HeadReencode, "precondition");
+        var w = SmartCutCost.Of(plan, await ProbeDurationAsync(src)).ReencodeShare;
+
+        var result = await new SmartCutEngine(totals, Probe()).CutAsync(src, S(10.033333), null, dest, spy);
+
+        result.FellBack.Should().BeFalse(result.FallbackReason);
+        var interim = spy.Values.Where(v => v < w - 1e-9).ToList();
+        _output.WriteLine($"w = {w:0.####}; progress: {string.Join(", ", spy.Values.Select(v => v.ToString("0.####", CultureInfo.InvariantCulture)))}");
+        totals.Totals[0]!.Value.TotalSeconds.Should().BeApproximately((plan.HeadEnd!.Value - plan.Start).TotalSeconds, 1e-6);
+        interim.Should().NotBeEmpty("ffmpeg's status lines during a 4-5 s head become values inside the head's slice, below w");
+        interim.Should().OnlyContain(v => v > 0);
+        spy.Values.Should().BeInAscendingOrder().And.OnlyHaveUniqueItems();
+        spy.Values[^1].Should().Be(1.0);
+        spy.Values.Count(v => v >= 1.0).Should().Be(1);
+        spy.Values.Take(spy.Values.Count - 1).Should().OnlyContain(v => v < 1.0);
+        existedAtOne.Should().Equal(new[] { true }, "the output is in place at the first 1.0");
+    }
+
+    // serves-spec: SPEC-001#I47 / SPEC-001#I69 - a cut cancelled from the FIRST progress callback, in the middle of a 10 s head of 720p
+    // noise (4-5 s of ffmpeg; the first status line arrives about half a second in, with the head a sixth done): the real runner
+    // kills the ffmpeg process tree, the cancel propagates, no destination file exists, the engine's temp dir is gone and no 1.0 was
+    // ever reported. No timer anywhere: the callback is what cancels.
+    [Trait("serves-spec", "SPEC-001")]
+    [SkippableFact]
+    public async Task ACutCancelledFromItsFirstProgressCallback_InTheMiddleOfALongHead_LeavesNothingBehind()
+    {
+        RequireBinaries();
+        var src = await _heavy.GetAsync();
         var dest = Path.Combine(_dir, "out", "exact.mp4");
         using var cts = new CancellationTokenSource();
         var spy = new ProgressSpy(_ => cts.Cancel());

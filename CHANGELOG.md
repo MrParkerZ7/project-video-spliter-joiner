@@ -12,12 +12,17 @@ goal; `0.1.0` is the first end-to-end, shippable cut.
   decoded every frame from the beginning of the file up to the cut point, so the work grew with the position: on a 2-minute 4K
   test video a 1.5 s start took 2.4 s at 10 s, 14.5 s at 104 s (769 MB read, 89% of the file) and on a 10-minute one 66 s at
   540 s (3.9 GB read). It now starts reading at the keyframe before the cut: 1.5 s, 1.5 s and 2.8 s, 24 MB each. The frames
-  are the same: built both ways, the two starts decode to identical frames (checked on 2 s and 10 s keyframe intervals, at cut
-  points on and between frames, on a video the app's Join wrote and on a MOV whose video starts behind an empty edit). And an
+  are the same for an ordinary (closed-GOP) video: built both ways, the two starts decode to identical frames, with the same
+  audio packets and timestamps (checked on 2 s and 10 s keyframe intervals, at cut points from 3 frames before a keyframe to 3
+  after and between frames, on a video the app's Join wrote and on a MOV whose video starts behind an empty edit). A video whose
+  keyframes have leading pictures (some open-GOP H.264 and MPEG-4 files) loses frames from a cut point a frame or two before a
+  keyframe with the new start, so the app now compares the re-encoded start with the video and, if it is not the same frames,
+  cuts that row on the nearest keyframe and says so on the row. And an
   Exact batch no longer looks frozen: each row's bar moves through the re-encode and then the copy instead of sitting at zero
   and jumping, and the batch bar, the taskbar button and the *~Ns left* text move with it, the re-encode weighed by what it
   costs (a row with a short kept range used to barely move the batch bar while its re-encode ran). The row's bar never goes
-  backwards and reaches the end only when the file is in place; how far into a row the re-encode ends is an estimate.
+  backwards and reaches the end only when the file is in place; how far into a row the re-encode ends is an estimate, good to
+  within a factor of two or three of the Exact part (seconds in absolute terms).
 - **An Exact cut now keeps its joint in time, and is written once.** With **Exact cut** on, the part of the video after
   the re-encoded start landed about 75–80 ms late on a video with B-frames: the first kept frame sat two to three frames
   after the re-encoded part ended, the kept video started after its audio, and a full decode of the result could print

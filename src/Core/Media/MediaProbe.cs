@@ -354,7 +354,12 @@ public sealed class MediaProbe : IMediaProbe, IVideoFrameProbe
         return times.ToList().AsReadOnly();
     }
 
-    /// <summary>How far past the requested time <see cref="FirstVideoFrameAtOrAfterAsync"/> reads for a frame.</summary>
+    /// <summary>
+    /// How far past the end of a requested interval the frame reads go: for a frame at or after the request
+    /// (<see cref="FirstVideoFrameAtOrAfterAsync"/>), and past the end of a window (<see cref="GetVideoFrameTimesAsync"/>), where it
+    /// is what puts the packets of an OPEN GOP in the read - the key frame that ends the window is decoded BEFORE the leading
+    /// B-frames that are displayed before it, so a read that stops at the key frame misses frames the window holds.
+    /// </summary>
     private static readonly TimeSpan FrameSearchWindow = TimeSpan.FromSeconds(2);
 
     /// <summary>A frame this close before the requested time counts as at it (a timestamp is printed to six decimals).</summary>
@@ -363,16 +368,57 @@ public sealed class MediaProbe : IMediaProbe, IVideoFrameProbe
     /// <inheritdoc />
     public async Task<TimeSpan?> FirstVideoFrameAtOrAfterAsync(string path, TimeSpan time, CancellationToken ct = default)
     {
-        if (string.IsNullOrWhiteSpace(path) || !File.Exists(path) || time < TimeSpan.Zero)
+        var times = await ReadFrameTimesAsync(path, time, time + FrameSearchWindow, ct).ConfigureAwait(false);
+        if (times is null)
+        {
+            return null;
+        }
+
+        TimeSpan? first = null;
+        foreach (var t in times)
+        {
+            if (t >= time - FrameTimeTolerance && (first is null || t < first))
+            {
+                first = t;
+            }
+        }
+
+        return first;
+    }
+
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<TimeSpan>?> GetVideoFrameTimesAsync(
+        string path, TimeSpan from, TimeSpan to, CancellationToken ct = default)
+    {
+        // The read runs FrameSearchWindow past `to`: the frames BEFORE `to` can sit after it in decode order (see above).
+        var times = await ReadFrameTimesAsync(path, from, to + FrameSearchWindow, ct).ConfigureAwait(false);
+        if (times is null)
+        {
+            return null;
+        }
+
+        var inWindow = times.Where(t => t >= from - FrameTimeTolerance && t < to - FrameTimeTolerance).ToList();
+        inWindow.Sort();
+        return inWindow.AsReadOnly();
+    }
+
+    /// <summary>
+    /// The frame time of every video packet ffprobe lists when it reads <c>[from, readTo)</c> of <paramref name="path"/> (it seeks
+    /// back to the key frame before <paramref name="from"/>, so earlier packets are listed too, in decode order), or null when
+    /// the answer cannot be given. A demux-level read, packet times only, no decoding.
+    /// </summary>
+    private async Task<List<TimeSpan>?> ReadFrameTimesAsync(string path, TimeSpan from, TimeSpan readTo, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(path) || !File.Exists(path) || from < TimeSpan.Zero)
         {
             return null;
         }
 
         // -read_intervals START%END (both absolute: a "+" END would count from the first packet read, which is the keyframe
-        // BEFORE START). ffprobe seeks back to that keyframe, so packets before START are listed too; the filter below drops
-        // them. Packet times only, no decoding: the cost is the GOP before START plus the window, not the file.
+        // BEFORE START). ffprobe seeks back to that keyframe, so packets before START are listed too; the callers drop them.
+        // Packet times only, no decoding: the cost is the GOP before START plus the window, not the file.
         var interval = string.Create(
-            CultureInfo.InvariantCulture, $"{time.TotalSeconds:0.######}%{(time + FrameSearchWindow).TotalSeconds:0.######}");
+            CultureInfo.InvariantCulture, $"{from.TotalSeconds:0.######}%{readTo.TotalSeconds:0.######}");
         var args = FfmpegArgs.ForFfprobe()
             .Raw(
                 "-v", "error",
@@ -392,8 +438,17 @@ public sealed class MediaProbe : IMediaProbe, IVideoFrameProbe
             return null;
         }
 
-        var root = JsonDeserialize<FfprobePacketsRoot>(json);
-        if (root?.Packets is null)
+        FfprobePacketsRoot? root;
+        try
+        {
+            root = JsonDeserialize<FfprobePacketsRoot>(json);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+
+        if (root is null)
         {
             return null;
         }
@@ -401,11 +456,12 @@ public sealed class MediaProbe : IMediaProbe, IVideoFrameProbe
         // A packet's frame time is its pts; one without a pts (an AVI with B-frames lists about a third of its video packets so)
         // takes its dts, as the keyframe scan does - but only while the stream shows no re-ordering. A packet that carries both
         // times and they differ is that evidence: a dts is then a decode time, not a display time, and a packet without a pts
-        // has no frame time to give. A packet with neither has none either. Both make the answer null (no snap), never a guess.
+        // has no frame time to give. A packet with neither has none either. Both make the answer null (no snap, no check), never
+        // a guess. No packets at all (a file without a video stream) is an empty list: no frames.
         var times = new List<TimeSpan>();
         var withoutPts = false;
         var reordered = false;
-        foreach (var p in root.Packets)
+        foreach (var p in root.Packets ?? new List<FfprobePacket>())
         {
             var hasPts = TryParseSeconds(p.PtsTime, out var pts);
             var hasDts = TryParseSeconds(p.DtsTime, out var dts);
@@ -425,71 +481,7 @@ public sealed class MediaProbe : IMediaProbe, IVideoFrameProbe
             }
         }
 
-        if (withoutPts && reordered)
-        {
-            return null;
-        }
-
-        TimeSpan? first = null;
-        foreach (var t in times)
-        {
-            if (t >= time - FrameTimeTolerance && (first is null || t < first))
-            {
-                first = t;
-            }
-        }
-
-        return first;
-    }
-
-    /// <inheritdoc />
-    public async Task<int?> CountVideoPacketsAsync(string path, CancellationToken ct = default)
-    {
-        if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
-        {
-            return null;
-        }
-
-        var args = FfmpegArgs.ForFfprobe()
-            .Raw(
-                "-v", "error",
-                "-select_streams", "v:0",
-                "-count_packets",
-                "-show_entries", "stream=nb_read_packets",
-                "-print_format", "json")
-            .Input(path);
-
-        string json;
-        try
-        {
-            json = await _ffprobe.RunJsonAsync(args, ct).ConfigureAwait(false);
-        }
-        catch (FfprobeException)
-        {
-            return null;
-        }
-
-        try
-        {
-            using var doc = JsonDocument.Parse(json);
-            if (!doc.RootElement.TryGetProperty("streams", out var streams) || streams.ValueKind != JsonValueKind.Array)
-            {
-                return null;
-            }
-
-            if (streams.GetArrayLength() == 0)
-            {
-                return 0; // no video stream
-            }
-
-            return TryParseInt(streams[0].TryGetProperty("nb_read_packets", out var n) ? n.GetString() : null, out var count)
-                ? count
-                : null;
-        }
-        catch (JsonException)
-        {
-            return null;
-        }
+        return withoutPts && reordered ? null : times;
     }
 
     /// <summary>

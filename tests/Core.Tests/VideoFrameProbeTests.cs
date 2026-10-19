@@ -229,41 +229,102 @@ public sealed class VideoFrameProbeTests : IDisposable
         await act.Should().ThrowAsync<OperationCanceledException>();
     }
 
-    // ---- CountVideoPacketsAsync (fake ffprobe) ------------------------------------------------------------------------
+    // ---- GetVideoFrameTimesAsync (fake ffprobe) -----------------------------------------------------------------------
 
-    private static string Count(string? n) => n is null
-        ? "{\"streams\":[]}"
-        : $"{{\"streams\":[{{\"nb_read_packets\":\"{n}\"}}]}}";
-
-    // serves-spec: SPEC-004#I40 - the count of the first video stream's packets, 0 for a file with no video stream.
+    // serves-spec: SPEC-004#I40 - the frames of a window, ascending whatever the decode order, from a read that starts at the
+    // keyframe before it: the packets before `from` and at or after `to` are dropped.
     [Trait("serves-spec", "SPEC-004")]
     [Fact]
-    public async Task CountVideoPackets_ReadsTheFirstVideoStreamsPacketCount_AndZeroWithoutAVideoStream()
+    public async Task GetVideoFrameTimes_ReturnsTheFramesOfTheWindow_Ascending()
     {
-        var file = Placeholder("head.mp4");
-        var ffprobe = new ScriptedFfprobe(_ => Count("45"));
+        var file = Placeholder("clip.mp4");
+        // decode order of a closed GOP: 6.0 I, 6.1 P, 6.033333 B, 6.066667 B, then the next GOP 7.0 I ...
+        var ffprobe = new ScriptedFfprobe(_ => Packets("6.000000", "6.100000", "6.033333", "6.066667", "7.000000", "7.100000", "7.066667", "7.033333"));
 
-        (await new MediaProbe(ffprobe).CountVideoPacketsAsync(file)).Should().Be(45);
-        var call = ffprobe.Calls.Should().ContainSingle().Which;
-        call.Should().ContainInOrder("-select_streams", "v:0").And.Contain("-count_packets").And.Contain(file);
-        call.Should().ContainInOrder("-show_entries", "stream=nb_read_packets");
+        var times = await new MediaProbe(ffprobe).GetVideoFrameTimesAsync(file, S(6.033333), S(7.066667));
 
-        (await new MediaProbe(new ScriptedFfprobe(_ => Count(null))).CountVideoPacketsAsync(file)).Should().Be(0, "an audio-only file");
-        (await new MediaProbe(new ScriptedFfprobe(_ => Count("0"))).CountVideoPacketsAsync(file)).Should().Be(0);
+        times.Should().Equal(S(6.033333), S(6.066667), S(6.1), S(7.0), S(7.033333));
     }
 
-    // serves-spec: SPEC-004#I40 - what it cannot read it does not claim: null, so the engine does not call the head empty.
+    // serves-spec: SPEC-004#I40 - the tolerance at both ends: 1 ms before `from` is in, 1 ms before `to` is out.
     [Trait("serves-spec", "SPEC-004")]
     [Fact]
-    public async Task CountVideoPackets_IsNullWhenTheCountCannotBeRead()
+    public async Task GetVideoFrameTimes_CountsAFrameWithinAMillisecondBeforeTheStartAsIn_AndBeforeTheEndAsOut()
+    {
+        var file = Placeholder("clip.mp4");
+        var ffprobe = new ScriptedFfprobe(_ => Packets("6.9995", "7.033333", "7.9995", "8.000000"));
+
+        var times = await new MediaProbe(ffprobe).GetVideoFrameTimesAsync(file, S(7.0), S(8.0));
+
+        times.Should().Equal(S(6.9995), S(7.033333));
+        times.Should().NotContain(S(7.9995), "within 1 ms before `to` is at `to`, out of [from, to)");
+    }
+
+    // serves-spec: SPEC-004#I40 - the OPEN-GOP case the question exists for: the key frame that ends the window (8.0) is decoded
+    // BEFORE the B-frames displayed ahead of it (7.933333, 7.966667), so a read that stopped at it would miss them. The read goes
+    // 2 s past `to`, and the window then holds them.
+    [Trait("serves-spec", "SPEC-004")]
+    [Fact]
+    public async Task GetVideoFrameTimes_ReadsTwoSecondsPastTheEnd_SoLeadingPicturesOfAnOpenGopAreInTheWindow()
+    {
+        var file = Placeholder("og.mp4");
+        var ffprobe = new ScriptedFfprobe(_ => Packets("7.866667", "7.900000", "8.000000", "7.933333", "7.966667", "8.100000", "8.033333", "8.066667"));
+        var probe = new MediaProbe(ffprobe);
+
+        var times = await probe.GetVideoFrameTimesAsync(file, S(7.9), S(8.0));
+
+        times.Should().Equal(S(7.9), S(7.933333), S(7.966667));
+        var call = ffprobe.Calls.Should().ContainSingle().Which;
+        call[call.ToList().IndexOf("-read_intervals") + 1].Should().Be("7.9%10", "from the window start to two seconds past its end, both absolute");
+        call.Should().ContainInOrder("-select_streams", "v:0").And.ContainInOrder("-show_entries", "packet=pts_time,dts_time");
+    }
+
+    // serves-spec: SPEC-004#I40 - a file with no video stream, or none in the window, is an EMPTY list (the engine reads it as "no
+    // picture"); what cannot be read is null (the engine then does not call the head wrong): garbage, a probe error, a missing file,
+    // a blank path, a negative start, a packet with no time at all.
+    [Trait("serves-spec", "SPEC-004")]
+    [Fact]
+    public async Task GetVideoFrameTimes_IsEmptyWithoutFrames_AndNullWhenItCannotSay()
     {
         var file = Placeholder("head.mp4");
 
-        (await new MediaProbe(new ScriptedFfprobe(_ => Count("N/A"))).CountVideoPacketsAsync(file)).Should().BeNull();
-        (await new MediaProbe(new ScriptedFfprobe(_ => "{}")).CountVideoPacketsAsync(file)).Should().BeNull();
-        (await new MediaProbe(new ScriptedFfprobe(_ => "not json")).CountVideoPacketsAsync(file)).Should().BeNull();
-        (await new MediaProbe(new FailingFfprobe()).CountVideoPacketsAsync(file)).Should().BeNull();
-        (await new MediaProbe(new ScriptedFfprobe(_ => Count("45"))).CountVideoPacketsAsync(Path.Combine(_dir, "gone.mp4"))).Should().BeNull();
+        (await new MediaProbe(new ScriptedFfprobe(_ => "{}")).GetVideoFrameTimesAsync(file, S(0), S(1))).Should().NotBeNull().And.BeEmpty("no video stream");
+        (await new MediaProbe(new ScriptedFfprobe(_ => Packets())).GetVideoFrameTimesAsync(file, S(0), S(1))).Should().NotBeNull().And.BeEmpty();
+        (await new MediaProbe(new ScriptedFfprobe(_ => Packets("5.0", "5.5"))).GetVideoFrameTimesAsync(file, S(0), S(1))).Should().BeEmpty("none in the window");
+
+        (await new MediaProbe(new ScriptedFfprobe(_ => "not json")).GetVideoFrameTimesAsync(file, S(0), S(1))).Should().BeNull();
+        (await new MediaProbe(new FailingFfprobe()).GetVideoFrameTimesAsync(file, S(0), S(1))).Should().BeNull("ffprobe failed");
+        (await new MediaProbe(new ScriptedFfprobe(_ => Packets("0.0"))).GetVideoFrameTimesAsync(Path.Combine(_dir, "gone.mp4"), S(0), S(1))).Should().BeNull("no file");
+        (await new MediaProbe(new ScriptedFfprobe(_ => Packets("0.0"))).GetVideoFrameTimesAsync(" ", S(0), S(1))).Should().BeNull("blank path");
+        (await new MediaProbe(new ScriptedFfprobe(_ => Packets("0.0"))).GetVideoFrameTimesAsync(file, S(-1), S(1))).Should().BeNull("negative start");
+        (await new MediaProbe(new ScriptedFfprobe(_ => PacketTimes(("0.0", "0.0"), (null, null)))).GetVideoFrameTimesAsync(file, S(0), S(1))).Should().BeNull("a packet with no time");
+    }
+
+    // serves-spec: SPEC-004#I40 - the same pts/dts rules as the first question: a packet without a pts takes its dts while the
+    // stream shows no re-ordering, and the answer is null once it does.
+    [Trait("serves-spec", "SPEC-004")]
+    [Fact]
+    public async Task GetVideoFrameTimes_UsesTheDecodingTimeOfAPacketWithoutAPts_OnlyWhileTheStreamShowsNoReordering()
+    {
+        var file = Placeholder("clip.avi");
+        var plain = new ScriptedFfprobe(_ => PacketTimes(
+            (null, "3.966667"), ("4.000000", "4.000000"), (null, "4.033333"), ("4.066667", "4.066667")));
+        (await new MediaProbe(plain).GetVideoFrameTimesAsync(file, S(4.0), S(4.1))).Should().Equal(S(4.0), S(4.033333), S(4.066667));
+
+        var reordered = new ScriptedFfprobe(_ => PacketTimes(("4.100000", "4.033333"), (null, "4.066667"), ("4.133333", "4.100000")));
+        (await new MediaProbe(reordered).GetVideoFrameTimesAsync(file, S(4.0), S(4.2))).Should().BeNull();
+    }
+
+    // serves-spec: SPEC-004#I40 - a cancel is not swallowed with the probe errors.
+    [Trait("serves-spec", "SPEC-004")]
+    [Fact]
+    public async Task GetVideoFrameTimes_PropagatesACancellation()
+    {
+        var file = Placeholder("clip.mp4");
+
+        var act = () => new MediaProbe(new OperationCancelledFfprobeRunner()).GetVideoFrameTimesAsync(file, S(0), S(1));
+
+        await act.Should().ThrowAsync<OperationCanceledException>();
     }
 
     // ---- The engine with a frame probe (fakes) ---------------------------------------------------------------------------
@@ -281,21 +342,36 @@ public sealed class VideoFrameProbeTests : IDisposable
         private readonly MediaInfo _info;
         private readonly IReadOnlyList<TimeSpan> _keyframes;
 
-        public FrameProbe(MediaInfo info, IReadOnlyList<TimeSpan> keyframes, TimeSpan? firstFrame, int? headPackets = 45)
+        public FrameProbe(MediaInfo info, IReadOnlyList<TimeSpan> keyframes, TimeSpan? firstFrame, int? headPackets = 45, int? sourceFrames = -1)
         {
             _info = info;
             _keyframes = keyframes;
             FirstFrame = firstFrame;
             HeadPackets = headPackets;
+            SourceFrames = sourceFrames == -1 ? headPackets : sourceFrames; // by default the source holds as many frames as the head
         }
 
         public TimeSpan? FirstFrame { get; set; }
 
+        /// <summary>How many frames the head file holds (null = the probe cannot say).</summary>
         public int? HeadPackets { get; set; }
+
+        /// <summary>How many frames the source holds in the span the head was cut from (null = the probe cannot say).</summary>
+        public int? SourceFrames { get; set; }
+
+        /// <summary>The time of the head's first frame (a head starts at 0).</summary>
+        public TimeSpan HeadFirst { get; set; } = TimeSpan.Zero;
 
         public List<TimeSpan> SnapAsked { get; } = new();
 
+        /// <summary>How many times the HEAD file's frames were read.</summary>
         public int CountAsked { get; private set; }
+
+        /// <summary>The windows asked of the SOURCE, as (from, to).</summary>
+        public List<(TimeSpan From, TimeSpan To)> SourceAsked { get; } = new();
+
+        /// <summary>The window asked of the head.</summary>
+        public (TimeSpan From, TimeSpan To)? HeadAsked { get; private set; }
 
         public Task<ProbeResult> ProbeAsync(string path, CancellationToken ct = default) => Task.FromResult(ProbeResult.Success(_info));
 
@@ -312,10 +388,25 @@ public sealed class VideoFrameProbeTests : IDisposable
             return Task.FromResult(FirstFrame);
         }
 
-        public Task<int?> CountVideoPacketsAsync(string path, CancellationToken ct = default)
+        public Task<IReadOnlyList<TimeSpan>?> GetVideoFrameTimesAsync(string path, TimeSpan from, TimeSpan to, CancellationToken ct = default)
         {
-            CountAsked++;
-            return Task.FromResult(HeadPackets);
+            // The engine names its head "head.<ext>" in its temp dir; anything else is the source.
+            var isHead = Path.GetFileName(path).StartsWith("head.", StringComparison.Ordinal);
+            if (isHead)
+            {
+                CountAsked++;
+                HeadAsked = (from, to);
+            }
+            else
+            {
+                SourceAsked.Add((from, to));
+            }
+
+            var count = isHead ? HeadPackets : SourceFrames;
+            IReadOnlyList<TimeSpan>? times = count is { } n
+                ? Enumerable.Range(0, n).Select(i => (isHead ? HeadFirst : from) + S(i / 30.0)).ToList()
+                : null;
+            return Task.FromResult(times);
         }
     }
 
@@ -343,7 +434,9 @@ public sealed class VideoFrameProbeTests : IDisposable
         var list = runner.Lists.Should().ContainSingle().Which.Split('\n', StringSplitOptions.RemoveEmptyEntries);
         list[1].Should().Be("duration 0.966667", "the source leg starts exactly where the head's last frame ends");
         list[3].Should().Be("inpoint 8");
-        probe.CountAsked.Should().Be(1, "the head is checked for a video frame");
+        probe.CountAsked.Should().Be(1, "the head is read for its frames");
+        probe.HeadAsked.Should().Be((TimeSpan.Zero, S(8) - S(7.033333) + S(1)), "the head is read from its time 0 over its own length and a second more");
+        probe.SourceAsked.Should().ContainSingle().Which.Should().Be((S(7.033333), S(8)), "the source over the span the head was cut from: [Start, HeadEnd)");
     }
 
     // serves-spec: SPEC-001#I43 - a request already on a frame stays as it is.
@@ -486,6 +579,159 @@ public sealed class VideoFrameProbeTests : IDisposable
         result.Strategy.Should().Be(SmartCutStrategy.FullReencode);
         result.FellBack.Should().BeTrue();
         File.Exists(output).Should().BeFalse();
+    }
+
+    // ---- The head must be the source's frames (T-191) ----------------------------------------------------------------------
+
+    private const string NotFrameExact = "the cut cannot be made frame-exact for this video yet";
+
+    // serves-spec: SPEC-001#I46 - the input seek lands on the key frame by its decoding time; where that key frame has leading
+    // pictures that need the GOP before it (an open GOP, MPEG-4 part 2 with B-frames) the head loses frames and the exit code is
+    // still 0. A head with fewer frames than the source has in [Start, HeadEnd) - measured: 1 against 2 at Start = K-2 on an
+    // x264 open-gop=1 file and on an MPEG-4 file - is a fall back, not a Done: no concat, nothing at the destination, no temp dir.
+    [Trait("serves-spec", "SPEC-001")]
+    [Theory]
+    [InlineData(44, 45)]   // one frame short
+    [InlineData(1, 2)]     // the measured shape: 1 frame instead of 2
+    [InlineData(46, 45)]   // one frame too many (a repeated frame)
+    public async Task SmartCutEngine_WhenTheHeadHoldsADifferentNumberOfFramesThanTheSource_FallsBack(int headFrames, int sourceFrames)
+    {
+        var input = Placeholder("clip.mp4");
+        var output = Path.Combine(_dir, "cut.mp4");
+        var probe = new FrameProbe(H264Aac(), Grid2s(), firstFrame: null, headPackets: headFrames, sourceFrames: sourceFrames);
+        var runner = new RecordingFakeRunner();
+        var progress = new List<double>();
+
+        var result = await new SmartCutEngine(runner, probe).CutAsync(
+            input, S(7.5), null, output, new Progress<double>(progress.Add));
+
+        result.FellBack.Should().BeTrue();
+        result.FallbackReason.Should().Be(NotFrameExact);
+        result.FallbackReason.Should().NotContainAny(new[] { "(", ")" }, "the row warning wraps the reason in parentheses already");
+        result.OutputPath.Should().BeNull();
+        result.EffectiveStart.Should().BeNull();
+        runner.Commands.Should().ContainSingle("the head ran, no concat after a head that is not the source's frames");
+        File.Exists(output).Should().BeFalse();
+        Directory.GetDirectories(_dir, ".vsj-smartcut-*").Should().BeEmpty("the temp dir is swept in a finally");
+        probe.SourceAsked.Should().ContainSingle().Which.Should().Be((S(7.5), S(8)), "the span the head was cut from: [Start, HeadEnd)");
+    }
+
+    // serves-spec: SPEC-001#I46 - the same number of frames is not enough when the first of them is late: a head whose first
+    // frame is at 2 frames (66 ms) instead of 0 starts the final's video late against its audio.
+    [Trait("serves-spec", "SPEC-001")]
+    [Theory]
+    [InlineData(66.0)]
+    [InlineData(34.0)]
+    public async Task SmartCutEngine_WhenTheHeadsFirstFrameIsLate_FallsBack_EvenWithTheRightNumberOfFrames(double firstMs)
+    {
+        var input = Placeholder("clip.mp4");
+        var output = Path.Combine(_dir, "cut.mp4");
+        var probe = new FrameProbe(H264Aac(), Grid2s(), firstFrame: null, headPackets: 15, sourceFrames: 15)
+        {
+            HeadFirst = TimeSpan.FromMilliseconds(firstMs),
+        };
+        var runner = new RecordingFakeRunner();
+
+        var result = await new SmartCutEngine(runner, probe).CutAsync(input, S(7.5), null, output);
+
+        result.FellBack.Should().BeTrue();
+        result.FallbackReason.Should().Be(NotFrameExact);
+        runner.Commands.Should().ContainSingle();
+        File.Exists(output).Should().BeFalse();
+        probe.SourceAsked.Should().BeEmpty("the late start is enough; the source is not read");
+    }
+
+    // serves-spec: SPEC-001#I46 - a first frame within half a frame of 0 (the encoder's time base) is on time.
+    [Trait("serves-spec", "SPEC-001")]
+    [Fact]
+    public async Task SmartCutEngine_AcceptsAHeadWhoseFirstFrameIsInsideHalfAFrame()
+    {
+        var input = Placeholder("clip.mp4");
+        var probe = new FrameProbe(H264Aac(), Grid2s(), firstFrame: null, headPackets: 15, sourceFrames: 15)
+        {
+            HeadFirst = TimeSpan.FromMilliseconds(0.1),
+        };
+
+        var result = await new SmartCutEngine(new RecordingFakeRunner(), probe).CutAsync(input, S(7.5), null, Path.Combine(_dir, "cut.mp4"));
+
+        result.FellBack.Should().BeFalse();
+    }
+
+    // serves-spec: SPEC-001#I46 - what the probe cannot say is not held against the head: no answer for the source (an AVI whose
+    // frame times cannot be told) or for the head leaves the cut as it was.
+    [Trait("serves-spec", "SPEC-001")]
+    [Theory]
+    [InlineData(15, null)]   // the source cannot be read
+    [InlineData(null, 15)]   // the head cannot be read
+    [InlineData(null, null)]
+    public async Task SmartCutEngine_DoesNotCallAHeadWrong_ThatTheProbeCannotCount(int? headFrames, int? sourceFrames)
+    {
+        var input = Placeholder("clip.mp4");
+        var output = Path.Combine(_dir, "cut.mp4");
+        var probe = new FrameProbe(H264Aac(), Grid2s(), firstFrame: null, headPackets: headFrames, sourceFrames: sourceFrames);
+
+        var result = await new SmartCutEngine(new RecordingFakeRunner(), probe).CutAsync(input, S(7.5), null, output);
+
+        result.FellBack.Should().BeFalse();
+        File.Exists(output).Should().BeTrue();
+    }
+
+    // serves-spec: SPEC-001#I46 - a head with NO frame keeps its own reason (the picture is gone), and the source is not read for it.
+    [Trait("serves-spec", "SPEC-001")]
+    [Fact]
+    public async Task SmartCutEngine_AHeadWithNoFrame_KeepsItsOwnReason_AndTheSourceIsNotRead()
+    {
+        var input = Placeholder("clip.mp4");
+        var probe = new FrameProbe(H264Aac(), Grid2s(), firstFrame: null, headPackets: 0, sourceFrames: 2);
+
+        var result = await new SmartCutEngine(new RecordingFakeRunner(), probe).CutAsync(input, S(7.5), null, Path.Combine(_dir, "cut.mp4"));
+
+        result.FellBack.Should().BeTrue();
+        result.FallbackReason.Should().Be(SmartCutEngine.NoPictureReason);
+        probe.SourceAsked.Should().BeEmpty();
+    }
+
+    // serves-spec: SPEC-001#I46 - the same end-to-end check on a FullReencode, where the head IS the output: the span is
+    // [Start, End).
+    [Trait("serves-spec", "SPEC-001")]
+    [Fact]
+    public async Task SmartCutEngine_AFullReencodeWhoseHeadIsNotTheSourcesFrames_FallsBack()
+    {
+        var input = Placeholder("clip.mp4");
+        var output = Path.Combine(_dir, "cut.mp4");
+        var probe = new FrameProbe(H264Aac(), Grid2s(), firstFrame: null, headPackets: 1, sourceFrames: 2);
+
+        var result = await new SmartCutEngine(new RecordingFakeRunner(), probe).CutAsync(input, S(9.01), S(9.08), output);
+
+        result.Strategy.Should().Be(SmartCutStrategy.FullReencode);
+        result.FellBack.Should().BeTrue();
+        result.FallbackReason.Should().Be(NotFrameExact);
+        File.Exists(output).Should().BeFalse();
+        probe.SourceAsked.Should().ContainSingle().Which.Should().Be((S(9.01), S(9.08)));
+    }
+
+    // serves-spec: SPEC-001#I46 / SPEC-011#I164 - in a Bulk batch such a row is cut on the nearest keyframe by the lossless pass, and
+    // says why in the engine's own words, after the run (the row cannot know before: it needs the head).
+    [Trait("serves-spec", "SPEC-002")]
+    [Fact]
+    public async Task ABulkRow_WhoseHeadIsNotTheSourcesFrames_IsCutLosslessly_WithTheReasonInItsWarning()
+    {
+        var input = Placeholder("clip.mp4");
+        var probe = new FrameProbe(H264Aac(), Grid2s(), firstFrame: null, headPackets: 1, sourceFrames: 2);
+        var split = new FakeSplitEngine();
+        var smart = new SmartCutEngine(new RecordingFakeRunner(), probe);
+
+        var result = await new VideoSplitJoiner.Core.Bulk.BulkTrimEngine(
+                split, new FakeRequestBuilder(), new FakeDiskSpaceProbe(long.MaxValue), smart, null)
+            .RunAsync(
+                new[] { new VideoSplitJoiner.Core.Bulk.BulkTrimItem(input, S(7.5), null, Path.Combine(_dir, "clip_trimmed.mp4")) },
+                new VideoSplitJoiner.Core.Bulk.BulkTrimOptions(Precision: VideoSplitJoiner.Core.Bulk.CutPrecision.Exact));
+
+        split.CallCount.Should().Be(1, "the lossless pass took the row over");
+        var row = result.Items.Single();
+        row.Outcome.Should().Be(VideoSplitJoiner.Core.Bulk.ItemOutcome.Done);
+        row.Warnings.Should().ContainSingle().Which.Should().Be(
+            $"{VideoSplitJoiner.Core.Bulk.BulkTrimEngine.ExactFallbackPrefix} ({NotFrameExact}) - cut snapped to the nearest keyframe");
     }
 
     // ---- The composition (T-190, third pass) ------------------------------------------------------------------------------
@@ -793,7 +1039,19 @@ public sealed class VideoFrameProbeTests : IDisposable
         var run = await new FfmpegRunner(Locator()).RunAsync(FfmpegArgs.ForFfmpeg()
             .Raw("-y", "-loglevel", "error", "-i", g60, "-vn", "-c:a", "copy").Output(audioOnly));
         run.ExitCode.Should().Be(0, run.StdErrText);
-        (await probe.CountVideoPacketsAsync(audioOnly)).Should().Be(0);
-        (await probe.CountVideoPacketsAsync(g60)).Should().Be(300);
+        (await probe.GetVideoFrameTimesAsync(audioOnly, S(0), S(10))).Should().NotBeNull().And.BeEmpty("an audio-only file has no frames");
+        (await probe.GetVideoFrameTimesAsync(g60, S(0), S(10))).Should().HaveCount(300);
+
+        // The window question against the same packet list: every window, whatever the keyframe it starts behind, holds exactly
+        // the packets whose pts lies in it.
+        var all = (await SmartCutJointTiming.PacketsAsync(g60, "v:0")).Select(p => p.Pts).OrderBy(x => x).ToList();
+        foreach (var (from, to) in new[] { (0.0, 1.0), (3.0, 3.0667), (3.9667, 4.0), (3.9667, 4.0333), (4.0, 6.0), (9.5, 10.0), (2.5, 9.9) })
+        {
+            var expectedWindow = all.Where(t => t >= from - 0.001 && t < to - 0.001).ToList();
+            var actualWindow = await probe.GetVideoFrameTimesAsync(g60, S(from), S(to));
+            _output.WriteLine($"g60 [{from}, {to}) -> {actualWindow?.Count} frames (packet list: {expectedWindow.Count})");
+            actualWindow.Should().NotBeNull();
+            actualWindow!.Select(t => t.TotalSeconds).Should().Equal(expectedWindow, (a, b) => Math.Abs(a - b) < 1e-6);
+        }
     }
 }
