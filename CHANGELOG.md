@@ -18,13 +18,21 @@ goal; `0.1.0` is the first end-to-end, shippable cut.
   interval, for a cut from the start point to the end and for a kept middle, with cut points on a frame of the video and
   between two frames: the first kept frame lands where it should, the audio runs on across the joint, no frame is lost
   or repeated, and a full decode prints nothing. A cut point between two frames now starts the cut on the first frame at
-  or after it, at most one frame later (33 ms at 30 fps); before, such a cut either put the kept part up to 33 ms off
-  or repeated one frame. A cut point 10 to 33 ms before a keyframe could produce a file with sound and no picture,
-  reported as done; it now becomes the lossless cut on that keyframe. `.ts`, `.m2ts` and `.mts` files, `.mkv` and `.webm`
-  files, and any other file whose timestamps do not start at zero can no longer be cut exactly this way (on a `.ts`
-  the old way started the kept part one keyframe interval late; on an `.mkv` it wrote a whole extra keyframe interval
-  of frames): they are cut on the nearest keyframe, the row says why before you press Run, and
-  the Exact note names the file types. HEVC still falls back to the nearest keyframe, as before.
+  or after it, at most one frame later (33 ms at 30 fps; a cut point within 10 ms after a keyframe is cut on that
+  keyframe, as before); before, such a cut either put the kept part up to 33 ms off or repeated one frame. A video
+  that has no frame for a while after the cut point (its picture stops while its sound goes on) is no longer cut at the
+  picture's return with the sound in between silently dropped: it is cut on the nearest keyframe and the row says why.
+  A cut point 10 to 33 ms before a keyframe could produce a file with sound and no picture, reported as done; it now
+  becomes the lossless cut on that keyframe. `.ts`, `.m2ts` and `.mts` files, `.mkv` and `.webm` files, and any other file
+  whose timestamps do not start at zero can no longer be cut exactly this way (on a `.ts` the old way started the kept
+  part one keyframe interval late; on an `.mkv` it wrote a whole extra keyframe interval of frames): they are cut on the
+  nearest keyframe, the row says why before you press Run, and the Exact note names the file types. The file's name counts
+  as well as what is inside it: an MP4 renamed `.mkv` (or cut into a `.mkv`, `.webm`, `.ts` or `.m2ts` output) used to
+  come out as a corrupt file reported as done, and is now cut on the nearest keyframe too. HEVC still falls back to the
+  nearest keyframe, as before. Two limits stay, both found at review and not built here: "no frame is lost or repeated"
+  holds for constant-frame-rate, closed-GOP videos; a variable-frame-rate video (frames dropped here and there) can start
+  one keyframe interval early, in the lossless cut as well as in Exact, and an open-GOP H.264 video breaks after the
+  joint in Exact as before (T-223).
 - **A split part now starts on the keyframe the plan shows.** On a video with B-frames — what x264, x265 and OBS
   write by default — every part of a full split ended one keyframe interval late: cuts at 3 s and 6 s on a video
   with a keyframe every second gave parts of 4, 3 and 3 seconds instead of 3, 3 and 4, and a short clip whose last

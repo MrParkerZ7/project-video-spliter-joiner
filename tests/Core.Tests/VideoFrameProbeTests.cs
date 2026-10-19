@@ -47,6 +47,15 @@ public sealed class VideoFrameProbeTests : IDisposable
     private static string Packets(params string[] ptsTimes) =>
         "{\"packets\":[" + string.Join(",", ptsTimes.Select(t => t == "" ? "{}" : $"{{\"pts_time\":\"{t}\"}}")) + "]}";
 
+    /// <summary>Packets with both times: <c>(pts, dts)</c>, either null = key absent (ffprobe's JSON drops an N/A field).</summary>
+    private static string PacketTimes(params (string? Pts, string? Dts)[] packets) =>
+        "{\"packets\":[" + string.Join(",", packets.Select(p =>
+            "{" + string.Join(",", new[]
+            {
+                p.Pts is null ? null : $"\"pts_time\":\"{p.Pts}\"",
+                p.Dts is null ? null : $"\"dts_time\":\"{p.Dts}\"",
+            }.Where(x => x is not null)) + "}")) + "]}";
+
     private sealed class ScriptedFfprobe : IFfprobeRunner
     {
         private readonly Func<FfmpegArgs, string> _answer;
@@ -97,7 +106,7 @@ public sealed class VideoFrameProbeTests : IDisposable
 
         var call = ffprobe.Calls.Should().ContainSingle().Which;
         call.Should().ContainInOrder("-select_streams", "v:0");
-        call.Should().ContainInOrder("-show_entries", "packet=pts_time");
+        call.Should().ContainInOrder("-show_entries", "packet=pts_time,dts_time");
         var interval = call[call.ToList().IndexOf("-read_intervals") + 1];
         interval.Should().Be("7.018%9.018", "from the request to two seconds past it, both absolute");
         call.Should().Contain(file);
@@ -149,6 +158,63 @@ public sealed class VideoFrameProbeTests : IDisposable
         (await new MediaProbe(new ScriptedFfprobe(_ => Packets("7.0"))).FirstVideoFrameAtOrAfterAsync(Path.Combine(_dir, "gone.mp4"), S(7))).Should().BeNull("no file");
         (await new MediaProbe(new ScriptedFfprobe(_ => Packets("7.0"))).FirstVideoFrameAtOrAfterAsync(" ", S(7))).Should().BeNull("blank path");
         (await new MediaProbe(new ScriptedFfprobe(_ => Packets("7.0"))).FirstVideoFrameAtOrAfterAsync(file, S(-1))).Should().BeNull("negative time");
+    }
+
+    // serves-spec: SPEC-004#I40 - the query asks for the decoding time as well (T-190, third pass).
+    [Trait("serves-spec", "SPEC-004")]
+    [Fact]
+    public async Task FirstVideoFrameAtOrAfter_AsksForTheDecodingTimeToo()
+    {
+        var file = Placeholder("clip.avi");
+        var ffprobe = new ScriptedFfprobe(_ => PacketTimes(("4.033333", "4.033333")));
+
+        await new MediaProbe(ffprobe).FirstVideoFrameAtOrAfterAsync(file, S(4.018));
+
+        ffprobe.Calls.Should().ContainSingle().Which.Should().ContainInOrder("-show_entries", "packet=pts_time,dts_time");
+    }
+
+    // serves-spec: SPEC-004#I40 - an AVI with B-frames lists about a third of its video packets without a pts, only a dts on the
+    // 1/fps grid (pts == dts wherever both exist): the frame at 4.033333 has no pts, and skipping it picked 4.066667 for a
+    // request at 4.018. The packet takes its dts, as the keyframe scan does.
+    [Trait("serves-spec", "SPEC-004")]
+    [Fact]
+    public async Task FirstVideoFrameAtOrAfter_UsesTheDecodingTime_OfAPacketWithoutAPts_WhenTheStreamShowsNoReordering()
+    {
+        var file = Placeholder("clip.avi");
+        var ffprobe = new ScriptedFfprobe(_ => PacketTimes(
+            (null, "3.966667"), ("4.000000", "4.000000"), (null, "4.033333"), ("4.066667", "4.066667"), ("4.100000", "4.100000")));
+
+        var first = await new MediaProbe(ffprobe).FirstVideoFrameAtOrAfterAsync(file, S(4.018));
+
+        first.Should().Be(S(4.033333));
+    }
+
+    // serves-spec: SPEC-004#I40 - but a packet without a pts in a stream that DOES show re-ordering (a packet whose pts and dts
+    // differ) has no frame time to give: its dts is a decode time. The answer is null, never a decode time passed off as a
+    // display time. A packet with no time at all is the same.
+    [Trait("serves-spec", "SPEC-004")]
+    [Fact]
+    public async Task FirstVideoFrameAtOrAfter_IsNull_WhenAPacketHasNoPts_AndTheStreamShowsReordering_OrNoTimeAtAll()
+    {
+        var file = Placeholder("clip.avi");
+
+        var reordered = new ScriptedFfprobe(_ => PacketTimes(("4.100000", "4.033333"), (null, "4.066667"), ("4.133333", "4.100000")));
+        (await new MediaProbe(reordered).FirstVideoFrameAtOrAfterAsync(file, S(4.018))).Should().BeNull();
+
+        var noTime = new ScriptedFfprobe(_ => PacketTimes(("4.033333", "4.033333"), (null, null)));
+        (await new MediaProbe(noTime).FirstVideoFrameAtOrAfterAsync(file, S(4.018))).Should().BeNull();
+    }
+
+    // serves-spec: SPEC-004#I40 - a normal re-ordered stream (every packet has both times, pts != dts) is untouched by the fallback.
+    [Trait("serves-spec", "SPEC-004")]
+    [Fact]
+    public async Task FirstVideoFrameAtOrAfter_StillUsesThePts_OfAStreamWithReordering()
+    {
+        var file = Placeholder("clip.mp4");
+        var ffprobe = new ScriptedFfprobe(_ => PacketTimes(
+            ("4.000000", "3.933333"), ("4.100000", "3.966667"), ("4.033333", "4.000000"), ("4.066667", "4.033333")));
+
+        (await new MediaProbe(ffprobe).FirstVideoFrameAtOrAfterAsync(file, S(4.018))).Should().Be(S(4.033333));
     }
 
     // serves-spec: SPEC-004#I40 - a cancel is not swallowed with the probe errors.
@@ -422,6 +488,129 @@ public sealed class VideoFrameProbeTests : IDisposable
         File.Exists(output).Should().BeFalse();
     }
 
+    // ---- The composition (T-190, third pass) ------------------------------------------------------------------------------
+
+    // serves-spec: SPEC-001#I43 / SPEC-004#I40 - the production graph (the app builds `new MediaProbe(ffprobeRunner)` and hands that
+    // same probe to `new SmartCutEngine(ffmpegRunner, probe)`) has the frame snap and the head check ACTIVE. `probe as
+    // IVideoFrameProbe` makes a probe without the interface switch both off silently, so this is the guard that would fail.
+    [Trait("serves-spec", "SPEC-001")]
+    [Fact]
+    public void TheProductionGraph_HasTheFrameSnapAndTheHeadCheckActive()
+    {
+        var locator = Locator();
+        var ffprobeRunner = new FfprobeRunner(locator);
+        var ffmpegRunner = new FfmpegRunner(locator);
+        var probe = new MediaProbe(ffprobeRunner);
+
+        typeof(IVideoFrameProbe).IsAssignableFrom(typeof(MediaProbe)).Should().BeTrue("MediaProbe answers the frame questions");
+        new SmartCutEngine(ffmpegRunner, probe).FrameQuestionsActive.Should().BeTrue();
+    }
+
+    // serves-spec: SPEC-001#I43 - the other side of the seam, so the guard above can fail: a probe without the interface leaves
+    // the engine without the snap and the head check (it cuts at the request, as before the snap).
+    [Trait("serves-spec", "SPEC-001")]
+    [Fact]
+    public void AProbeWithoutTheFrameInterface_LeavesTheEngineWithoutTheSnapAndTheHeadCheck()
+    {
+        var plain = new PlainProbe();
+
+        typeof(IVideoFrameProbe).IsAssignableFrom(typeof(PlainProbe)).Should().BeFalse("precondition");
+        new SmartCutEngine(new RecordingFakeRunner(), plain).FrameQuestionsActive.Should().BeFalse();
+    }
+
+    private sealed class PlainProbe : IMediaProbe
+    {
+        public Task<ProbeResult> ProbeAsync(string path, CancellationToken ct = default) => throw new NotSupportedException();
+
+        public Task<IReadOnlyList<TimeSpan>> GetKeyframesAsync(string path, CancellationToken ct = default) => throw new NotSupportedException();
+
+        public KeyframeSnap SnapToNearestKeyframe(IReadOnlyList<TimeSpan> keyframes, TimeSpan requested) => throw new NotSupportedException();
+
+        public TimeSpan AverageGop(IReadOnlyList<TimeSpan> keyframes) => TimeSpan.Zero;
+    }
+
+    // ---- The snap's reach (T-190, third pass) -----------------------------------------------------------------------------
+
+    private static MediaInfo H264At(double? fps) => new(
+        S(60), "mov,mp4,m4a,3gp,3g2,mj2",
+        new[] { new StreamInfo(0, "h264", "video", 1920, 1080, "yuv420p", null, null, "1/15360", fps, fps) },
+        new[] { new StreamInfo(1, "aac", "audio", null, null, null, 48000, 2, "1/48000") });
+
+    // serves-spec: SPEC-001#I43 - the furthest the snap may move the start: three frame intervals of the first video stream's
+    // frame rate, 250 ms when the rate is unknown or unusable.
+    [Trait("serves-spec", "SPEC-001")]
+    [Theory]
+    [InlineData(30.0, 100)]
+    [InlineData(24.0, 125)]
+    [InlineData(60.0, 50)]
+    [InlineData(25.0, 120)]
+    [InlineData(null, 250)]
+    [InlineData(0.0, 250)]
+    [InlineData(-5.0, 250)]
+    [InlineData(double.NaN, 250)]
+    [InlineData(double.PositiveInfinity, 250)]
+    public void MaxSnapShift_IsThreeFrameIntervals_OrAQuarterSecondWhenTheRateIsUnknown(double? fps, double expectedMs)
+    {
+        SmartCutEngine.MaxSnapShift(H264At(fps)).TotalMilliseconds.Should().BeApproximately(expectedMs, 0.5);
+    }
+
+    // serves-spec: SPEC-001#I43 - no video stream, no rate: the unknown-rate bound.
+    [Trait("serves-spec", "SPEC-001")]
+    [Fact]
+    public void MaxSnapShift_WithoutAVideoStream_IsTheUnknownRateBound()
+    {
+        SmartCutEngine.MaxSnapShift(H264Aac(video: false)).Should().Be(TimeSpan.FromMilliseconds(250));
+    }
+
+    // serves-spec: SPEC-001#I43 / SPEC-001#I46 - a frame further away than the reach is a GAP in the picture, not the next frame:
+    // the cut would start there and silently drop the audio in between. The engine falls back with a reason, runs nothing, and
+    // leaves nothing behind - at 30 fps the reach is 100 ms: 99 ms is a snap, 110 ms is a fall back.
+    [Trait("serves-spec", "SPEC-001")]
+    [Theory]
+    [InlineData(7.099, true)]
+    [InlineData(7.110, false)]
+    [InlineData(8.5, false)]
+    public async Task SmartCutEngine_FallsBack_WhenTheNextFrameIsBeyondTheSnapsReach(double firstFrame, bool snaps)
+    {
+        var input = Placeholder("clip.mp4");
+        var output = Path.Combine(_dir, "cut.mp4");
+        var probe = new FrameProbe(H264At(30), Grid2s(), firstFrame: S(firstFrame));
+        var runner = new RecordingFakeRunner();
+
+        var result = await new SmartCutEngine(runner, probe).CutAsync(input, S(7.0), null, output);
+
+        if (snaps)
+        {
+            result.FellBack.Should().BeFalse();
+            result.EffectiveStart.Should().Be(S(firstFrame));
+            return;
+        }
+
+        result.FellBack.Should().BeTrue();
+        result.FallbackReason.Should().Be("the video has no frame within a few frames after the requested time");
+        result.FallbackReason.Should().NotContainAny(new[] { "(", ")" }, "the row warning wraps the reason in parentheses already");
+        result.Strategy.Should().NotBe(SmartCutStrategy.PureCopy, "BulkTrimEngine warns the row for any fall back that is not PureCopy");
+        result.EffectiveStart.Should().BeNull();
+        runner.Commands.Should().BeEmpty();
+        File.Exists(output).Should().BeFalse();
+        Directory.GetDirectories(_dir, ".vsj-smartcut-*").Should().BeEmpty();
+    }
+
+    // serves-spec: SPEC-001#I43 - a source whose frame rate is unknown gets the quarter-second reach.
+    [Trait("serves-spec", "SPEC-001")]
+    [Theory]
+    [InlineData(7.2, true)]
+    [InlineData(7.3, false)]
+    public async Task SmartCutEngine_UsesAQuarterSecondReach_WhenTheFrameRateIsUnknown(double firstFrame, bool snaps)
+    {
+        var input = Placeholder("clip.mp4");
+        var probe = new FrameProbe(H264Aac(), Grid2s(), firstFrame: S(firstFrame));
+
+        var result = await new SmartCutEngine(new RecordingFakeRunner(), probe).CutAsync(input, S(7.0), null, Path.Combine(_dir, "cut.mp4"));
+
+        result.FellBack.Should().Be(!snaps);
+    }
+
     // ---- The container gate ---------------------------------------------------------------------------------------------
 
     // serves-spec: SPEC-001#I45 / SPEC-001#I46 - Matroska and WebM (ffprobe names both "matroska,webm") fall back with a reason
@@ -467,10 +656,110 @@ public sealed class VideoFrameProbeTests : IDisposable
         why.Should().BeNull();
     }
 
+    // serves-spec: SPEC-001#I45 / SPEC-001#I46 - the gate reads FILE NAMES as well as the container (T-190, third pass): the head
+    // and final take their container from the OUTPUT extension, so MP4 content named .mkv is refused by its name, and any source
+    // cut into a .mkv/.webm/.mka output is refused by the output's. Matroska names get the Matroska sentence, transport-stream
+    // names the sentence that names them; case does not matter; no name, an empty name and an extension-less name are fine.
+    [Trait("serves-spec", "SPEC-001")]
+    [Theory]
+    [InlineData("a.mkv", "frame-exact cutting is not supported yet for .mkv and .webm files")]
+    [InlineData("a.WEBM", "frame-exact cutting is not supported yet for .mkv and .webm files")]
+    [InlineData(@"C:\clips\a.b.Mka", "frame-exact cutting is not supported yet for .mkv and .webm files")]
+    [InlineData("a.ts", "frame-exact cutting is not supported yet for .ts, .m2ts and .mts files or other files whose timestamps do not start at zero")]
+    [InlineData("a.M2TS", "frame-exact cutting is not supported yet for .ts, .m2ts and .mts files or other files whose timestamps do not start at zero")]
+    [InlineData("a.mts", "frame-exact cutting is not supported yet for .ts, .m2ts and .mts files or other files whose timestamps do not start at zero")]
+    [InlineData("a.mp4", null)]
+    [InlineData("a.m4v", null)]
+    [InlineData("a.mov", null)]
+    [InlineData("mkv", null)]
+    [InlineData("a.mkv.mp4", null)]
+    [InlineData("", null)]
+    [InlineData(null, null)]
+    public void UnsupportedFileNameReason_NamesTheMatroskaAndTransportStreamExtensions(string? path, string? expected)
+    {
+        SmartCutArgsBuilder.UnsupportedFileNameReason(path).Should().Be(expected);
+    }
+
+    // serves-spec: SPEC-001#I45 / SPEC-001#I46 - on an MP4-container source the names decide: the source's name, the output's
+    // name, either; a codec Exact cannot reproduce is still reported as itself; no names = the container-level answer.
+    [Trait("serves-spec", "SPEC-001")]
+    [Theory]
+    [InlineData("a.mp4", "b.mp4", true)]
+    [InlineData(null, null, true)]
+    [InlineData("a.mkv", "b.mkv", false)]
+    [InlineData("a.mkv", "b.mp4", false)]
+    [InlineData("a.mp4", "b.mkv", false)]
+    [InlineData("a.mp4", "b.webm", false)]
+    [InlineData("a.mp4", "b.mka", false)]
+    [InlineData("a.mp4", "b.ts", false)]
+    [InlineData("a.mp4", "b.m2ts", false)]
+    public void TryResolveEncoders_ReadsTheSourceAndOutputNames_OnAnMp4Container(string? source, string? output, bool resolves)
+    {
+        var info = new MediaInfo(
+            S(30), "mov,mp4,m4a,3gp,3g2,mj2",
+            new[] { new StreamInfo(0, "h264", "video", 1920, 1080, "yuv420p", null, null, "1/30") },
+            new[] { new StreamInfo(1, "aac", "audio", null, null, null, 48000, 2, "1/48000") });
+
+        SmartCutArgsBuilder.TryResolveEncoders(info, out var video, out var audio, out var why, source, output).Should().Be(resolves);
+
+        if (resolves)
+        {
+            video.Should().Be("libx264");
+            why.Should().BeNull();
+        }
+        else
+        {
+            video.Should().BeNull();
+            audio.Should().BeNull();
+            why.Should().NotBeNullOrWhiteSpace();
+            why.Should().NotContainAny(new[] { "(", ")" }, "the row warning wraps the reason in parentheses already");
+        }
+    }
+
+    // serves-spec: SPEC-001#I46 - a codec Exact cannot reproduce wins over a Matroska NAME, as it does over the Matroska container.
+    [Trait("serves-spec", "SPEC-001")]
+    [Fact]
+    public void TryResolveEncoders_ReportsAnUnmappableCodecBeforeAMatroskaName()
+    {
+        var info = new MediaInfo(
+            S(30), "mov,mp4,m4a,3gp,3g2,mj2",
+            new[] { new StreamInfo(0, "hevc", "video", 1920, 1080, "yuv420p", null, null, "1/30") },
+            Array.Empty<StreamInfo>());
+
+        SmartCutArgsBuilder.TryResolveEncoders(info, out _, out _, out var why, "a.mkv", "b.mkv").Should().BeFalse();
+
+        why.Should().Contain("HEVC");
+    }
+
     // ---- The probe on real media -------------------------------------------------------------------------------------------
 
     private static FfmpegBinaryLocator Locator() => new(
         ffmpegOverride: FfmpegTestBinaries.Ffmpeg, ffprobeOverride: FfmpegTestBinaries.Ffprobe);
+
+    // serves-spec: SPEC-004#I40 - on a REAL AVI with B-frames (about a third of its video packets have no pts) the probe agrees
+    // with the 1/fps grid the source's own decoding times give, where reading pts alone skipped the frame at 4.033333.
+    [Trait("serves-spec", "SPEC-004")]
+    [SkippableFact]
+    public async Task TheRealProbe_FindsTheFrameOnAnAviWhosePacketsHaveNoPts()
+    {
+        FfmpegTestBinaries.Require(_output, FfmpegTestBinaries.FfmpegExists, "ffmpeg");
+        FfmpegTestBinaries.Require(_output, FfmpegTestBinaries.FfprobeExists, "ffprobe");
+        var avi = await SmartCutJointTiming.MakeAviWithoutPtsAsync(_dir, "bframes.avi");
+        var missing = await SmartCutJointTiming.VideoPacketsWithoutPtsAsync(avi);
+        _output.WriteLine($"{missing} of the AVI's video packets report no pts");
+        missing.Should().BeGreaterThan(50, "precondition: the fixture must show the shape");
+        var dts = (await SmartCutJointTiming.PacketsAsync(avi, "v:0")).Select(p => p.Dts).OrderBy(d => d).ToList();
+        var probe = new MediaProbe(new FfprobeRunner(Locator()));
+
+        foreach (var time in new[] { 4.018, 4.0, 4.031, 4.0334, 1.0, 0.01, 9.9 })
+        {
+            var expected = dts.First(d => d >= time - 0.001);
+            var actual = await probe.FirstVideoFrameAtOrAfterAsync(avi, S(time));
+            _output.WriteLine($"avi @ {time.ToString(CultureInfo.InvariantCulture)} -> {actual?.TotalSeconds:0.######} (decoding-time grid: {expected:0.######})");
+            actual.Should().NotBeNull();
+            actual!.Value.TotalSeconds.Should().BeApproximately(expected, 1e-6);
+        }
+    }
 
     // serves-spec: SPEC-004#I40 - the real ffprobe answers agree with the source's own packet list, at times that
     // sit on a frame, between two frames, just before a keyframe, deep in a 10 s GOP (ffprobe seeks back 7 s to its keyframe),

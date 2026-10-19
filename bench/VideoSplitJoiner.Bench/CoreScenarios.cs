@@ -730,11 +730,11 @@ internal static class CoreScenarios
             return null;
         }
 
-        // T-190: the engine starts the cut on the first source frame at or after the request, found with one bounded ffprobe
-        // read before it plans; its cost is its own row.
+        // T-190: the engine starts the cut on the first source frame at or after the request, found with one ffprobe read
+        // (the GOP before it and a 2 s window, not the file) before it plans; its cost is its own row.
         TimeSpan? firstFrame = null;
         var (tSnap, snapUsage) = await Meter.Run(async () => firstFrame = await probe.FirstVideoFrameAtOrAfterAsync(fx.Path, S(start)));
-        c.Results.Add("bulk", $"  Exact {tag}: frame snap (ffprobe -read_intervals, one bounded read)", fx.Key, "warm", 1, tSnap, snapUsage,
+        c.Results.Add("bulk", $"  Exact {tag}: frame snap (ffprobe -read_intervals: the GOP before it + 2 s)", fx.Key, "warm", 1, tSnap, snapUsage,
             $"first frame at or after {start}s: {firstFrame?.TotalSeconds.ToString("0.######", CultureInfo.InvariantCulture) ?? "none"}s");
         var effectiveStart = firstFrame is { } ff && ff != S(start) && (end is not { } endLimit || ff < S(endLimit)) ? ff : S(start);
         var plan = SmartCutPlanner.Plan(effectiveStart, end is { } e ? S(e) : null, kf);

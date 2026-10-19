@@ -59,7 +59,8 @@ public interface ISmartCutEngine
 /// coincide, or the head's own timestamps would shift against the copied part.</para>
 ///
 /// <para><b>The start is snapped to a frame (T-190, SPEC-001 I43).</b> The cut starts at the first source video frame at or
-/// after the requested time, found before the plan is made, so the head's frames sit on the same grid as the copied part's.
+/// after the requested time (within a few frame intervals: a video gap is a fall back, <see cref="MaxSnapShift"/>), found
+/// before the plan is made, so the head's frames sit on the same grid as the copied part's.
 /// A Start between two frames used to leave the head's frames on the encoder's 1/fps grid counted from the Start: the joint
 /// 33 ms early with a muxer timestamp line, or one repeated frame. The head the engine wrote is also checked for a video
 /// frame: a head with none would make the concat drop the source's video, and a cut that loses the video is a fall back,
@@ -81,6 +82,14 @@ public sealed class SmartCutEngine : ISmartCutEngine
         _probe = probe ?? throw new ArgumentNullException(nameof(probe));
         _frames = probe as IVideoFrameProbe; // MediaProbe is one; a probe that is not leaves the frame snap and the head check off
     }
+
+    /// <summary>
+    /// True when the probe this engine was built over answers the frame questions (<see cref="IVideoFrameProbe"/>), so the frame
+    /// snap and the head check run. False is silent by design - a fake probe in a unit test cuts at the request - which is why the
+    /// production graph is pinned to be true (<c>SmartCutEngineCompositionTests</c>, and the composition root's source in the App
+    /// tests): swapping the shared <c>MediaProbe</c> for a probe without the interface would switch both off with every test green.
+    /// </summary>
+    internal bool FrameQuestionsActive => _frames is not null;
 
     /// <inheritdoc />
     public async Task<SmartCutResult> CutAsync(
@@ -119,7 +128,7 @@ public sealed class SmartCutEngine : ISmartCutEngine
         }
 
         // Only re-encode when we can genuinely reproduce the source's streams.
-        if (!SmartCutArgsBuilder.TryResolveEncoders(ok.Info, out var vEnc, out var aEnc, out var why))
+        if (!SmartCutArgsBuilder.TryResolveEncoders(ok.Info, out var vEnc, out var aEnc, out var why, inputPath, outputPath))
         {
             return new SmartCutResult(null, plan.Strategy, FellBack: true, why, TimeSpan.Zero);
         }
@@ -134,6 +143,16 @@ public sealed class SmartCutEngine : ISmartCutEngine
             && firstFrame != start
             && (end is not { } endTime || firstFrame < endTime))
         {
+            // The snap moves the start by up to a frame, not by a gap in the picture: when the next frame is further than a
+            // few frame intervals away (a video that stops while its audio goes on) the cut would start there and silently
+            // drop the audio in between, so the request is handed back to the lossless cut with the reason instead.
+            if (firstFrame - start > MaxSnapShift(ok.Info))
+            {
+                return new SmartCutResult(null, plan.Strategy, FellBack: true,
+                    "the video has no frame within a few frames after the requested time",
+                    TimeSpan.Zero);
+            }
+
             start = firstFrame;
             plan = SmartCutPlanner.Plan(start, end, keyframes);
             if (plan.Strategy == SmartCutStrategy.PureCopy)
@@ -218,6 +237,25 @@ public sealed class SmartCutEngine : ISmartCutEngine
         {
             TrySweep(tempDir);
         }
+    }
+
+    /// <summary>How many frame intervals the start may move up to a frame (the next frame is normally under one away).</summary>
+    internal const int SnapShiftFrames = 3;
+
+    /// <summary>The largest move of the start when the video's frame rate is unknown.</summary>
+    internal static readonly TimeSpan SnapShiftWhenRateUnknown = TimeSpan.FromMilliseconds(250);
+
+    /// <summary>
+    /// The furthest the frame snap may move the start (T-190, third pass): <see cref="SnapShiftFrames"/> frame intervals of the
+    /// first video stream's frame rate, or <see cref="SnapShiftWhenRateUnknown"/> when the rate is unknown or not usable. A
+    /// frame further away than that is a gap in the picture, not the next frame.
+    /// </summary>
+    internal static TimeSpan MaxSnapShift(MediaInfo info)
+    {
+        var fps = info.VideoStreams.Count > 0 ? info.VideoStreams[0].FrameRate : null;
+        return fps is { } rate && double.IsFinite(rate) && rate > 0
+            ? TimeSpan.FromSeconds(SnapShiftFrames / rate)
+            : SnapShiftWhenRateUnknown;
     }
 
     private static void MoveIntoPlace(string tempFile, string destination)

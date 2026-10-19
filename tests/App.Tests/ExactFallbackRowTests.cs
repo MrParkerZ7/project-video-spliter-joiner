@@ -532,6 +532,56 @@ public sealed class ExactFallbackRowTests : IDisposable
             "the extensions the note names are ones the picker and the drop accept");
     }
 
+    // serves-spec: SPEC-011#I164 / SPEC-001#I45 — the row's gate reads the source's FILE NAME as well as its probed container
+    // (T-190, third pass): the engine writes its head and final into the container the OUTPUT extension picks, and a Bulk row's
+    // output keeps its source's extension. MP4 content named .mkv (the probe says mov,mp4) is therefore refused before Run, in
+    // the run's own words, exactly as the engine refuses it. Case does not matter; an .mp4 name is untouched.
+    [Trait("serves-spec", "SPEC-011")]
+    [Theory]
+    [InlineData("camera.mkv", "frame-exact cutting is not supported yet for .mkv and .webm files")]
+    [InlineData("CAMERA.MKV", "frame-exact cutting is not supported yet for .mkv and .webm files")]
+    [InlineData("clip.webm", "frame-exact cutting is not supported yet for .mkv and .webm files")]
+    [InlineData("tape.m2ts", "frame-exact cutting is not supported yet for .ts, .m2ts and .mts files or other files whose timestamps do not start at zero")]
+    [InlineData("camera.mp4", null)]
+    [InlineData("camera.mov", null)]
+    public async Task ARowWhoseFileIsNamedMatroskaOrTransportStream_InExact_StatesTheReason_WhateverTheContainerIs(string fileName, string? expectedReason)
+    {
+        var (vm, probe, _, _) = Build();
+        vm.ExactCut = true;
+
+        var row = await AddAsync(vm, probe, MakeVideo(fileName), "h264"); // the fake probe reports an ordinary MP4 container
+
+        row.ExactUnavailableReason.Should().Be(expectedReason);
+        if (expectedReason is null)
+        {
+            row.ExactCutApplies.Should().BeTrue();
+            (row.Warning ?? string.Empty).Should().NotContain(BulkTrimEngine.ExactFallbackPrefix);
+        }
+        else
+        {
+            row.ExactCutApplies.Should().BeFalse("the run falls back for this file, so the row behaves as Lossless");
+            row.Warning.Should().Contain($"{BulkTrimEngine.ExactFallbackPrefix} ({expectedReason}) - cut snapped to the nearest keyframe");
+        }
+    }
+
+    // serves-spec: SPEC-001#I43 / SPEC-004#I40 — the composition root builds the Exact engine over the SHARED `MediaProbe`, the
+    // class that answers the frame questions. `SmartCutEngine` reads them through `probe as IVideoFrameProbe`, so a probe
+    // without the interface would switch the frame snap and the head check off silently while every test, each with its own
+    // fake, stays green. Asserted on the composition root's SOURCE for the reason the T-167 guard is (constructing the real
+    // MainViewModel builds the FFME player); the Core test `TheProductionGraph_HasTheFrameSnapAndTheHeadCheckActive` pins that
+    // the engine over a `MediaProbe` really has them active.
+    [Trait("serves-spec", "SPEC-001")]
+    [Fact]
+    public void TheCompositionRoot_BuildsTheExactEngineOverTheSharedMediaProbe()
+    {
+        typeof(IVideoFrameProbe).IsAssignableFrom(typeof(MediaProbe)).Should().BeTrue("MediaProbe is the production probe");
+
+        var text = File.ReadAllText(RepoPaths.Source("src", "App", "ViewModels", "MainViewModel.cs"));
+
+        text.Should().MatchRegex(@"var\s+probe\s*=\s*new\s+MediaProbe\(", "the shared probe is a MediaProbe");
+        text.Should().MatchRegex(@"new\s+SmartCutEngine\(\s*\w+\s*,\s*probe\s*\)", "the Exact engine is built over that shared probe");
+    }
+
     // serves-spec: SPEC-011#I164 / SPEC-011#I90 — a row whose source does not start at zero (an MPEG-TS, an AVCHD .mts) in Exact
     // behaves as Lossless and says why BEFORE Run, in the run's own words (T-190). The gate is the engine's
     // (SmartCutArgsBuilder.TryResolveEncoders), so the row and the run never disagree.

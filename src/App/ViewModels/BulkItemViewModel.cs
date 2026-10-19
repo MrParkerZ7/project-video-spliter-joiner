@@ -509,7 +509,8 @@ public sealed class BulkItemViewModel : ObservableObject
     {
         ArgumentNullException.ThrowIfNull(info);
 
-        var reason = SmartCutArgsBuilder.TryResolveEncoders(info, out _, out _, out var why)
+        // The row's output keeps its source's extension, so the source's name stands for both (the engine checks each).
+        var reason = SmartCutArgsBuilder.TryResolveEncoders(info, out _, out _, out var why, Path, Path)
             ? null
             : why ?? "this video cannot be cut frame-exactly";
 

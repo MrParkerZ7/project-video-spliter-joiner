@@ -370,7 +370,7 @@ public sealed class MediaProbe : IMediaProbe, IVideoFrameProbe
 
         // -read_intervals START%END (both absolute: a "+" END would count from the first packet read, which is the keyframe
         // BEFORE START). ffprobe seeks back to that keyframe, so packets before START are listed too; the filter below drops
-        // them. Packet times only, no decoding.
+        // them. Packet times only, no decoding: the cost is the GOP before START plus the window, not the file.
         var interval = string.Create(
             CultureInfo.InvariantCulture, $"{time.TotalSeconds:0.######}%{(time + FrameSearchWindow).TotalSeconds:0.######}");
         var args = FfmpegArgs.ForFfprobe()
@@ -378,7 +378,7 @@ public sealed class MediaProbe : IMediaProbe, IVideoFrameProbe
                 "-v", "error",
                 "-select_streams", "v:0",
                 "-read_intervals", interval,
-                "-show_entries", "packet=pts_time",
+                "-show_entries", "packet=pts_time,dts_time",
                 "-print_format", "json")
             .Input(path);
 
@@ -393,15 +393,49 @@ public sealed class MediaProbe : IMediaProbe, IVideoFrameProbe
         }
 
         var root = JsonDeserialize<FfprobePacketsRoot>(json);
-        TimeSpan? first = null;
-        if (root?.Packets is not null)
+        if (root?.Packets is null)
         {
-            foreach (var p in root.Packets)
+            return null;
+        }
+
+        // A packet's frame time is its pts; one without a pts (an AVI with B-frames lists about a third of its video packets so)
+        // takes its dts, as the keyframe scan does - but only while the stream shows no re-ordering. A packet that carries both
+        // times and they differ is that evidence: a dts is then a decode time, not a display time, and a packet without a pts
+        // has no frame time to give. A packet with neither has none either. Both make the answer null (no snap), never a guess.
+        var times = new List<TimeSpan>();
+        var withoutPts = false;
+        var reordered = false;
+        foreach (var p in root.Packets)
+        {
+            var hasPts = TryParseSeconds(p.PtsTime, out var pts);
+            var hasDts = TryParseSeconds(p.DtsTime, out var dts);
+            if (hasPts)
             {
-                if (TryParseSeconds(p.PtsTime, out var t) && t >= time - FrameTimeTolerance && (first is null || t < first))
-                {
-                    first = t;
-                }
+                times.Add(pts);
+                reordered |= hasDts && (pts - dts).Duration() > FrameTimeTolerance;
+            }
+            else if (hasDts)
+            {
+                withoutPts = true;
+                times.Add(dts);
+            }
+            else
+            {
+                return null;
+            }
+        }
+
+        if (withoutPts && reordered)
+        {
+            return null;
+        }
+
+        TimeSpan? first = null;
+        foreach (var t in times)
+        {
+            if (t >= time - FrameTimeTolerance && (first is null || t < first))
+            {
+                first = t;
             }
         }
 

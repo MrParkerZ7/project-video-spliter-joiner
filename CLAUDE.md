@@ -107,8 +107,8 @@ A .NET 8 WPF app that splits and joins video **without re-encoding**. See [READM
   `CutPrecision.Exact`, ADR 0018), and it lives in the separate `SmartCutEngine`, not in `SplitEngine`/
   `JoinEngine`: it re-encodes at most one GOP — the head fragment (requested start → next keyframe), or the
   whole range if it lies inside one GOP (no keyframe between start and end) — and stream-copies the rest; a
-  start already on a keyframe, a source whose codecs it cannot reproduce (HEVC), a Matroska/WebM source, or a source whose
-  timestamps do not start at zero (MPEG-TS), falls back to the lossless cut; the kept part is read from the source by the concat
+  start already on a keyframe, a source whose codecs it cannot reproduce (HEVC), a Matroska/WebM source (by container or by
+  file name, source or output), or a source whose timestamps do not start at zero (MPEG-TS), falls back to the lossless cut; the kept part is read from the source by the concat
   itself (two ffmpeg runs), and the cut starts on the first video frame at or after the requested time (T-190).
   Do not add a re-encode branch to `SplitEngine`/`JoinEngine` or another re-encode path.
 - **No auto-detect.** The black/white/scene auto-detect feature was removed (no `Core/Detect`,

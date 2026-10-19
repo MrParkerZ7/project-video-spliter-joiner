@@ -109,13 +109,20 @@ public sealed class SmartCutJointTimingIntegrationTests : IDisposable
         report.ErrorLines.ToList().ForEach(l => _output.WriteLine("    " + l));
         _output.WriteLine("  runs: " + cut.Runner.Commands.Count + "; temp dir after each: " + string.Join(" | ", cut.Runner.TempDirListings.Select(l => string.Join(",", l))));
 
-        var half = m.FrameInterval / 2;
+        // The tolerances (T-190, third pass). The joint, the audio gap and a start-only video span are measured to the microsecond
+        // (ffprobe prints six decimals) and every case below lands on 0.00 ms, so they are held to 1 ms, not to half a frame or an
+        // AAC frame: a joint that is a fraction of a frame off, or an audio overlap of a few milliseconds, is a defect this test
+        // must catch. What stays at the documented allowance is only what genuinely needs it: the audio-minus-video duration
+        // (the output's audio is counted from its first packet at or after the final's first video frame, which drops the head's
+        // AAC priming; what is left is the gap between the Start and the source's first audio packet after it, under one AAC frame
+        // and measured up to 17 ms here), and the end overrun of a kept middle (has_b_frames frames, T-220).
+        const double ExactTolerance = 0.001;
         var tol = 1e-4;
         using var scope = new AssertionScope(label);
 
         // The joint: the first frame from the joint on is presented HeadEnd − Start after the final's first video frame.
-        m.JointRel.Should().BeApproximately(m.ExpectedJointRel, half + tol,
-            "the first kept frame is presented HeadEnd − Start after the final's first video frame, within half a frame");
+        m.JointRel.Should().BeApproximately(m.ExpectedJointRel, ExactTolerance,
+            "the first kept frame is presented HeadEnd − Start after the final's first video frame, within 1 ms");
 
         // The head holds exactly the source's frames of [Start, HeadEnd): an extra (repeated) or a missing frame at the joint
         // moves every frame after it by one INDEX, which the by-index md5 check below cannot see.
@@ -124,7 +131,7 @@ public sealed class SmartCutJointTimingIntegrationTests : IDisposable
 
         // Audio runs on across the joint.
         m.AudioNotIncreasing.Should().Be(0, "audio timestamps increase strictly across the joint");
-        Math.Abs(m.AudioWorstGap).Should().BeLessThanOrEqualTo(m.AacFrame + tol, "no gap or overlap longer than one AAC frame");
+        Math.Abs(m.AudioWorstGap).Should().BeLessThanOrEqualTo(ExactTolerance, "no audio gap or overlap across the joint longer than 1 ms");
 
         // A full -v error decode prints no line, the null muxer's own included.
         m.DecodeLines.Should().Be(0, "a full decode of the final prints no line (the shipped engine printed non monotonically increasing dts lines)");
@@ -136,7 +143,7 @@ public sealed class SmartCutJointTimingIntegrationTests : IDisposable
         m.OverrunFrames.Should().BeInRange(0, overrunAllowed, "the end overrun is the source's has_b_frames at most (T-220)");
         if (cut.End is null)
         {
-            m.OutVideoSpan.Should().BeApproximately(m.RefVideoSpan, m.FrameInterval + tol, "the video is End − Start long, within one frame");
+            m.OutVideoSpan.Should().BeApproximately(m.RefVideoSpan, ExactTolerance, "the video is the source's [Start, End) long, within 1 ms");
             m.OutAv.Should().BeApproximately(m.RefAv, m.AacFrame + tol, "audio-minus-video equals the source's over [Start, End], within one AAC frame");
         }
         else
@@ -236,6 +243,70 @@ public sealed class SmartCutJointTimingIntegrationTests : IDisposable
         var cut = await CutAsync(late, start, null, "exact.mp4");
 
         await AssertJointAsync(cut, $"Join output, Start {start}");
+    }
+
+    // ---- A picture that stops while the sound goes on -----------------------------------------------------------------
+
+    // serves-spec: SPEC-001#I43 / SPEC-001#I46 - the snap moves the start up to the next frame, a frame or so, not across a gap in
+    // the picture (T-190, third pass). A 20 s source with video only before 10.2 s and from 12.5 s and continuous audio: a Start
+    // at 11.0 s used to become 12.5 s, the file started there and the 1.5 s of sound in between was silently dropped. Now the
+    // engine falls back with a stated reason (zero ffmpeg runs, nothing written), and a Start inside the contiguous picture
+    // still snaps to its frame.
+    [Trait("serves-spec", "SPEC-001")]
+    [SkippableFact]
+    public async Task AnExactCut_WhoseNextVideoFrameIsAGapAway_FallsBack_InsteadOfDroppingTheAudioInBetween()
+    {
+        RequireBinaries();
+        var src = await MakeGappedSourceAsync(_dir, "gap.mp4");
+        var dest = Path.Combine(_dir, "exact.mp4");
+        var runner = new RecordingRealRunner(new FfmpegRunner(Locator()), Path.Combine(_dir, "kept"));
+
+        var result = await new SmartCutEngine(runner, Probe()).CutAsync(src, S(11.0), null, dest);
+
+        _output.WriteLine($"fell back: {result.FellBack}; reason: {result.FallbackReason}; effective start: {result.EffectiveStart?.TotalSeconds:0.######}; runs: {runner.Commands.Count}");
+        if (!result.FellBack)
+        {
+            var written = await Probe().ProbeAsync(dest);
+            _output.WriteLine($"NOT refused: Done, output {((ProbeResult.ProbeSucceeded)written).Info.Duration.TotalSeconds:0.0} s for a request at 11.0 s of a 20 s source");
+        }
+
+        result.FellBack.Should().BeTrue("the next video frame is 1.5 s after the request");
+        result.FallbackReason.Should().Be("the video has no frame within a few frames after the requested time");
+        runner.Commands.Should().BeEmpty();
+        File.Exists(dest).Should().BeFalse();
+
+        var inside = await new SmartCutEngine(runner, Probe()).CutAsync(src, S(5.018), null, Path.Combine(_dir, "inside.mp4"));
+        inside.FellBack.Should().BeFalse("a Start inside the contiguous picture still snaps, by a frame");
+        inside.EffectiveStart!.Value.TotalSeconds.Should().BeApproximately(5.033333, 1e-6);
+    }
+
+    // ---- A container that lists no pts for some packets ----------------------------------------------------------------
+
+    // serves-spec: SPEC-001#I43 / SPEC-004#I40 - an AVI with B-frames (about a third of its video packets report no pts, only a dts
+    // on the 1/fps grid) is accepted by the gate. The snap read pts alone and skipped the frame at 4.033333, so a Start at 4.018
+    // began the cut at 4.066667; it now takes the frame's dts like the keyframe scan, and the cut starts on 4.033333 with every
+    // frame of the source from there on present and a clean decode. (Whether AVI joints are right in general is T-202's.)
+    [Trait("serves-spec", "SPEC-001")]
+    [SkippableFact]
+    public async Task AnExactCut_OnAnAviWhosePacketsHaveNoPts_StartsOnTheFirstFrameAtOrAfterTheRequest()
+    {
+        RequireBinaries();
+        var avi = await MakeAviWithoutPtsAsync(_dir, "bframes.avi");
+        (await VideoPacketsWithoutPtsAsync(avi)).Should().BeGreaterThan(50, "precondition: the fixture shows the shape");
+        var runner = new RecordingRealRunner(new FfmpegRunner(Locator()), Path.Combine(_dir, "kept"));
+        var dest = Path.Combine(_dir, "exact.avi");
+
+        var result = await new SmartCutEngine(runner, Probe()).CutAsync(avi, S(4.018), null, dest);
+
+        _output.WriteLine($"fell back: {result.FellBack} {result.FallbackReason}; effective {result.EffectiveStart?.TotalSeconds:0.######}; runs {runner.Commands.Count}");
+        result.FellBack.Should().BeFalse(result.FallbackReason);
+        result.EffectiveStart!.Value.TotalSeconds.Should().BeApproximately(4.033333, 1e-6, "the frame at 4.033333 has no pts, only a dts");
+        var sourceFrames = (await PacketsAsync(avi, "v:0")).Count(p => p.Dts >= 4.033333 - 0.001);
+        (await VideoPacketCountAsync(dest)).Should().Be(sourceFrames, "every frame of the source from the effective start on, none lost or repeated");
+        var (errors, lines) = await SmartCutJointIntegrity.DecodeAsync(dest);
+        _output.WriteLine($"output decode: {errors} decoder/demuxer error line(s), {lines.Count} line(s) in all");
+        errors.Should().Be(0);
+        lines.Count.Should().Be(0);
     }
 
     // ---- A Start that leaves no video frame in the head ---------------------------------------------------------------
@@ -429,6 +500,100 @@ public sealed class SmartCutJointTimingIntegrationTests : IDisposable
         cut.Result.FallbackReason.Should().Be(MatroskaReason, "the reason names the files the user sees (.mkv and .webm), not timestamps");
         cut.Runner.Commands.Should().BeEmpty("a source Exact cannot cut costs no ffmpeg run");
         File.Exists(cut.Dest).Should().BeFalse("a fall-back writes nothing; the caller runs the lossless cut");
+    }
+
+    // serves-spec: SPEC-001#I45 / SPEC-001#I46 - the gate is the FILE NAME as well as the container (T-190, third pass). The head
+    // and the final take their container from the OUTPUT extension, so MP4 content (ffprobe: mov,mp4) named .mkv, or any source
+    // cut into a .mkv/.webm/.mka output, got a Matroska head and final while the container gate saw an MP4 and let it through.
+    // Measured at the second review on a 20 s source copied to mislabeled.mkv, Start 7.018: the final was 622.4 s long, its audio
+    // packets 1.024 s apart, and the cut was reported Done. Now the source's name and the output's name both count.
+    [Trait("serves-spec", "SPEC-001")]
+    [SkippableTheory]
+    [InlineData("mislabeled.mkv", "exact.mkv")]
+    [InlineData("plain.mp4", "exact.mkv")]
+    [InlineData("plain.mp4", "exact.webm")]
+    [InlineData("plain.mp4", "exact.mka")]
+    [InlineData("mislabeled.mkv", "exact.mp4")]
+    public async Task AnExactCut_WhoseSourceOrOutputIsNamedMatroska_FallsBack_WhateverTheContentIs(string sourceName, string outputName)
+    {
+        RequireBinaries();
+        var plain = await MakeSourceAsync(_dir, "plain.mp4", 20, 60);
+        var source = sourceName == "plain.mp4" ? plain : Path.Combine(_dir, sourceName);
+        if (source != plain)
+        {
+            File.Copy(plain, source);
+        }
+
+        var probed = await Probe().ProbeAsync(source);
+        _output.WriteLine($"{sourceName} -> {outputName}: container '{((ProbeResult.ProbeSucceeded)probed).Info.Container}'");
+
+        var cut = await CutAsync(source, 7.018, null, outputName);
+
+        if (!cut.Result.FellBack)
+        {
+            var written = await Probe().ProbeAsync(cut.Dest);
+            var length = written is ProbeResult.ProbeSucceeded w ? w.Info.Duration.TotalSeconds : double.NaN;
+            _output.WriteLine($"NOT refused: reported Done, output {length:0.0} s long for a 20 s source, {cut.Runner.Commands.Count} runs");
+        }
+
+        cut.Result.FellBack.Should().BeTrue("a Matroska/WebM name on the source or the output makes the head and the final Matroska, whose joint is wrong");
+        cut.Result.FallbackReason.Should().Be(MatroskaReason);
+        cut.Runner.Commands.Should().BeEmpty("a source Exact cannot cut costs no ffmpeg run");
+        File.Exists(cut.Dest).Should().BeFalse("a fall-back writes nothing; the caller runs the lossless cut");
+    }
+
+    // serves-spec: SPEC-001#I45 / SPEC-001#I46 - the same name rule for the transport-stream names the Exact note lists. MP4
+    // content cut into a .ts / .m2ts / .mts output got a transport-stream head and final (measured: the first kept frame three
+    // frames early, 547 ms of audio overlap, 2 non-increasing audio packets, reported Done), so the name falls back with the
+    // sentence that names those extensions.
+    [Trait("serves-spec", "SPEC-001")]
+    [SkippableTheory]
+    [InlineData("exact.ts")]
+    [InlineData("exact.m2ts")]
+    [InlineData("exact.MTS")]
+    public async Task AnExactCut_IntoATransportStreamName_FallsBack_WhateverTheContentIs(string outputName)
+    {
+        RequireBinaries();
+        var plain = await MakeSourceAsync(_dir, "plain.mp4", 20, 60);
+
+        var cut = await CutAsync(plain, 7.5, null, outputName);
+
+        cut.Result.FellBack.Should().BeTrue();
+        cut.Result.FallbackReason.Should().Be(StartTimeReason);
+        cut.Runner.Commands.Should().BeEmpty("a name Exact cannot cut costs no ffmpeg run");
+        File.Exists(cut.Dest).Should().BeFalse();
+    }
+
+    // serves-spec: SPEC-002#I50 / SPEC-002#I51 / SPEC-001#I45 - the whole Bulk row on MP4 content named .mkv (a mislabeled
+    // file): the row's output keeps the .mkv name, so Exact falls back with the Matroska sentence and the lossless cut it
+    // runs decodes clean. Shipped, this was the case that wrote a 622 s file for a 20 s source and reported Done.
+    [Trait("serves-spec", "SPEC-002")]
+    [SkippableFact]
+    public async Task AnExactBulkRow_OnMp4ContentNamedMkv_WritesTheLosslessCut_WithTheReason_ThatDecodesClean()
+    {
+        RequireBinaries();
+        var plain = await MakeSourceAsync(_dir, "plain.mp4", 20, 60);
+        var src = Path.Combine(_dir, "mislabeled.mkv");
+        File.Copy(plain, src);
+        var runner = new FfmpegRunner(Locator());
+        var probe = Probe();
+        var split = new SplitEngine(runner, probe, new ErrorLogWriter(Path.Combine(_dir, "logs"))); // never %LOCALAPPDATA%
+        var batch = new BulkTrimEngine(
+            split, new KeptMiddleRequestBuilder(probe), new FakeDiskSpaceProbe(long.MaxValue), new SmartCutEngine(runner, probe), null);
+        var dest = Path.Combine(_dir, "mislabeled_trimmed.mkv");
+
+        var result = await batch.RunAsync(
+            new[] { new BulkTrimItem(src, S(7.018), null, dest) }, new BulkTrimOptions(Precision: CutPrecision.Exact));
+
+        var row = result.Items.Single();
+        row.Outcome.Should().Be(ItemOutcome.Done, row.Error?.Message);
+        row.Warnings.Should().Contain(w => w.StartsWith(BulkTrimEngine.ExactFallbackPrefix, StringComparison.Ordinal) && w.Contains(MatroskaReason, StringComparison.Ordinal));
+        var written = await probe.ProbeAsync(row.OutputPath!);
+        var length = ((ProbeResult.ProbeSucceeded)written).Info.Duration.TotalSeconds;
+        _output.WriteLine($"mislabeled .mkv Exact row, fell back: output {length:0.0} s for a 20 s source, 7.018 s start");
+        length.Should().BeInRange(10, 14, "the lossless cut keeps about 20 − 7 s (snapped to a keyframe), not 622 s");
+        var (errors, _) = await SmartCutJointIntegrity.DecodeAsync(row.OutputPath!);
+        errors.Should().Be(0);
     }
 
     // serves-spec: SPEC-002#I50 / SPEC-002#I51 / SPEC-001#I45 - the whole Bulk row on a real .mkv: Exact falls back with the

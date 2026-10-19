@@ -86,6 +86,39 @@ public static class SmartCutArgsBuilder
     /// </summary>
     internal const string MatroskaUnsupportedReason = "frame-exact cutting is not supported yet for .mkv and .webm files";
 
+    /// <summary>The Matroska/WebM file extensions (<c>.mka</c> is Matroska audio): ffmpeg picks the muxer from them.</summary>
+    private static readonly string[] MatroskaExtensions = { ".mkv", ".webm", ".mka" };
+
+    /// <summary>The transport-stream extensions the Exact note names (<c>VideoFileFilter</c> accepts all three).</summary>
+    private static readonly string[] TransportStreamExtensions = { ".ts", ".m2ts", ".mts" };
+
+    /// <summary>
+    /// Why Exact refuses a file by its NAME alone, or null when the name is fine (T-190, third pass). The engine writes its
+    /// head and its final into the container the OUTPUT extension picks, so a source that ffprobe calls <c>mov,mp4</c> but
+    /// is named <c>.mkv</c> (or any source cut into a <c>.mkv</c> / <c>.webm</c> / <c>.mka</c> output) gets a Matroska head
+    /// and final that the container check never saw: measured on a 20 s source copied to <c>mislabeled.mkv</c>, Start 7.018,
+    /// the final was 622.4 s long, its audio packets 1.024 s apart, and the cut was reported Done. The same MP4 content cut
+    /// into a <c>.ts</c> or <c>.m2ts</c> output came out three frames early with 547 ms of audio overlap. So the names the
+    /// Exact note lists count as well as the container: Matroska/WebM names get <see cref="MatroskaUnsupportedReason"/>,
+    /// transport-stream names get <see cref="NonZeroStartTimeReason"/> (the sentence that names them). Case-insensitive; a
+    /// null or extension-less path is fine.
+    /// </summary>
+    public static string? UnsupportedFileNameReason(string? path)
+    {
+        var ext = string.IsNullOrWhiteSpace(path) ? string.Empty : Path.GetExtension(path);
+        if (ext.Length == 0)
+        {
+            return null;
+        }
+
+        if (MatroskaExtensions.Contains(ext, StringComparer.OrdinalIgnoreCase))
+        {
+            return MatroskaUnsupportedReason;
+        }
+
+        return TransportStreamExtensions.Contains(ext, StringComparer.OrdinalIgnoreCase) ? NonZeroStartTimeReason : null;
+    }
+
     /// <summary>
     /// A format <c>start_time</c> within this of zero counts as zero (T-190). Exact assumes the probe's keyframe times and
     /// ffmpeg's <c>-ss</c> offsets coincide, which holds only when the format starts at 0; a millisecond is the mp4/mkv
@@ -101,8 +134,20 @@ public static class SmartCutArgsBuilder
     /// <para>This is the ONE predicate that decides whether Exact really runs for a source (G-059): the engine falls back
     /// on it, and the Bulk Cut row evaluates it on its own probed <see cref="MediaInfo"/> to decide, before Run, whether
     /// it shows the snapped cut and the reason (T-189) — so the row and the run never disagree.</para>
+    ///
+    /// <para><paramref name="sourcePath"/> and <paramref name="outputPath"/> (T-190, third pass) are the names the cut will
+    /// read and write: the container the head and the final get comes from the OUTPUT extension, which the probed
+    /// <paramref name="info"/> cannot see (<see cref="UnsupportedFileNameReason"/>). The engine passes both; the Bulk row
+    /// passes its source's name, because its output keeps the extension. Both are optional so a caller with only a probe
+    /// result still gets the container-level answer.</para>
     /// </summary>
-    public static bool TryResolveEncoders(MediaInfo info, out string? videoEncoder, out string? audioEncoder, out string? reason)
+    public static bool TryResolveEncoders(
+        MediaInfo info,
+        out string? videoEncoder,
+        out string? audioEncoder,
+        out string? reason,
+        string? sourcePath = null,
+        string? outputPath = null)
     {
         ArgumentNullException.ThrowIfNull(info);
         videoEncoder = null;
@@ -162,12 +207,16 @@ public static class SmartCutArgsBuilder
             return false;
         }
 
-        // The container (T-190, second pass). See MatroskaUnsupportedReason.
-        if (matroska)
+        // The container (T-190, second pass) and the file names (third pass). See MatroskaUnsupportedReason and
+        // UnsupportedFileNameReason.
+        var containerReason = matroska
+            ? MatroskaUnsupportedReason
+            : UnsupportedFileNameReason(sourcePath) ?? UnsupportedFileNameReason(outputPath);
+        if (containerReason is not null)
         {
             videoEncoder = null;
             audioEncoder = null;
-            reason = MatroskaUnsupportedReason;
+            reason = containerReason;
             return false;
         }
 

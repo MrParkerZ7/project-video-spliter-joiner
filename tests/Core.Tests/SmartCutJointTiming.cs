@@ -65,6 +65,54 @@ internal static class SmartCutJointTiming
     }
 
     /// <summary>
+    /// A source whose picture stops while its sound goes on (T-190, third pass): 20 s, 30 fps, 48 kHz stereo AAC, video frames
+    /// only before 10.2 s and from 12.5 s (the last frame before the gap is at 10.166667 s), audio continuous. libx264 with
+    /// <c>-g 60</c> counted in frames, so the keyframes are at 0, 2 ... 10 s and then 14.3 s (frame 360), none at 12.5 s: a
+    /// Start at 11.0 s plans a head that begins at the picture's return, 1.5 s after the request.
+    /// </summary>
+    public static async Task<string> MakeGappedSourceAsync(string dir, string name)
+    {
+        var path = Path.Combine(dir, name);
+        var run = await Runner().RunAsync(FfmpegArgs.ForFfmpeg()
+            .Raw("-y", "-loglevel", "error")
+            .Raw("-f", "lavfi", "-i", "testsrc2=size=320x240:rate=30:duration=20")
+            .Raw("-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000:duration=20")
+            .Raw("-map", "0:v:0", "-map", "1:a:0")
+            .Raw("-vf", "select='lt(t,10.2)+gte(t,12.5)'", "-fps_mode", "vfr")
+            .Raw("-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p")
+            .Raw("-g", "60", "-keyint_min", "60", "-sc_threshold", "0", "-bf", "2")
+            .Raw("-c:a", "aac", "-b:a", "192000", "-ar", "48000", "-ac", "2")
+            .Raw("-t", "20")
+            .Output(path));
+        run.ExitCode.Should().Be(0, "the gapped fixture must be produced before anything is asserted: " + run.StdErrText);
+        return path;
+    }
+
+    /// <summary>
+    /// An AVI with MPEG-4 video and B-frames (<c>-bf 2</c>) and MP3 audio (T-190, third pass): the container lists about a
+    /// third of its video packets without a presentation time (<c>pts_time</c> N/A), only a decoding time on the 1/fps grid.
+    /// </summary>
+    public static async Task<string> MakeAviWithoutPtsAsync(string dir, string name)
+    {
+        var path = Path.Combine(dir, name);
+        var run = await Runner().RunAsync(FfmpegArgs.ForFfmpeg()
+            .Raw("-y", "-loglevel", "error")
+            .Raw("-f", "lavfi", "-i", "testsrc2=size=320x240:rate=30:duration=10")
+            .Raw("-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000:duration=10")
+            .Raw("-map", "0:v:0", "-map", "1:a:0")
+            .Raw("-c:v", "mpeg4", "-bf", "2", "-g", "60", "-qscale:v", "3")
+            .Raw("-c:a", "libmp3lame", "-b:a", "128000", "-ar", "48000", "-ac", "2")
+            .Raw("-t", "10")
+            .Output(path));
+        run.ExitCode.Should().Be(0, "the AVI fixture must be produced before anything is asserted: " + run.StdErrText);
+        return path;
+    }
+
+    /// <summary>Video packets of <paramref name="path"/> that report no presentation time.</summary>
+    public static async Task<int> VideoPacketsWithoutPtsAsync(string path) =>
+        (await PacketsAsync(path, "v:0")).Count(p => double.IsNaN(p.Pts));
+
+    /// <summary>
     /// A source whose video starts one AAC frame AFTER its audio while its format starts at 0 — the shape of a file the
     /// app's own Join writes, and of the bench's <c>4k10m</c> and <c>mkv</c> fixtures: a <c>-c copy</c> concat or remux
     /// carries the head clip's AAC priming packet over and shifts every stream so the audio starts at 0. Made here the
