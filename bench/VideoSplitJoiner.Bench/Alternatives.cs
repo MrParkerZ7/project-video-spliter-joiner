@@ -256,7 +256,7 @@ internal static class Alternatives
                 {
                     var headEnd = Math.Ceiling(start / fx.Gop) * fx.Gop;
                     var head = SmartCutArgsBuilder.HeadReencode(fx.Path, TimeSpan.FromSeconds(start), TimeSpan.FromSeconds(headEnd), ok.Info, v!, a, Path.Combine(tmp, "head" + Path.GetExtension(fx.Path)));
-                    await Rec($"exact-cut head re-encode @{start}s, output -ss (SmartCutArgsBuilder.cs:317)", head.ToList().Skip(2).ToArray(), false);
+                    await Rec($"exact-cut head re-encode @{start}s, input -ss (SmartCutArgsBuilder.HeadReencode)", head.ToList().Skip(2).ToArray(), false);
                 }
             }
 
@@ -520,7 +520,7 @@ internal static class Alternatives
                 var variants = new List<(string Name, string[] Args)>
                 {
                     // The engine's own head tokens, minus the runner's -hide_banner -nostdin and the output path.
-                    ($"current: -i in -ss {sStart} (output seek) {venc} default preset",
+                    ($"current: -ss {sStart} -i in (input seek, T-191) {venc} default preset",
                         SmartCutArgsBuilder.HeadReencode(fx.Path, plan.Start, headEnd, info, venc!, aenc, "<out>").ToList().Skip(2).SkipLast(1).ToArray()),
                 };
                 variants.AddRange(SmartHeads.Variants(fx, span));

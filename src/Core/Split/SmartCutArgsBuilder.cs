@@ -225,8 +225,14 @@ public static class SmartCutArgsBuilder
 
     /// <summary>
     /// The head fragment: <c>[start, end)</c> re-encoded to match the source so it can be concatenated
-    /// with the copied tail. Uses an OUTPUT seek (<c>-ss</c> AFTER <c>-i</c>) so the cut is
-    /// frame-exact — the whole point of this path — accepting the decode cost, which is bounded by one GOP.
+    /// with the source's own packets from the boundary keyframe. Uses an INPUT seek (<c>-ss</c> BEFORE <c>-i</c>, T-191): with
+    /// ffmpeg's default <c>accurate_seek</c> the demuxer jumps to the keyframe before <c>start</c>, the decoder drops the frames
+    /// before it, and the fragment begins on the exact requested frame — the same frames an output seek gives (proven against
+    /// the old output-seek args, frame by frame) — so the decode is bounded by one GOP wherever in the file the cut is. The
+    /// output seek this replaced (<c>-ss</c> AFTER <c>-i</c>) decoded every frame from the start of the file up to <c>start</c>
+    /// and discarded it: measured by the bench <c>smart</c> scenario in one run, a 1.5 s head took 2.4 s (94 MB read) at an intro
+    /// of 10.5 s, 14.5 s (769 MB, 89% of the file) at 104.5 s of the 2-minute 4K file and 66.5 s (3.9 GB, 91%) at 540.5 s of the
+    /// 10-minute one, against 1.5 s, 1.5 s and 2.8 s (24 MB each) for the input seek. <c>-t</c> stays an output duration.
     /// </summary>
     public static FfmpegArgs HeadReencode(
         string inputPath,
@@ -249,9 +255,10 @@ public static class SmartCutArgsBuilder
 
         var args = FfmpegArgs.ForFfmpeg()
             .Raw("-y")
-            .Input(inputPath)
-            // OUTPUT seek: decodes from the previous keyframe and starts the output at EXACTLY `start`.
+            // INPUT seek (T-191): the demuxer jumps to the keyframe before `start`, the decoder drops frames until `start`
+            // (accurate_seek is ffmpeg's default), and the output starts at EXACTLY `start` - decoding one GOP at most.
             .Raw("-ss", SplitPlanner.ToFfmpegSeconds(start))
+            .Input(inputPath)
             .Raw("-t", SplitPlanner.ToFfmpegSeconds(duration))
             .Raw("-map", "0");
 

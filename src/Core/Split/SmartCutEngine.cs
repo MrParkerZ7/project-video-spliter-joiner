@@ -66,6 +66,21 @@ public interface ISmartCutEngine
 /// frame: a head with none would make the concat drop the source's video, and a cut that loses the video is a fall back,
 /// not a result.</para>
 ///
+/// <para><b>The head seeks to its keyframe before it decodes (T-191, SPEC-001 I44).</b> <see cref="SmartCutArgsBuilder.HeadReencode"/>
+/// puts <c>-ss</c> before <c>-i</c>, so the decode starts at the keyframe before the start whatever the position in the file;
+/// the output seek it replaced decoded everything from the start of the file up to the cut.</para>
+///
+/// <para><b>Real progress (T-191, SPEC-001 I69).</b> Each ffmpeg run reports into its own slice of the row's fraction, below
+/// 1.0: the head encode into <c>[0, w)</c>, the concat into <c>[w, 1)</c>, with <c>w = h·k / (h·k + c)</c> from
+/// <see cref="SmartCutCost"/> (the same function the Bulk Cut batch weighs the row by). A <c>FullReencode</c> reports its one
+/// run across <c>[0, 1)</c>. The fraction never goes backwards, a run that reports nothing still ends at its slice's end, and
+/// 1.0 is reported once, after the output is in place — never by a cut that fails, is cancelled or falls back. The two
+/// ffprobe reads around the head (the frame snap before it, the head's packet count after it) carry no progress of their own
+/// and no weight: each is bounded by a GOP and costs a fraction of a second against a head of seconds (measured 0.06-0.15 s each
+/// on the bench's 4K fixtures against a head of 1.5-5 s), so the row sits at 0 while the snap is read, at or just below the end of
+/// the head's slice while the head is checked (a head that fails the check is handed back to the lossless cut, which the Bulk
+/// engine keeps from moving the row's bar back).</para>
+///
 /// <para>Every intermediate lands in a temp dir that is swept in a <c>finally</c>, and the final file is
 /// only moved into place once it exists — the same cancel-safety contract <see cref="SplitEngine"/>
 /// holds. A source whose codecs cannot be reproduced is reported as a FALLBACK, never guessed at.</para>
@@ -176,7 +191,14 @@ public sealed class SmartCutEngine : ISmartCutEngine
             var headPath = Path.Combine(tempDir, "head" + ext);
             var finalTemp = Path.Combine(tempDir, "final" + ext);
 
-            // --- 1. The re-encoded head fragment (bounded by one GOP). ---
+            // The row's fraction (T-191): the head encode owns [0, w), the concat [w, 1), w = the head's share of the cut's cost
+            // (SmartCutCost, the function the Bulk Cut batch weighs this row by). A FullReencode's one run owns all of [0, 1).
+            var rowProgress = new RowProgress(progress);
+            var headShare = plan.Strategy == SmartCutStrategy.HeadReencode
+                ? SmartCutCost.Of(plan, ok.Info.Duration).ReencodeShare
+                : 1d;
+
+            // --- 1. The re-encoded head fragment (the decode starts at the keyframe before the start: one GOP at most). ---
             var headEnd = plan.Strategy == SmartCutStrategy.HeadReencode
                 ? plan.HeadEnd!.Value
                 : plan.End ?? ok.Info.Duration;
@@ -184,7 +206,9 @@ public sealed class SmartCutEngine : ISmartCutEngine
             var headArgs = SmartCutArgsBuilder.HeadReencode(
                 inputPath, plan.Start, headEnd, ok.Info, vEnc!, aEnc, headPath);
 
-            var headRun = await _runner.RunAsync(headArgs, null, null, ct).ConfigureAwait(false);
+            // ffmpeg's time= counts the head's OUTPUT time, 0 .. HeadEnd - Start.
+            var headRun = await _runner.RunAsync(
+                headArgs, headEnd - plan.Start, rowProgress.Slice(0d, headShare), ct).ConfigureAwait(false);
             if (headRun.ExitCode != 0 || !File.Exists(headPath))
             {
                 throw new SplitException(
@@ -201,13 +225,14 @@ public sealed class SmartCutEngine : ISmartCutEngine
                     TimeSpan.Zero);
             }
 
-            progress?.Report(0.5);
+            // The head is verified: its slice is done, even when ffmpeg printed no time= for a run this short.
+            rowProgress.Reach(headShare);
 
             // --- 2. No copyable tail (request sits in the final GOP) -> the head IS the output. ---
             if (plan.Strategy == SmartCutStrategy.FullReencode)
             {
                 MoveIntoPlace(headPath, outputPath);
-                progress?.Report(1.0);
+                rowProgress.Complete();
                 return new SmartCutResult(outputPath, plan.Strategy, false, null, plan.ReencodedDuration, plan.Start);
             }
 
@@ -220,16 +245,23 @@ public sealed class SmartCutEngine : ISmartCutEngine
                 SmartCutArgsBuilder.RenderJointList(headPath, headEndTime - plan.Start, inputPath, headEndTime, plan.End),
                 ct).ConfigureAwait(false);
 
+            // ffmpeg's time= counts the concat's output time from the START of the head, so the whole kept range is the total
+            // and the head's own part of it (already reported by the head's slice) is where the concat's slice begins.
+            var kept = (plan.End ?? ok.Info.Duration) - plan.Start;
+            var headFraction = kept > TimeSpan.Zero ? (headEndTime - plan.Start).TotalSeconds / kept.TotalSeconds : 0d;
+
             var concatArgs = JoinArgsBuilder.ConcatCopy(listPath, finalTemp);
-            var concatRun = await _runner.RunAsync(concatArgs, null, null, ct).ConfigureAwait(false);
+            var concatRun = await _runner.RunAsync(
+                concatArgs, kept, rowProgress.Slice(headShare, 1d, headFraction), ct).ConfigureAwait(false);
             if (concatRun.ExitCode != 0 || !File.Exists(finalTemp))
             {
                 throw new SplitException(
                     $"Exact cut failed while joining the fragments of '{Path.GetFileName(inputPath)}'.");
             }
 
+            rowProgress.Reach(1d);
             MoveIntoPlace(finalTemp, outputPath);
-            progress?.Report(1.0);
+            rowProgress.Complete();
 
             return new SmartCutResult(outputPath, plan.Strategy, false, null, plan.ReencodedDuration, plan.Start);
         }
@@ -256,6 +288,111 @@ public sealed class SmartCutEngine : ISmartCutEngine
         return fps is { } rate && double.IsFinite(rate) && rate > 0
             ? TimeSpan.FromSeconds(SnapShiftFrames / rate)
             : SnapShiftWhenRateUnknown;
+    }
+
+    /// <summary>
+    /// Copy-equivalent seconds per second of re-encoded video (T-191): a second of head the engine re-encodes costs this many
+    /// times the wall time of a second it stream-copies. It weights the cut's two runs against each other
+    /// (<see cref="SmartCutCost"/>), both in the row's own fraction (<c>w = h·k / (h·k + c)</c>) and in the Bulk Cut batch bar and
+    /// time left, which weigh an Exact row by <c>h·k + c</c>. Chosen from the bench's <c>smart</c> scenario on <c>4k</c>, <c>g10</c>
+    /// and <c>4k10m</c> (T-191's Build log): at each cut position the row's measured head share of the wall time, head over head plus
+    /// concat, is matched by <c>h·k / (h·k + c)</c> at a <c>k</c> of 38 to 244 (median 120, geometric mean 102), because a head
+    /// costs 0.6-1.9 s of wall time per second re-encoded and the concat 5-18 ms per second copied (its start-up included), and the
+    /// concat's cost depends on the disk and the bitrate. 100 is the round number in that range. It is approximate by nature and shapes only how the bars
+    /// move, never what is cut: the row's fraction is monotonic whatever it is.
+    /// </summary>
+    public const double EncodeCostFactor = 100d;
+
+    /// <summary>
+    /// The highest fraction a RUN may report (T-191). 1.0 is reported once, by the engine, after the output is in place - never by
+    /// an ffmpeg run, whose last <c>time=</c> reaches its total a moment before the file is closed and moved.
+    /// </summary>
+    internal const double MaxRunProgress = 0.999;
+
+    /// <summary>
+    /// One cut's reports into the row's fraction (T-191, SPEC-001 I69): a run reports into a slice of it, the value never goes
+    /// below an earlier one, no run reports 1.0, and 1.0 is reported once, by <see cref="Complete"/>. Every call comes from the
+    /// ffmpeg run in flight or from the engine between runs (the runner returns only after its stderr is read), and each is
+    /// serialized by the lock anyway.
+    /// </summary>
+    private sealed class RowProgress
+    {
+        private readonly IProgress<double>? _sink;
+        private readonly object _gate = new();
+        private double _last;
+        private bool _completed;
+
+        public RowProgress(IProgress<double>? sink) => _sink = sink;
+
+        /// <summary>
+        /// The progress handed to a run: its fractions 0..1 land in <c>[<paramref name="lo"/>, <paramref name="hi"/>]</c>.
+        /// <paramref name="from"/> is the run's own fraction at which the slice begins (the concat's <c>time=</c> starts at the head's
+        /// length, which the head's slice already reported). Null when nobody listens, so the runner is handed no progress.
+        /// </summary>
+        public IProgress<double>? Slice(double lo, double hi, double from = 0d) =>
+            _sink is null ? null : new SliceProgress(this, lo, hi, from);
+
+        /// <summary>A run finished without reporting its slice's end (very short, or no <c>time=</c>): the row is at least there.</summary>
+        public void Reach(double value) => Report(value);
+
+        /// <summary>The output is in place: report 1.0, once.</summary>
+        public void Complete()
+        {
+            lock (_gate)
+            {
+                if (_completed || _sink is null)
+                {
+                    return;
+                }
+
+                _completed = true;
+                _last = 1d;
+                _sink.Report(1d);
+            }
+        }
+
+        private void Report(double value)
+        {
+            if (_sink is null || double.IsNaN(value))
+            {
+                return;
+            }
+
+            value = Math.Min(Math.Max(value, 0d), MaxRunProgress);
+            lock (_gate)
+            {
+                if (_completed || value <= _last)
+                {
+                    return;
+                }
+
+                _last = value;
+                _sink.Report(value);
+            }
+        }
+
+        private sealed class SliceProgress : IProgress<double>
+        {
+            private readonly RowProgress _row;
+            private readonly double _lo;
+            private readonly double _hi;
+            private readonly double _from;
+
+            public SliceProgress(RowProgress row, double lo, double hi, double from)
+            {
+                _row = row;
+                _lo = lo;
+                _hi = hi;
+                _from = from;
+            }
+
+            public void Report(double fraction)
+            {
+                var span = 1d - _from;
+                var within = span > 0d ? Math.Clamp((fraction - _from) / span, 0d, 1d) : 1d;
+                _row.Report(_lo + ((_hi - _lo) * within));
+            }
+        }
     }
 
     private static void MoveIntoPlace(string tempFile, string destination)

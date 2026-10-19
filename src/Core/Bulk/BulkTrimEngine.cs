@@ -215,11 +215,15 @@ public sealed class BulkTrimEngine : IBulkTrimEngine
             var fileName = Path.GetFileName(item.InputPath);
             var baseDone = runnableDone;
 
+            // A row's fraction never goes backwards (T-191): an Exact cut that falls back after its head ran (the head held no
+            // picture) hands the row to the lossless pass, whose own fraction starts again from 0.
+            var rowHighWater = 0.0;
             IProgress<double>? rowProgress = progress is null
                 ? null
                 : new DelegateProgress<double>(local =>
                 {
-                    var clamped = Clamp01(local);
+                    var clamped = Math.Max(Clamp01(local), rowHighWater);
+                    rowHighWater = clamped;
                     var overall = runnableTotal == 0 ? 0.0 : (baseDone + clamped) / runnableTotal;
                     progress.Report(new BulkTrimProgress(i, n, fileName, clamped, overall, BulkTrimPhase.Item));
                 });

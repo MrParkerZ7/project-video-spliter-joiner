@@ -131,10 +131,45 @@ public sealed class SmartCutTests
 
         args.Should().Contain("libx264").And.Contain("yuv420p").And.Contain("1920x1080");
         args.Should().Contain("aac").And.Contain("48000").And.Contain("2");
-        // Output seek (-ss AFTER -i) is what makes the cut frame-exact.
+        // T-191 (recorded contract change; this assertion used to demand an OUTPUT seek, -ss AFTER -i): the INPUT seek (-ss
+        // BEFORE -i, ffmpeg's accurate_seek) starts the decode at the keyframe before the start and drops frames until it, so the
+        // cut is just as frame-exact and the decode no longer runs from the start of the file.
         var list = args.ToList();
-        list.FindIndex(t => t == "-ss").Should().BeGreaterThan(list.FindIndex(t => t.EndsWith("clip.mp4")),
-            "the seek must come after the input for a frame-exact start");
+        list.FindIndex(t => t == "-ss").Should().BeLessThan(list.FindIndex(t => t.EndsWith("clip.mp4")),
+            "the seek must come BEFORE the input: an input seek decodes from the keyframe before the start, not from the file's start");
+    }
+
+    // SPEC-001#I44 (T-191) - the head's argument shape: ONE -ss, before -i, and -t (an output duration) after it, no
+    // -noaccurate_seek; every other token is the one the output-seek head had, in the same order.
+    [Trait("serves-spec", "SPEC-001")]
+    [Fact]
+    public void HeadReencode_SeeksBeforeItsInput_AndOtherwiseKeepsEveryToken()
+    {
+        var tokens = SmartCutArgsBuilder.HeadReencode(
+            @"C:\v\clip.mp4", TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(8),
+            H264Aac(), "libx264", "aac", @"C:\v\head.mp4").ToList().ToList();
+
+        tokens.Count(t => t == "-ss").Should().Be(1, "one seek, and it is on the input");
+        tokens.Should().NotContain("-noaccurate_seek", "accurate_seek (ffmpeg's default) is what makes the start frame-exact");
+        var ss = tokens.IndexOf("-ss");
+        var input = tokens.IndexOf("-i");
+        tokens[ss + 1].Should().Be("5");
+        ss.Should().Be(input - 2, "-ss <start> immediately precedes -i <input>");
+        tokens[input + 1].Should().Be(@"C:\v\clip.mp4");
+        tokens.IndexOf("-t").Should().BeGreaterThan(input + 1, "-t stays an OUTPUT duration, after the input");
+        tokens[tokens.IndexOf("-t") + 1].Should().Be("3");
+
+        // The shipped output-seek head, token for token: -i <in> -ss <start> -t <dur> ... Moving the pair is the whole change.
+        var before = tokens.ToList();
+        before.RemoveRange(ss, 2);
+        before.Insert(before.IndexOf("-i") + 2, "-ss");
+        before.Insert(before.IndexOf("-ss") + 1, "5");
+        before.Skip(before.IndexOf("-y")).Should().Equal(new[]
+        {
+            "-y", "-i", @"C:\v\clip.mp4", "-ss", "5", "-t", "3", "-map", "0",
+            "-c:v", "libx264", "-pix_fmt", "yuv420p", "-s", "1920x1080",
+            "-c:a", "aac", "-ar", "48000", "-ac", "2", @"C:\v\head.mp4",
+        }, "the codec, pix_fmt, size, sample-rate and channel tokens are unchanged");
     }
 
     // SPEC-001#I44 (T-190) - the kept part is no longer copied into a tail file: the concat reads the SOURCE itself from the
@@ -343,7 +378,15 @@ public sealed class SmartCutTests
             list[2].Should().Be("file '" + Path.GetFullPath(input) + "'", "the second entry is the source");
             list[3].Should().Be("inpoint 8", "the kept part begins at the boundary keyframe");
 
-            progress.Values.Should().Equal(new[] { 0.5, 1.0 }, "two steps: after the head, after the concat");
+            // T-191 (recorded contract change; this used to demand the interim steps 0.5 then 1.0): the fake runner prints no time=, so
+            // each run still ends at the end of its slice - the head at w = h·k / (h·k + c) from SmartCutCost (3 s re-encoded, 52 s
+            // copied), the concat just below 1 - and 1.0 follows the move into place. The fixed 0.5 step is gone.
+            var w = SmartCutCost.Of(SmartCutPlanner.Plan(TimeSpan.FromSeconds(5), null, Grid4s()), TimeSpan.FromSeconds(60)).ReencodeShare;
+            progress.Values.Should().HaveCount(3).And.BeInAscendingOrder();
+            progress.Values[0].Should().BeApproximately(w, 1e-12, "the head's slice ends at its share of the cost");
+            progress.Values[1].Should().Be(SmartCutEngine.MaxRunProgress, "the concat's slice ends just below 1");
+            progress.Values[2].Should().Be(1.0, "1.0 follows, once, after the output is in place");
+            progress.Values.Should().NotContain(0.5);
 
             result.Strategy.Should().Be(SmartCutStrategy.HeadReencode);
             result.FellBack.Should().BeFalse("h264/aac resolve to encoders, so the exact route is available");

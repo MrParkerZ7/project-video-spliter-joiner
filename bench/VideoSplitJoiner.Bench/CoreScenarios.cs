@@ -693,7 +693,7 @@ internal static class CoreScenarios
     /// <summary>
     /// The <c>smart</c> scenario: at each of the fixture's named cut positions, SmartCutEngine's two ffmpeg runs
     /// (the engine's own public builders: head re-encode, then the concat of the head and the source itself; the tail
-    /// copy it used to run before T-190 is gone), then the head variants (input seek,
+    /// copy it used to run before T-190 is gone), then the head variants (the output seek the head used before T-191,
     /// presets, NVENC) on the same span, one run each. The first position keeps the fixture's outro; later ones
     /// cut to the end, as the prototype did.
     /// </summary>
@@ -749,7 +749,7 @@ internal static class CoreScenarios
             var headArgs = SmartCutArgsBuilder.HeadReencode(fx.Path, plan.Start, headEnd, info, v!, a, head);
             FfmpegResult? hr = null;
             var (tHead, hu) = await Meter.Run(async () => hr = await c.Ffmpeg.RunAsync(headArgs));
-            c.Results.Add("bulk", $"  Exact {tag}: head re-encode [{start}s..{headEnd.TotalSeconds}s] ({v}, output -ss)", fx.Key, "warm", 1, tHead, hu,
+            c.Results.Add("bulk", $"  Exact {tag}: head re-encode [{start}s..{headEnd.TotalSeconds}s] ({v}, input -ss)", fx.Key, "warm", 1, tHead, hu,
                 $"exit {hr!.ExitCode}; read {100.0 * hu.ReadBytes / new FileInfo(fx.Path).Length:0}% of the file; args: {string.Join(' ', headArgs.ToList().Skip(2)).Replace(fx.Path, "<in>", StringComparison.Ordinal).Replace(head, "<head>", StringComparison.Ordinal)}");
             var span = new SmartHeads.Span(info, plan.Start, headEnd, v!, a);
 

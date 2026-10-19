@@ -109,7 +109,9 @@ A .NET 8 WPF app that splits and joins video **without re-encoding**. See [READM
   whole range if it lies inside one GOP (no keyframe between start and end) — and stream-copies the rest; a
   start already on a keyframe, a source whose codecs it cannot reproduce (HEVC), a Matroska/WebM source (by container or by
   file name, source or output), or a source whose timestamps do not start at zero (MPEG-TS), falls back to the lossless cut; the kept part is read from the source by the concat
-  itself (two ffmpeg runs), and the cut starts on the first video frame at or after the requested time (T-190).
+  itself (two ffmpeg runs), and the cut starts on the first video frame at or after the requested time (T-190). The head
+  seeks to its keyframe BEFORE it decodes (`-ss` before `-i`, T-191), and each run reports into its own slice of the row's
+  fraction (`SmartCutCost`, the one cost function the Bulk Cut batch weight shares): never add the seek back after `-i`.
   Do not add a re-encode branch to `SplitEngine`/`JoinEngine` or another re-encode path.
 - **No auto-detect.** The black/white/scene auto-detect feature was removed (no `Core/Detect`,
   no `SplitPointDetector`, no candidate UI). Do not reintroduce a detect layer or candidate ticks;

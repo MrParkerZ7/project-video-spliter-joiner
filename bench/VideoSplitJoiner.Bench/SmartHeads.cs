@@ -5,8 +5,9 @@ using VideoSplitJoiner.Core.Split;
 namespace VideoSplitJoiner.Bench;
 
 /// <summary>
-/// The Exact-cut head variants the T-187 evidence compared against SmartCutEngine's own head (output seek,
-/// encoder defaults): an input seek, two libx264/libx265 presets, and NVENC with and without CUDA decode. Shared
+/// The Exact-cut head variants the T-187 evidence compared against SmartCutEngine's own head (an input seek since T-191,
+/// encoder defaults): the OUTPUT seek the head used before T-191 (the "before" row, so one run shows both), two
+/// libx264/libx265 presets, and NVENC with and without CUDA decode. Shared
 /// by the <c>smart</c> core scenario (timing only) and <c>alt smart2</c> (timing plus equivalence checks).
 /// </summary>
 internal static class SmartHeads
@@ -50,9 +51,10 @@ internal static class SmartHeads
 
         var nvenc = venc == "libx265" ? "hevc_nvenc" : "h264_nvenc";
         var inSeek = new[] { "-y", "-ss", sStart, "-i", fx.Path, "-t", sDur };
+        var outSeek = new[] { "-y", "-i", fx.Path, "-ss", sStart, "-t", sDur };
         return new List<(string, string[])>
         {
-            ($"-ss {sStart} -i in (input seek, accurate) {venc} default preset", inSeek.Concat(Enc(venc)).ToArray()),
+            ($"-i in -ss {sStart} (output seek: the head before T-191) {venc} default preset", outSeek.Concat(Enc(venc)).ToArray()),
             ($"input seek + {venc} -preset veryfast", inSeek.Concat(Enc(venc, "-preset", "veryfast")).ToArray()),
             ($"input seek + {venc} -preset ultrafast", inSeek.Concat(Enc(venc, "-preset", "ultrafast")).ToArray()),
             ($"input seek + {nvenc} -preset p4 -cq 19", inSeek.Concat(Enc(nvenc, "-preset", "p4", "-rc", "vbr", "-cq", "19", "-b:v", "0")).ToArray()),

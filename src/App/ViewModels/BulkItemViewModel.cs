@@ -418,6 +418,37 @@ public sealed class BulkItemViewModel : ObservableObject
     public TimeSpan? KeptDuration =>
         KeyframesReady && Duration is { } d ? (EffectiveOutroStart ?? d) - EffectiveIntroEnd : null;
 
+    /// <summary>
+    /// T-191 (SPEC-011 I165): what the engine's Exact cut of this row costs, in copy-equivalent seconds — the
+    /// <see cref="SmartCutCost.Total"/> (<c>h·k + c</c>) of <see cref="SmartCutPlanner.Plan"/> for the cut this row hands the
+    /// engine (<c>IntroEnd.Requested</c> to <c>OutroStart.Requested</c>, or to the end of the file) over this row's own keyframes, so
+    /// <c>h</c> and <c>c</c> come from the planner itself, including its 10 ms on-keyframe tolerance (a request within it is a
+    /// <c>PureCopy</c>, <c>h</c> = 0; a range with no keyframe inside it is a <c>FullReencode</c>). Null when the row is not cut
+    /// exactly (Exact off, or <see cref="ExactCutApplies"/> false: the row's kept duration is its weight then), before the keyframes
+    /// are ready, or for a range the planner refuses.
+    /// </summary>
+    internal double? ExactCutCost
+    {
+        get
+        {
+            if (!ExactCutApplies || !KeyframesReady || Duration is not { } duration)
+            {
+                return null;
+            }
+
+            try
+            {
+                var plan = SmartCutPlanner.Plan(IntroEnd.Requested, HasOutro ? OutroStart!.Requested : null, Keyframes);
+                var cost = SmartCutCost.Of(plan, duration).Total;
+                return cost > 0 ? cost : null;
+            }
+            catch (ArgumentException)
+            {
+                return null; // a hopeless range (the row is not valid, so it is not in the batch anyway)
+            }
+        }
+    }
+
     /// <summary>Minimum meaningful kept span — <c>max(1s, 1 GOP)</c> (D-004 open-decision 4).</summary>
     public TimeSpan MinKeptSpan
     {

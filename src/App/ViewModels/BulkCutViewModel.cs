@@ -2878,8 +2878,17 @@ public sealed class BulkCutViewModel : ObservableObject
         _ => BulkBatchState.Idle,
     };
 
-    private static double RowWeight(BulkItemViewModel row) =>
-        row.KeptDuration is { } kept && kept.TotalSeconds > 0 ? kept.TotalSeconds : Math.Max(1d, row.SizeBefore);
+    /// <summary>
+    /// One row's weight in the batch fraction (<see cref="WeightedOverall"/>, SPEC-011 I165): a row that will really be cut
+    /// exactly weighs the <see cref="SmartCutCost"/> of the engine's own plan for it (<c>h·k + c</c>, copy-equivalent seconds,
+    /// <see cref="BulkItemViewModel.ExactCutCost"/>), so the batch bar, the taskbar and the time left move during a head encode in
+    /// proportion to what the head costs — the same function the engine splits the row's own fraction by. Every other row weighs
+    /// its kept duration (seconds), the unit a stream copy costs in.
+    /// </summary>
+    internal static double RowWeight(BulkItemViewModel row) =>
+        row.ExactCutCost is { } cost
+            ? cost
+            : row.KeptDuration is { } kept && kept.TotalSeconds > 0 ? kept.TotalSeconds : Math.Max(1d, row.SizeBefore);
 
     // ---- Plumbing ---------------------------------------------------------------------------
 
