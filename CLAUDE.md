@@ -12,7 +12,7 @@ A .NET 8 WPF app that splits and joins video **without re-encoding**. See [READM
 - `bench/` — `VideoSplitJoiner.Bench`, the dev-only performance bench (T-188): synthetic fixtures only, never
   packaged. See [bench/README.md](bench/README.md).
 - `packaging/package.ps1` — single-file self-contained win-x64 publish + bundled ffmpeg + zip.
-- `docs/todo/` — the task board. **Do not touch it** during code/doc work.
+- `docs/todo/` — the task board, in the nested docs repo (its own git repo, ignored by this one). **Do not touch it** during code/doc work: only the `task` / `todo-*` commands and `develop-docs-engine.py` write it, and they commit it in the docs repo.
 
 ## Conventions (keep these true)
 
@@ -254,6 +254,6 @@ powershell -File packaging/package.ps1        # produces dist/VideoSplitJoiner-v
 
 ## Git
 
-- **Commit with explicit pathspecs** (`git commit -m … -- <paths>`), not `git add -A` — the board
-  (`docs/todo/`) and build output must not be swept into unrelated commits.
-- Do not edit `docs/todo/` as part of code/doc changes.
+- **Commit with explicit pathspecs** (`git commit -m … -- <paths>`), not `git add -A` — build output must not be
+  swept into unrelated commits, and no `docs/` path belongs in a commit of this repo (it is ignored here).
+- Do not edit `docs/todo/` by hand as part of code/doc changes: it is the docs repo's board, written by the `task` / `todo-*` commands and committed there by `develop-docs-engine.py commit`.
