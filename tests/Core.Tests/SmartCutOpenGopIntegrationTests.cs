@@ -1,5 +1,8 @@
 using FluentAssertions;
+using VideoSplitJoiner.Core.Bulk;
+using VideoSplitJoiner.Core.Errors;
 using VideoSplitJoiner.Core.Ffmpeg;
+using VideoSplitJoiner.Core.Io;
 using VideoSplitJoiner.Core.Media;
 using VideoSplitJoiner.Core.Split;
 using Xunit;
@@ -142,6 +145,43 @@ public sealed class SmartCutOpenGopIntegrationTests : IDisposable
         File.Exists(dest).Should().BeFalse();
         Directory.Exists(Path.GetDirectoryName(dest)!).Should().BeFalse(
             "the question comes before anything is created: not the output folder, so not a temp dir the finally would sweep either");
+    }
+
+    // serves-spec: SPEC-002#I50 / SPEC-002#I51 / SPEC-001#I70 - through the Bulk engine: an open-GOP Exact row runs the lossless cut
+    // (snapped to the 4 s keyframe), its warning names the reason, and the file is the source's own packets from that keyframe on:
+    // the only decoder line is the `mmco: unref short failure` note (SPEC-001 I44) that EVERY start on an open-GOP keyframe prints -
+    // the leading pictures that refer to the GOP before it - with the frames and ffmpeg's exit code intact. (The ticket asked for zero
+    // lines; that cannot hold for a lossless cut at a non-IDR keyframe, which is what the fall back is, and is logged on the ticket.)
+    [Trait("serves-spec", "SPEC-002")]
+    [SkippableFact]
+    public async Task AnOpenGopExactRow_ThroughTheBulkEngine_WritesTheLosslessCut_ThatDecodesClean()
+    {
+        RequireBinaries();
+        var src = await MakeAsync("open.mp4", OpenGopParams, "-bf", "2");
+        var dest = Path.Combine(_dir, "trimmed", "open_trimmed.mp4");
+        var runner = new FfmpegRunner(Locator());
+        var probe = Probe();
+        var logs = new ErrorLogWriter(Path.Combine(_dir, "logs")); // never %LOCALAPPDATA%
+        var split = new SplitEngine(runner, probe, logs, new FakeDiskSpaceProbe(long.MaxValue));
+        var batch = new BulkTrimEngine(
+            split, new KeptMiddleRequestBuilder(probe), new FakeDiskSpaceProbe(long.MaxValue), new SmartCutEngine(runner, probe), null);
+
+        var result = await batch.RunAsync(
+            new[] { new BulkTrimItem(src, S(3.4), null, dest) }, new BulkTrimOptions(Precision: CutPrecision.Exact));
+
+        var row = result.Items.Single();
+        row.Outcome.Should().Be(ItemOutcome.Done, row.Error?.Message);
+        row.Warnings.Should().Contain(w =>
+            w.StartsWith(BulkTrimEngine.ExactFallbackPrefix) && w.Contains(SmartCutEngine.NotAnIdrKeyframeReason));
+        File.Exists(row.OutputPath).Should().BeTrue();
+        var (errors, lines) = await SmartCutJointIntegrity.DecodeAsync(row.OutputPath!);
+        lines.ToList().ForEach(_output.WriteLine);
+        lines.Where(SmartCutJointIntegrity.IsDecoderOrDemuxerError).Should().OnlyContain(
+            l => l.Contains("mmco: unref short failure"),
+            "the lossless cut is the source's own packets from a keyframe on: the one note of an open-GOP start, no corruption");
+        errors.Should().BeLessThanOrEqualTo(1);
+        var info = ((ProbeResult.ProbeSucceeded)await probe.ProbeAsync(row.OutputPath!)).Info;
+        info.Duration.TotalSeconds.Should().BeApproximately(8.0, 0.4, "3.4 s snaps to the 4 s keyframe on the lossless path");
     }
 
     // serves-spec: SPEC-001#I70 - the probe on real packets: the first keyframe of an open-GOP file is an IDR, the later ones are not;
