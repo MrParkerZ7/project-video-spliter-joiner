@@ -140,7 +140,8 @@ A .NET 8 WPF app that splits and joins video **without re-encoding**. See [READM
   Don't re-block the load on the full scan or add a second keyframe scan pass.
 - **The keyframe scan reads the container's sample table first (T-194).** `MediaProbe.GetKeyframesAsync` reads an
   MP4/MOV file's `moov` sample table (`IsoBmffKeyframeIndex`: the `moov` and some box headers, never the media
-  data), checked against two short ffprobe packet windows at the ends of the file; then the demux packet-flag
+  data), checked against two short ffprobe packet windows at the ends of the file (the read runs on the thread pool: the scan starts from
+  the UI thread); then the demux packet-flag
   scan (`-show_packets`, keeping `K`-flag packets), when the reader declines the file or a window disagrees; then
   the decode-based `-skip_frame nokey` frame scan, only when the packet query is empty or throws. Keep all three
   producing the same sorted-distinct output; don't drop the fallbacks. The reader declines anything it was not

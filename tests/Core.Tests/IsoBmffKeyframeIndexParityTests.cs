@@ -334,8 +334,10 @@ public class IsoBmffKeyframeIndexParityTests
 
     [SkippableFact]
     [Trait("serves-spec", "SPEC-004")]
-    public async Task TableWithAShiftedTimeScale_IsNotTrusted()
+    public async Task TableWithAShiftedTimeScale_ListsWhatFfprobeListsForTheSameFile()
     {
+        // ffprobe reads the same patched mdhd, so the table and the demuxer shift together: the anchor has nothing to
+        // disagree about, and the contract here is only that the list equals the packet scan of the very same bytes.
         Skip();
         var patched = _samples.PathFor("disagree_timescale.mp4");
         var bytes = File.ReadAllBytes(_samples.H264Bframes);

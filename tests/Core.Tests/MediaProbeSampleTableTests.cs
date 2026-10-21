@@ -189,6 +189,59 @@ public sealed class MediaProbeSampleTableTests : IDisposable
         fake.Runs.Should().HaveCount(3);
     }
 
+    [Fact]
+    [Trait("serves-spec", "SPEC-004")]
+    public async Task TheSampleTableRead_NeverRunsInTheCallersSynchronizationContext()
+    {
+        // The Split and Bulk view models start the scan from the WPF UI thread. `await Task.Yield()` in the shared scan
+        // hands its continuation back to that context, so a blocking file read placed there froze the window for as long as
+        // the read took (a network share, a cold disk). The reader must run on the thread pool.
+        var seen = new List<SynchronizationContext?>();
+        var probe = new MediaProbe(Fake());
+        var inner = probe.KeyframeIndexReader;
+        probe.KeyframeIndexReader = (open, ct) =>
+        {
+            seen.Add(SynchronizationContext.Current);
+            return inner(open, ct);
+        };
+        var path = NewMp4();
+
+        Task<IReadOnlyList<TimeSpan>> scan;
+        var caller = new PoolPostingContext();
+        var previous = SynchronizationContext.Current;
+        SynchronizationContext.SetSynchronizationContext(caller);
+        try
+        {
+            scan = probe.GetKeyframesAsync(path); // starts the shared scan synchronously, under the caller's context
+        }
+        finally
+        {
+            SynchronizationContext.SetSynchronizationContext(previous);
+        }
+
+        (await scan).Should().Equal(IndexList);
+        probe.LastScanPath.Should().Be(KeyframeScanPath.Index);
+        seen.Should().ContainSingle().Which.Should().BeNull("the sample table is read on the thread pool, not in the caller's (UI) context");
+    }
+
+    /// <summary>A stand-in for the UI thread's dispatcher: it runs what is posted to it on a pool thread with itself as the current context.</summary>
+    private sealed class PoolPostingContext : SynchronizationContext
+    {
+        public override void Post(SendOrPostCallback d, object? state) =>
+            ThreadPool.QueueUserWorkItem(_ =>
+            {
+                SetSynchronizationContext(this);
+                try
+                {
+                    d(state);
+                }
+                finally
+                {
+                    SetSynchronizationContext(null);
+                }
+            });
+    }
+
     // ---- Failure paths ----------------------------------------------------------------------------------------------------
 
     [Theory]

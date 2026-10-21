@@ -11,14 +11,14 @@ goal; `0.1.0` is the first end-to-end, shippable cut.
 - **A 4K MP4 or MOV is ready to cut the moment it loads.** The list of keyframes that cuts snap to was found by reading
   the whole video file, so on a big 4K file the Split screen (cut snapping and Preparing), a Bulk Cut batch (its rows
   become runnable) and an Exact cut each waited for a read of every byte first: 0.6 s and 861 MB on a 2-minute 4K test
-  video, 3.2 s and 4.3 GB on a 10-minute one, and about 24-30 s for 4.5 GB on a spinning disk. For MP4 and MOV files (the
+  video, 3.2 s and 4.3 GB on a 10-minute one, and an estimated 24-30 s for 4.5 GB on a spinning disk (calculated from the bytes, not measured). For MP4 and MOV files (the
   format of nearly every phone and camera) the list is now read from the index the file already carries (125 KB on the
   2-minute video) and ffprobe checks the first and the last keyframe instead of reading all of the file: 0.07 s and 30 MB
   on the 2-minute and the 10-minute video alike, so *Split enabled* comes 0.16 s after the load instead of 0.66 s and 3.3 s,
   and the 3 rows of a Bulk Cut batch are runnable in 0.4 s instead of 0.9 s. A file whose index is not read exactly as
   ffprobe would read it (a fragmented MP4, a codec other than H.264 or HEVC, an unusual edit list, a damaged or cut-off
   file), an MKV or TS file, and a file whose first or last keyframe ffprobe does not confirm all take the whole-file read
-  they always took, so the list is the same either way. Checked on more than 400 ffmpeg-made files, including phone-style
+  they always took, so the list is the same either way. Compared with ffprobe on 421 ffmpeg-made files with no difference among the ones it read, including phone-style
   trimmed copies, a video that starts late, a Join's output and a file over 4 GB with 64-bit offsets.
 - **An Exact cut costs the same wherever the cut is, and its bars move while it runs.** The re-encoded start of an Exact cut
   decoded every frame from the beginning of the file up to the cut point, so the work grew with the position: on a 2-minute 4K

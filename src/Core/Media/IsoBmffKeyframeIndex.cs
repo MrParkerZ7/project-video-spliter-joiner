@@ -31,6 +31,12 @@ internal static class IsoBmffKeyframeIndex
     /// <summary>A <c>moov</c> box bigger than this declines (it is read whole, into memory).</summary>
     internal const long MaxMoovBytes = 256L * 1024 * 1024;
 
+    /// <summary>
+    /// The most top-level boxes the header walk visits. An ordinary file has four to ten (ftyp, free, mdat, moov, a few
+    /// vendor boxes); each header is a seek and a small read, so this bounds what the reader reads beyond <c>moov</c>.
+    /// </summary>
+    internal const int MaxTopLevelBoxes = 256;
+
     /// <summary>More sync samples than this decline: the list is held in memory and handed to every screen.</summary>
     internal const int MaxKeyframes = 4_000_000;
 
@@ -134,10 +140,16 @@ internal static class IsoBmffKeyframeIndex
         byte[]? moov = null;
         long position = 0;
         var first = true;
+        var boxes = 0;
 
         while (length - position >= 8)
         {
             ct.ThrowIfCancellationRequested();
+            if (++boxes > MaxTopLevelBoxes)
+            {
+                throw new DeclineException("more than " + MaxTopLevelBoxes + " top-level boxes");
+            }
+
             stream.Position = position;
             ReadExactly(stream, header, 8, ref bytesRead);
             long size = BinaryPrimitives.ReadUInt32BigEndian(header);

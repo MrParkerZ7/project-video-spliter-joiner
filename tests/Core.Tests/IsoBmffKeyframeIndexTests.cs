@@ -294,6 +294,34 @@ public class IsoBmffKeyframeIndexTests
 
     [Fact]
     [Trait("serves-spec", "SPEC-004")]
+    public void ManyTopLevelBoxes_Declines_SoTheHeaderWalkStaysSmall()
+    {
+        // An ordinary file has a handful of top-level boxes (ftyp, free, mdat, moov). A file with hundreds is not
+        // one this reader has been checked against, and each header is a seek and a small read.
+        var b = new Mp4Builder();
+        for (var i = 0; i < IsoBmffKeyframeIndex.MaxTopLevelBoxes + 1; i++)
+        {
+            b.TopLevelAfterMoov.Add(Mp4Builder.Box("free", new byte[8]));
+        }
+
+        AssertDeclines(b, "top-level boxes");
+    }
+
+    [Fact]
+    [Trait("serves-spec", "SPEC-004")]
+    public void AHundredTopLevelBoxes_AreStillRead()
+    {
+        var b = new Mp4Builder();
+        for (var i = 0; i < 100; i++)
+        {
+            b.TopLevelAfterMoov.Add(Mp4Builder.Box("free", new byte[8]));
+        }
+
+        AssertReads(b, ZeroOneTwo);
+    }
+
+    [Fact]
+    [Trait("serves-spec", "SPEC-004")]
     public void MoofBeforeMoov_Declines()
     {
         var file = Mp4Builder.Concat(

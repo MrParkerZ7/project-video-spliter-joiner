@@ -387,7 +387,9 @@ public sealed class MediaProbe : IMediaProbe, IVideoFrameProbe
     /// </summary>
     private async Task<IReadOnlyList<TimeSpan>?> TryKeyframesFromSampleTableAsync(string path)
     {
-        var read = KeyframeIndexReader(() => OpenKeyframeSource(path), CancellationToken.None);
+        // On the thread pool: the shared scan's continuation after `Task.Yield` returns to the caller's context, which is the
+        // UI thread for Split and Bulk Cut, and the reader is blocking file I/O (a network share, a cold disk).
+        var read = await Task.Run(() => KeyframeIndexReader(() => OpenKeyframeSource(path), CancellationToken.None)).ConfigureAwait(false);
         if (read is null || read.Keyframes.Count < 2)
         {
             return null;
