@@ -105,6 +105,20 @@ internal sealed class FfprobePacketsRoot
 {
     [JsonPropertyName("packets")]
     public List<FfprobePacket>? Packets { get; set; }
+
+    // Only the one-packet IDR read asks for it (T-223): the stream's NAL framing, which says how the packet bytes are laid out.
+    [JsonPropertyName("streams")]
+    public List<FfprobeNalFraming>? Streams { get; set; }
+}
+
+/// <summary>An H.264 stream's NAL framing as ffprobe prints it: <c>is_avc</c> "true" with a <c>nal_length_size</c> of 1-4 (ISO length-prefixed), or "false" with 0 (Annex B).</summary>
+internal sealed class FfprobeNalFraming
+{
+    [JsonPropertyName("is_avc")]
+    public string? IsAvc { get; set; }
+
+    [JsonPropertyName("nal_length_size")]
+    public string? NalLengthSize { get; set; }
 }
 
 internal sealed class FfprobePacket
@@ -119,6 +133,10 @@ internal sealed class FfprobePacket
     // "___" for a non-keyframe. The 'K' marker (any position) means keyframe.
     [JsonPropertyName("flags")]
     public string? Flags { get; set; }
+
+    // The packet's size in bytes (printed as a string); only the one-packet IDR read asks for it (T-223).
+    [JsonPropertyName("size")]
+    public string? Size { get; set; }
 
     // The packet's bytes as ffprobe's -show_data hex dump; only the one-packet read of IsIdrKeyframeAsync asks for it (T-223).
     [JsonPropertyName("data")]

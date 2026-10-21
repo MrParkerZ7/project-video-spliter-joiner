@@ -263,6 +263,96 @@ public sealed class OpenGopRowTests : IDisposable
         row.ExactCutApplies.Should().BeTrue();
     }
 
+    // serves-spec: SPEC-011#I164 - review finding: a crossed range (the outro at or before the intro) is hopeless before any snap, and
+    // the drag that crosses it passes through the row on every move. It must not throw (the planner refuses a range that ends before
+    // it starts): not when the intro is dragged past the outro in Exact, not when Exact is switched on with the range already crossed.
+    [Trait("serves-spec", "SPEC-011")]
+    [Fact]
+    public async Task ACrossedRange_IsNotAskedAndNeverThrows()
+    {
+        var (vm, probe, _) = Build();
+        vm.ExactCut = true;
+        probe.Answers[S(4)] = false;
+        var row = await AddAsync(vm, probe, MakeVideo("camera.mp4"));
+        row.AddOutro(S(10));
+
+        var drag = () => row.IntroEnd.Requested = S(12);
+        drag.Should().NotThrow("the intro dragged past the outro is a hopeless range, not an error");
+        row.KeyframeKindReason.Should().BeNull();
+        probe.Asked.Should().BeEmpty();
+
+        vm.ExactCut = false;
+        var switchOn = () => vm.ExactCut = true;
+        switchOn.Should().NotThrow("Exact switched on with the range already crossed");
+        row.KeyframeKindReason.Should().BeNull();
+    }
+
+    // serves-spec: SPEC-011#I164 - review finding: the outro is an input of the question (the engine plans with it as the cut's end).
+    // An outro that ends the range before the keyframe removes the joint, so the reason goes; clearing it brings the joint back, and
+    // the row asks then.
+    [Trait("serves-spec", "SPEC-011")]
+    [Fact]
+    public async Task AddingAnOutro_ThatRemovesTheJoint_ClearsTheReason_AndClearingItAsksAgain()
+    {
+        var (vm, probe, _) = Build();
+        vm.ExactCut = true;
+        probe.Answers[S(4)] = false;
+        var row = await AddAsync(vm, probe, MakeVideo("camera.mp4"));
+        row.IntroEnd.Requested = S(3.4);
+        row.KeyframeKindReason.Should().Be(Reason);
+
+        row.AddOutro(S(3.9)); // the cut ends before the 4 s keyframe: the head is the whole output, no joint
+        row.KeyframeKindReason.Should().BeNull("with the outro there is no copied part behind a keyframe");
+        row.ExactCutApplies.Should().BeTrue();
+
+        row.ClearOutro();
+        row.KeyframeKindReason.Should().Be(Reason, "the joint is back");
+    }
+
+    // serves-spec: SPEC-011#I164 - the same with a keyframe that was never asked about: clearing the outro asks.
+    [Trait("serves-spec", "SPEC-011")]
+    [Fact]
+    public async Task ClearingTheOutro_ThatHidAJoint_AsksTheQuestion()
+    {
+        var (vm, probe, _) = Build();
+        vm.ExactCut = true;
+        probe.Answers[S(4)] = false;
+        var row = await AddAsync(vm, probe, MakeVideo("camera.mp4"));
+        row.AddOutro(S(3.9));
+        row.IntroEnd.Requested = S(3.4);
+        probe.Asked.Should().BeEmpty("no joint while the outro ends the range first");
+
+        row.ClearOutro();
+
+        probe.Asked.Should().Equal(new[] { S(4) });
+        row.KeyframeKindReason.Should().Be(Reason);
+    }
+
+    // serves-spec: SPEC-011#I164 - review finding: a probe that could not say is not remembered for good. The row states the reason
+    // (the engine's rule) and asks again once the intro has been to another keyframe and come back.
+    [Trait("serves-spec", "SPEC-011")]
+    [Fact]
+    public async Task AnAnswerOfNull_IsAskedAgain_AfterTheIntroMovedAwayAndBack()
+    {
+        var (vm, probe, _) = Build();
+        vm.ExactCut = true;
+        probe.Answers[S(4)] = null;
+        var row = await AddAsync(vm, probe, MakeVideo("camera.mp4"));
+
+        row.IntroEnd.Requested = S(3.4);
+        row.KeyframeKindReason.Should().Be(Reason, "the probe could not say");
+        row.IntroEnd.Requested = S(3.2);
+        probe.Asked.Should().Equal(new[] { S(4) }, "the same keyframe is not asked again at once");
+
+        row.IntroEnd.Requested = S(7.4); // another keyframe (8 s: an IDR)
+        row.KeyframeKindReason.Should().BeNull();
+        probe.Answers[S(4)] = true;      // the failure was transient
+        row.IntroEnd.Requested = S(3.4);
+
+        probe.Asked.Should().Equal(new[] { S(4), S(8), S(4) });
+        row.KeyframeKindReason.Should().BeNull("the second answer is an IDR");
+    }
+
     private static async Task WaitForAsync(Func<bool> condition)
     {
         var until = DateTime.UtcNow.AddSeconds(10);

@@ -187,7 +187,7 @@ public sealed class SmartCutEngine : ISmartCutEngine
         if (plan.Strategy == SmartCutStrategy.HeadReencode
             && _frames is not null
             && IsH264(ok.Info)
-            && await _frames.IsIdrKeyframeAsync(inputPath, plan.HeadEnd!.Value, ct).ConfigureAwait(false) is not true)
+            && await IsIdrAsync(_frames, inputPath, plan.HeadEnd!.Value, ct).ConfigureAwait(false) is not true)
         {
             return new SmartCutResult(null, plan.Strategy, FellBack: true, NotAnIdrKeyframeReason, TimeSpan.Zero);
         }
@@ -294,6 +294,22 @@ public sealed class SmartCutEngine : ISmartCutEngine
     /// parentheses and no internal terms (the row warning wraps the reason in its own parentheses and the user reads it).
     /// </summary>
     public const string NotAnIdrKeyframeReason = "frame-exact cutting is not supported yet for this video's keyframe type";
+
+    /// <summary>
+    /// The probe's answer to "is the keyframe an IDR?"; a probe that throws (anything but a cancellation) cannot say, which is the
+    /// same as null: a fall back, never an Exact cut on unknown ground (SPEC-001 I70).
+    /// </summary>
+    private static async Task<bool?> IsIdrAsync(IVideoFrameProbe frames, string path, TimeSpan keyframe, CancellationToken ct)
+    {
+        try
+        {
+            return await frames.IsIdrKeyframeAsync(path, keyframe, ct).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            return null;
+        }
+    }
 
     /// <summary>True for an H.264 first video stream (the codec the IDR question is about).</summary>
     private static bool IsH264(MediaInfo info) =>

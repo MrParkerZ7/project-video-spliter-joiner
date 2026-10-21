@@ -276,6 +276,8 @@ public sealed class BulkItemViewModel : ObservableObject
         // T-108: the resolve above runs BEFORE the OutroStart setter subscribes OnHandleChanged, so the
         // handle event won't fire the first grab — kick it explicitly (also covers a no-change re-snap).
         RequestOutroThumbnail();
+
+        RefreshKeyframeKind(); // T-223: an outro can end the range before the joint, or bring the joint back when it is cleared
     }
 
     /// <summary>Drop the outro-start handle (keep now runs to EOF).</summary>
@@ -287,6 +289,8 @@ public sealed class BulkItemViewModel : ObservableObject
         // T-108: cancel any in-flight outro grab and drop its frame so the (now-hidden) outro chip clears.
         _outroGrabber?.Cancel();
         OutroThumbnailPath = null;
+
+        RefreshKeyframeKind(); // T-223: see AddOutro
     }
 
     // ---- Cut-point frame thumbnails (T-108) -------------------------------------------------
@@ -579,7 +583,20 @@ public sealed class BulkItemViewModel : ObservableObject
         }
 
         var end = HasOutro ? OutroStart!.Requested : (TimeSpan?)null;
-        var plan = SmartCutPlanner.Plan(IntroEnd.Requested, end, Keyframes);
+        SmartCutPlan plan;
+        try
+        {
+            plan = SmartCutPlanner.Plan(IntroEnd.Requested, end, Keyframes);
+        }
+        catch (ArgumentException)
+        {
+            // A crossed range (the outro at or before the intro) is hopeless before any snap or precision (IsCutHopelessBeforeSnap):
+            // nothing to cut, so nothing to ask. A drag past the other handle passes through here on every move.
+            CancelKindQuery();
+            SetKeyframeKindReason(null);
+            return;
+        }
+
         if (plan.Strategy != SmartCutStrategy.HeadReencode || plan.HeadEnd is not { } headEnd)
         {
             CancelKindQuery(); // a start on a keyframe, or none ahead: no joint, nothing to ask
@@ -589,7 +606,15 @@ public sealed class BulkItemViewModel : ObservableObject
 
         if (_idrByHeadEnd.TryGetValue(headEnd, out var known))
         {
-            SetKeyframeKindReason(known is true ? null : SmartCutEngine.NotAnIdrKeyframeReason);
+            SetKeyframeKindReason(known ? null : SmartCutEngine.NotAnIdrKeyframeReason);
+            return;
+        }
+
+        if (_kindUnknownFor == headEnd)
+        {
+            // The probe could not say about this keyframe, which is the engine's "not provably an IDR": the reason stands until the
+            // intro moves to another keyframe (and back), so a transient failure is asked again then and is not kept for good.
+            SetKeyframeKindReason(SmartCutEngine.NotAnIdrKeyframeReason);
             return;
         }
 
@@ -597,6 +622,8 @@ public sealed class BulkItemViewModel : ObservableObject
         {
             return; // the answer for this keyframe is on its way
         }
+
+        _kindUnknownFor = null;
 
         CancelKindQuery();
         var cts = _kindCts = new CancellationTokenSource();
@@ -626,7 +653,15 @@ public sealed class BulkItemViewModel : ObservableObject
         }
 
         _kindAskedFor = null;
-        _idrByHeadEnd[headEnd] = idr;
+        if (idr is { } answer)
+        {
+            _idrByHeadEnd[headEnd] = answer;
+        }
+        else
+        {
+            _kindUnknownFor = headEnd; // not cached for good: see RefreshKeyframeKind
+        }
+
         RefreshKeyframeKind();
     }
 
@@ -635,6 +670,7 @@ public sealed class BulkItemViewModel : ObservableObject
         _kindCts?.Cancel();
         _kindCts = null;
         _kindAskedFor = null;
+        _kindUnknownFor = null;
     }
 
     private void SetKeyframeKindReason(string? reason)
@@ -715,8 +751,9 @@ public sealed class BulkItemViewModel : ObservableObject
     private string? _keyframeKindReason;
     private bool _isH264;
     private TimeSpan? _kindAskedFor;
+    private TimeSpan? _kindUnknownFor;
     private CancellationTokenSource? _kindCts;
-    private readonly Dictionary<TimeSpan, bool?> _idrByHeadEnd = new();
+    private readonly Dictionary<TimeSpan, bool> _idrByHeadEnd = new();
 
     /// <summary>
     /// T-189: why Exact cannot cut this row's source, in the words the run's warning uses

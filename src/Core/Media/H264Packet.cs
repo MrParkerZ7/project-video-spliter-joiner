@@ -3,7 +3,7 @@ namespace VideoSplitJoiner.Core.Media;
 /// <summary>What the first picture of an H.264 packet is (<see cref="H264Packet.FirstPictureKind"/>).</summary>
 internal enum H264PictureKind
 {
-    /// <summary>The packet could not be read as H.264 NAL units in either framing, or holds no picture in what was read.</summary>
+    /// <summary>The packet could not be read as H.264 NAL units in the framing it was given, or holds no picture in what was read.</summary>
     Unknown,
 
     /// <summary>An IDR picture (NAL unit type 5): every later picture decodes without anything before it.</summary>
@@ -19,10 +19,15 @@ internal enum H264PictureKind
 /// keyframe but the first), and the pictures after it may refer to the ones before it, so a part that starts there is not
 /// self-contained. Only an IDR is.
 ///
-/// <para>The packet is in one of two framings: ISO length-prefixed NAL units (MP4/MOV, a 4-byte length each, in practice always 4)
-/// or Annex B (start codes, AVI). A packet is read in both and the answer stands only when they agree or one cannot be read: a
-/// length prefix of <c>00 00 01 xx</c> looks like a start code, and a packet that reads two ways differently is
-/// <see cref="H264PictureKind.Unknown"/>, never a guess. The caller treats Unknown as "not provably an IDR".</para>
+/// <para><b>The framing is told, never guessed.</b> A packet is either ISO length-prefixed NAL units (MP4/MOV/MKV, a length of
+/// 1 to 4 bytes) or Annex B (start codes, TS). ffprobe says which for the stream it is reading (<c>is_avc</c>,
+/// <c>nal_length_size</c>) and the caller passes that: a length-prefixed packet is read ONLY with its length size, an Annex B
+/// packet ONLY by its start codes. An earlier version tried both and let the one that parsed win, and the review found packets
+/// that read as an IDR in the framing they are not in (a 2-byte length followed by a slice whose 5th byte looks like an IDR
+/// header; a 4-byte length of <c>00 00 01 65</c> that looks like a start code and an IDR header). Every length is also checked
+/// against the packet's declared size, so a length that does not fit the packet is not a length.</para>
+///
+/// <para>Anything not provable is <see cref="H264PictureKind.Unknown"/>, which the caller treats as "not an IDR".</para>
 /// </summary>
 internal static class H264Packet
 {
@@ -106,50 +111,56 @@ internal static class H264Packet
     };
 
     /// <summary>
-    /// The kind of the first picture (the first slice NAL unit: type 1, 2 or 5) in <paramref name="data"/>, read as length-prefixed
-    /// and as Annex B. SPS, PPS, SEI and access-unit delimiters before it are skipped. <paramref name="data"/> may be the head of the
-    /// packet only; a NAL unit that is cut off before its first slice is Unknown.
+    /// The kind of the first picture (the first slice NAL unit: type 1, 2 or 5) in <paramref name="data"/>, the leading bytes of a
+    /// packet of <paramref name="packetSize"/> bytes. <paramref name="nalLengthSize"/> is the framing: 1 to 4 for length-prefixed
+    /// units with a length of that many bytes, 0 for Annex B; any other value is Unknown. SPS, PPS, SEI and access-unit delimiters
+    /// before the picture are skipped. A unit that is cut off before its first slice, a length that does not fit the packet, a
+    /// reserved type or a forbidden bit is Unknown.
     /// </summary>
-    internal static H264PictureKind FirstPictureKind(ReadOnlySpan<byte> data)
+    internal static H264PictureKind FirstPictureKind(ReadOnlySpan<byte> data, int nalLengthSize, long packetSize)
     {
-        var lengthPrefixed = WalkLengthPrefixed(data);
-        var annexB = WalkAnnexB(data);
-        if (lengthPrefixed == H264PictureKind.Unknown)
+        if (data.Length == 0 || packetSize < data.Length)
         {
-            return annexB;
+            return H264PictureKind.Unknown; // the declared size cannot be smaller than what was read
         }
 
-        return annexB == H264PictureKind.Unknown || annexB == lengthPrefixed ? lengthPrefixed : H264PictureKind.Unknown;
+        return nalLengthSize switch
+        {
+            0 => WalkAnnexB(data),
+            >= 1 and <= 4 => WalkLengthPrefixed(data, nalLengthSize, packetSize),
+            _ => H264PictureKind.Unknown,
+        };
     }
 
-    private static H264PictureKind WalkLengthPrefixed(ReadOnlySpan<byte> data)
+    private static H264PictureKind WalkLengthPrefixed(ReadOnlySpan<byte> data, int lengthSize, long packetSize)
     {
-        var pos = 0;
-        while (pos + 5 <= data.Length)
+        long pos = 0;
+        while (pos + lengthSize + 1 <= data.Length)
         {
-            var length = ((long)data[pos] << 24) | ((long)data[pos + 1] << 16) | ((long)data[pos + 2] << 8) | data[pos + 3];
-            if (length < 2)
+            long length = 0;
+            for (var i = 0; i < lengthSize; i++)
             {
-                return H264PictureKind.Unknown; // a unit has its header and a payload: a length of 1 is an Annex B start code
+                length = (length << 8) | data[(int)pos + i];
             }
 
-            var picture = PictureOf(data[pos + 4]);
+            if (length < 2 || pos + lengthSize + length > packetSize)
+            {
+                return H264PictureKind.Unknown; // a unit has a header and a payload, and it lies inside the packet
+            }
+
+            var header = data[(int)pos + lengthSize];
+            var picture = PictureOf(header);
             if (picture is not null)
             {
                 return picture.Value;
             }
 
-            if (!IsSkippable(data[pos + 4]))
+            if (!IsSkippable(header) || pos + lengthSize + length > data.Length)
             {
-                return H264PictureKind.Unknown; // not a NAL unit header this walk knows how to step over
+                return H264PictureKind.Unknown; // not a unit this walk steps over, or one that runs past what was read
             }
 
-            if (pos + 4 + length > data.Length)
-            {
-                return H264PictureKind.Unknown; // the unit to skip runs past what was read
-            }
-
-            pos += 4 + (int)length;
+            pos += lengthSize + length;
         }
 
         return H264PictureKind.Unknown;

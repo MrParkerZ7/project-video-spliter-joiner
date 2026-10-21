@@ -59,6 +59,33 @@ public sealed class SmartCutLeadingPictureIntegrationTests : IDisposable
 
     private static MediaProbe Probe() => new(new FfprobeRunner(Locator()));
 
+    /// <summary>
+    /// The real probe, but every keyframe is an IDR (T-223). The IDR check makes an open-GOP source fall back before a head is
+    /// written, so the leading-picture rows on an open-GOP file use this to keep the HEAD check (T-191) exercised on real
+    /// open-GOP packets: a Start just before a key frame must still never give a wrong head.
+    /// </summary>
+    private sealed class IdrTrustingProbe : IMediaProbe, IVideoFrameProbe
+    {
+        private readonly MediaProbe _inner = Probe();
+
+        public Task<ProbeResult> ProbeAsync(string path, CancellationToken ct = default) => _inner.ProbeAsync(path, ct);
+
+        public Task<IReadOnlyList<TimeSpan>> GetKeyframesAsync(string path, CancellationToken ct = default) => _inner.GetKeyframesAsync(path, ct);
+
+        public KeyframeSnap SnapToNearestKeyframe(IReadOnlyList<TimeSpan> keyframes, TimeSpan requested) => _inner.SnapToNearestKeyframe(keyframes, requested);
+
+        public TimeSpan AverageGop(IReadOnlyList<TimeSpan> keyframes) => _inner.AverageGop(keyframes);
+
+        public Task<TimeSpan?> FirstVideoFrameAtOrAfterAsync(string path, TimeSpan time, CancellationToken ct = default) =>
+            _inner.FirstVideoFrameAtOrAfterAsync(path, time, ct);
+
+        public Task<IReadOnlyList<TimeSpan>?> GetVideoFrameTimesAsync(string path, TimeSpan from, TimeSpan to, CancellationToken ct = default) =>
+            _inner.GetVideoFrameTimesAsync(path, from, to, ct);
+
+        public Task<bool?> IsIdrKeyframeAsync(string path, TimeSpan keyframeTime, CancellationToken ct = default) =>
+            Task.FromResult<bool?>(true);
+    }
+
     private static TimeSpan S(double seconds) => TimeSpan.FromSeconds(seconds);
 
     public enum Shape
@@ -149,7 +176,7 @@ public sealed class SmartCutLeadingPictureIntegrationTests : IDisposable
     /// FINAL is not compared: the joint is SmartCutOpenGopIntegrationTests' and SmartCutJointIntegrityTests' to check, and an
     /// open-GOP source no longer reaches this head check at all - T-223 makes it fall back first.) Returns whether it fell back.
     /// </summary>
-    private async Task<bool> CutAndCheckAsync(string source, double start, string label)
+    private async Task<bool> CutAndCheckAsync(string source, double start, string label, bool trustKeyframeKind = false)
     {
         var effective = await FirstFrameAtOrAfterAsync(source, start - 0.0005);
         var keyframes = await Probe().GetKeyframesAsync(source);
@@ -159,7 +186,7 @@ public sealed class SmartCutLeadingPictureIntegrationTests : IDisposable
 
         var dest = Path.Combine(_dir, "out", "exact.mp4");
         var runner = new RecordingRealRunner(Runner(), Path.Combine(_dir, "kept-" + Guid.NewGuid().ToString("N")));
-        var result = await new SmartCutEngine(runner, Probe()).CutAsync(source, S(start), null, dest);
+        var result = await new SmartCutEngine(runner, trustKeyframeKind ? new IdrTrustingProbe() : Probe()).CutAsync(source, S(start), null, dest);
 
         IReadOnlyList<string> headHashes = Array.Empty<string>();
         if (!result.FellBack)
@@ -243,7 +270,9 @@ public sealed class SmartCutLeadingPictureIntegrationTests : IDisposable
         RequireBinaries();
         var src = await MakeAsync(Shape.OpenGop);
 
-        await CutAndCheckAsync(src, start, $"open GOP, Start {start}");
+        // The IDR check of T-223 would send every one of these to the lossless cut before a head is written (the next test); it is
+        // switched off here so the head check stays covered on real open-GOP packets.
+        await CutAndCheckAsync(src, start, $"open GOP, Start {start}", trustKeyframeKind: true);
     }
 
     // serves-spec: SPEC-001#I46 / SPEC-001#I70 - the same open-GOP file with a Start well inside a GOP (4 frames or more before the

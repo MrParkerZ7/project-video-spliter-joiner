@@ -415,10 +415,13 @@ public sealed class VideoFrameProbeTests : IDisposable
         /// <summary>The keyframe times the engine asked about.</summary>
         public List<TimeSpan> IdrAsked { get; } = new();
 
+        /// <summary>A probe whose IDR question throws (a bug or an I/O error the real probe does not catch).</summary>
+        public bool IdrThrows { get; set; }
+
         public Task<bool?> IsIdrKeyframeAsync(string path, TimeSpan keyframeTime, CancellationToken ct = default)
         {
             IdrAsked.Add(keyframeTime);
-            return Task.FromResult(IdrAnswer);
+            return IdrThrows ? throw new InvalidOperationException("scripted") : Task.FromResult(IdrAnswer);
         }
     }
 
@@ -567,13 +570,14 @@ public sealed class VideoFrameProbeTests : IDisposable
     // the keyframe-type reason BEFORE anything is written or run: no ffmpeg, no temp dir, no head. Asked once, at HeadEnd (8 s).
     [Trait("serves-spec", "SPEC-001")]
     [Theory]
-    [InlineData(false)]
-    [InlineData(null)]
-    public async Task SmartCutEngine_WhenTheHeadEndKeyframeIsNotProvablyAnIdr_FallsBackBeforeAnyRun(bool? answer)
+    [InlineData(false, false)]
+    [InlineData(null, false)]
+    [InlineData(true, true)]   // a probe that throws: it cannot say, which is the same
+    public async Task SmartCutEngine_WhenTheHeadEndKeyframeIsNotProvablyAnIdr_FallsBackBeforeAnyRun(bool? answer, bool throws)
     {
         var input = Placeholder("clip.mp4");
-        var output = Path.Combine(_dir, "cut.mp4");
-        var probe = new FrameProbe(H264Aac(), Grid2s(), firstFrame: S(7.5)) { IdrAnswer = answer };
+        var output = Path.Combine(_dir, "sub", "cut.mp4");
+        var probe = new FrameProbe(H264Aac(), Grid2s(), firstFrame: S(7.5)) { IdrAnswer = answer, IdrThrows = throws };
         var runner = new RecordingFakeRunner();
 
         var result = await new SmartCutEngine(runner, probe).CutAsync(input, S(7.5), null, output);
@@ -586,7 +590,8 @@ public sealed class VideoFrameProbeTests : IDisposable
         runner.Commands.Should().BeEmpty("nothing is re-encoded for a joint that cannot be clean");
         probe.IdrAsked.Should().Equal(new[] { S(8) }, "asked once, about the keyframe the head ends on");
         File.Exists(output).Should().BeFalse();
-        Directory.GetDirectories(_dir, ".vsj-smartcut-*").Should().BeEmpty("the question comes before the temp dir exists");
+        Directory.Exists(Path.GetDirectoryName(output)).Should().BeFalse(
+            "the question comes before anything is created: not the output folder, so not a temp dir the finally would sweep");
     }
 
     // serves-spec: SPEC-001#I70 / SPEC-001#I45 - an IDR keyframe (a closed GOP, the common case) cuts exactly as before.

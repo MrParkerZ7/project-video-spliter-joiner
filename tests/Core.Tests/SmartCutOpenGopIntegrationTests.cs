@@ -140,9 +140,8 @@ public sealed class SmartCutOpenGopIntegrationTests : IDisposable
         result.FallbackReason.Should().NotContainAny(new[] { "(", ")" }, "the row warning wraps the reason in parentheses already");
         runner.Commands.Should().BeEmpty("no head is encoded and nothing is joined for a keyframe that is not an IDR");
         File.Exists(dest).Should().BeFalse();
-        var outDir = Path.GetDirectoryName(dest)!;
-        (Directory.Exists(outDir) ? Directory.GetDirectories(outDir, ".vsj-smartcut-*") : Array.Empty<string>())
-            .Should().BeEmpty("the question comes before the temp dir exists");
+        Directory.Exists(Path.GetDirectoryName(dest)!).Should().BeFalse(
+            "the question comes before anything is created: not the output folder, so not a temp dir the finally would sweep either");
     }
 
     // serves-spec: SPEC-001#I70 - the probe on real packets: the first keyframe of an open-GOP file is an IDR, the later ones are not;
@@ -167,6 +166,37 @@ public sealed class SmartCutOpenGopIntegrationTests : IDisposable
         (await probe.IsIdrKeyframeAsync(closed, S(3))).Should().BeNull("3 s is no keyframe: the packet the seek lands on is the one at 2 s");
         (await probe.IsIdrKeyframeAsync(Path.Combine(_dir, "missing.mp4"), S(2))).Should().BeNull();
         (await probe.IsIdrKeyframeAsync(closed, TimeSpan.FromSeconds(-1))).Should().BeNull();
+    }
+
+    // serves-spec: SPEC-001#I70 - the framing is the stream's: the same open-GOP packets in a MOV and a Matroska file (ISO
+    // length-prefixed with a 4-byte length in both) are told apart the same way. An AVI with B-frames lists its packets by decoding
+    // time (about a third have no presentation time), so a keyframe's time is not the one the list gave: the probe says null there,
+    // which is a fall back, and above all never true for a keyframe that is not an IDR.
+    [Trait("serves-spec", "SPEC-001")]
+    [SkippableTheory]
+    [InlineData("mov", true)]
+    [InlineData("mkv", true)]
+    [InlineData("avi", false)]
+    public async Task TheProbe_AnswersTheSameInOtherContainers_AndNeverTrueForANonIdr(string extension, bool exact)
+    {
+        RequireBinaries();
+        var open = await MakeAsync("open.mp4", OpenGopParams, "-bf", "2");
+        var copy = Path.Combine(_dir, "copy." + extension);
+        var run = await new FfmpegRunner(Locator()).RunAsync(FfmpegArgs.ForFfmpeg()
+            .Raw("-y", "-loglevel", "error").Input(open).Raw("-map", "0:v:0", "-c", "copy").Output(copy));
+        run.ExitCode.Should().Be(0, run.StdErrText);
+        var probe = Probe();
+
+        var atTwo = await probe.IsIdrKeyframeAsync(copy, S(2));
+        var atFour = await probe.IsIdrKeyframeAsync(copy, S(4));
+        atTwo.Should().NotBe(true, "the keyframe at 2 s is not an IDR");
+        atFour.Should().NotBe(true);
+        if (exact)
+        {
+            (await probe.IsIdrKeyframeAsync(copy, S(0))).Should().BeTrue();
+            atTwo.Should().BeFalse();
+            atFour.Should().BeFalse();
+        }
     }
 
     // serves-spec: SPEC-001#I70 - decided per HeadEnd, not per file: an open-GOP file whose keyframe at 4 s is a forced IDR. A cut

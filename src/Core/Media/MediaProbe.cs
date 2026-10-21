@@ -588,7 +588,7 @@ public sealed class MediaProbe : IMediaProbe, IVideoFrameProbe
                 "-v", "error",
                 "-select_streams", "v:0",
                 "-read_intervals", interval,
-                "-show_entries", "packet=pts_time,dts_time,flags,data",
+                "-show_entries", "packet=pts_time,dts_time,flags,size,data:stream=is_avc,nal_length_size",
                 "-show_data",
                 "-print_format", "json")
             .Input(path);
@@ -626,8 +626,32 @@ public sealed class MediaProbe : IMediaProbe, IVideoFrameProbe
             return null;
         }
 
+        // The packet's framing comes from the stream (is_avc, nal_length_size) and its size from the packet: the bytes are read in
+        // that one framing only, with every length held against the size (H264Packet). A stream that says neither is no answer.
+        int? lengthSize = null;
+        if (root.Streams is { Count: > 0 } streams)
+        {
+            var framing = streams[0];
+            if (framing.IsAvc == "false")
+            {
+                lengthSize = 0;
+            }
+            else if (framing.IsAvc == "true"
+                     && int.TryParse(framing.NalLengthSize, NumberStyles.None, CultureInfo.InvariantCulture, out var n)
+                     && n is >= 1 and <= 4)
+            {
+                lengthSize = n;
+            }
+        }
+
+        if (lengthSize is not { } nalLengthSize
+            || !long.TryParse(packet.Size, NumberStyles.None, CultureInfo.InvariantCulture, out var packetSize))
+        {
+            return null;
+        }
+
         var kind = H264Packet.FirstPictureKind(
-            H264Packet.BytesFromHexDump(packet.Data, KeyframeBytesRead) ?? Array.Empty<byte>());
+            H264Packet.BytesFromHexDump(packet.Data, KeyframeBytesRead) ?? Array.Empty<byte>(), nalLengthSize, packetSize);
         return kind switch
         {
             H264PictureKind.Idr => true,

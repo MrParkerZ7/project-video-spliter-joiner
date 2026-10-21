@@ -11,11 +11,12 @@ goal; `0.1.0` is the first end-to-end, shippable cut.
 - **An Exact cut on an open-GOP H.264 video no longer writes a file that breaks after the joint.** Some H.264 videos (x264 with
   its open-GOP setting, and some cameras) mark keyframes that are not independent pictures. The part Exact copies from such a
   keyframe refers to frames before it, so the file came out with decoder errors and lost frames at the joint while the row said
-  it was done (measured: 2 decoder errors and 9 frames lost on a 12-second test video, 663 errors on a harder one). Exact now
+  it was done (measured on a 12-second test video: 2 decoder errors and 8 of 200 frames lost after the joint; about 650 errors on
+  a harder one). Exact now
   checks the keyframe the copied part starts at and, when it is not an independent picture, cuts on the nearest keyframe instead
   and says *frame-exact cutting is not supported yet for this video's keyframe type*; the Bulk Cut row says it before you press
   Run. Videos whose keyframes are all independent pictures (what the default x264 settings and most editors write) are cut
-  exactly as before. The check is one short read of the keyframe, about 0.08 s on a 4K file.
+  exactly as before. The check is one short read of the keyframe, 0.1 to 0.25 s on a 4K file.
 - **A 4K MP4 or MOV is ready to cut the moment it loads.** The list of keyframes that cuts snap to was found by reading
   the whole video file, so on a big 4K file the Split screen (cut snapping and Preparing), a Bulk Cut batch (its rows
   become runnable) and an Exact cut each waited for a read of every byte first: 0.6 s and 861 MB on a 2-minute 4K test
