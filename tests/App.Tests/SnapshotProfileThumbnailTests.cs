@@ -106,6 +106,9 @@ public sealed class SnapshotProfileThumbnailTests : IDisposable
         grab.Time.Should().Be(
             TimeSpan.FromSeconds(91),
             "the point of the gesture is THIS frame — not the intro-end the automatic capture uses");
+        // T-196: an exact-time grab at the player's position as it is (the player counts from the start of the file, ffmpeg's base).
+        thumbs.ExactRequests.Should().Contain(grab);
+        thumbs.BucketedRequests.Should().BeEmpty();
         grab.Width.Should().Be(640, "it must match the auto path's width or the stored pictures differ in size (T-169 raised it 96 -> 320, T-172 to 640)");
     }
 

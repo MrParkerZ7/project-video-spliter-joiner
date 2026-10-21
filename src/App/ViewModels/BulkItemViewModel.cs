@@ -330,10 +330,29 @@ public sealed class BulkItemViewModel : ObservableObject
         : handle.IsSnapPending ? null
         : handle.Snapped;
 
+    /// <summary>
+    /// The ffmpeg SEEK OFFSET of <paramref name="handle"/>'s chip grab (T-196, SPEC-011 I61): <see cref="GrabTime"/> in ffmpeg's base. A
+    /// requested time (Exact on a row Exact cuts) is already in it - it came from the player's position or a profile's offset from the
+    /// start of the file - but a snapped time is a keyframe pts, and ffmpeg counts <c>-ss</c> from the format <c>start_time</c>, so it
+    /// is converted with <see cref="ToSeekOffset"/> (zero conversion on an ordinary MP4; about 1.4 s on an MPEG-TS).
+    /// </summary>
+    private TimeSpan? GrabSeekTime(CutMarkerViewModel handle) =>
+        GrabTime(handle) is { } time ? (ExactCutApplies ? time : ToSeekOffset(time)) : null;
+
+    /// <summary>
+    /// A source time (a keyframe's pts) as an ffmpeg <c>-ss</c> offset for this row's file: <c>max(0, time - StartTime)</c> over the
+    /// start time its probe reported (<see cref="MediaInfo.ToSeekOffset"/>, SPEC-004 I47); the time itself until the row is probed.
+    /// </summary>
+    internal TimeSpan ToSeekOffset(TimeSpan sourceTime)
+    {
+        var offset = sourceTime - _sourceStartTime;
+        return offset > TimeSpan.Zero ? offset : TimeSpan.Zero;
+    }
+
     /// <summary>Re-grab the intro-end frame at its effective cut time (debounced + latest-wins). No-op when inert or provisional.</summary>
     private void RequestIntroThumbnail()
     {
-        if (GrabTime(IntroEnd) is { } time)
+        if (GrabSeekTime(IntroEnd) is { } time)
         {
             _introGrabber?.Request(Path, time);
         }
@@ -342,7 +361,7 @@ public sealed class BulkItemViewModel : ObservableObject
     /// <summary>Re-grab the outro-start frame at its effective cut time (debounced + latest-wins). No-op without an outro, or while provisional.</summary>
     private void RequestOutroThumbnail()
     {
-        if (OutroStart is { } outro && GrabTime(outro) is { } time)
+        if (OutroStart is { } outro && GrabSeekTime(outro) is { } time)
         {
             _outroGrabber?.Request(Path, time);
         }
@@ -555,6 +574,7 @@ public sealed class BulkItemViewModel : ObservableObject
             return;
         }
 
+        _sourceStartTime = info.StartTime;
         _sourceKnown = true;
         _isH264 = info.HasVideo
             && (string.Equals(info.VideoStreams[0].CodecName, "h264", StringComparison.OrdinalIgnoreCase)
@@ -750,6 +770,10 @@ public sealed class BulkItemViewModel : ObservableObject
     // point, so it follows the intro and is asked of the probe only when the keyframe the head ends on changes.
     private string? _keyframeKindReason;
     private bool _isH264;
+
+    // T-196: the format start time its probe reported (about 1.4 s on an MPEG-TS, zero on an ordinary MP4); the chip's seek offset is
+    // a keyframe time minus it. Zero until the row is probed (SetSourceMedia).
+    private TimeSpan _sourceStartTime;
     private TimeSpan? _kindAskedFor;
     private TimeSpan? _kindUnknownFor;
     private CancellationTokenSource? _kindCts;
@@ -1346,7 +1370,11 @@ public sealed class BulkItemViewModel : ObservableObject
             _postResult = new Progress<PathResult>(OnResolved);
         }
 
-        /// <summary>Debounce → (gated) grab → marshal-back for the frame of <paramref name="inputPath"/> at <paramref name="time"/>, latest-wins.</summary>
+        /// <summary>
+        /// Debounce → (gated) grab → marshal-back for the frame of <paramref name="inputPath"/> at <paramref name="time"/>, latest-wins.
+        /// <paramref name="time"/> is an ffmpeg seek offset and the grab is an EXACT-time request (T-196): a cut-point picture shows
+        /// the frame the run cuts at and costs one frame's decode at a keyframe, not most of a GOP.
+        /// </summary>
         public void Request(string inputPath, TimeSpan time)
         {
             Cancel();
@@ -1397,7 +1425,7 @@ public sealed class BulkItemViewModel : ObservableObject
                     await _gate.WaitAsync(cts.Token).ConfigureAwait(false);
                     try
                     {
-                        path = await _thumbnails.GetThumbnailAsync(inputPath, time, _width, cts.Token).ConfigureAwait(false);
+                        path = await _thumbnails.GetExactThumbnailAsync(inputPath, time, _width, cts.Token).ConfigureAwait(false);
                     }
                     finally
                     {
@@ -1406,7 +1434,7 @@ public sealed class BulkItemViewModel : ObservableObject
                 }
                 else
                 {
-                    path = await _thumbnails.GetThumbnailAsync(inputPath, time, _width, cts.Token).ConfigureAwait(false);
+                    path = await _thumbnails.GetExactThumbnailAsync(inputPath, time, _width, cts.Token).ConfigureAwait(false);
                 }
 
                 if (cts.Token.IsCancellationRequested)

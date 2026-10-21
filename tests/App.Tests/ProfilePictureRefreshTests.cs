@@ -89,6 +89,9 @@ public sealed class ProfilePictureRefreshTests : IDisposable
         var grab = rig.Thumbs.Requests.Should().ContainSingle("one refresh, one grab").Subject;
         grab.Should().Be((PathA, TimeSpan.FromSeconds(11), 640),
             "the row's file, at the PROFILE's own intro (11 s), at ProfileThumbnailWidth");
+        // T-196: the re-take is an EXACT-time grab at the profile's offset from the start of the file, unconverted.
+        rig.Thumbs.ExactRequests.Should().ContainSingle().Which.Should().Be(grab);
+        rig.Thumbs.BucketedRequests.Should().BeEmpty();
         grab.Time.Should().NotBe(row.IntroEnd.Snapped,
             "the requested time, not the row's snapped cut (11 s snaps to 10 on a 2-second grid)");
 

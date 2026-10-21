@@ -167,7 +167,8 @@ A .NET 8 WPF app that splits and joins video **without re-encoding**. See [READM
 - **Scrub-bar hover thumbnails come from Core `IThumbnailService` (G-030).** Hovering the timeline shows
   a frame preview at the hovered time. Frames are extracted by a **separate ffmpeg CLI process** (Core
   `FfmpegThumbnailService`: `-ss <t>` fast-seek → `-frames:v 1 -vf scale=W:-1` → a temp jpg, returning
-  a **PATH**, best-effort/never-throws, bucket-cached LRU) — deliberately kept **apart from the FFME
+  a **PATH**, best-effort/never-throws, bucket-cached LRU for the hover; a cut-point or profile picture is an exact-time request, `GetExactThumbnailAsync`, with its own
+  `x<µs>_w<width>` key, at a keyframe time minus `MediaInfo.StartTime` (T-196)) — deliberately kept **apart from the FFME
   preview** so the two don't fight. The App side stays WPF-free in the VM: `ThumbnailPreviewViewModel`
   (owned by `PlayerViewModel` as `Thumbnail`) **debounces** hover (~60ms) then **coalesces latest-wins**
   (each hover cancels the prior request's CTS; a superseded grab never clobbers a newer one), awaits off

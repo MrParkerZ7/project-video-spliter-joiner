@@ -33,4 +33,16 @@ public sealed record MediaInfo(
 
     /// <summary>True when the file has at least one audio stream.</summary>
     public bool HasAudio => AudioStreams.Count > 0;
+
+    /// <summary>
+    /// A source time (a keyframe's pts, the base of the probe's keyframe list) as an ffmpeg input <c>-ss</c> offset (T-196, SPEC-004
+    /// I47): <c>max(0, sourceTime - StartTime)</c>. ffmpeg counts <c>-ss</c> from the format <c>start_time</c>, so on an MPEG-TS
+    /// (about 1.4 s) a grab at the keyframe's own time lands that much late. The same conversion the lossless per-segment cut makes
+    /// (T-219). Zero for a time below the start.
+    /// </summary>
+    public TimeSpan ToSeekOffset(TimeSpan sourceTime)
+    {
+        var offset = sourceTime - StartTime;
+        return offset > TimeSpan.Zero ? offset : TimeSpan.Zero;
+    }
 }

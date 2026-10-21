@@ -31,6 +31,23 @@ public interface IThumbnailService
     /// <returns>The temp jpg path, or <c>null</c> on any failure.</returns>
     Task<string?> GetThumbnailAsync(string inputPath, TimeSpan time, int width, CancellationToken ct);
 
+    /// <summary>
+    /// Extract the frame of <paramref name="inputPath"/> at EXACTLY <paramref name="time"/> (T-196, SPEC-005 I28-I32), scaled to
+    /// <paramref name="width"/> px wide, and return the temp jpg path - or <c>null</c> on any failure. Never throws.
+    /// <para>
+    /// For a CUT-POINT or profile picture, where the bucketed request is wrong twice over: it shows a frame up to a second before the
+    /// cut, and its floored <c>-ss</c> lands before the cut's keyframe so ffmpeg decodes most of a GOP (9-11 times the CPU of an
+    /// exact seek to the keyframe, measured). The seek is the time itself at six decimals, never rounded to milliseconds. A time of
+    /// zero or less is zero. Its cache key and file name are <c>x&lt;µs&gt;_w&lt;width&gt;</c>, which can never equal a bucket's, so an
+    /// exact request and a hover never serve each other.
+    /// </para>
+    /// <para>
+    /// <paramref name="time"/> is an ffmpeg SEEK OFFSET, counted from the format <c>start_time</c>; the service passes it through
+    /// unchanged. A caller holding a keyframe time (a source pts) passes <see cref="Media.MediaInfo.ToSeekOffset"/> of it.
+    /// </para>
+    /// </summary>
+    Task<string?> GetExactThumbnailAsync(string inputPath, TimeSpan time, int width, CancellationToken ct);
+
     /// <summary>Best-effort delete of the cache dir for one input file (missing dir = no-op, never throws).</summary>
     void Clear(string inputPath);
 

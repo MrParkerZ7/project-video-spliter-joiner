@@ -27,6 +27,14 @@ namespace VideoSplitJoiner.Core.Thumbnails;
 /// profile picture must never be handed a 64px row chip's cached frame). The cache is LRU-bounded (default
 /// 128 entries) — the oldest entry (and its file) is evicted when the cap is exceeded.</para>
 ///
+/// <para><b>Exact requests (T-196, SPEC-005 I28-I32):</b> <see cref="GetExactThumbnailAsync"/> seeks to the time itself, at six
+/// decimals and never rounded to milliseconds, for a cut-point or profile picture, whose frame must be the one the run cuts at and
+/// whose keyframe is not to be re-decoded from the GOP before it (a floored <c>-ss</c> lands before the keyframe). Its cache key
+/// and file name are <c>x&lt;µs&gt;_w&lt;width&gt;</c>: an <c>x</c> followed by whole microseconds, which no bucket name (digits
+/// only) can equal, in the same per-input folder and the same LRU, so an exact request and a hover never serve each other, two
+/// widths of one exact time are two files, and <see cref="Clear"/> / <see cref="ClearAll"/> remove them. The time is an ffmpeg
+/// seek offset from the format start time and is passed through unchanged.</para>
+///
 /// <para><b>Coalesce/cancel:</b> the supplied <see cref="CancellationToken"/> is honored end-to-end, so a
 /// superseded request can be cancelled and never clobbers a newer one. The service is stateless-per-call
 /// beyond the cache; the caller (the T-078 VM) enforces latest-wins by cancelling stale requests and
@@ -105,7 +113,26 @@ public sealed class FfmpegThumbnailService : IThumbnailService
     }
 
     /// <inheritdoc />
-    public async Task<string?> GetThumbnailAsync(string inputPath, TimeSpan time, int width, CancellationToken ct)
+    public Task<string?> GetThumbnailAsync(string inputPath, TimeSpan time, int width, CancellationToken ct)
+    {
+        var bucket = FloorToBucket(time);
+        return GrabAsync(inputPath, bucket, BucketName(bucket), width, ct);
+    }
+
+    /// <inheritdoc />
+    public Task<string?> GetExactThumbnailAsync(string inputPath, TimeSpan time, int width, CancellationToken ct)
+    {
+        // T-196: the exact time (never floored, never rounded to milliseconds), zero when it is not positive; its own name.
+        var exact = time > TimeSpan.Zero ? time : TimeSpan.Zero;
+        return GrabAsync(inputPath, exact, ExactName(exact), width, ct);
+    }
+
+    /// <summary>
+    /// The one grab both requests share: look up <paramref name="name"/> (a bucket's milliseconds, or an exact time's
+    /// <c>x&lt;µs&gt;</c>) at <paramref name="width"/>, reuse a file on disk under that name, or run ffmpeg once for
+    /// <paramref name="seek"/> and remember the result. Best-effort: any failure is null.
+    /// </summary>
+    private async Task<string?> GrabAsync(string inputPath, TimeSpan seek, string name, int width, CancellationToken ct)
     {
         try
         {
@@ -116,8 +143,7 @@ public sealed class FfmpegThumbnailService : IThumbnailService
 
             ct.ThrowIfCancellationRequested();
 
-            var bucket = FloorToBucket(time);
-            var cacheKey = BuildCacheKey(inputPath, bucket, width);
+            var cacheKey = BuildCacheKey(inputPath, name, width);
 
             // Cache HIT: return the existing temp file WITHOUT running ffmpeg (only if it still exists).
             if (TryGetCached(cacheKey, out var cachedPath) && File.Exists(cachedPath))
@@ -125,7 +151,7 @@ public sealed class FfmpegThumbnailService : IThumbnailService
                 return cachedPath;
             }
 
-            var tempPath = ResolveTempPath(inputPath, bucket, width);
+            var tempPath = ResolveTempPath(inputPath, name, width);
 
             // A prior run may have left the file on disk though it's not tracked (fresh process). Reuse it —
             // the width is in the file name, so only a file of the requested width can match.
@@ -142,7 +168,7 @@ public sealed class FfmpegThumbnailService : IThumbnailService
                 Directory.CreateDirectory(dir);
             }
 
-            var args = BuildArgs(inputPath, bucket, width, tempPath);
+            var args = BuildArgs(inputPath, seek, width, tempPath);
 
             ct.ThrowIfCancellationRequested();
             var result = await _runner.RunAsync(args, totalDuration: null, progress: null, ct: ct)
@@ -245,13 +271,27 @@ public sealed class FfmpegThumbnailService : IThumbnailService
     /// width is part of the name so a file another request left on disk is reused only at its own width.
     /// </summary>
     internal string ResolveTempPath(string inputPath, TimeSpan bucket, int width) =>
-        Path.Combine(InputCacheDir(inputPath), BucketName(bucket) + "_w" + width.ToString(CultureInfo.InvariantCulture) + ".jpg");
+        ResolveTempPath(inputPath, BucketName(bucket), width);
 
-    private static string BuildCacheKey(string inputPath, TimeSpan bucket, int width) =>
-        inputPath + "|" + BucketName(bucket) + "|w" + width.ToString(CultureInfo.InvariantCulture);
+    /// <summary>The temp path of an EXACT request (T-196): <c>&lt;inputDir&gt;/x&lt;µs&gt;_w&lt;width&gt;.jpg</c>.</summary>
+    internal string ResolveExactTempPath(string inputPath, TimeSpan time, int width) =>
+        ResolveTempPath(inputPath, ExactName(time > TimeSpan.Zero ? time : TimeSpan.Zero), width);
+
+    private string ResolveTempPath(string inputPath, string name, int width) =>
+        Path.Combine(InputCacheDir(inputPath), name + "_w" + width.ToString(CultureInfo.InvariantCulture) + ".jpg");
+
+    private static string BuildCacheKey(string inputPath, string name, int width) =>
+        inputPath + "|" + name + "|w" + width.ToString(CultureInfo.InvariantCulture);
 
     private static string BucketName(TimeSpan bucket) =>
         ((long)bucket.TotalMilliseconds).ToString(CultureInfo.InvariantCulture);
+
+    /// <summary>
+    /// An exact request's name (T-196): <c>x</c> and the time in whole microseconds. The <c>x</c> keeps it from ever equalling a
+    /// bucket's name (digits only), so the two requests never share a cache entry or a file in either direction.
+    /// </summary>
+    private static string ExactName(TimeSpan time) =>
+        "x" + (time.Ticks / (TimeSpan.TicksPerMillisecond / 1000)).ToString(CultureInfo.InvariantCulture);
 
     /// <summary>Stable, filesystem-safe subdir name for an input path (SHA-256, hex, first 16 bytes).</summary>
     private static string HashInput(string inputPath)

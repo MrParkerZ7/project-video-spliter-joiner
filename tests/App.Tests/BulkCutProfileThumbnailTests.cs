@@ -390,6 +390,8 @@ public sealed class BulkCutProfileThumbnailTests : IDisposable
 
         thumbs.GetThumbnailCallCount.Should().Be(1, "the auto-default grabbed exactly one frame");
         grabbedAt.Should().Be(row.IntroEnd.Snapped, "the default thumbnail is the row's snapped intro-end frame");
+        thumbs.ExactRequests.Should().ContainSingle("T-196: the picture is an exact-time grab");
+        thumbs.BucketedRequests.Should().BeEmpty();
         thumbs.Requests[0].Width.Should().Be(640,
             "the auto-default grabs at the NAMED ProfileThumbnailWidth, not an arbitrary size. T-169 " +
             "raised it 96 -> 320 so the hover preview has pixels to show, and T-172 to 640 so it stays sharp " +

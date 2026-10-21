@@ -275,8 +275,18 @@ internal sealed class FakeThumbnailService : IThumbnailService
     /// <summary>Number of <see cref="GetThumbnailAsync"/> calls — lets a test assert the auto-default grab actually fired.</summary>
     public int GetThumbnailCallCount { get; private set; }
 
-    /// <summary>Every grab's (inputPath, time, width), in call order (T-108 — assert the snapped grab time).</summary>
+    /// <summary>
+    /// Every grab's (inputPath, time, width), in call order (T-108 — assert the snapped grab time). Since T-196 it holds BOTH kinds
+    /// (bucketed and exact), so the counts and times the older tests assert are unchanged; <see cref="ExactRequests"/> and
+    /// <see cref="BucketedRequests"/> say which method each came through (a fake must not hide the behaviour under test, T-179).
+    /// </summary>
     public List<(string InputPath, TimeSpan Time, int Width)> Requests { get; } = new();
+
+    /// <summary>The grabs that came through <see cref="GetExactThumbnailAsync"/> (T-196: chips, Save, Use current frame, the re-take).</summary>
+    public List<(string InputPath, TimeSpan Time, int Width)> ExactRequests { get; } = new();
+
+    /// <summary>The grabs that came through <see cref="GetThumbnailAsync"/> (the hover).</summary>
+    public List<(string InputPath, TimeSpan Time, int Width)> BucketedRequests { get; } = new();
 
     /// <summary>When set, each grab awaits this gate before returning — hold it to observe concurrency, release to let grabs finish (T-108).</summary>
     public TaskCompletionSource? Gate { get; set; }
@@ -339,13 +349,20 @@ internal sealed class FakeThumbnailService : IThumbnailService
         }
     }
 
-    public async Task<string?> GetThumbnailAsync(string inputPath, TimeSpan time, int width, CancellationToken ct)
+    public Task<string?> GetThumbnailAsync(string inputPath, TimeSpan time, int width, CancellationToken ct) =>
+        RecordAsync(inputPath, time, width, exact: false, ct);
+
+    public Task<string?> GetExactThumbnailAsync(string inputPath, TimeSpan time, int width, CancellationToken ct) =>
+        RecordAsync(inputPath, time, width, exact: true, ct);
+
+    private async Task<string?> RecordAsync(string inputPath, TimeSpan time, int width, bool exact, CancellationToken ct)
     {
         TaskCompletionSource? gate;
         lock (_lock)
         {
             GetThumbnailCallCount++;
             Requests.Add((inputPath, time, width));
+            (exact ? ExactRequests : BucketedRequests).Add((inputPath, time, width));
             CurrentConcurrent++;
             if (CurrentConcurrent > PeakConcurrent)
             {

@@ -42,6 +42,15 @@ public sealed class ThumbnailPreviewViewModelTests
         /// <summary>When set, a grab returns null (simulating a failed/absent frame).</summary>
         public bool ReturnNull { get; set; }
 
+        /// <summary>The hover stays bucketed (T-196): an exact request from the preview is a test failure.</summary>
+        public List<TimeSpan> ExactRequests { get; } = new();
+
+        public Task<string?> GetExactThumbnailAsync(string inputPath, TimeSpan time, int width, CancellationToken ct)
+        {
+            ExactRequests.Add(time);
+            return Task.FromResult<string?>(null);
+        }
+
         public Task<string?> GetThumbnailAsync(string inputPath, TimeSpan time, int width, CancellationToken ct)
         {
             Requests.Add(time);
@@ -294,6 +303,7 @@ public sealed class ThumbnailPreviewViewModelTests
         Settle(delay, pump, vm);
 
         service.Requests.Should().ContainSingle().Which.Should().Be(TimeSpan.FromSeconds(30));
+        service.ExactRequests.Should().BeEmpty("T-196: the hover stays a bucketed request - one picture per second is plenty");
         vm.HoverThumbnailPath.Should().Be("frame-30.jpg");
         vm.HasThumbnail.Should().BeTrue();
     }

@@ -166,6 +166,22 @@ internal static class CoreScenarios
             }
         }
 
+        // T-196: a cut-point chip and a profile picture are EXACT-time requests now (GetExactThumbnailAsync, the time itself at six
+        // decimals); the bucketed rows above stay as the hover's cost and as the "before" of these two in the same run.
+        foreach (var (label, width) in new[] { ("bulk chip", ChipWidth), ("profile", ProfileWidth) })
+        {
+            foreach (var (where, t) in new[] { ("on keyframe", fx.ThumbOnKf), ($"{fx.ThumbMidGop - fx.ThumbOnKf:0.##}s into GOP", fx.ThumbMidGop) })
+            {
+                for (var i = 1; i <= runs; i++)
+                {
+                    var svc = new FfmpegThumbnailService(c.Ffmpeg, c.NewTempDir("th"));
+                    string? path = null;
+                    var (s, u) = await Meter.Run(async () => path = await svc.GetExactThumbnailAsync(fx.Path, S(t), width, CancellationToken.None));
+                    c.Results.Add("shared", $"Thumbnail EXACT {label} {width}px @{At(t)}s ({where})", fx.Key, "warm", i, s, u, SeekNote(fx, path));
+                }
+            }
+        }
+
         // Cache hit (same bucket, same width): what a repeated hover costs.
         {
             var svc = new FfmpegThumbnailService(c.Ffmpeg, c.NewTempDir("th"));
@@ -215,12 +231,15 @@ internal static class CoreScenarios
 
         var name = Path.GetFileNameWithoutExtension(path);
         var cut = name.IndexOf("_w", StringComparison.Ordinal);
-        if (cut <= 0 || !long.TryParse(name[..cut], NumberStyles.Integer, CultureInfo.InvariantCulture, out var ms) || fx.Keyframes.Length == 0)
+
+        // T-196: an exact request is named x<microseconds>_w<width>; a bucket's name is its milliseconds.
+        var exact = name.StartsWith('x');
+        if (cut <= 0 || !long.TryParse(name[(exact ? 1 : 0)..cut], NumberStyles.Integer, CultureInfo.InvariantCulture, out var ticks) || fx.Keyframes.Length == 0)
         {
             return null;
         }
 
-        var seek = ms / 1000.0;
+        var seek = exact ? ticks / 1_000_000.0 : ticks / 1000.0;
         var at = seek.ToString("0.###", CultureInfo.InvariantCulture);
         var earlier = fx.Keyframes.Where(k => k <= seek + 0.0005).ToList();
         if (earlier.Count == 0)
@@ -592,6 +611,7 @@ internal static class CoreScenarios
 
             await BulkAdd(c, fx, new[] { fx.Path }, "warm");
             await BulkAdd(c, fx, copies, "warm");
+            await BulkAdd(c, fx, copies, "warm", exact: false); // the chips as they were drawn before T-196, in the same run
             var coldRows = new List<string>();
             try
             {
@@ -636,7 +656,7 @@ internal static class CoreScenarios
     /// on scan, intro + outro chips at 64px under a 3-wide thumbnail gate (BulkCutViewModel.cs:178; 200 ms debounce
     /// BulkItemViewModel.cs:95 NOT included here). The three lines share the run's job usage.
     /// </summary>
-    public static async Task BulkAdd(BenchContext c, Fixture fx, IReadOnlyList<string> files, string mode)
+    public static async Task BulkAdd(BenchContext c, Fixture fx, IReadOnlyList<string> files, string mode, bool exact = true)
     {
         var probe = c.NewProbe();
         var thumbs = new FfmpegThumbnailService(c.Ffmpeg, c.NewTempDir("th"));
@@ -666,7 +686,10 @@ internal static class CoreScenarios
                     await thumbGate.WaitAsync();
                     try
                     {
-                        await thumbs.GetThumbnailAsync(f, S(t), ChipWidth, CancellationToken.None);
+                        // T-196: the row's chips are exact-time requests; exact: false is the bucketed request they were before.
+                        await (exact
+                            ? thumbs.GetExactThumbnailAsync(f, S(t), ChipWidth, CancellationToken.None)
+                            : thumbs.GetThumbnailAsync(f, S(t), ChipWidth, CancellationToken.None));
                     }
                     finally
                     {
@@ -683,9 +706,10 @@ internal static class CoreScenarios
         var scans = await Task.WhenAll(scanTasks);
         var tAll = sw.Elapsed.TotalSeconds;
         var u = JobAccounting.Since(mark);
-        c.Results.Add("bulk", $"ADD {files.Count} row(s): all probed (rows show duration)", fx.Key, mode, 1, tProbed, u);
-        c.Results.Add("bulk", $"ADD {files.Count} row(s): all keyframe scans done (rows runnable)", fx.Key, mode, 1, scans.Max(), u);
-        c.Results.Add("bulk", $"ADD {files.Count} row(s): all intro/outro chips drawn", fx.Key, mode, 1, tAll, u);
+        var kind = exact ? string.Empty : " (bucketed grabs, as before T-196)";
+        c.Results.Add("bulk", $"ADD {files.Count} row(s): all probed (rows show duration){kind}", fx.Key, mode, 1, tProbed, u);
+        c.Results.Add("bulk", $"ADD {files.Count} row(s): all keyframe scans done (rows runnable){kind}", fx.Key, mode, 1, scans.Max(), u);
+        c.Results.Add("bulk", $"ADD {files.Count} row(s): all intro/outro chips drawn{kind}", fx.Key, mode, 1, tAll, u);
     }
 
     /// <summary>

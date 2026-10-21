@@ -1100,6 +1100,15 @@ public sealed class PlayerViewModelTests
             return Task.FromResult<string?>(null);
         }
 
+        /// <summary>The hover never asks for an exact frame (T-196): a call here is a test failure, not a result.</summary>
+        public List<(string Path, TimeSpan Time)> ExactRequests { get; } = new();
+
+        public Task<string?> GetExactThumbnailAsync(string inputPath, TimeSpan time, int width, CancellationToken ct)
+        {
+            ExactRequests.Add((inputPath, time));
+            return Task.FromResult<string?>(null);
+        }
+
         public void Clear(string inputPath) => Cleared.Add(inputPath);
 
         public void ClearAll() => ClearAllCount++;

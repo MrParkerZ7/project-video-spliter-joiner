@@ -603,7 +603,9 @@ public sealed class ExactFallbackRowTests : IDisposable
         row.IntroEnd.Snapped.Should().Be(S(10));
         row.IntroEnd.HasSnapNote.Should().BeTrue("the run cuts at the keyframe, so the row says so");
         row.KeptDuration.Should().Be(S(50), "eligibility and the kept length come from Snapped: 60 − 10");
-        RequestedTimes(thumbs, path).Last().Should().Be(S(10), "the chip shows the frame the run cuts at");
+        // T-196 (a recorded contract change: this assertion used to expect S(10)): the chip is grabbed at the keyframe's seek
+        // OFFSET - ffmpeg counts -ss from the format start time, 1.445 s on this file - so it shows the frame the run cuts at.
+        RequestedTimes(thumbs, path).Last().Should().Be(S(10) - S(1.445), "the chip shows the frame the run cuts at, in ffmpeg's base");
         RequestedTimes(thumbs, path).Should().NotContain(S(11), "the row never shows a Requested cut it will not make");
         row.Warning.Should().Contain(StartTimeNote, "the reason is stated before Run, in the run's own words");
     }

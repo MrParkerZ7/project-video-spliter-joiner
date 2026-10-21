@@ -1967,7 +1967,7 @@ public sealed class BulkCutViewModel : ObservableObject
     /// Save the selected row's cut as <paramref name="name"/> (via <see cref="SaveProfile"/>) AND, best-effort
     /// and OFF the save path, capture the row's intro-end frame as the profile's <b>default thumbnail</b>
     /// (T-107). The profile is persisted + shown FIRST — the save is NEVER blocked on the grab — then a
-    /// background <see cref="IThumbnailService.GetThumbnailAsync"/> at the row's snapped intro-end is copied
+    /// background <see cref="IThumbnailService.GetExactThumbnailAsync"/> at the row's snapped intro-end is copied
     /// into the <see cref="ProfileThumbnailStore"/> and its stored path folded onto the profile. A null /
     /// failed grab (or a store failure) simply leaves the profile with no thumbnail (the picker shows a
     /// placeholder). This is the async step the <see cref="SaveProfileCommand"/> drives (fire-and-forget);
@@ -1994,8 +1994,9 @@ public sealed class BulkCutViewModel : ObservableObject
         string? framePath;
         try
         {
+            // T-196: an exact-time grab at the keyframe the cut lands on, in ffmpeg's base (the keyframe time minus the file's start time).
             framePath = await _thumbnails
-                .GetThumbnailAsync(row.Path, row.IntroEnd.Snapped, ProfileThumbnailWidth, ct)
+                .GetExactThumbnailAsync(row.Path, row.ToSeekOffset(row.IntroEnd.Snapped), ProfileThumbnailWidth, ct)
                 .ConfigureAwait(true);
         }
         catch
@@ -2056,8 +2057,9 @@ public sealed class BulkCutViewModel : ObservableObject
         string? framePath;
         try
         {
+            // T-196: exact-time, at the player's position as it is (the player reports it from the start of the file, ffmpeg's base).
             framePath = await _thumbnails
-                .GetThumbnailAsync(row.Path, Player.Position, ProfileThumbnailWidth, ct)
+                .GetExactThumbnailAsync(row.Path, Player.Position, ProfileThumbnailWidth, ct)
                 .ConfigureAwait(true);
         }
         catch (Exception ex)
@@ -2576,8 +2578,9 @@ public sealed class BulkCutViewModel : ObservableObject
             string? frame;
             try
             {
+                // T-196: exact-time, at the profile's offset from the start of the file as it is (ffmpeg's base, not a keyframe pts).
                 frame = await _thumbnails
-                    .GetThumbnailAsync(videoPath, time, ProfileThumbnailWidth, CancellationToken.None)
+                    .GetExactThumbnailAsync(videoPath, time, ProfileThumbnailWidth, CancellationToken.None)
                     .ConfigureAwait(true);
             }
             catch

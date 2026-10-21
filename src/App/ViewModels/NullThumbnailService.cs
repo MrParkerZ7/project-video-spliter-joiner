@@ -25,6 +25,10 @@ internal sealed class NullThumbnailService : IThumbnailService
         => Task.FromResult<string?>(null);
 
     /// <inheritdoc />
+    public Task<string?> GetExactThumbnailAsync(string inputPath, TimeSpan time, int width, CancellationToken ct)
+        => Task.FromResult<string?>(null);
+
+    /// <inheritdoc />
     public void Clear(string inputPath)
     {
     }
