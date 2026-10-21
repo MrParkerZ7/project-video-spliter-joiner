@@ -34,6 +34,9 @@ internal static class Cli
                                                        nofsi thumbframe smart2 [4k104 hevc10 hevc44 4k10cuda g10 4k10m540]
           bench selftest                               the guard, the job accounting, the fixture self-checks, the results file
           bench show [--session id|last] [--fixture k] [--op text] [--scenario s] [--area a] [--markdown]
+          bench compare --session id,id,...|last:N [--fixture k] [--op text] [--scenario s] [--area a] [--markdown]
+                                                       sessions side by side per op, grouped by Core build; flags sessions of one
+                                                       build that differ by more than 15% (alternate the builds A B A B, T-225)
 
           --root <dir>   fixture root (default %TEMP%\vsj-bench-fixtures); fixtures, work files and results all live under it.
                          A new or empty folder (it gets a .vsj-bench-root marker) or an existing bench root; nothing else.
@@ -63,6 +66,8 @@ internal static class Cli
                     return opts.Command is null ? ExitCodes.Usage : ExitCodes.Ok;
                 case "show":
                     return Commands.Show(new FixtureRoot(opts.Root), o, new ShowFilter(opts.Session, opts.Fixture, opts.Op, opts.Scenario, opts.Area), opts.Markdown);
+                case "compare":
+                    return Compare.Run(new FixtureRoot(opts.Root), o, new ShowFilter(opts.Session, opts.Fixture, opts.Op, opts.Scenario, opts.Area), opts.Markdown);
                 case "fixtures" or "core" or "alt" or "selftest":
                     break;
                 default:

@@ -35,6 +35,7 @@ $bench = "bench\VideoSplitJoiner.Bench\bin\Release\net8.0\VideoSplitJoiner.Bench
 & $bench core                     # every scenario on every valid fixture (the full baseline)
 & $bench show --session last --markdown
 & $bench show --session last --scenario smart --markdown   # one scenario's rows, for a Build log
+& $bench compare --session last:4 --markdown   # sessions side by side, grouped by Core build (A B A B, T-225)
 ```
 
 It needs the app's ffmpeg shared build in `ffmpeg-shared/` (found walking up from the bench binary). Without it
@@ -47,6 +48,7 @@ the bench exits with the hint to run `packaging/fetch-ffmpeg-shared.ps1`; the te
 | `alt [fixtures…] [sections…]` | The ffmpeg-level alternatives behind the T-187 evidence: `floor io probe kf thumb smart join wf decode nofsi thumbframe`, and `smart2 [4k104 hevc10 hevc44 4k10cuda g10 4k10m540]`. |
 | `selftest` | Runs the selftest cases below; exit 0 only when all pass. Needs the `4k` fixture. |
 | `show [--session id\|last] [--fixture k] [--op text] [--scenario s] [--area a] [--markdown]` | Filters the ledger (the prototype's `show.py`). `--scenario` takes what a command ran: a `core` scenario, an `alt` section, `fixtures` or `selftest` (the row's `section`). `--area` takes the app area in the row's `scenario` field (`shared`, `split`, `join`, `bulk`, `fixtures`, `alt-*`, `error`), the only filter for rows written before `section` existed. An unknown `--scenario` is refused (exit 2), and so is a filter no row matches (exit 5, with the sections the ledger holds), so an empty table is never pasted into a Build log. |
+| `compare --session id,id,...\|last:N [--fixture k] [--op text] [--scenario s] [--area a] [--markdown]` | Lays 2 or more sessions side by side per (fixture, op, mode), grouped by the Core build that ran, with the median of each build's session medians, the spread between sessions of one build (marked `!` over 15%), the second build over the first and the written MB/s: the reading side of the A B A B method (T-225, [Comparing two builds](#comparing-two-builds-the-copy-stage---t-225)). |
 
 Options: `--root <dir>` moves the fixture root (fixtures, work files and results move together; default
 `%TEMP%\vsj-bench-fixtures`). It must be a new or empty folder, or an existing bench root (see below). `--runs <n>`
@@ -126,6 +128,38 @@ run's usage. At the end of every command the bench prints this session's rows as
 **Scratch space.** Besides the fixtures (about 8 GB), a cold copy needs the fixture's size free, and `bulk` needs
 about five times the fixture at its peak (two row copies plus three cold row copies: about 22 GB on `4k10m`, 4.5 GB
 on `4k`). Each is checked before anything is written (exit 7 when short).
+
+## Comparing two builds (the copy stage) - T-225
+
+G-059 criterion 6 says the `-c copy` passes keep their speed, and a Build log has to show it for a change that touches where a copy cuts.
+**One session of each build cannot show it.** The copy stage of a split or join writes tens of gigabytes, and on a disk that is being
+written to the order of the sessions moves the same code's numbers by 2 to 3 times: T-193 measured the `4k10m` 3-part split's ffmpeg
+stage at 1.77-1.98 s, then 3.60-3.83 s, then 5.21-6.88 s for one build run first and third, on a drive that was 93% full. A plain
+before-then-after pair would show a change doubling the copy time that did nothing to it.
+
+**The method: alternate the builds, then compare medians.**
+
+1. Build the bench of the build before the change and of the build after it into two folders (a second `git worktree` of the
+   commit before, `dotnet build bench\VideoSplitJoiner.Bench -c Release`; copy `ffmpeg-shared\` into it, the bench finds it walking up).
+2. Run the SAME command on the SAME `--root`: **one throwaway session first, then alternating A B A B, four sessions of each**,
+   e.g. `bench core 4k 4k10m split join --root D:\bench-root` from build A (discarded), then A, B, A, B, A, B, A, B (about 1.5 minutes a
+   session on the fixtures here). Quote the load column. Why both: the first session after a pause ran the `4k10m` split's copy stage
+   in 4.0 s and the next three in 6.1-6.4 s (same build, same root), so an A B A B that began with it would hand build A a 1.2 times head
+   start; and with two sessions of each, three of the ten copy-stage rows of two IDENTICAL builds still differed by 16-52% (the shortest
+   ones, a part's 0.3-3 s, and a session under a heavier load), while with four of each every row agreed within 15% (worst 14%, medians
+   of four sessions, `4k` and `4k10m`, one throwaway before).
+3. `bench compare --session last:4 --markdown` (or `--session id,id,id,id`; `--fixture`, `--op`, `--scenario` and `--area` filter as in
+   `show`). It lays the sessions side by side per (fixture, op, mode), groups them by the Core build that ran (`core_build`, which changes
+   whenever Core's code does), prints the median of each build's session medians and how far apart those were, the second build over
+   the first, and the written MB/s of the newest session. A Build log quotes **those medians**, with the bytes-written column.
+4. A row marked `!` is one where two sessions of the SAME build differ by more than 15%: for that row the order of the sessions, not
+   the code, is moving the number, and the pair is not a comparison yet. Add sessions (more A B pairs) or move the root to a drive with
+   headroom; do not quote the row.
+
+**Where the root lives matters.** The default root is `%TEMP%\vsj-bench-fixtures`, on the system drive. A copy-stage comparison should
+use `--root` on a drive with free-space headroom: each session writes about 50 GB of parts, joins and bulk outputs, and the existing
+pre-flight (exit 7) only checks that the run fits, not that the drive is quiet. On a drive that is nearly full the noise grows with it
+(T-193's was 93% full). Probe-stage numbers need none of this: process counts and stage splits are deterministic and compare cleanly.
 
 ## The fixture matrix
 

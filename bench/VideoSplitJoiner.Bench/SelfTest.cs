@@ -203,8 +203,10 @@ internal static class SelfTest
             var p4k = main.Root.Resolve(main.Root.Child(e4k.File));
             var size = new FileInfo(p4k).Length;
             IReadOnlyList<TimeSpan>? kf = null;
-            var (s1, u1) = await Meter.Run(async () => kf = await main.NewProbe().GetKeyframesAsync(p4k));
-            inner.Results.Add("selftest", "MediaProbe.GetKeyframesAsync (ffprobe -show_packets) on 4k", "4k", "warm", 1, s1, u1, $"{kf!.Count} keyframes");
+            // T-225: the packet scan itself, not GetKeyframesAsync - since T-194 that reads an MP4's sample table and two ffprobe windows, so it reads
+            // about 3% of the file, which is not what this case is about: that the job accounting counts real bytes.
+            var (s1, u1) = await Meter.Run(async () => kf = await main.NewProbe().ScanKeyframesFromPacketsForTestAsync(p4k));
+            inner.Results.Add("selftest", "MediaProbe packet scan (ffprobe -show_packets) on 4k", "4k", "warm", 1, s1, u1, $"{kf!.Count} keyframes");
             Check("job accounting: ffprobe -show_packets on 4k reads >= 90% of the file",
                 u1.ReadBytes >= 0.9 * size && u1.Processes >= 1,
                 $"read {Results.Mb(u1.ReadBytes)} of {Results.Mb(size)} ({100.0 * u1.ReadBytes / size:0.0}%), {u1.Processes} process(es), {s1:0.000} s");
@@ -266,6 +268,34 @@ internal static class SelfTest
         Check("show --scenario filters on the section a command ran, and refuses an unknown section or an empty match",
             sh1 == ExitCodes.Ok && shOut1.Contains("MediaProbe.ProbeAsync", StringComparison.Ordinal) && sh2 == ExitCodes.Usage && sh3 == ExitCodes.NoFixture,
             $"probe → exit {sh1}{(sh1 == 0 ? string.Empty : " " + Trim(shErr1))}; nope → exit {sh2} ({Trim(shErr2)}); smart → exit {sh3} ({Trim(shErr3)})");
+
+        // ---- 6b. `compare` (T-225): sessions side by side, grouped by Core build; two sessions of ONE build that differ by more than
+        //          15% are flagged (the order effect on a disk being written to), two that agree are not; fewer than two sessions is refused.
+        var cmpRoot = Path.Combine(dir, "compare-root");
+        Directory.CreateDirectory(Path.Combine(cmpRoot, "results"));
+        static string Line(string session, string build, string op, double wall, long written) =>
+            "{\"session\":\"" + session + "\",\"scenario\":\"split\",\"section\":\"split\",\"op\":\"" + op + "\",\"fixture\":\"4k\",\"mode\":\"warm\",\"run\":1,"
+            + "\"wall_s\":" + wall.ToString("0.000", System.Globalization.CultureInfo.InvariantCulture) + ",\"cpu_s\":1,\"read_bytes\":0,\"write_bytes\":" + written.ToString(System.Globalization.CultureInfo.InvariantCulture)
+            + ",\"processes\":2,\"git\":\"abcdef0\",\"core_build\":\"" + build + "\"}";
+        var cmpLines = new List<string>();
+        foreach (var (s, bld, steady, drifting) in new[] { ("s1", "aaaaaaaa11", 1.00, 1.8), ("s2", "bbbbbbbb22", 1.05, 3.6), ("s3", "aaaaaaaa11", 1.04, 5.2), ("s4", "bbbbbbbb22", 0.98, 3.7) })
+        {
+            cmpLines.Add(Line(s, bld, "steady stage", steady, 52428800));
+            cmpLines.Add(Line(s, bld, "drifting stage", drifting, 52428800));
+        }
+
+        File.WriteAllLines(Path.Combine(cmpRoot, "results", "timings.jsonl"), cmpLines);
+        var (cmp1, _, cmpOut, cmpErr) = await RunCli(main, new[] { "compare", "--root", cmpRoot, "--session", "s1,s2,s3,s4" });
+        var (cmp2, _, _, cmpErr2) = await RunCli(main, new[] { "compare", "--root", cmpRoot, "--session", "s1" });
+        var (cmp3, _, cmpOut3, _) = await RunCli(main, new[] { "compare", "--root", cmpRoot, "--session", "last:2", "--markdown" });
+        var steadyLine = cmpOut.Split('\n').FirstOrDefault(l => l.Contains("steady stage", StringComparison.Ordinal)) ?? string.Empty;
+        var driftLine = cmpOut.Split('\n').FirstOrDefault(l => l.Contains("drifting stage", StringComparison.Ordinal)) ?? string.Empty;
+        Check("compare lays sessions side by side by build, flags 2x drift between sessions of one build and not a 4% spread, and refuses one session",
+            cmp1 == ExitCodes.Ok && !steadyLine.Contains(" !", StringComparison.Ordinal) && driftLine.Contains(" !", StringComparison.Ordinal)
+            && steadyLine.Contains("aaaaaaaa", StringComparison.Ordinal) && steadyLine.Contains("bbbbbbbb", StringComparison.Ordinal)
+            && steadyLine.Contains("MB/s written", StringComparison.Ordinal)
+            && cmp2 == ExitCodes.Usage && cmp3 == ExitCodes.Ok && cmpOut3.StartsWith("| fixture", StringComparison.Ordinal),
+            $"all four → exit {cmp1}{(cmp1 == 0 ? string.Empty : " " + Trim(cmpErr))}; steady: {Trim(steadyLine)}; drifting: {Trim(driftLine)}; one session → exit {cmp2} ({Trim(cmpErr2)}); last:2 markdown → exit {cmp3}");
 
         // ---- 7. Failures do not crash the bench: a scenario that throws gets a FAILED row and the next one still runs;
         //         an exception outside any scenario exits 1 with a message.

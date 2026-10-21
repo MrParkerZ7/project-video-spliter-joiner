@@ -263,7 +263,9 @@ powershell -File packaging/package.ps1        # produces dist/VideoSplitJoiner-v
   path, `..` escape or link that leads outside it, and any file the root's `fixtures.json` does not list (the
   bench's own `work\` files aside). `--root` takes only a new or empty folder or an existing bench root (its
   `.vsj-bench-root` marker). The bench builds with the solution (a Core API change breaks it), is not a test
-  project, and `package.ps1` never publishes it. Never point it at a user's video.
+  project, and `package.ps1` never publishes it. Never point it at a user's video. A copy-stage comparison between two builds is
+  never read from one session of each (the order of the sessions moved one build's numbers 1.5 to 3 times): run one throwaway
+  session, then alternate the builds A B A B on the same root and read them with `bench compare` (T-225, `bench/README.md`).
 
 ## Git
 
