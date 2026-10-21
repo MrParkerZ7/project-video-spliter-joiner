@@ -8,14 +8,14 @@ namespace VideoSplitJoiner.Core.Ffmpeg;
 /// needs, so that run puts <see cref="Flag"/> before <c>-i</c> for such an input, and wrote byte-identical PCM in the
 /// T-195 measurements.
 ///
-/// <para><b>Only the waveform uses it.</b> The pass also computes the format <c>start_time</c>, and an input
-/// <c>-ss</c> counts from it; without it the <c>-ss</c> counts from timestamp 0. The waveform does not seek, so its PCM
-/// is the same either way, on files that start at 0 and on files that do not. The frame grab seeks, so it keeps the
-/// pass (SPEC-005 I27): on an MP4/MOV whose start time is not 0 a skipping grab exits 0 with the wrong frame, and the
-/// first part of the app's own lossless split of an H.264 B-frame + AAC MP4 starts at about 0.043 s (a skipping grab
-/// came back one frame early). Letting the grab skip the pass only when the probed start time is 0 is a follow-up
-/// ticket. The metadata probe needs <c>pix_fmt</c> and the format duration, which the flag loses, and the
-/// <c>-c copy</c> runs are not touched (SPEC-006 I3).</para>
+/// <para><b>The waveform always uses it for such an input; the frame grab only when the start is 0 (T-226).</b> The pass also
+/// computes the format <c>start_time</c>, and an input <c>-ss</c> counts from it; without it the <c>-ss</c> counts from timestamp 0.
+/// The waveform does not seek, so its PCM is the same either way, on files that start at 0 and on files that do not. The frame
+/// grab seeks: on an MP4/MOV whose start time is not 0 a skipping grab exits 0 with the wrong frame, and the first part of the app's
+/// own lossless split of an H.264 B-frame + AAC MP4 starts at about 0.043 s (a skipping grab came back one frame early). So the grab
+/// carries the flag only for an MP4/MOV whose probed format start time is exactly 0, and runs once more without it when the flagged
+/// run yields no picture (SPEC-005 I27, <c>FfmpegThumbnailService</c>). The metadata probe needs <c>pix_fmt</c> and the format duration,
+/// which the flag loses, and the <c>-c copy</c> runs are not touched (SPEC-006 I3).</para>
 ///
 /// <para><b>The extension is a hint, and the retry backs a failed run.</b> A file named <c>.mp4</c> that holds something
 /// else (an MPEG-TS stream, say) may fail the flagged run; the waveform then runs once more without the flag

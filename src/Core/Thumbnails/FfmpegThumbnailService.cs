@@ -14,12 +14,15 @@ namespace VideoSplitJoiner.Core.Thumbnails;
 /// before <c>t</c> and decodes from there to <c>t</c> itself, so the picture is the frame at the (bucketed) time,
 /// not the keyframe (measured on MP4, MOV and MKV; an MPEG-TS source can land on the next keyframe instead).</para>
 ///
-/// <para><b>The stream-info pass stays, on every input (T-195):</b> unlike the waveform, the grab never carries
-/// <see cref="StreamInfoSkip.Flag"/>. Skipping that pass also leaves ffmpeg without the format start time an input
-/// <c>-ss</c> counts from, so on an MP4/MOV whose start time is not 0 the grab would exit 0 with the wrong frame. The
-/// first part of the app's own lossless split of an H.264 B-frame + AAC MP4 is such a file (it starts at about
-/// 0.043 s, and a skipping grab came back one frame early). Skipping it only when the probed start time is 0 is a
-/// follow-up ticket (SPEC-005 I27).</para>
+/// <para><b>The stream-info pass is skipped only for an MP4/MOV whose probed start time is exactly 0 (T-195, T-226, SPEC-005
+/// I27):</b> skipping it (<see cref="StreamInfoSkip.Flag"/>, 0.05-0.09 s per 4K H.264 grab) also leaves ffmpeg without the format
+/// start time an input <c>-ss</c> counts from, so on an MP4/MOV whose start time is not 0 the grab would exit 0 with the wrong
+/// frame (the first part of the app's own lossless split of an H.264 B-frame + AAC MP4 starts at about 0.043 s, and a skipping grab
+/// came back one frame early; so do an <c>-output_ts_offset</c> MOV and MPEG-TS content named <c>.mp4</c>). So the flag goes
+/// before <c>-i</c> only when the input is <c>.mp4</c>, <c>.m4v</c> or <c>.mov</c> AND the start-time source given to the constructor
+/// (the shared probe, whose result is cached, so the gate costs no process) says the start is exactly zero. No source, a probe
+/// that failed or does not know, or any other start: today's unflagged args. A flagged grab that exits non-zero, writes no file or an
+/// empty one is run once more without the flag (as the waveform does, SPEC-006 I24); a cancelled grab is never retried.</para>
 ///
 /// <para><b>Cache:</b> keyed by <c>(inputPath, bucket, width)</c> where <c>bucket</c> is the requested time
 /// floored to a configurable granularity (default 1s). A cached temp file for that bucket AT THAT WIDTH is
@@ -61,6 +64,7 @@ public sealed class FfmpegThumbnailService : IThumbnailService
     public const int DefaultMaxEntries = 128;
 
     private readonly IFfmpegRunner _runner;
+    private readonly Func<string, CancellationToken, Task<TimeSpan?>>? _startTimeOf;
     private readonly string _cacheRoot;
     private readonly TimeSpan _bucketGranularity;
     private readonly int _maxEntries;
@@ -77,6 +81,15 @@ public sealed class FfmpegThumbnailService : IThumbnailService
     }
 
     /// <summary>
+    /// As above, with the source of a file's probed format start time that lets a zero-start MP4/MOV grab skip the stream-info decode
+    /// (T-226, SPEC-005 I27). The app passes the shared probe's cached <c>MediaInfo.StartTime</c>; a null result means "unknown".
+    /// </summary>
+    public FfmpegThumbnailService(IFfmpegRunner runner, Func<string, CancellationToken, Task<TimeSpan?>>? startTimeOf)
+        : this(runner, DefaultCacheRoot(), DefaultBucketGranularity, DefaultMaxEntries, startTimeOf)
+    {
+    }
+
+    /// <summary>
     /// Create the service with an explicit cache root, bucket granularity, and cache cap — used by tests to
     /// redirect the temp tree and control bucketing without hitting the real filesystem / ffmpeg.
     /// </summary>
@@ -84,9 +97,11 @@ public sealed class FfmpegThumbnailService : IThumbnailService
         IFfmpegRunner runner,
         string cacheRoot,
         TimeSpan? bucketGranularity = null,
-        int maxEntries = DefaultMaxEntries)
+        int maxEntries = DefaultMaxEntries,
+        Func<string, CancellationToken, Task<TimeSpan?>>? startTimeOf = null)
     {
         _runner = runner ?? throw new ArgumentNullException(nameof(runner));
+        _startTimeOf = startTimeOf;
         _cacheRoot = cacheRoot ?? throw new ArgumentNullException(nameof(cacheRoot));
 
         var g = bucketGranularity ?? DefaultBucketGranularity;
@@ -168,11 +183,24 @@ public sealed class FfmpegThumbnailService : IThumbnailService
                 Directory.CreateDirectory(dir);
             }
 
-            var args = BuildArgs(inputPath, seek, width, tempPath);
+            // T-226: an MP4/MOV whose probed start time is exactly 0 skips the stream-info decode; any doubt is today's args.
+            var skipStreamInfo = await CanSkipStreamInfoAsync(inputPath, ct).ConfigureAwait(false);
+            var args = BuildArgs(inputPath, seek, width, tempPath, skipStreamInfo);
 
             ct.ThrowIfCancellationRequested();
             var result = await _runner.RunAsync(args, totalDuration: null, progress: null, ct: ct)
                 .ConfigureAwait(false);
+
+            // A flagged run that failed, wrote no file or an empty one is run once more without the flag: the extension and the
+            // start time are hints, and a wrong one must cost a second run, never a missing picture. A cancelled grab is never retried
+            // (it threw above); the retry is judged on its own output, never on a file the failed run left behind.
+            if (skipStreamInfo && !(result.Success && HasPicture(tempPath)))
+            {
+                ct.ThrowIfCancellationRequested();
+                TryDeleteFile(tempPath);
+                result = await _runner.RunAsync(BuildArgs(inputPath, seek, width, tempPath), totalDuration: null, progress: null, ct: ct)
+                    .ConfigureAwait(false);
+            }
 
             // ffmpeg failed, or produced nothing → best-effort null (do NOT cache a missing file).
             if (!result.Success || !File.Exists(tempPath))
@@ -238,14 +266,60 @@ public sealed class FfmpegThumbnailService : IThumbnailService
     /// Build the frame-grab args: fast seek (<c>-ss</c> BEFORE <c>-i</c>), single frame, scale to width.
     /// Exposed <c>internal</c> so a unit test can assert the exact token order/values with no ffmpeg run.
     /// </summary>
-    internal static FfmpegArgs BuildArgs(string inputPath, TimeSpan bucket, int width, string tempPath) =>
-        FfmpegArgs.ForFfmpeg()
-            .Raw("-ss", FormatSeconds(bucket))
+    internal static FfmpegArgs BuildArgs(string inputPath, TimeSpan bucket, int width, string tempPath, bool skipStreamInfo = false)
+    {
+        var args = FfmpegArgs.ForFfmpeg().Raw("-ss", FormatSeconds(bucket));
+        if (skipStreamInfo)
+        {
+            args.Raw(StreamInfoSkip.Flag); // an input option: immediately before -i
+        }
+
+        return args
             .Input(inputPath)
             .Raw("-frames:v", "1")
             .Raw("-vf", $"scale={width.ToString(CultureInfo.InvariantCulture)}:-1")
             .Raw("-y")
             .Output(tempPath);
+    }
+
+    /// <summary>
+    /// True when the grab of <paramref name="inputPath"/> may skip the stream-info decode (T-226, SPEC-005 I27): the extension is
+    /// MP4/M4V/MOV AND the start-time source says the format starts at exactly 0. No source, an unknown start, or a source that threw
+    /// is false (today's args); a cancellation propagates.
+    /// </summary>
+    private async Task<bool> CanSkipStreamInfoAsync(string inputPath, CancellationToken ct)
+    {
+        if (_startTimeOf is null || !StreamInfoSkip.IsIsoBmffExtension(inputPath))
+        {
+            return false;
+        }
+
+        try
+        {
+            return await _startTimeOf(inputPath, ct).ConfigureAwait(false) is { } start && start == TimeSpan.Zero;
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>A file with at least one byte: what a grab that "worked" must have written.</summary>
+    private static bool HasPicture(string path)
+    {
+        try
+        {
+            return new FileInfo(path) is { Exists: true, Length: > 0 };
+        }
+        catch
+        {
+            return false;
+        }
+    }
 
     /// <summary>Floor a time to the bucket granularity (never negative). Public-shaped for testing.</summary>
     internal TimeSpan FloorToBucket(TimeSpan time)

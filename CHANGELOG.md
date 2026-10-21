@@ -8,6 +8,11 @@ goal; `0.1.0` is the first end-to-end, shippable cut.
 ## [Unreleased]
 
 ### Changed
+- **Pictures of MP4 and MOV videos are drawn a little faster.** A hover picture, a Bulk Cut chip and a profile picture no longer wait for
+  ffmpeg to analyse the first frames of the file, when the file starts at time 0 (nearly every phone and camera clip): 0.23 s to 0.21 s
+  for a chip of a 4K H.264 video, a ten-picture sweep of the scrub bar 2.8 s to 2.5 s (one run on a test machine). A file that starts
+  later (the first part of a split, an offset MOV, a transport stream named .mp4) is grabbed as before, and a picture that does not come
+  out is asked for again the old way, so the pictures are the same.
 - **The piece an Exact cut re-encodes is made 1.5 to 1.9 times faster.** Exact re-encodes the few seconds between your cut and the
   next keyframe and copies the rest. That piece is now encoded with x264's `veryfast` setting at a quality factor chosen so that
   it scores no more than half a decibel below the old piece (it scored equal or better on every test video measured), and its

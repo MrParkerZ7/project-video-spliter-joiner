@@ -182,6 +182,40 @@ internal static class CoreScenarios
             }
         }
 
+        // T-226: the same grabs through the service given the probe's format start time (the app's wiring): a zero-start MP4/MOV skips the
+        // stream-info decode, anything else (the mkv fixture is the control) keeps today's args. The probe is asked once BEFORE the timing, as
+        // the app has already probed a file it grabs from (SPEC-004 I33), so the rows show that the gate itself costs no process.
+        {
+            var probe = c.NewProbe();
+            await probe.ProbeAsync(fx.Path);
+            Task<TimeSpan?> StartOf(string p, CancellationToken ct) => StartTimeAsync(probe, p, ct);
+            foreach (var (label, width) in new[] { ("hover", HoverWidth), ("bulk chip", ChipWidth), ("profile", ProfileWidth) })
+            {
+                foreach (var (where, tm) in new[] { ("on keyframe", fx.ThumbOnKf), ($"{fx.ThumbMidGop - fx.ThumbOnKf:0.##}s into GOP", fx.ThumbMidGop) })
+                {
+                    for (var i = 1; i <= runs; i++)
+                    {
+                        var svc = new FfmpegThumbnailService(c.Ffmpeg, c.NewTempDir("th"), TimeSpan.FromSeconds(1), FfmpegThumbnailService.DefaultMaxEntries, StartOf);
+                        string? path = null;
+                        var (s, u) = await Meter.Run(async () => path = await svc.GetThumbnailAsync(fx.Path, S(tm), width, CancellationToken.None));
+                        c.Results.Add("shared", $"Thumbnail GATED {label} {width}px @{At(tm)}s ({where})", fx.Key, "warm", i, s, u, SeekNote(fx, path));
+                    }
+                }
+            }
+
+            // The hover sweep of T-195's table: 10 distinct 1-s buckets in a row, sequential, through the gated service.
+            var sweepSvc = new FfmpegThumbnailService(c.Ffmpeg, c.NewTempDir("th"), TimeSpan.FromSeconds(1), FfmpegThumbnailService.DefaultMaxEntries, StartOf);
+            var sweepStart = Math.Max(1, fx.ThumbOnKf - 5);
+            var (sw, su) = await Meter.Run(async () =>
+            {
+                for (var k = 0; k < 10; k++)
+                {
+                    await sweepSvc.GetThumbnailAsync(fx.Path, S(sweepStart + k + 0.4), HoverWidth, CancellationToken.None);
+                }
+            });
+            c.Results.Add("split", "Hover sweep GATED: 10 new buckets, sequential (total)", fx.Key, "warm", 1, sw, su, $"{sw / 10:0.000}s per grab");
+        }
+
         // Cache hit (same bucket, same width): what a repeated hover costs.
         {
             var svc = new FfmpegThumbnailService(c.Ffmpeg, c.NewTempDir("th"));
@@ -217,6 +251,10 @@ internal static class CoreScenarios
             Io.TryDelete(cold);
         }
     }
+
+    /// <summary>The probe's format start time of <paramref name="path"/>, or null when it could not be probed (what the app hands the thumbnail service).</summary>
+    private static async Task<TimeSpan?> StartTimeAsync(MediaProbe probe, string path, CancellationToken ct) =>
+        await probe.ProbeAsync(path, ct) is ProbeResult.ProbeSucceeded ok ? ok.Info.StartTime : null;
 
     /// <summary>
     /// Where a thumbnail grab seeked: the bucket the service floored the request to (read back from the

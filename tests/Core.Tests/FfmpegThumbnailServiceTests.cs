@@ -359,7 +359,7 @@ public class FfmpegThumbnailServiceTests : IDisposable
     {
         var runner = new WritingFakeRunner();
         var act1 = () => new FfmpegThumbnailService(null!, _cacheRoot);
-        var act2 = () => new FfmpegThumbnailService(runner, null!);
+        var act2 = () => new FfmpegThumbnailService(runner, (string)null!); // T-226: the cast picks the cacheRoot overload, not the start-time one
         act1.Should().Throw<ArgumentNullException>();
         act2.Should().Throw<ArgumentNullException>();
     }

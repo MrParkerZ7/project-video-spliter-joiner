@@ -77,7 +77,10 @@ public sealed class MainViewModel : ObservableObject
         // T-077/T-078: the scrub-bar hover thumbnail source — a separate ffmpeg CLI process per frame
         // (own bucket-cached temp files), independent of the FFME preview. Shared into the Split screen's
         // player VM, which debounces hover + shows the popup.
-        var thumbnailService = new FfmpegThumbnailService(ffmpegRunner);
+        // T-226: the shared probe's cached format start time lets a zero-start MP4/MOV grab skip the stream-info decode (no extra process).
+        var thumbnailService = new FfmpegThumbnailService(
+            ffmpegRunner,
+            async (path, ct) => await probe.ProbeAsync(path, ct).ConfigureAwait(false) is ProbeResult.ProbeSucceeded ok ? ok.Info.StartTime : null);
 
         // T-084/D-002: the audio-waveform source — a separate ffmpeg CLI pass that extracts a downsampled
         // mono PCM temp file and reduces it to a normalized peak array (own per-file LRU cache), built over
