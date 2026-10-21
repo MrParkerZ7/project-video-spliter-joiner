@@ -504,7 +504,8 @@ public sealed class SmartCutEngine : ISmartCutEngine
     /// on <c>4k</c>, <c>1080</c>, <c>g10</c> and <c>4k10m</c> at their named positions, against 39 to 150 (median 96, geometric
     /// mean 84) for the medium head of the same run, because a head now costs 0.2-0.6 s of wall time per second re-encoded and the
     /// concat 3-18 ms per second copied (its start-up included), and the concat's cost depends on the disk and the bitrate. 50 is the
-    /// round number in that range. It is approximate by nature and shapes only how the bars move, never what is cut: the row's
+    /// round number in that range. The fixtures are libx264 only: a head for another encoder (vp9, vp8, av1, mpeg4, mpeg2) did not get
+    /// faster and is now weighed about half as heavy as it should be, which moves the bars' shape and the estimate, not what is cut. It is approximate by nature and shapes only how the bars move, never what is cut: the row's
     /// fraction is monotonic whatever it is.
     /// </summary>
     public const double EncodeCostFactor = 50d;

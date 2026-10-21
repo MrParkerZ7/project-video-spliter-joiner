@@ -520,7 +520,7 @@ internal static class Alternatives
                 var variants = new List<(string Name, string[] Args)>
                 {
                     // The engine's own head tokens, minus the runner's -hide_banner -nostdin and the output path.
-                    ($"current: -ss {sStart} -i in (input seek, T-191) {venc} default preset",
+                    ($"current: -ss {sStart} -i in (input seek, T-191; {venc} -preset veryfast -crf 20 since T-192, other encoders default)",
                         SmartCutArgsBuilder.HeadReencode(fx.Path, plan.Start, headEnd, info, venc!, aenc, "<out>").ToList().Skip(2).SkipLast(1).ToArray()),
                 };
                 variants.AddRange(SmartHeads.Variants(fx, span));

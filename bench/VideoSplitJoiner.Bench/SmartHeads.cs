@@ -56,7 +56,7 @@ internal static class SmartHeads
         return new List<(string, string[])>
         {
             ($"-i in -ss {sStart} (output seek: the head before T-191) {venc} default preset", outSeek.Concat(Enc(venc)).ToArray()),
-            ($"input seek + {venc} default preset (the head before T-192)", inSeek.Concat(Enc(venc)).ToArray()),
+            ($"input seek + {venc} default preset (what libx264 heads were before T-192)", inSeek.Concat(Enc(venc)).ToArray()),
             ($"input seek + {venc} -preset veryfast", inSeek.Concat(Enc(venc, "-preset", "veryfast")).ToArray()),
             ($"input seek + {venc} -preset ultrafast", inSeek.Concat(Enc(venc, "-preset", "ultrafast")).ToArray()),
             ($"input seek + {nvenc} -preset p4 -cq 19", inSeek.Concat(Enc(nvenc, "-preset", "p4", "-rc", "vbr", "-cq", "19", "-b:v", "0")).ToArray()),

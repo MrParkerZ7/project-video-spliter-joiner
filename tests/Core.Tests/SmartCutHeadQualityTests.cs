@@ -10,7 +10,7 @@ namespace VideoSplitJoiner.Core.Tests;
 /// T-192 (G-059, SPEC-001 I45 / I72) - an H.264 Exact head is encoded at x264 <c>veryfast</c> with a quality floor.
 ///
 /// <para>The head is at most one GOP, so its SIZE does not matter; its speed and its quality do. libx264 at its defaults
-/// (<c>medium</c>, crf 23) costs 4.94 s for the head at 104.5 s of the 4K fixture, <c>veryfast</c> 2.16 s (T-192's measurement). The
+/// (<c>medium</c>, crf 23) costs 1.54 s for the head at 104.5 s of the bench's 4K fixture, <c>veryfast</c> at crf 20 0.93 s (one bench run). The
 /// quality floor is relative, never a figure: the head must score no more than 0.5 dB PSNR below a default-settings head of the same
 /// frames, and its profile must never be lower than the source's (the concat output takes its <c>avcC</c> from the head, so the
 /// declared profile must cover the copied part). <c>ultrafast</c> is rejected: it declares Constrained Baseline over a High source.</para>
@@ -66,7 +66,7 @@ public sealed class SmartCutHeadQualityTests : IDisposable
     [Fact]
     public void TheHeadCrf_IsAnX264Value_BetweenVisuallyLosslessAndTheDefault()
     {
-        SmartCutArgsBuilder.X264HeadCrf.Should().BeInRange(12, 23, "veryfast at crf 23 is 1.2 dB below the default head, so the constant is lower than the default 23");
+        SmartCutArgsBuilder.X264HeadCrf.Should().BeInRange(14, 22, "veryfast at the default 23 is 1.2-2.4 dB below the default head (the floor test shows it), so the constant is lower than 23");
     }
 
     // serves-spec: SPEC-001#I45 - every other encoder is unchanged: no -preset and no -crf, and the tokens are exactly the ones the

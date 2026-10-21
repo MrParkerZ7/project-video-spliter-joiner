@@ -91,7 +91,7 @@ internal static class Smart2
         var span = new SmartHeads.Span(info, plan.Start, headEnd, venc!, aenc);
         var all = new List<(string Name, string[] Args, bool Engine)>
         {
-            ($"current engine args (SmartCutArgsBuilder.HeadReencode: -ss {sStart} -i in, input seek, {venc} default preset)", Array.Empty<string>(), true),
+            ($"current engine args (SmartCutArgsBuilder.HeadReencode: -ss {sStart} -i in, input seek, {venc}; since T-192 libx264 at -preset veryfast -crf 20)", Array.Empty<string>(), true),
         };
         all.AddRange(SmartHeads.Variants(fx, span).Select(v => (v.Name, v.Args, false)));
         var variants = onlyHw ? all.Where(v => v.Engine || v.Name.StartsWith("-hwaccel", StringComparison.Ordinal)).ToList() : all;

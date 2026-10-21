@@ -77,7 +77,11 @@ public static class SmartCutArgsBuilder
     /// default head of the same frames. 20 is the largest whole value that keeps the floor - no more than 0.5 dB below a
     /// default-settings head - on every fixture measured: the bench's <c>4k</c>, <c>1080</c> and <c>g10</c> (+0.8 to +1.0 dB) and the
     /// test suite's 320x240 sources with a 2 s and a 10 s GOP (+0.09 and -0.01 dB); 21 held on the bench fixtures but is 0.76 dB below
-    /// on the 10 s GOP test source. The head's size grows by about a fifth, which does not matter at one GOP.
+    /// on the 10 s GOP test source. The floor is measured on those fixtures only: the review of T-192 found flat screen-text content
+    /// at -1.9 dB, a 4:4:4 and a 10-bit source at -0.55 and -0.66 dB (the old head's PSNR is inflated when it re-quantises a source
+    /// that x264 medium crf 23 wrote), still 37 dB or more in absolute terms. The head's size grows by about a fifth on the bench
+    /// fixtures and up to about twice on noisy content, which does not matter at one GOP (a <c>FullReencode</c> head is the whole
+    /// output, bounded by the last GOP).
     /// </summary>
     public const int X264HeadCrf = 20;
 
