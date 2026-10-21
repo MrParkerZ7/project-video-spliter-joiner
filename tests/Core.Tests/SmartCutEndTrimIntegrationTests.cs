@@ -153,6 +153,85 @@ public sealed class SmartCutEndTrimIntegrationTests : IDisposable
         Directory.GetDirectories(Path.GetDirectoryName(dest)!, ".vsj-smartcut-*").Should().BeEmpty("the temp dir is swept");
     }
 
+    // serves-spec: SPEC-001#I71 - without B-frames the outpoint is the end: the file holds exactly the source's frames of [4 s, 9.1 s)
+    // (128 at 25 fps: 4.00 .. 9.08 s), none past the end. Pins the exactness the has_b_frames allowance of the first test hides.
+    [Trait("serves-spec", "SPEC-001")]
+    [SkippableFact]
+    public async Task AnEndTrimOnASourceWithoutBFrames_HoldsExactlyTheFramesOfTheRange()
+    {
+        RequireBinaries();
+        var src = await SmartCutJointIntegrityTests.MakeFixtureAsync(
+            _dir, "bf0.mp4", 12, 25, "-c:v", "libx264", "-g", "50", "-keyint_min", "50", "-sc_threshold", "0", "-bf", "0");
+        (await SmartCutJointTiming.HasBFramesAsync(src)).Should().Be(0, "precondition: the fixture has no B-frames");
+
+        var (row, dest) = await RunExactRowAsync(src, 4.0, 9.1);
+
+        row.Outcome.Should().Be(ItemOutcome.Done, row.Error?.Message);
+        row.Warnings.Should().BeEmpty();
+        (await SmartCutJointTiming.FrameCountAsync(dest)).Should().Be(128, "the frames at 4.00 .. 9.08 s, and not the one at 9.12 s");
+        var report = await SmartCutJointIntegrity.CheckAsync(dest, src, S(4), S(4), _dir, default, S(9.1), allowedOverrunFrames: 1);
+        _output.WriteLine(report.Describe());
+        report.Passes.Should().BeTrue(report.Describe());
+    }
+
+    /// <summary>The ticket's source with one more stream: a cover picture (an MP4), or a timecode data track (a MOV).</summary>
+    private async Task<string> MakeSourceWithExtraStreamAsync(string kind)
+    {
+        var mp4 = await MakeSourceAsync("plain-" + kind + ".mp4");
+        var runner = new FfmpegRunner(Locator());
+        string path;
+        FfmpegArgs args;
+        if (kind == "cover")
+        {
+            var jpg = Path.Combine(_dir, "cover.jpg");
+            var made = await runner.RunAsync(FfmpegArgs.ForFfmpeg().Raw("-y", "-loglevel", "error")
+                .Raw("-f", "lavfi", "-i", "testsrc=size=160x120:rate=1:duration=1").Raw("-frames:v", "1").Output(jpg));
+            made.ExitCode.Should().Be(0, made.StdErrText);
+            path = Path.Combine(_dir, "cover.mp4");
+            args = FfmpegArgs.ForFfmpeg().Raw("-y", "-loglevel", "error").Input(mp4).Input(jpg)
+                .Raw("-map", "0", "-map", "1", "-c", "copy", "-disposition:v:1", "attached_pic").Output(path);
+        }
+        else
+        {
+            path = Path.Combine(_dir, "timecode.mov");
+            args = FfmpegArgs.ForFfmpeg().Raw("-y", "-loglevel", "error").Input(mp4)
+                .Raw("-map", "0", "-c", "copy", "-timecode", "01:00:00:00").Output(path);
+        }
+
+        var run = await runner.RunAsync(args);
+        run.ExitCode.Should().Be(0, run.StdErrText);
+        return path;
+    }
+
+    // serves-spec: SPEC-001#I71 / SPEC-002#I51 - a source with a cover picture (the concat demuxer gave the file a 4 s empty start:
+    // video at 4.0 s, format duration 9.2 s for 5.1 s of content) or a timecode data track (the concat fails: "Cannot map stream
+    // #0:2 - unsupported type") keeps the lossless cut, which carries every stream, and the row says the end snaps. Both are found
+    // by the review of the first version, which mapped every stream through the concat.
+    [Trait("serves-spec", "SPEC-001")]
+    [SkippableTheory]
+    [InlineData("cover")]
+    [InlineData("timecode")]
+    public async Task AnEndTrimOnASourceWithACoverPictureOrADataTrack_KeepsTheLosslessCut_AndTheRowSaysSo(string kind)
+    {
+        RequireBinaries();
+        var src = await MakeSourceWithExtraStreamAsync(kind);
+        (await Probe().ProbeAsync(src) is ProbeResult.ProbeSucceeded ok).Should().BeTrue();
+        ((ProbeResult.ProbeSucceeded)await Probe().ProbeAsync(src)).Info.ExtraStreams.Should().BeGreaterThan(0, "precondition: the probe sees the extra stream");
+
+        var runner = new SmartCutJointTiming.RecordingRealRunner(new FfmpegRunner(Locator()), Path.Combine(_dir, "kept"));
+        var result = await new SmartCutEngine(runner, Probe()).CutAsync(src, S(4), S(9.1), Path.Combine(_dir, "out", "cut" + Path.GetExtension(src)));
+        result.FellBack.Should().BeTrue();
+        result.FallbackReason.Should().Be(SmartCutEngine.EndTrimExtraStreamsReason);
+        result.EndSnapped.Should().BeTrue();
+        runner.Commands.Should().BeEmpty();
+
+        var (row, dest) = await RunExactRowAsync(src, 4.0, 9.1, "extra_trimmed" + Path.GetExtension(src));
+        row.Outcome.Should().Be(ItemOutcome.Done, row.Error?.Message);
+        row.Warnings.Should().Contain(w =>
+            w.StartsWith(BulkTrimEngine.ExactFallbackPrefix) && w.Contains(SmartCutEngine.EndTrimExtraStreamsReason));
+        File.Exists(dest).Should().BeTrue("the lossless cut produced the file");
+    }
+
     // serves-spec: SPEC-001#I71 - the boundary: an end that is itself on a keyframe is where the lossless cut ends, exactly, so the
     // engine hands it back with no run (the same answer as before the fix); and so is a cut with no end at all.
     [Trait("serves-spec", "SPEC-001")]

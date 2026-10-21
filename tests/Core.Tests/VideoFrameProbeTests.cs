@@ -679,6 +679,24 @@ public sealed class VideoFrameProbeTests : IDisposable
         runner.Lists.Should().ContainSingle().Which.Should().EndWith("inpoint 12\noutpoint 17.1\n");
     }
 
+    // serves-spec: SPEC-001#I71 - the snapped start reaches the same extra-streams rule as a start on a keyframe: a source with a
+    // cover picture, a data track or a subtitle keeps the lossless cut and says the end snaps.
+    [Trait("serves-spec", "SPEC-001")]
+    [Fact]
+    public async Task SmartCutEngine_ASnappedStartEndTrimOnASourceWithExtraStreams_FallsBackAndSaysTheEndSnaps()
+    {
+        var input = Placeholder("clip.mp4");
+        var probe = new FrameProbe(H264Aac() with { ExtraStreams = 1 }, Grid2s(), firstFrame: S(12));
+        var runner = new RecordingFakeRunner();
+
+        var result = await new SmartCutEngine(runner, probe).CutAsync(input, S(11.975), S(17.1), Path.Combine(_dir, "cut.mp4"));
+
+        result.FellBack.Should().BeTrue();
+        result.EndSnapped.Should().BeTrue();
+        result.FallbackReason.Should().Be(SmartCutEngine.EndTrimExtraStreamsReason);
+        runner.Commands.Should().BeEmpty();
+    }
+
     // serves-spec: SPEC-001#I71 - the same snapped start with an end that is itself on a keyframe stays the quiet lossless fall back.
     [Trait("serves-spec", "SPEC-001")]
     [Fact]

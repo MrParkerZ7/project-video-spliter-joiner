@@ -85,6 +85,55 @@ public class MediaProbeSpecGapTests
         finally { File.Delete(file); }
     }
 
+    // SPEC-004#I6 / SPEC-001#I71 - T-224: ExtraStreams counts what is neither picture nor sound - a subtitle, a data stream, an
+    // attachment and a cover picture (a video stream with disposition.attached_pic 1) - and nothing else. The cover picture is
+    // still listed with the video streams, as before.
+    [Trait("serves-spec", "SPEC-004")]
+    [Fact]
+    public async Task ProbeAsync_CountsTheStreamsThatAreNeitherPictureNorSound()
+    {
+        const string json = """
+            {"streams":[
+              {"index":0,"codec_type":"video","codec_name":"h264","disposition":{"default":1,"attached_pic":0}},
+              {"index":1,"codec_type":"audio","codec_name":"aac","disposition":{"default":1}},
+              {"index":2,"codec_type":"video","codec_name":"mjpeg","disposition":{"default":0,"attached_pic":1}},
+              {"index":3,"codec_type":"subtitle","codec_name":"mov_text"},
+              {"index":4,"codec_type":"data","codec_name":"none"},
+              {"index":5,"codec_type":"attachment","codec_name":"ttf"}
+            ]}
+            """;
+        var file = NewTempFile("extrastreams");
+        try
+        {
+            var result = await MakeProbe(new FakeFfprobeRunner(json)).ProbeAsync(file);
+
+            var info = ((ProbeResult.ProbeSucceeded)result).Info;
+            info.ExtraStreams.Should().Be(4, "the cover picture, the subtitle, the data stream and the attachment");
+            info.VideoStreams.Should().HaveCount(2, "a cover picture is still a video stream in the list");
+            info.AudioStreams.Should().HaveCount(1);
+        }
+        finally { File.Delete(file); }
+    }
+
+    // SPEC-004#I6 / SPEC-001#I71 - a file of one picture and one sound has no extra stream, with or without the disposition block.
+    [Trait("serves-spec", "SPEC-004")]
+    [Theory]
+    [InlineData("")]
+    [InlineData(",\"disposition\":{\"default\":1,\"attached_pic\":0}")]
+    public async Task ProbeAsync_AFileOfPictureAndSoundOnly_HasNoExtraStreams(string disposition)
+    {
+        var json = "{\"streams\":[{\"index\":0,\"codec_type\":\"video\",\"codec_name\":\"h264\"" + disposition + "},"
+            + "{\"index\":1,\"codec_type\":\"audio\",\"codec_name\":\"aac\"}]}";
+        var file = NewTempFile("noextrastreams");
+        try
+        {
+            var result = await MakeProbe(new FakeFfprobeRunner(json)).ProbeAsync(file);
+
+            ((ProbeResult.ProbeSucceeded)result).Info.ExtraStreams.Should().Be(0);
+        }
+        finally { File.Delete(file); }
+    }
+
     // SPEC-004#I7 — Duration falls back to the LONGEST stream duration when format.duration is absent.
     [Trait("serves-spec", "SPEC-004")]
     [Fact]

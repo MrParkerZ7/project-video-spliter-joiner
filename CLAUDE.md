@@ -116,6 +116,8 @@ A .NET 8 WPF app that splits and joins video **without re-encoding**. See [READM
   IDR (`IVideoFrameProbe.IsIdrKeyframeAsync`, one ffprobe packet read, asked per `HeadEnd`): behind a non-IDR keyframe (an open-GOP
   H.264 file) the copied part is not self-contained, so the cut falls back before anything is written, and the Bulk row asks the
   same question before Run (T-223). Never treat the packet scan's `K` flag as "safe to cut here" for H.264.
+  A start on a keyframe with the end inside a GOP is not handed to the lossless cut (it would snap the end): it is an end
+  trim, one stream-copy concat of the source from the keyframe to the end, with no head and no frame question (T-224).
   Do not add a re-encode branch to `SplitEngine`/`JoinEngine` or another re-encode path.
 - **No auto-detect.** The black/white/scene auto-detect feature was removed (no `Core/Detect`,
   no `SplitPointDetector`, no candidate UI). Do not reintroduce a detect layer or candidate ticks;

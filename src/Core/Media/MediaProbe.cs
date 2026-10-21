@@ -157,6 +157,7 @@ public sealed class MediaProbe : IMediaProbe, IVideoFrameProbe
         var video = new List<StreamInfo>();
         var audio = new List<StreamInfo>();
         var streamDurations = new List<TimeSpan>();
+        var extraStreams = 0;
 
         foreach (var s in root.Streams)
         {
@@ -164,10 +165,18 @@ public sealed class MediaProbe : IMediaProbe, IVideoFrameProbe
             if (info.IsVideo)
             {
                 video.Add(info);
+                if (s.Disposition is { AttachedPic: 1 })
+                {
+                    extraStreams++; // a cover picture is a video stream that is not the picture
+                }
             }
             else if (info.IsAudio)
             {
                 audio.Add(info);
+            }
+            else
+            {
+                extraStreams++; // subtitle, data, attachment (T-224)
             }
 
             if (TryParseSeconds(s.Duration, out var sd))
@@ -182,7 +191,7 @@ public sealed class MediaProbe : IMediaProbe, IVideoFrameProbe
         // T-219: the time base of ffmpeg's input -ss (an offset from format.start_time); zero when absent or unparsable.
         var startTime = TryParseSeconds(root.Format?.StartTime, out var st) ? st : TimeSpan.Zero;
 
-        var info2 = new MediaInfo(duration, container, video.AsReadOnly(), audio.AsReadOnly(), startTime);
+        var info2 = new MediaInfo(duration, container, video.AsReadOnly(), audio.AsReadOnly(), startTime, extraStreams);
         var success = new ProbeResult.ProbeSucceeded(info2);
         if (hasKey)
         {

@@ -14,12 +14,19 @@ namespace VideoSplitJoiner.Core.Media;
 /// cut seeks to <c>max(0, keyframe − StartTime)</c>. About 1.4 s on an MPEG-TS; 0 on an ordinary MP4. It may be
 /// negative (an MP4 whose edit list starts before 0).
 /// </param>
+/// <param name="ExtraStreams">
+/// T-224: how many streams the file holds besides real video and audio: subtitle, data (timecode, camera telemetry) and
+/// attachment streams, and a video stream that is a cover picture (<c>disposition.attached_pic</c>). They are still listed in
+/// <see cref="VideoStreams"/> when they are a cover picture. Zero for a file of picture and sound only, and for a
+/// <see cref="MediaInfo"/> built without the count.
+/// </param>
 public sealed record MediaInfo(
     TimeSpan Duration,
     string Container,
     IReadOnlyList<StreamInfo> VideoStreams,
     IReadOnlyList<StreamInfo> AudioStreams,
-    TimeSpan StartTime = default)
+    TimeSpan StartTime = default,
+    int ExtraStreams = 0)
 {
     /// <summary>True when the file has at least one video stream.</summary>
     public bool HasVideo => VideoStreams.Count > 0;

@@ -89,6 +89,13 @@ public interface ISmartCutEngine
 /// just below the end of the head's slice while the head is checked (a head that fails the check is handed back to the lossless cut, which the Bulk
 /// engine keeps from moving the row's bar back).</para>
 ///
+/// <para><b>An end inside a GOP under a start on a keyframe is an end trim (T-224, SPEC-001 I71).</b> The planner calls a start
+/// on a keyframe a <c>PureCopy</c> whatever the end is, and the lossless cut ends at a keyframe, so that request used to come back
+/// with its outro snapped. It is now the joint without its head: one concat of the source itself, <c>inpoint</c> the keyframe and
+/// <c>outpoint</c> the end (<see cref="SmartCutArgsBuilder.RenderEndTrimList"/>), a stream copy. It asks the same encoder gate as
+/// every Exact cut, and a source with a subtitle, data or cover-picture stream keeps the lossless cut with the end's snap
+/// announced (<see cref="SmartCutResult.EndSnapped"/>).</para>
+///
 /// <para>Every intermediate lands in a temp dir that is swept in a <c>finally</c>, and the final file is
 /// only moved into place once it exists — the same cancel-safety contract <see cref="SplitEngine"/>
 /// holds. A source whose codecs cannot be reproduced is reported as a FALLBACK, never guessed at.</para>
@@ -196,6 +203,15 @@ public sealed class SmartCutEngine : ISmartCutEngine
                         TimeSpan.Zero);
                 }
             }
+        }
+
+        // T-224: the end trim copies the source through the concat demuxer, which gives a cover picture the time 0 of its own (the
+        // file then starts at the cut time with that much empty before it), fails on a data track (timecode, camera telemetry) and
+        // times a subtitle track by its own rules. A source with any of them keeps the lossless cut - which carries every stream -
+        // and the end it snaps is announced. T-238 owns the same question for the head leg and the row.
+        if (endTrim && ok.Info.ExtraStreams > 0)
+        {
+            return new SmartCutResult(null, plan.Strategy, FellBack: true, EndTrimExtraStreamsReason, TimeSpan.Zero, EndSnapped: true);
         }
 
         // T-223: the copied part starts at HeadEnd, and behind a keyframe that is not an IDR (an open GOP: x264 open-gop=1, some
@@ -312,11 +328,13 @@ public sealed class SmartCutEngine : ISmartCutEngine
     /// <summary>
     /// True when <paramref name="end"/> is a time inside a GOP: there is one, it is before the end of the file and it is not on a
     /// keyframe (within <see cref="SmartCutPlanner.OnKeyframeTolerance"/>). A lossless cut ends at a keyframe, so only then does it
-    /// not end where it was asked to (T-224); an end on a keyframe, or at the end of the file, is exact either way.
+    /// not end where it was asked to (T-224); an end on a keyframe, or at or past the end of the file, is exact either way. The
+    /// end of the file is exact: the lossless pass drops a cut only when it is at or past the duration, so an end a few
+    /// milliseconds short of it still snaps to a keyframe there.
     /// </summary>
     private static bool EndIsInsideAGop(TimeSpan? end, IReadOnlyList<TimeSpan> keyframes, TimeSpan duration) =>
         end is { } e
-        && duration - e > SmartCutPlanner.OnKeyframeTolerance
+        && e < duration
         && !SmartCutPlanner.IsOnKeyframe(e, keyframes);
 
     /// <summary>
@@ -375,6 +393,12 @@ public sealed class SmartCutEngine : ISmartCutEngine
     /// parentheses and no internal terms (the row warning wraps the reason in its own parentheses and the user reads it).
     /// </summary>
     public const string NotAnIdrKeyframeReason = "frame-exact cutting is not supported yet for this video's keyframe type";
+
+    /// <summary>
+    /// Why an end trim is not used on a source that holds a subtitle, data or cover-picture stream (T-224, SPEC-001 I71). No
+    /// parentheses and no internal terms (the row warning wraps the reason in its own parentheses and the user reads it).
+    /// </summary>
+    public const string EndTrimExtraStreamsReason = "frame-exact end cutting is not supported yet for videos with subtitle, cover picture or data tracks";
 
     /// <summary>
     /// The probe's answer to "is the keyframe an IDR?"; a probe that throws (anything but a cancellation) cannot say, which is the

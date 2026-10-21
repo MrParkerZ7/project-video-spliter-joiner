@@ -8,6 +8,15 @@ goal; `0.1.0` is the first end-to-end, shippable cut.
 ## [Unreleased]
 
 ### Fixed
+- **An Exact cut that trims only the end now keeps the end you set.** When the intro sat on a keyframe (or at 0) and the outro
+  inside a group of pictures, the cut quietly fell back to the keyframe-snapped lossless cut and the outro moved to a
+  keyframe, while the Bulk Cut row still showed the outro you set (measured on a 12-second test video with a keyframe every
+  2 s: an intro of 4 s and an outro of 9.1 s came out 6.08 s long instead of about 5.1 s, an outro of 11.3 s from 2 s came out
+  8.08 s instead of about 9.3 s). Exact now copies the video from its keyframe to the outro in one pass, with no re-encoding,
+  so the file ends where you set it, plus up to two frames on a video with B-frames. A video Exact cannot cut (HEVC, .mkv,
+  .webm, .ts and the like) still snaps to a keyframe, and the finished row now says so when the outro is the part that snaps. So does
+  a video that carries subtitles, a cover picture or a data track (an iPhone or GoPro recording): its tracks cannot be copied
+  to an exact end yet, so it keeps the keyframe cut with all its tracks, and the result says the end moved.
 - **An Exact cut on an open-GOP H.264 video no longer writes a file that breaks after the joint.** Some H.264 videos (x264 with
   its open-GOP setting, and some cameras) mark keyframes that are not independent pictures. The part Exact copies from such a
   keyframe refers to frames before it, so the file came out with decoder errors and lost frames at the joint while the row said
