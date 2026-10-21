@@ -199,10 +199,10 @@ public sealed class FfmpegThumbnailServiceExactIntegrationTests : IDisposable
     }
 
     // serves-spec: SPEC-005#I28 - cost: an exact seek to a keyframe decodes about one frame, the floored one most of a GOP. Not a
-    // wall-clock assertion (T-137): the CPU time of the two grabs is printed for the Build log.
+    // wall-clock assertion (T-137): both grabs must succeed and the time of each is printed for the Build log.
     [Trait("serves-spec", "SPEC-005")]
     [SkippableFact]
-    public async Task TheExactGrab_AtAKeyframe_IsNoDearerThanTheBucketedOne_AndTheNumbersArePrinted()
+    public async Task TheExactAndTheBucketedGrab_AtAKeyframe_BothSucceed_AndTheirTimesArePrinted()
     {
         RequireBinaries();
         var src = await MakeNtscAsync();
@@ -215,6 +215,25 @@ public sealed class FfmpegThumbnailServiceExactIntegrationTests : IDisposable
         _output.WriteLine($"exact grab at {keyframe.TotalSeconds:0.######} s: {exact.Wall.TotalMilliseconds:0} ms wall; bucketed (-ss 7): {bucketed.Wall.TotalMilliseconds:0} ms wall");
         exact.Path.Should().NotBeNull();
         bucketed.Path.Should().NotBeNull();
+    }
+
+    // serves-spec: SPEC-005#I28 - the time of the LAST frame has a frame to show: an exact seek to the end of the file (or a hair before
+    // it) makes ffmpeg exit with no file, which is why a caller that knows the length clamps with ThumbnailTimes.ClampBeforeEnd; the
+    // clamped time shows a frame near the end.
+    [Trait("serves-spec", "SPEC-005")]
+    [SkippableFact]
+    public async Task AnExactSeekToTheEndOfTheFile_HasNoFrame_AndTheClampedOneDoes()
+    {
+        RequireBinaries();
+        var src = await MakeNtscAsync();
+        var duration = ((ProbeResult.ProbeSucceeded)await Probe().ProbeAsync(src)).Info.Duration;
+        var svc = NewService();
+
+        (await svc.GetExactThumbnailAsync(src, duration, Width, CancellationToken.None)).Should().BeNull(
+            "precondition: ffmpeg returns no frame at the very end");
+        var clamped = await svc.GetExactThumbnailAsync(src, ThumbnailTimes.ClampBeforeEnd(duration, duration), Width, CancellationToken.None);
+
+        clamped.Should().NotBeNull("the clamped time is before the last frame");
     }
 
     private static async Task<(string? Path, TimeSpan Wall)> TimedAsync(Func<Task<string?>> grab)

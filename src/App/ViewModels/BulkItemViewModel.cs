@@ -337,7 +337,9 @@ public sealed class BulkItemViewModel : ObservableObject
     /// is converted with <see cref="ToSeekOffset"/> (zero conversion on an ordinary MP4; about 1.4 s on an MPEG-TS).
     /// </summary>
     private TimeSpan? GrabSeekTime(CutMarkerViewModel handle) =>
-        GrabTime(handle) is { } time ? (ExactCutApplies ? time : ToSeekOffset(time)) : null;
+        GrabTime(handle) is { } time
+            ? ThumbnailTimes.ClampBeforeEnd(ExactCutApplies ? time : ToSeekOffset(time), Duration)
+            : null;
 
     /// <summary>
     /// A source time (a keyframe's pts) as an ffmpeg <c>-ss</c> offset for this row's file: <c>max(0, time - StartTime)</c> over the
@@ -569,12 +571,20 @@ public sealed class BulkItemViewModel : ObservableObject
             ? null
             : why ?? "this video cannot be cut frame-exactly";
 
+        // T-196: the start time belongs to the file, not to the Exact verdict: a re-probe that changes it (the file was replaced) moves
+        // every chip's seek offset, even when the verdict is the same.
+        var startChanged = _sourceKnown && info.StartTime != _sourceStartTime;
+        _sourceStartTime = info.StartTime;
         if (_sourceKnown && string.Equals(reason, _exactUnavailableReason, StringComparison.Ordinal))
         {
+            if (startChanged)
+            {
+                RequestAllThumbnails();
+            }
+
             return;
         }
 
-        _sourceStartTime = info.StartTime;
         _sourceKnown = true;
         _isH264 = info.HasVideo
             && (string.Equals(info.VideoStreams[0].CodecName, "h264", StringComparison.OrdinalIgnoreCase)

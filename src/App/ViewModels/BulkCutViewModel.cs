@@ -1996,7 +1996,8 @@ public sealed class BulkCutViewModel : ObservableObject
         {
             // T-196: an exact-time grab at the keyframe the cut lands on, in ffmpeg's base (the keyframe time minus the file's start time).
             framePath = await _thumbnails
-                .GetExactThumbnailAsync(row.Path, row.ToSeekOffset(row.IntroEnd.Snapped), ProfileThumbnailWidth, ct)
+                .GetExactThumbnailAsync(
+                    row.Path, ThumbnailTimes.ClampBeforeEnd(row.ToSeekOffset(row.IntroEnd.Snapped), row.Duration), ProfileThumbnailWidth, ct)
                 .ConfigureAwait(true);
         }
         catch
@@ -2059,7 +2060,8 @@ public sealed class BulkCutViewModel : ObservableObject
         {
             // T-196: exact-time, at the player's position as it is (the player reports it from the start of the file, ffmpeg's base).
             framePath = await _thumbnails
-                .GetExactThumbnailAsync(row.Path, Player.Position, ProfileThumbnailWidth, ct)
+                .GetExactThumbnailAsync(
+                    row.Path, ThumbnailTimes.ClampBeforeEnd(Player.Position, Player.Duration ?? row.Duration), ProfileThumbnailWidth, ct)
                 .ConfigureAwait(true);
         }
         catch (Exception ex)

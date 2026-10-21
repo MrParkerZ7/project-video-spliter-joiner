@@ -454,7 +454,10 @@ public sealed class BulkRowIntentTests
         // snapped 60s to the requested 90s. The intro sits on a keyframe, so its cut did not move and it asks nothing.
         thumbs.Requests.Skip(grabsBefore).Should().ContainSingle(
                 "the chip must show the cut the run will make, and only the outro's cut moved")
-            .Which.Time.Should().Be(TimeSpan.FromSeconds(90));
+            .Which.Time.Should().Be(
+                TimeSpan.FromSeconds(60) - VideoSplitJoiner.Core.Thumbnails.ThumbnailTimes.EndGuard,
+                "T-196 (a recorded contract change: this used to expect 90 s): an exact seek past the last frame has no picture, so a chip "
+                + "asked for a time beyond the file is grabbed 100 ms before its end");
 
         // Pulling the handle back inside the file clears the sentence with no checkbox gesture.
         row.OutroStart!.Requested = TimeSpan.FromSeconds(50);

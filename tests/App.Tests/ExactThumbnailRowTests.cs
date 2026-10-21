@@ -8,6 +8,7 @@ using FluentAssertions;
 using VideoSplitJoiner.App.Settings;
 using VideoSplitJoiner.App.ViewModels;
 using VideoSplitJoiner.Core.Bulk;
+using VideoSplitJoiner.Core.Thumbnails;
 using Xunit;
 
 namespace VideoSplitJoiner.App.Tests;
@@ -113,7 +114,9 @@ public sealed class ExactThumbnailRowTests : IDisposable
     {
         var (vm, probe, thumbs) = Build(exact: true);
         var path = MakeVideo("clip.mp4");
-        var row = await AddAsync(vm, probe, path);
+        // A start of 0.9 ms is still "zero" to Exact (the gate allows 1 ms), so the row is a real Exact row - and a conversion of the
+        // requested time through ToSeekOffset would show as 11.4991 here, which a start of exactly 0 could not tell.
+        var row = await AddAsync(vm, probe, path, startSeconds: 0.0009);
 
         row.IntroEnd.Requested = S(11.5);
         Settle(row);
@@ -185,8 +188,45 @@ public sealed class ExactThumbnailRowTests : IDisposable
         thumbs.BucketedRequests.Should().BeEmpty();
     }
 
-    // serves-spec: SPEC-005#I28 / SPEC-011#I164 - before its probe lands a row has no start time to subtract: the cut time itself, so an
-    // ordinary MP4 (start 0) is unchanged by T-196.
+    // serves-spec: SPEC-011#I61 / SPEC-005#I28 - T-196 review: an outro dragged to the very end of an Exact row (or a profile with no tail)
+    // asks for a chip AT the duration, where an exact seek finds no frame; the row stops a tenth of a second short of the end, so the
+    // chip shows the last frames and not the placeholder the floored grab never had.
+    [Trait("serves-spec", "SPEC-011")]
+    [Fact]
+    public async Task AChipAtTheVeryEndOfAnExactRow_IsGrabbedJustBeforeTheEnd()
+    {
+        var (vm, probe, thumbs) = Build(exact: true);
+        var path = MakeVideo("clip.mp4");
+        var row = await AddAsync(vm, probe, path);
+
+        row.AddOutro(S(60)); // the duration of the fake probe's file
+        Settle(row);
+
+        row.ExactCutApplies.Should().BeTrue("precondition");
+        ExactTimes(thumbs, path).Last().Should().Be(S(60) - ThumbnailTimes.EndGuard);
+    }
+
+    // serves-spec: SPEC-011#I61 - T-196 review: the start time belongs to the file, not to the Exact verdict. A re-probe of the row that
+    // reports the same verdict with another start time moves the chip's seek offset, so the chips are grabbed again at it.
+    [Trait("serves-spec", "SPEC-011")]
+    [Fact]
+    public async Task AReProbeThatChangesTheStartTime_GrabsTheChipsAgain_AtTheNewOffset()
+    {
+        var (vm, probe, thumbs) = Build();
+        var path = MakeVideo("camera.mts");
+        var row = await AddAsync(vm, probe, path, startSeconds: 1.445333, step: 1);
+        row.IntroEnd.Requested = S(10);
+        Settle(row);
+        ExactTimes(thumbs, path).Last().TotalSeconds.Should().BeApproximately(10 - 1.445333, 1e-6, "precondition");
+
+        row.SetSourceMedia(new VideoSplitJoiner.Core.Media.MediaInfo(
+            S(60), "mpegts", Array.Empty<VideoSplitJoiner.Core.Media.StreamInfo>(), Array.Empty<VideoSplitJoiner.Core.Media.StreamInfo>(), S(2.0)));
+        Settle(row);
+
+        ExactTimes(thumbs, path).Last().TotalSeconds.Should().BeApproximately(10 - 2.0, 1e-6);
+    }
+
+    // serves-spec: SPEC-005#I28 / SPEC-011#I164 - an ordinary MP4 (start 0) is unchanged by T-196: the seek offset is the cut itself.
     [Trait("serves-spec", "SPEC-011")]
     [Fact]
     public async Task OnAnOrdinaryMp4_TheSeekOffset_IsTheCutItself()
