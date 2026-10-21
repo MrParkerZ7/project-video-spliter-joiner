@@ -47,4 +47,19 @@ public interface IVideoFrameProbe
     /// them. A head that does not match is a fall back, never a Done.</para>
     /// </summary>
     Task<IReadOnlyList<TimeSpan>?> GetVideoFrameTimesAsync(string path, TimeSpan from, TimeSpan to, CancellationToken ct = default);
+
+    /// <summary>
+    /// Whether the H.264 keyframe of <paramref name="path"/> at <paramref name="keyframeTime"/> is an IDR picture: true for an
+    /// IDR, false for a non-IDR I-frame that ffmpeg's parser flags as a keyframe (an OPEN-GOP keyframe: the pictures after it may
+    /// refer to the ones before it), and null when the answer cannot be given - the file cannot be read, the packet at that time
+    /// is not a keyframe, or its bytes cannot be read as H.264 NAL units (not H.264, an unusual framing, a unit cut off). A
+    /// demux-level read of ONE packet (<c>ffprobe -read_intervals T%+#1 -show_data</c>): one ffprobe start and the keyframe's
+    /// bytes, bounded by the picture, not the GOP or the file.
+    ///
+    /// <para>Why the engine asks (T-223, SPEC-001 I70): the part an Exact cut copies starts at <c>HeadEnd</c>. Behind an IDR it is
+    /// self-contained, with the SPS/PPS <c>h264_mp4toannexb</c> puts before it. Behind a non-IDR keyframe its frames refer to the
+    /// GOP before it and the SPS/PPS are the head's, and the final printed decoder errors and lost frames at the joint with
+    /// ffmpeg's exit code 0. A keyframe that is not provably an IDR is a fall back to the lossless cut, never a Done.</para>
+    /// </summary>
+    Task<bool?> IsIdrKeyframeAsync(string path, TimeSpan keyframeTime, CancellationToken ct = default);
 }

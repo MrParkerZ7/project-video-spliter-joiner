@@ -528,6 +528,7 @@ public sealed class BulkItemViewModel : ObservableObject
         }
 
         ApplyPrecisionRule(() => _exactCut = exact);
+        RefreshKeyframeKind();
     }
 
     /// <summary>
@@ -551,7 +552,99 @@ public sealed class BulkItemViewModel : ObservableObject
         }
 
         _sourceKnown = true;
+        _isH264 = info.HasVideo
+            && (string.Equals(info.VideoStreams[0].CodecName, "h264", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(info.VideoStreams[0].CodecName, "avc1", StringComparison.OrdinalIgnoreCase));
         ApplyPrecisionRule(() => _exactUnavailableReason = reason);
+    }
+
+    /// <summary>
+    /// T-223 (G-059): keep <see cref="KeyframeKindReason"/> true to the row's current intro, from the SAME question the engine
+    /// falls back on (<see cref="IVideoFrameProbe.IsIdrKeyframeAsync"/> about the keyframe the head ends on), so the row says
+    /// before Run what the run would say. Called whenever one of its inputs changes: Exact switched, the keyframes landed, a
+    /// handle moved. The probe is asked once per keyframe (the answer is kept), latest-wins, off the UI thread's critical path;
+    /// until it answers the row reads as before, like a row whose probe has not said yet.
+    /// </summary>
+    private void RefreshKeyframeKind()
+    {
+        if (!_exactCut
+            || !_isH264
+            || _exactUnavailableReason is not null
+            || !KeyframesReady
+            || _probe is not IVideoFrameProbe frames)
+        {
+            CancelKindQuery();
+            SetKeyframeKindReason(null);
+            return;
+        }
+
+        var end = HasOutro ? OutroStart!.Requested : (TimeSpan?)null;
+        var plan = SmartCutPlanner.Plan(IntroEnd.Requested, end, Keyframes);
+        if (plan.Strategy != SmartCutStrategy.HeadReencode || plan.HeadEnd is not { } headEnd)
+        {
+            CancelKindQuery(); // a start on a keyframe, or none ahead: no joint, nothing to ask
+            SetKeyframeKindReason(null);
+            return;
+        }
+
+        if (_idrByHeadEnd.TryGetValue(headEnd, out var known))
+        {
+            SetKeyframeKindReason(known is true ? null : SmartCutEngine.NotAnIdrKeyframeReason);
+            return;
+        }
+
+        if (_kindAskedFor == headEnd)
+        {
+            return; // the answer for this keyframe is on its way
+        }
+
+        CancelKindQuery();
+        var cts = _kindCts = new CancellationTokenSource();
+        _kindAskedFor = headEnd;
+        _ = AskKeyframeKindAsync(frames, headEnd, cts);
+    }
+
+    private async Task AskKeyframeKindAsync(IVideoFrameProbe frames, TimeSpan headEnd, CancellationTokenSource cts)
+    {
+        bool? idr;
+        try
+        {
+            idr = await frames.IsIdrKeyframeAsync(Path, headEnd, cts.Token).ConfigureAwait(true);
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+        catch
+        {
+            idr = null; // a probe that throws cannot say: the engine falls back on that too
+        }
+
+        if (!ReferenceEquals(_kindCts, cts))
+        {
+            return; // superseded by a newer keyframe, a precision flip or a removal
+        }
+
+        _kindAskedFor = null;
+        _idrByHeadEnd[headEnd] = idr;
+        RefreshKeyframeKind();
+    }
+
+    private void CancelKindQuery()
+    {
+        _kindCts?.Cancel();
+        _kindCts = null;
+        _kindAskedFor = null;
+    }
+
+    private void SetKeyframeKindReason(string? reason)
+    {
+        if (string.Equals(reason, _keyframeKindReason, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        ApplyPrecisionRule(() => _keyframeKindReason = reason);
     }
 
     /// <summary>
@@ -616,6 +709,15 @@ public sealed class BulkItemViewModel : ObservableObject
     private string? _exactUnavailableReason;
     private bool _sourceKnown;
 
+    // T-223: why Exact cannot cut this row AT ITS CURRENT INTRO - the keyframe its head would end on is not an IDR picture (an
+    // open-GOP H.264 file; the engine falls back on the same question). Unlike _exactUnavailableReason it depends on the cut
+    // point, so it follows the intro and is asked of the probe only when the keyframe the head ends on changes.
+    private string? _keyframeKindReason;
+    private bool _isH264;
+    private TimeSpan? _kindAskedFor;
+    private CancellationTokenSource? _kindCts;
+    private readonly Dictionary<TimeSpan, bool?> _idrByHeadEnd = new();
+
     /// <summary>
     /// T-189: why Exact cannot cut this row's source, in the words the run's warning uses
     /// (<see cref="SmartCutArgsBuilder.TryResolveEncoders"/>'s reason) — or null when it can, or before the probe.
@@ -627,14 +729,20 @@ public sealed class BulkItemViewModel : ObservableObject
     /// false the row behaves exactly as in Lossless: snap readout shown, cut and chip at <c>Snapped</c> (provisional
     /// while the snap is pending), eligibility from <c>Snapped</c>, and the T-120 "cut moved" note.
     /// </summary>
-    internal bool ExactCutApplies => _exactCut && _exactUnavailableReason is null;
+    internal bool ExactCutApplies => _exactCut && _exactUnavailableReason is null && _keyframeKindReason is null;
+
+    /// <summary>
+    /// T-223: why Exact cannot cut this row at its current intro - the keyframe the head would end on is not an IDR (see the field) -
+    /// or null when it can, when the answer has not come yet, or when the row's source is not H.264 or its probe cannot say.
+    /// </summary>
+    internal string? KeyframeKindReason => _keyframeKindReason;
 
     /// <summary>
     /// T-189: the before-Run statement of an Exact row whose source Exact cannot cut, in the run's own words
     /// (<see cref="BulkTrimEngine"/> writes the same sentence as the row warning when it falls back); null otherwise.
     /// </summary>
     private string? ExactFallbackNote =>
-        _exactCut && _exactUnavailableReason is { } reason
+        _exactCut && (_exactUnavailableReason ?? _keyframeKindReason) is { } reason
             ? $"{BulkTrimEngine.ExactFallbackPrefix} ({reason}) - cut snapped to the nearest keyframe"
             : null;
 
@@ -919,6 +1027,8 @@ public sealed class BulkItemViewModel : ObservableObject
         // handle is still pending, so the change-driven route skips it. Contract (SPEC-011 I158): every
         // ResolveSnap on a Bulk handle is followed by a frame request for that handle.
         RequestAllThumbnails();
+
+        RefreshKeyframeKind(); // T-223: the keyframes are known, so is the keyframe the head would end on
     }
 
     /// <summary>
@@ -930,6 +1040,7 @@ public sealed class BulkItemViewModel : ObservableObject
         _scanCts?.Cancel();
         _introGrabber?.Cancel();
         _outroGrabber?.Cancel();
+        CancelKindQuery();
     }
 
     /// <summary>The row's current scan task (for tests to await the throttled scans deterministically).</summary>
@@ -1080,6 +1191,11 @@ public sealed class BulkItemViewModel : ObservableObject
             or nameof(CutMarkerViewModel.Display))
         {
             RecomputeAll();
+        }
+
+        if (e.PropertyName == nameof(CutMarkerViewModel.Requested))
+        {
+            RefreshKeyframeKind(); // T-223: the keyframe the head ends on follows the intro
         }
 
         // T-108 / T-174: a change of the property that IS the cut re-grabs THAT handle's frame — Snapped in Lossless,

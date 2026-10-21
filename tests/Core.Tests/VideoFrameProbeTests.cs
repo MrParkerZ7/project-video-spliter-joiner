@@ -408,6 +408,18 @@ public sealed class VideoFrameProbeTests : IDisposable
                 : null;
             return Task.FromResult(times);
         }
+
+        /// <summary>The answer to "is the keyframe at HeadEnd an IDR?" (T-223): true (a closed GOP) unless a test scripts another.</summary>
+        public bool? IdrAnswer { get; set; } = true;
+
+        /// <summary>The keyframe times the engine asked about.</summary>
+        public List<TimeSpan> IdrAsked { get; } = new();
+
+        public Task<bool?> IsIdrKeyframeAsync(string path, TimeSpan keyframeTime, CancellationToken ct = default)
+        {
+            IdrAsked.Add(keyframeTime);
+            return Task.FromResult(IdrAnswer);
+        }
     }
 
     private static string Arg(IReadOnlyList<string> tokens, string name) => tokens[tokens.ToList().IndexOf(name) + 1];
@@ -540,6 +552,82 @@ public sealed class VideoFrameProbeTests : IDisposable
         result.FellBack.Should().BeTrue();
         probe.SnapAsked.Should().BeEmpty();
         runner.Commands.Should().BeEmpty();
+    }
+
+    // ---- T-223: the keyframe the head ends on must be an IDR (the probe's answer is scripted here) -------------------------
+
+    private const string NotAnIdr = "frame-exact cutting is not supported yet for this video's keyframe type";
+
+    private static MediaInfo Mpeg4Aac() => new(
+        S(60), "mov,mp4,m4a,3gp,3g2,mj2",
+        new[] { new StreamInfo(0, "mpeg4", "video", 1920, 1080, "yuv420p", null, null, "1/15360") },
+        new[] { new StreamInfo(1, "aac", "audio", null, null, null, 48000, 2, "1/48000") });
+
+    // serves-spec: SPEC-001#I70 - a keyframe that is not an IDR (false), or that the probe cannot classify (null), is a fall back with
+    // the keyframe-type reason BEFORE anything is written or run: no ffmpeg, no temp dir, no head. Asked once, at HeadEnd (8 s).
+    [Trait("serves-spec", "SPEC-001")]
+    [Theory]
+    [InlineData(false)]
+    [InlineData(null)]
+    public async Task SmartCutEngine_WhenTheHeadEndKeyframeIsNotProvablyAnIdr_FallsBackBeforeAnyRun(bool? answer)
+    {
+        var input = Placeholder("clip.mp4");
+        var output = Path.Combine(_dir, "cut.mp4");
+        var probe = new FrameProbe(H264Aac(), Grid2s(), firstFrame: S(7.5)) { IdrAnswer = answer };
+        var runner = new RecordingFakeRunner();
+
+        var result = await new SmartCutEngine(runner, probe).CutAsync(input, S(7.5), null, output);
+
+        result.FellBack.Should().BeTrue();
+        result.FallbackReason.Should().Be(NotAnIdr);
+        result.FallbackReason.Should().NotContainAny(new[] { "(", ")" }, "the row warning wraps the reason in parentheses already");
+        result.OutputPath.Should().BeNull();
+        result.ReencodedDuration.Should().Be(TimeSpan.Zero);
+        runner.Commands.Should().BeEmpty("nothing is re-encoded for a joint that cannot be clean");
+        probe.IdrAsked.Should().Equal(new[] { S(8) }, "asked once, about the keyframe the head ends on");
+        File.Exists(output).Should().BeFalse();
+        Directory.GetDirectories(_dir, ".vsj-smartcut-*").Should().BeEmpty("the question comes before the temp dir exists");
+    }
+
+    // serves-spec: SPEC-001#I70 / SPEC-001#I45 - an IDR keyframe (a closed GOP, the common case) cuts exactly as before.
+    [Trait("serves-spec", "SPEC-001")]
+    [Fact]
+    public async Task SmartCutEngine_WhenTheHeadEndKeyframeIsAnIdr_CutsExactlyAsBefore()
+    {
+        var input = Placeholder("clip.mp4");
+        var probe = new FrameProbe(H264Aac(), Grid2s(), firstFrame: S(7.5)) { IdrAnswer = true };
+        var runner = new ListCapturingRunner();
+
+        var result = await new SmartCutEngine(runner, probe).CutAsync(input, S(7.5), null, Path.Combine(_dir, "cut.mp4"));
+
+        result.FellBack.Should().BeFalse(result.FallbackReason);
+        runner.Commands.Should().HaveCount(2, "the head and the one concat");
+        probe.IdrAsked.Should().Equal(new[] { S(8) });
+    }
+
+    // serves-spec: SPEC-001#I70 - the question is only about a JOINT on H.264: not asked when there is no copied part (a start on a
+    // keyframe, or a start in the last GOP), nor for another codec (MPEG-4 part 2 is T-202's).
+    [Trait("serves-spec", "SPEC-001")]
+    [Fact]
+    public async Task SmartCutEngine_AsksNoIdrQuestion_WhereThereIsNoJointOrNoH264()
+    {
+        var input = Placeholder("clip.mp4");
+
+        var onKeyframe = new FrameProbe(H264Aac(), Grid2s(), firstFrame: S(8)) { IdrAnswer = false };
+        (await new SmartCutEngine(new RecordingFakeRunner(), onKeyframe).CutAsync(input, S(8), null, Path.Combine(_dir, "a.mp4")))
+            .Strategy.Should().Be(SmartCutStrategy.PureCopy);
+        onKeyframe.IdrAsked.Should().BeEmpty("a start on a keyframe is the lossless cut: no head, no joint");
+
+        var lastGop = new FrameProbe(H264Aac(), Grid2s().Take(30).ToList(), firstFrame: S(59)) { IdrAnswer = false }; // the last keyframe is 58 s
+        var lastResult = await new SmartCutEngine(new ListCapturingRunner(), lastGop).CutAsync(input, S(59), null, Path.Combine(_dir, "b.mp4"));
+        lastResult.Strategy.Should().Be(SmartCutStrategy.FullReencode);
+        lastResult.FallbackReason.Should().NotBe(NotAnIdr, "the head is the whole output: nothing is copied behind a keyframe");
+        lastGop.IdrAsked.Should().BeEmpty();
+
+        var mpeg4 = new FrameProbe(Mpeg4Aac(), Grid2s(), firstFrame: S(7.5)) { IdrAnswer = false };
+        var mpegResult = await new SmartCutEngine(new ListCapturingRunner(), mpeg4).CutAsync(input, S(7.5), null, Path.Combine(_dir, "c.mp4"));
+        mpegResult.FallbackReason.Should().NotBe(NotAnIdr);
+        mpeg4.IdrAsked.Should().BeEmpty("IDR is an H.264 notion");
     }
 
     // serves-spec: SPEC-001#I46 - a head that holds no video frame is a fall back with a reason, not a Done: the concat takes

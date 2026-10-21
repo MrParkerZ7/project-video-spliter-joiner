@@ -8,6 +8,14 @@ goal; `0.1.0` is the first end-to-end, shippable cut.
 ## [Unreleased]
 
 ### Fixed
+- **An Exact cut on an open-GOP H.264 video no longer writes a file that breaks after the joint.** Some H.264 videos (x264 with
+  its open-GOP setting, and some cameras) mark keyframes that are not independent pictures. The part Exact copies from such a
+  keyframe refers to frames before it, so the file came out with decoder errors and lost frames at the joint while the row said
+  it was done (measured: 2 decoder errors and 9 frames lost on a 12-second test video, 663 errors on a harder one). Exact now
+  checks the keyframe the copied part starts at and, when it is not an independent picture, cuts on the nearest keyframe instead
+  and says *frame-exact cutting is not supported yet for this video's keyframe type*; the Bulk Cut row says it before you press
+  Run. Videos whose keyframes are all independent pictures (what the default x264 settings and most editors write) are cut
+  exactly as before. The check is one short read of the keyframe, about 0.08 s on a 4K file.
 - **A 4K MP4 or MOV is ready to cut the moment it loads.** The list of keyframes that cuts snap to was found by reading
   the whole video file, so on a big 4K file the Split screen (cut snapping and Preparing), a Bulk Cut batch (its rows
   become runnable) and an Exact cut each waited for a read of every byte first: 0.6 s and 861 MB on a 2-minute 4K test
@@ -58,8 +66,8 @@ goal; `0.1.0` is the first end-to-end, shippable cut.
   come out as a corrupt file reported as done, and is now cut on the nearest keyframe too. HEVC still falls back to the
   nearest keyframe, as before. Two limits stay, both found at review and not built here: "no frame is lost or repeated"
   holds for constant-frame-rate, closed-GOP videos; a variable-frame-rate video (frames dropped here and there) can start
-  one keyframe interval early, in the lossless cut as well as in Exact, and an open-GOP H.264 video breaks after the
-  joint in Exact as before (T-223).
+  one keyframe interval early, in the lossless cut as well as in Exact. (The open-GOP H.264 case that was listed here
+  too is fixed: see the entry on open-GOP videos above.)
 - **A split part now starts on the keyframe the plan shows.** On a video with B-frames — what x264, x265 and OBS
   write by default — every part of a full split ended one keyframe interval late: cuts at 3 s and 6 s on a video
   with a keyframe every second gave parts of 4, 3 and 3 seconds instead of 3, 3 and 4, and a short clip whose last

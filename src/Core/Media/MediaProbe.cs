@@ -567,6 +567,78 @@ public sealed class MediaProbe : IMediaProbe, IVideoFrameProbe
         return inWindow.AsReadOnly();
     }
 
+    /// <summary>How many leading bytes of a keyframe packet are read for its NAL units (parameter sets and SEI come before the slice).</summary>
+    private const int KeyframeBytesRead = 16 * 1024;
+
+    /// <inheritdoc />
+    public async Task<bool?> IsIdrKeyframeAsync(string path, TimeSpan keyframeTime, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(path) || !File.Exists(path) || keyframeTime < TimeSpan.Zero)
+        {
+            return null;
+        }
+
+        // -read_intervals START%+#1: ffprobe seeks back to the keyframe at or before START and prints that one packet. START is a
+        // millisecond past the keyframe so the seek lands on it whichever way its printed time rounded, and the packet's own time is
+        // checked below: a keyframe that is not at the time asked (the list was wrong) is no answer.
+        var interval = string.Create(
+            CultureInfo.InvariantCulture, $"{(keyframeTime + FrameTimeTolerance).TotalSeconds:0.######}%+#1");
+        var args = FfmpegArgs.ForFfprobe()
+            .Raw(
+                "-v", "error",
+                "-select_streams", "v:0",
+                "-read_intervals", interval,
+                "-show_entries", "packet=pts_time,dts_time,flags,data",
+                "-show_data",
+                "-print_format", "json")
+            .Input(path);
+
+        string json;
+        try
+        {
+            json = await _ffprobe.RunJsonAsync(args, ct).ConfigureAwait(false);
+        }
+        catch (FfprobeException)
+        {
+            return null;
+        }
+
+        FfprobePacketsRoot? root;
+        try
+        {
+            root = JsonDeserialize<FfprobePacketsRoot>(json);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+
+        if (root?.Packets is not { Count: > 0 } packets)
+        {
+            return null;
+        }
+
+        var packet = packets[0];
+        if (!IsKeyframeFlag(packet.Flags)
+            || !TryParseSeconds(packet.PtsTime ?? packet.DtsTime, out var time)
+            || (time - keyframeTime).Duration() > IdrKeyframeTimeTolerance)
+        {
+            return null;
+        }
+
+        var kind = H264Packet.FirstPictureKind(
+            H264Packet.BytesFromHexDump(packet.Data, KeyframeBytesRead) ?? Array.Empty<byte>());
+        return kind switch
+        {
+            H264PictureKind.Idr => true,
+            H264PictureKind.NonIdr => false,
+            _ => null,
+        };
+    }
+
+    /// <summary>How far the packet <see cref="IsIdrKeyframeAsync"/> reads may be from the keyframe time it was asked about.</summary>
+    private static readonly TimeSpan IdrKeyframeTimeTolerance = TimeSpan.FromMilliseconds(2);
+
     /// <summary>
     /// The frame time of every video packet ffprobe lists when it reads <c>[from, readTo)</c> of <paramref name="path"/> (it seeks
     /// back to the key frame before <paramref name="from"/>, so earlier packets are listed too, in decode order), or null when

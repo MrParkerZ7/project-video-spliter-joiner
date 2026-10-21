@@ -146,8 +146,8 @@ public sealed class SmartCutLeadingPictureIntegrationTests : IDisposable
     /// One Exact cut through the real engine at <paramref name="start"/>. Whatever it does, it must never report Done with a head
     /// that is not the frames the shipped head had: either it falls back (nothing written, no temp dir, a stated reason), or the
     /// head file the engine wrote (the recording runner copies it out before the sweep) IS the shipped head, md5 for md5. (The
-    /// FINAL is not compared: on an open-GOP source the copied part's leading pictures are displayed inside the head's span, a joint
-    /// defect that is T-223's and was there before the head's seek changed.) Returns whether it fell back.
+    /// FINAL is not compared: the joint is SmartCutOpenGopIntegrationTests' and SmartCutJointIntegrityTests' to check, and an
+    /// open-GOP source no longer reaches this head check at all - T-223 makes it fall back first.) Returns whether it fell back.
     /// </summary>
     private async Task<bool> CutAndCheckAsync(string source, double start, string label)
     {
@@ -246,20 +246,22 @@ public sealed class SmartCutLeadingPictureIntegrationTests : IDisposable
         await CutAndCheckAsync(src, start, $"open GOP, Start {start}");
     }
 
-    // serves-spec: SPEC-001#I46 - the control on the same open-GOP file: a Start well inside a GOP (4 frames or more before the key
-    // frame) is cut exactly - the guard is for the leading pictures, it does not turn a whole file into fall backs.
+    // serves-spec: SPEC-001#I46 / SPEC-001#I70 - the same open-GOP file with a Start well inside a GOP (4 frames or more before the
+    // key frame). T-191 cut these exactly - the head is right there - and the control said so; T-223 found that the JOINT behind a
+    // non-IDR key frame is not (the copied part's frames refer to the GOP before it), so every one of these now falls back with the
+    // keyframe-type reason, before a head is written. The head check above stays the guard for the sources that do get that far.
     [Trait("serves-spec", "SPEC-001")]
     [SkippableTheory]
     [InlineData(1.5)]
     [InlineData(3.0)]
     [InlineData(6.4)]
-    public async Task AnOpenGopSource_WellInsideAGop_IsCutExactly(double start)
+    public async Task AnOpenGopSource_WellInsideAGop_FallsBack_BecauseItsKeyframeIsNotAnIdr(double start)
     {
         RequireBinaries();
         var src = await MakeAsync(Shape.OpenGop);
 
         var fellBack = await CutAndCheckAsync(src, start, $"open GOP, Start {start}");
 
-        fellBack.Should().BeFalse("far enough from the key frame, the input seek and the output seek give the same head");
+        fellBack.Should().BeTrue("the key frame the head ends on is a non-IDR I-frame, so the copied part is not self-contained (T-223)");
     }
 }

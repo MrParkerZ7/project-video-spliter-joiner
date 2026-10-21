@@ -119,6 +119,10 @@ public sealed class SmartCutProgressTests : IDisposable
                 : null;
             return Task.FromResult(times);
         }
+
+        // T-223: every keyframe of the scripted source is an IDR (a closed GOP), so the question never changes the events logged.
+        public Task<bool?> IsIdrKeyframeAsync(string path, TimeSpan keyframeTime, CancellationToken ct = default) =>
+            Task.FromResult<bool?>(true);
     }
 
     private enum RunEnd

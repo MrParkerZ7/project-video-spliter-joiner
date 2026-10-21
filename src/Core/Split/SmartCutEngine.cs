@@ -179,6 +179,19 @@ public sealed class SmartCutEngine : ISmartCutEngine
             }
         }
 
+        // T-223: the copied part starts at HeadEnd, and behind a keyframe that is not an IDR (an open GOP: x264 open-gop=1, some
+        // cameras) it is not self-contained - its frames refer to the GOP before it and the SPS/PPS are the head's - so the final
+        // printed decoder errors and lost frames at the joint with exit code 0. Asked per HeadEnd (a file can mix both), only
+        // where there is a joint (a FullReencode has no copied part), and before anything is written: a keyframe that is not
+        // provably an IDR (the probe could not say included) is a fall back, never an Exact cut on unknown ground.
+        if (plan.Strategy == SmartCutStrategy.HeadReencode
+            && _frames is not null
+            && IsH264(ok.Info)
+            && await _frames.IsIdrKeyframeAsync(inputPath, plan.HeadEnd!.Value, ct).ConfigureAwait(false) is not true)
+        {
+            return new SmartCutResult(null, plan.Strategy, FellBack: true, NotAnIdrKeyframeReason, TimeSpan.Zero);
+        }
+
         var outDir = Path.GetDirectoryName(Path.GetFullPath(outputPath))
             ?? throw new SplitException($"Cannot resolve an output directory for '{outputPath}'.");
         Directory.CreateDirectory(outDir);
@@ -275,6 +288,18 @@ public sealed class SmartCutEngine : ISmartCutEngine
     /// the source's video, and the file would be Done and have no picture. No parentheses (the row warning wraps the reason).
     /// </summary>
     internal const string NoPictureReason = "no video frame lies in the part to re-encode, so the cut would have no picture";
+
+    /// <summary>
+    /// Why a cut whose copied part would start at a keyframe that is not an IDR picture is not used (T-223, SPEC-001 I70). No
+    /// parentheses and no internal terms (the row warning wraps the reason in its own parentheses and the user reads it).
+    /// </summary>
+    public const string NotAnIdrKeyframeReason = "frame-exact cutting is not supported yet for this video's keyframe type";
+
+    /// <summary>True for an H.264 first video stream (the codec the IDR question is about).</summary>
+    private static bool IsH264(MediaInfo info) =>
+        info.HasVideo
+        && (string.Equals(info.VideoStreams[0].CodecName, "h264", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(info.VideoStreams[0].CodecName, "avc1", StringComparison.OrdinalIgnoreCase));
 
     /// <summary>
     /// Why a head that is not the source's frames is not used (T-191). No parentheses and no internal terms (the row warning

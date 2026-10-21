@@ -355,6 +355,9 @@ public sealed class SmartCutJointTimingIntegrationTests : IDisposable
 
         public Task<IReadOnlyList<TimeSpan>?> GetVideoFrameTimesAsync(string path, TimeSpan from, TimeSpan to, CancellationToken ct = default) =>
             _inner.GetVideoFrameTimesAsync(path, from, to, ct);
+
+        public Task<bool?> IsIdrKeyframeAsync(string path, TimeSpan keyframeTime, CancellationToken ct = default) =>
+            _inner.IsIdrKeyframeAsync(path, keyframeTime, ct);
     }
 
     // serves-spec: SPEC-001#I46 - the head check on real media, independent of the snap: the planned head [11.975, 12) holds no

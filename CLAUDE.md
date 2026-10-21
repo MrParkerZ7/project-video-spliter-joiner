@@ -112,7 +112,10 @@ A .NET 8 WPF app that splits and joins video **without re-encoding**. See [READM
   itself (two ffmpeg runs), and the cut starts on the first video frame at or after the requested time (T-190). The head
   seeks to its keyframe BEFORE it decodes (`-ss` before `-i`, T-191), and each run reports into its own slice of the row's
   fraction (`SmartCutCost`, the one cost function the Bulk Cut batch weight shares): never add the seek back after `-i`. The head is checked against the source (frame count and first frame) and a mismatch falls back
-  to the lossless cut: the input seek loses the leading pictures of an open-GOP / MPEG-4 key frame.
+  to the lossless cut: the input seek loses the leading pictures of an MPEG-4 key frame. The keyframe the head ends on must be an
+  IDR (`IVideoFrameProbe.IsIdrKeyframeAsync`, one ffprobe packet read, asked per `HeadEnd`): behind a non-IDR keyframe (an open-GOP
+  H.264 file) the copied part is not self-contained, so the cut falls back before anything is written, and the Bulk row asks the
+  same question before Run (T-223). Never treat the packet scan's `K` flag as "safe to cut here" for H.264.
   Do not add a re-encode branch to `SplitEngine`/`JoinEngine` or another re-encode path.
 - **No auto-detect.** The black/white/scene auto-detect feature was removed (no `Core/Detect`,
   no `SplitPointDetector`, no candidate UI). Do not reintroduce a detect layer or candidate ticks;

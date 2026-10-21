@@ -119,4 +119,8 @@ internal sealed class FfprobePacket
     // "___" for a non-keyframe. The 'K' marker (any position) means keyframe.
     [JsonPropertyName("flags")]
     public string? Flags { get; set; }
+
+    // The packet's bytes as ffprobe's -show_data hex dump; only the one-packet read of IsIdrKeyframeAsync asks for it (T-223).
+    [JsonPropertyName("data")]
+    public string? Data { get; set; }
 }
