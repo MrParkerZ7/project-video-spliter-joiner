@@ -496,14 +496,18 @@ public sealed class SmartCutEngine : ISmartCutEngine
     /// Copy-equivalent seconds per second of re-encoded video (T-191): a second of head the engine re-encodes costs this many
     /// times the wall time of a second it stream-copies. It weights the cut's two runs against each other
     /// (<see cref="SmartCutCost"/>), both in the row's own fraction (<c>w = h·k / (h·k + c)</c>) and in the Bulk Cut batch bar and
-    /// time left, which weigh an Exact row by <c>h·k + c</c>. Chosen from the bench's <c>smart</c> scenario on <c>4k</c>, <c>g10</c>
-    /// and <c>4k10m</c> (T-191's Build log): at each cut position the row's measured head share of the wall time, head over head plus
-    /// concat, is matched by <c>h·k / (h·k + c)</c> at a <c>k</c> of 38 to 244 (median 120, geometric mean 102), because a head
-    /// costs 0.6-1.9 s of wall time per second re-encoded and the concat 5-18 ms per second copied (its start-up included), and the
-    /// concat's cost depends on the disk and the bitrate. 100 is the round number in that range. It is approximate by nature and shapes only how the bars
-    /// move, never what is cut: the row's fraction is monotonic whatever it is.
+    /// time left, which weigh an Exact row by <c>h·k + c</c>. Chosen from the bench's <c>smart</c> scenario (T-191's and T-192's Build
+    /// logs): at each cut position the row's measured head share of the wall time, head over head plus concat, is matched by
+    /// <c>h·k / (h·k + c)</c>. T-191 fitted 38 to 244 (median 120, geometric mean 102) for a head at libx264's default <c>medium</c>
+    /// preset and chose 100. T-192 encodes the head at <c>veryfast</c> (<see cref="SmartCutArgsBuilder.X264HeadPreset"/>), 1.5-1.9
+    /// times faster, and re-measured it in one run with the medium head beside it: <c>k</c> 24 to 93 (median 57, geometric mean 51)
+    /// on <c>4k</c>, <c>1080</c>, <c>g10</c> and <c>4k10m</c> at their named positions, against 39 to 150 (median 96, geometric
+    /// mean 84) for the medium head of the same run, because a head now costs 0.2-0.6 s of wall time per second re-encoded and the
+    /// concat 3-18 ms per second copied (its start-up included), and the concat's cost depends on the disk and the bitrate. 50 is the
+    /// round number in that range. It is approximate by nature and shapes only how the bars move, never what is cut: the row's
+    /// fraction is monotonic whatever it is.
     /// </summary>
-    public const double EncodeCostFactor = 100d;
+    public const double EncodeCostFactor = 50d;
 
     /// <summary>
     /// The highest fraction a RUN may report (T-191). 1.0 is reported once, by the engine, after the output is in place - never by

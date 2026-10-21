@@ -65,6 +65,23 @@ public static class SmartCutArgsBuilder
     private const string HevcUnsupportedReason = "frame-exact cutting is not supported for HEVC/H.265 video yet";
 
     /// <summary>
+    /// The x264 preset of an H.264 head (T-192, SPEC-001 I72): <c>veryfast</c>, which keeps CABAC, B-frames and 8x8 transforms
+    /// (so the head stays High profile over a High source, which the concat output's <c>avcC</c> needs) and encodes faster than the
+    /// default <c>medium</c>. <c>ultrafast</c> is rejected: it declares
+    /// Constrained Baseline over a High source. Hardware encoders are T-203.
+    /// </summary>
+    public const string X264HeadPreset = "veryfast";
+
+    /// <summary>
+    /// The x264 rate factor of an H.264 head (T-192, SPEC-001 I72). <c>veryfast</c> at the default 23 scores 1.2-1.6 dB PSNR below the
+    /// default head of the same frames. 20 is the largest whole value that keeps the floor - no more than 0.5 dB below a
+    /// default-settings head - on every fixture measured: the bench's <c>4k</c>, <c>1080</c> and <c>g10</c> (+0.8 to +1.0 dB) and the
+    /// test suite's 320x240 sources with a 2 s and a 10 s GOP (+0.09 and -0.01 dB); 21 held on the bench fixtures but is 0.76 dB below
+    /// on the 10 s GOP test source. The head's size grows by about a fifth, which does not matter at one GOP.
+    /// </summary>
+    public const int X264HeadCrf = 20;
+
+    /// <summary>
     /// Why Exact refuses a source whose format <c>start_time</c> is not zero (T-190), in the words the Bulk Cut row and the
     /// run's warning show. No parentheses: the row warning wraps the reason in its own (T-189's copy rule).
     /// </summary>
@@ -270,6 +287,12 @@ public static class SmartCutArgsBuilder
         if (info.HasVideo)
         {
             args.Raw("-c:v", videoEncoder);
+
+            // T-192: libx264 only. The head is at most one GOP, so its speed and its quality matter and its size does not.
+            if (string.Equals(videoEncoder, "libx264", StringComparison.Ordinal))
+            {
+                args.Raw("-preset", X264HeadPreset, "-crf", X264HeadCrf.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            }
 
             // Reproduce the source's pixel format + resolution so the concat demuxer accepts the join.
             var v = info.VideoStreams[0];

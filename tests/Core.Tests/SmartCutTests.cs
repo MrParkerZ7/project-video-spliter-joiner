@@ -167,9 +167,11 @@ public sealed class SmartCutTests
         before.Skip(before.IndexOf("-y")).Should().Equal(new[]
         {
             "-y", "-i", @"C:\v\clip.mp4", "-ss", "5", "-t", "3", "-map", "0",
-            "-c:v", "libx264", "-pix_fmt", "yuv420p", "-s", "1920x1080",
+            "-c:v", "libx264", "-preset", SmartCutArgsBuilder.X264HeadPreset,
+            "-crf", SmartCutArgsBuilder.X264HeadCrf.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            "-pix_fmt", "yuv420p", "-s", "1920x1080",
             "-c:a", "aac", "-ar", "48000", "-ac", "2", @"C:\v\head.mp4",
-        }, "the codec, pix_fmt, size, sample-rate and channel tokens are unchanged");
+        }, "the codec, pix_fmt, size, sample-rate and channel tokens are unchanged; T-192 (a recorded contract change) put the libx264 preset and crf after the codec");
     }
 
     // SPEC-001#I44 (T-190) - the kept part is no longer copied into a tail file: the concat reads the SOURCE itself from the

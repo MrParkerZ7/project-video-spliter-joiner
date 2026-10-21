@@ -7,6 +7,14 @@ goal; `0.1.0` is the first end-to-end, shippable cut.
 
 ## [Unreleased]
 
+### Changed
+- **The piece an Exact cut re-encodes is made 1.5 to 1.9 times faster.** Exact re-encodes the few seconds between your cut and the
+  next keyframe and copies the rest. That piece is now encoded with x264's `veryfast` setting at a quality factor chosen so that
+  it scores no more than half a decibel below the old piece (it scored equal or better on every test video measured), and its
+  profile is never lower than the video's own. On a 4K test video: 1.59 s to 0.90 s at 10.5 s, 5.23 s to 3.00 s for a 7.5-second
+  piece in a video with a 10-second keyframe gap. The piece is about a fifth larger, which does not matter at this length. The
+  batch bar and *~Ns left* weigh the piece accordingly.
+
 ### Fixed
 - **An Exact cut that trims only the end now keeps the end you set.** When the intro sat on a keyframe (or at 0) and the outro
   inside a group of pictures, the cut quietly fell back to the keyframe-snapped lossless cut and the outro moved to a
