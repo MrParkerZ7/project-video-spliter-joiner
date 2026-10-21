@@ -1,6 +1,7 @@
 using FluentAssertions;
 using VideoSplitJoiner.Core.Bulk;
 using VideoSplitJoiner.Core.Ffmpeg;
+using VideoSplitJoiner.Core.Join;
 using VideoSplitJoiner.Core.Media;
 using VideoSplitJoiner.Core.Split;
 using Xunit;
@@ -294,6 +295,236 @@ public sealed class SmartCutTwoRunTests : IDisposable
         runner.Commands.Should().BeEmpty();
         result.Strategy.Should().Be(SmartCutStrategy.PureCopy);
         result.FellBack.Should().BeTrue();
+    }
+
+    // ---- T-224: a start on a keyframe with the end inside a GOP is the joint without its head ------------------------------
+
+    // serves-spec: SPEC-001#I71 - the end-trim list is exactly these three lines: the source, the keyframe it starts on, the end.
+    [Trait("serves-spec", "SPEC-001")]
+    [Fact]
+    public void RenderEndTrimList_EmitsTheSourceItsInpointAndItsOutpoint_AndNothingElse()
+    {
+        var list = SmartCutArgsBuilder.RenderEndTrimList(@"C:\videos\clip.mp4", S(8), S(13.0166667));
+
+        list.Should().Be("file 'C:\\videos\\clip.mp4'\ninpoint 8\noutpoint 13.016667\n", "seconds rounded to 6 places, like the joint list");
+    }
+
+    // serves-spec: SPEC-001#I71 - a single quote is escaped the concat-demuxer way, and a relative path is made absolute.
+    [Trait("serves-spec", "SPEC-001")]
+    [Fact]
+    public void RenderEndTrimList_EscapesASingleQuote_AndMakesARelativePathAbsolute()
+    {
+        SmartCutArgsBuilder.RenderEndTrimList(@"C:\videos\Dad's clip.mp4", S(2), S(3)).Should().Contain("file 'C:\\videos\\Dad'\\''s clip.mp4'\n");
+        SmartCutArgsBuilder.RenderEndTrimList(@"sub\clip.mp4", S(2), S(3)).Should().Contain("file '" + Path.GetFullPath(@"sub\clip.mp4") + "'\n");
+    }
+
+    // serves-spec: SPEC-001#I71 - a blank source is a programming error, not a list.
+    [Trait("serves-spec", "SPEC-001")]
+    [Theory]
+    [InlineData("")]
+    [InlineData(" ")]
+    public void RenderEndTrimList_RejectsABlankSource(string source)
+    {
+        var act = () => SmartCutArgsBuilder.RenderEndTrimList(source, S(2), S(3));
+
+        act.Should().Throw<ArgumentException>();
+    }
+
+    // serves-spec: SPEC-001#I71 - the keyframe at 8 s, an end at 13 s inside the GOP of 12-14 s: ONE run, the concat of the source
+    // itself (no head, no encoder, no tail file), the list says inpoint 8 / outpoint 13, the result is a produced file that
+    // re-encoded nothing and started on the keyframe.
+    [Trait("serves-spec", "SPEC-001")]
+    [Fact]
+    public async Task SmartCutEngine_AStartOnAKeyframeWithAnEndInsideAGop_IsOneConcatOfTheSourceItself()
+    {
+        var input = Placeholder("it's clip.mp4");
+        var output = Path.Combine(_dir, "cut.mp4");
+        var runner = new ListCapturingRunner();
+        var engine = new SmartCutEngine(runner, new FixedProbe(Info(0), Grid2s()));
+
+        var result = await engine.CutAsync(input, S(8), S(13), output);
+
+        result.FellBack.Should().BeFalse(result.FallbackReason);
+        result.OutputPath.Should().Be(output);
+        result.Strategy.Should().Be(SmartCutStrategy.PureCopy);
+        result.ReencodedDuration.Should().Be(TimeSpan.Zero);
+        result.EffectiveStart.Should().Be(S(8));
+        result.EndSnapped.Should().BeFalse();
+        runner.Commands.Should().ContainSingle("no head encode");
+        JoinArgsBuilder.SatisfiesCopyInvariant(runner.Commands[0]).Should().BeTrue("a stream copy through the unchanged ConcatCopy");
+        runner.Lists.Should().ContainSingle().Which.Should().Be(
+            "file '" + Path.GetFullPath(input).Replace("'", "'\\''", StringComparison.Ordinal) + "'\ninpoint 8\noutpoint 13\n");
+        File.Exists(output).Should().BeTrue();
+        Directory.GetDirectories(_dir, ".vsj-smartcut-*").Should().BeEmpty("the temp dir is swept in a finally");
+    }
+
+    // serves-spec: SPEC-001#I71 / SPEC-001#I69 - its one run owns the whole row's fraction: never backwards, 1.0 once, at the end.
+    [Trait("serves-spec", "SPEC-001")]
+    [Fact]
+    public async Task SmartCutEngine_TheEndTrim_ReportsItsOneRunAcrossTheRow_AndOneAtTheEnd()
+    {
+        var input = Placeholder("clip.mp4");
+        var progress = new RecordingProgress<double>();
+        var runner = new ListCapturingRunner();
+        var engine = new SmartCutEngine(runner, new FixedProbe(Info(0), Grid2s()));
+
+        await engine.CutAsync(input, S(8), S(13), Path.Combine(_dir, "cut.mp4"), progress);
+
+        progress.Reports.Should().NotBeEmpty();
+        progress.Reports.Should().BeInAscendingOrder("a row's fraction never goes backwards");
+        progress.Reports.Count(p => p >= 1d).Should().Be(1, "1.0 is reported once, after the output is in place");
+        progress.Reports[^1].Should().Be(1d);
+    }
+
+    // serves-spec: SPEC-001#I71 / SPEC-001#I40 - where the lossless cut IS exact the engine hands the row back with zero runs and
+    // says nothing about the end: an end on a keyframe (2 s grid: 12), an end at the file's end, within the planner's 10 ms of it
+    // or past it, and no end at all.
+    [Trait("serves-spec", "SPEC-001")]
+    [Theory]
+    [InlineData(8.0, 12.0)]
+    [InlineData(8.0, 12.005)]
+    [InlineData(8.0, 59.995)]
+    [InlineData(8.0, 60.0)]
+    [InlineData(8.0, double.NaN)]
+    public async Task SmartCutEngine_AnEndOnAKeyframeOrAtTheEndOfTheFile_IsStillPureCopy_WithZeroRuns(double start, double end)
+    {
+        var input = Placeholder("clip.mp4");
+        var runner = new RecordingFakeRunner();
+        var engine = new SmartCutEngine(runner, new FixedProbe(Info(0), Grid2s()));
+
+        var result = await engine.CutAsync(input, S(start), double.IsNaN(end) ? null : S(end), Path.Combine(_dir, "cut.mp4"));
+
+        runner.Commands.Should().BeEmpty();
+        result.Strategy.Should().Be(SmartCutStrategy.PureCopy);
+        result.FellBack.Should().BeTrue();
+        result.FallbackReason.Should().Contain("already on a keyframe");
+        result.EndSnapped.Should().BeFalse("the lossless cut ends where it was asked to");
+        result.EffectiveStart.Should().BeNull();
+        Directory.GetDirectories(_dir, ".vsj-smartcut-*").Should().BeEmpty();
+    }
+
+    // serves-spec: SPEC-001#I71 / SPEC-001#I40 - a start up to 10 ms past a keyframe is PureCopy (the planner's tolerance): the copy
+    // starts on THAT keyframe, and the list names it, not the request.
+    [Trait("serves-spec", "SPEC-001")]
+    [Fact]
+    public async Task SmartCutEngine_ARequestJustPastAKeyframe_StartsTheCopyOnThatKeyframe()
+    {
+        var input = Placeholder("clip.mp4");
+        var runner = new ListCapturingRunner();
+        var engine = new SmartCutEngine(runner, new FixedProbe(Info(0), Grid2s()));
+
+        var result = await engine.CutAsync(input, S(8.004), S(13), Path.Combine(_dir, "cut.mp4"));
+
+        result.FellBack.Should().BeFalse(result.FallbackReason);
+        result.EffectiveStart.Should().Be(S(8), "the file starts on the keyframe, up to 10 ms before the request");
+        runner.Lists.Should().ContainSingle().Which.Should().Contain("inpoint 8\n").And.Contain("outpoint 13\n");
+    }
+
+    // serves-spec: SPEC-001#I71 / SPEC-001#I46 - a source Exact does not cut keeps the lossless cut with an end inside a GOP too, and
+    // now says the end snaps: the same gate and the same reason as every other Exact fall back, zero runs, nothing created.
+    [Trait("serves-spec", "SPEC-001")]
+    [Theory]
+    [InlineData(1.4, "h264", "aac")]
+    [InlineData(0.0, "hevc", "aac")]
+    [InlineData(0.0, "h264", "pcm_s24le")]
+    public async Task SmartCutEngine_AnEndTrimOnASourceExactDoesNotCut_FallsBackWithTheReason_AndSaysTheEndSnaps(
+        double formatStart, string video, string audio)
+    {
+        var input = Placeholder("camera.mov");
+        var runner = new RecordingFakeRunner();
+        var engine = new SmartCutEngine(runner, new FixedProbe(Info(formatStart, video, audio), Grid2s()));
+
+        var result = await engine.CutAsync(input, S(4), S(9), Path.Combine(_dir, "sub", "cut.mov"));
+
+        result.FellBack.Should().BeTrue();
+        result.Strategy.Should().Be(SmartCutStrategy.PureCopy);
+        result.EndSnapped.Should().BeTrue("the lossless cut ends at a keyframe, not at 9 s");
+        result.FallbackReason.Should().NotBeNullOrWhiteSpace().And.NotContain("already on a keyframe");
+        if (formatStart != 0)
+        {
+            result.FallbackReason.Should().Be(StartTimeReason);
+        }
+
+        runner.Commands.Should().BeEmpty();
+        Directory.Exists(Path.Combine(_dir, "sub")).Should().BeFalse("nothing is created for a source Exact refuses");
+    }
+
+    // serves-spec: SPEC-001#I71 / SPEC-001#I47 - a start on a keyframe with NO end on a source Exact does not cut is the silent
+    // fall back it always was: the lossless cut is exact, so there is nothing to say.
+    [Trait("serves-spec", "SPEC-001")]
+    [Fact]
+    public async Task SmartCutEngine_ARefusedSourceWithNoEnd_StaysAQuietPureCopy()
+    {
+        var input = Placeholder("camera.mov");
+        var engine = new SmartCutEngine(new RecordingFakeRunner(), new FixedProbe(Info(1.4), Grid2s()));
+
+        var result = await engine.CutAsync(input, S(4), null, Path.Combine(_dir, "cut.mov"));
+
+        result.EndSnapped.Should().BeFalse();
+        result.FallbackReason.Should().Contain("already on a keyframe");
+    }
+
+    private sealed class EndTrimRunner : IFfmpegRunner
+    {
+        private readonly bool _exitNonZero;
+        private readonly bool _cancel;
+
+        public EndTrimRunner(bool exitNonZero = false, bool cancel = false)
+        {
+            _exitNonZero = exitNonZero;
+            _cancel = cancel;
+        }
+
+        public Task<FfmpegResult> RunAsync(
+            FfmpegArgs args, TimeSpan? totalDuration = null, IProgress<double>? progress = null, CancellationToken ct = default)
+        {
+            if (_cancel)
+            {
+                throw new OperationCanceledException(ct);
+            }
+
+            return Task.FromResult(_exitNonZero
+                ? new FfmpegResult(1, new List<string> { "concat: boom" }.AsReadOnly())
+                : new FfmpegResult(0, new List<string>().AsReadOnly())); // exits 0 and writes no final file
+        }
+    }
+
+    // serves-spec: SPEC-001#I71 / SPEC-001#I47 - the concat fails (non-zero, or 0 with no final file): a SplitException that names the
+    // step, nothing at the destination, an existing destination untouched, no temp dir.
+    [Trait("serves-spec", "SPEC-001")]
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task SmartCutEngine_WhenTheEndTrimFails_ThrowsAnError_AndLeavesNothingBehind(bool exitNonZero)
+    {
+        var input = Placeholder("clip.mp4");
+        var output = Path.Combine(_dir, "cut.mp4");
+        await File.WriteAllTextAsync(output, "an earlier result");
+        var engine = new SmartCutEngine(new EndTrimRunner(exitNonZero), new FixedProbe(Info(0), Grid2s()));
+
+        var act = () => engine.CutAsync(input, S(8), S(13), output);
+
+        (await act.Should().ThrowAsync<SplitException>()).Which.Message.Should().Contain("while cutting the end");
+        File.ReadAllText(output).Should().Be("an earlier result", "the final is moved into place only after it exists");
+        Directory.GetDirectories(_dir, ".vsj-smartcut-*").Should().BeEmpty("the temp dir is swept in a finally");
+    }
+
+    // serves-spec: SPEC-001#I71 / SPEC-001#I47 - a cancelled end trim leaves no temp dir and no output.
+    [Trait("serves-spec", "SPEC-001")]
+    [Fact]
+    public async Task SmartCutEngine_WhenTheEndTrimIsCancelled_LeavesNothingBehind()
+    {
+        var input = Placeholder("clip.mp4");
+        var output = Path.Combine(_dir, "cut.mp4");
+        using var cts = new CancellationTokenSource();
+        await cts.CancelAsync();
+        var engine = new SmartCutEngine(new EndTrimRunner(cancel: true), new FixedProbe(Info(0), Grid2s()));
+
+        var act = () => engine.CutAsync(input, S(8), S(13), output, null, cts.Token);
+
+        await act.Should().ThrowAsync<OperationCanceledException>();
+        File.Exists(output).Should().BeFalse();
+        Directory.GetDirectories(_dir, ".vsj-smartcut-*").Should().BeEmpty();
     }
 
     // ---- The batch: a lossless cut, the row's warning ---------------------------------------------------------------------

@@ -310,10 +310,11 @@ public sealed class BulkTrimEngine : IBulkTrimEngine
                         // one, and it was written over the source. Silence is least acceptable exactly
                         // where the original is destroyed.
                         if (exact.FallbackReason is { } fbReason
-                            && exact.Strategy != SmartCutStrategy.PureCopy)
+                            && (exact.Strategy != SmartCutStrategy.PureCopy || exact.EndSnapped))
                         {
                             // Only worth telling the user when exact was genuinely unavailable - an
-                            // already-on-a-keyframe cut is exact either way and needs no note.
+                            // already-on-a-keyframe cut is exact either way and needs no note, unless the
+                            // end it was asked to keep sits inside a GOP and the lossless cut snaps it (T-224).
                             rowWarnings = new[] { $"{ExactFallbackPrefix} ({fbReason}) - cut snapped to the nearest keyframe" };
                         }
                     }

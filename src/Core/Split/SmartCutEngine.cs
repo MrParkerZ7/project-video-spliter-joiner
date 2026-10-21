@@ -14,7 +14,13 @@ namespace VideoSplitJoiner.Core.Split;
 /// Where the produced file really starts in the source (T-190): the requested start moved up to the first source video
 /// frame at or after it, so at most one frame later (33 ms at 30 fps) and equal to the request when it already sat on a
 /// frame or the source cannot be asked. Null unless a file was produced. A caller that shows the cut time (T-196) reads
-/// this, not the time it asked for.
+/// this, not the time it asked for. For a cut that only trims the end (T-224) it is the keyframe the file starts on.
+/// </param>
+/// <param name="EndSnapped">
+/// T-224: true when the request starts on a keyframe (so <paramref name="Strategy"/> is <see cref="SmartCutStrategy.PureCopy"/>)
+/// but ends inside a GOP and the engine could not cut it exactly (<paramref name="FallbackReason"/> says why): the lossless cut
+/// the caller falls back to ends at a keyframe, not at the end that was asked for, which is worth telling the user. False for a
+/// start on a keyframe with the end on one too, or with no end - there the lossless cut is exact and needs no note.
 /// </param>
 public sealed record SmartCutResult(
     string? OutputPath,
@@ -22,7 +28,8 @@ public sealed record SmartCutResult(
     bool FellBack,
     string? FallbackReason,
     TimeSpan ReencodedDuration,
-    TimeSpan? EffectiveStart = null);
+    TimeSpan? EffectiveStart = null,
+    bool EndSnapped = false);
 
 /// <summary>
 /// Frame-exact cutting (T-124, epic G-042): produce <c>[start, end)</c> starting at the requested time, to the frame,
@@ -134,27 +141,34 @@ public sealed class SmartCutEngine : ISmartCutEngine
         var keyframes = await _probe.GetKeyframesAsync(inputPath, ct).ConfigureAwait(false);
         var plan = SmartCutPlanner.Plan(start, end, keyframes);
 
-        // Already on a keyframe: the lossless path yields exactly this - hand back to it rather than
-        // re-encoding for no reason.
-        if (plan.Strategy == SmartCutStrategy.PureCopy)
+        // T-224: a start on a keyframe is a PureCopy whatever the end is, and the lossless cut ends at a keyframe - so with an end
+        // inside a GOP it would snap the end the user set. That one case is not handed back: it is the joint without its head.
+        var endTrim = plan.Strategy == SmartCutStrategy.PureCopy && EndIsInsideAGop(plan.End, keyframes, ok.Info.Duration);
+
+        // Already on a keyframe, and so is the end (or there is none): the lossless path yields exactly this - hand back to it
+        // rather than re-encoding for no reason.
+        if (plan.Strategy == SmartCutStrategy.PureCopy && !endTrim)
         {
             return new SmartCutResult(null, plan.Strategy, FellBack: true,
                 "the requested time is already on a keyframe — the lossless cut is exact here",
                 TimeSpan.Zero);
         }
 
-        // Only re-encode when we can genuinely reproduce the source's streams.
+        // Only re-encode when we can genuinely reproduce the source's streams. The end trim re-encodes nothing, but it asks the
+        // same question: the Bulk Cut row decides from this one predicate whether it shows the end as requested, so the row and
+        // the run must not disagree (SPEC-001 I71).
         if (!SmartCutArgsBuilder.TryResolveEncoders(ok.Info, out var vEnc, out var aEnc, out var why, inputPath, outputPath))
         {
-            return new SmartCutResult(null, plan.Strategy, FellBack: true, why, TimeSpan.Zero);
+            return new SmartCutResult(null, plan.Strategy, FellBack: true, why, TimeSpan.Zero, EndSnapped: endTrim);
         }
 
         // T-190: start ON a frame. The first source video frame at or after the request (a frame within a millisecond before
         // it counts as at it) becomes the start BEFORE the head is built, so the head's frame grid is the copied part's.
         // The plan is made again from it: a start within a frame of a keyframe becomes PureCopy (the lossless cut is exact
         // there), and one between the last frame and the end of the range stays as it was. Asked only now, so a source Exact
-        // refuses costs no ffprobe.
-        if (_frames is not null && ok.Info.HasVideo
+        // refuses costs no ffprobe. An end trim starts on a keyframe, which is a frame: nothing to snap.
+        if (!endTrim
+            && _frames is not null && ok.Info.HasVideo
             && await _frames.FirstVideoFrameAtOrAfterAsync(inputPath, start, ct).ConfigureAwait(false) is { } firstFrame
             && firstFrame != start
             && (end is not { } endTime || firstFrame < endTime))
@@ -173,9 +187,14 @@ public sealed class SmartCutEngine : ISmartCutEngine
             plan = SmartCutPlanner.Plan(start, end, keyframes);
             if (plan.Strategy == SmartCutStrategy.PureCopy)
             {
-                return new SmartCutResult(null, plan.Strategy, FellBack: true,
-                    "the first frame at or after the requested time is a keyframe — the lossless cut is exact here",
-                    TimeSpan.Zero);
+                // The snapped start sits on a keyframe: with the end inside a GOP that is an end trim too (T-224).
+                endTrim = EndIsInsideAGop(plan.End, keyframes, ok.Info.Duration);
+                if (!endTrim)
+                {
+                    return new SmartCutResult(null, plan.Strategy, FellBack: true,
+                        "the first frame at or after the requested time is a keyframe — the lossless cut is exact here",
+                        TimeSpan.Zero);
+                }
             }
         }
 
@@ -183,7 +202,8 @@ public sealed class SmartCutEngine : ISmartCutEngine
         // cameras) it is not self-contained - its frames refer to the GOP before it and the SPS/PPS are the head's - so the final
         // printed decoder errors and lost frames at the joint with exit code 0. Asked per HeadEnd (a file can mix both), only
         // where there is a joint (a FullReencode has no copied part), and before anything is written: a keyframe that is not
-        // provably an IDR (the probe could not say included) is a fall back, never an Exact cut on unknown ground.
+        // provably an IDR (the probe could not say included) is a fall back, never an Exact cut on unknown ground. An end trim has
+        // no head and no joint: its file is the source's own packets from the keyframe, as the lossless cut's is.
         if (plan.Strategy == SmartCutStrategy.HeadReencode
             && _frames is not null
             && IsH264(ok.Info)
@@ -202,6 +222,12 @@ public sealed class SmartCutEngine : ISmartCutEngine
         try
         {
             var ext = Path.GetExtension(outputPath);
+
+            if (endTrim)
+            {
+                return await TrimEndAsync(inputPath, plan, keyframes, outputPath, tempDir, progress, ct).ConfigureAwait(false);
+            }
+
             var headPath = Path.Combine(tempDir, "head" + ext);
             var finalTemp = Path.Combine(tempDir, "final" + ext);
 
@@ -281,6 +307,61 @@ public sealed class SmartCutEngine : ISmartCutEngine
         {
             TrySweep(tempDir);
         }
+    }
+
+    /// <summary>
+    /// True when <paramref name="end"/> is a time inside a GOP: there is one, it is before the end of the file and it is not on a
+    /// keyframe (within <see cref="SmartCutPlanner.OnKeyframeTolerance"/>). A lossless cut ends at a keyframe, so only then does it
+    /// not end where it was asked to (T-224); an end on a keyframe, or at the end of the file, is exact either way.
+    /// </summary>
+    private static bool EndIsInsideAGop(TimeSpan? end, IReadOnlyList<TimeSpan> keyframes, TimeSpan duration) =>
+        end is { } e
+        && duration - e > SmartCutPlanner.OnKeyframeTolerance
+        && !SmartCutPlanner.IsOnKeyframe(e, keyframes);
+
+    /// <summary>
+    /// A cut that starts on a keyframe and ends inside a GOP (T-224, SPEC-001 I71): the Exact joint without its head. One concat of
+    /// the source itself, <c>inpoint</c> the keyframe the cut starts on and <c>outpoint</c> the requested end
+    /// (<see cref="SmartCutArgsBuilder.RenderEndTrimList"/>) - a stream copy through the unchanged
+    /// <see cref="JoinArgsBuilder.ConcatCopy"/>, so nothing is re-encoded and the kept bytes are written once. The end is a decoding
+    /// time to the concat demuxer, so on a source with B-frames the file keeps up to <c>has_b_frames</c> frames past it (T-220), as
+    /// the end of every Exact cut with an end does.
+    /// </summary>
+    private async Task<SmartCutResult> TrimEndAsync(
+        string inputPath,
+        SmartCutPlan plan,
+        IReadOnlyList<TimeSpan> keyframes,
+        string outputPath,
+        string tempDir,
+        IProgress<double>? progress,
+        CancellationToken ct)
+    {
+        // The lossless cut starts on the keyframe the request sits on (within the planner's 10 ms): so does this one. The keyframe's
+        // own time, not the request, because the demuxer's seek to an inpoint a few ms past it still lands on the keyframe and the
+        // list should say what happens.
+        var inpoint = keyframes.OrderBy(k => (k - plan.Start).Duration()).First();
+        var end = plan.End!.Value;
+
+        var listPath = Path.Combine(tempDir, "concat.txt");
+        await File.WriteAllTextAsync(listPath, SmartCutArgsBuilder.RenderEndTrimList(inputPath, inpoint, end), ct).ConfigureAwait(false);
+
+        var finalTemp = Path.Combine(tempDir, "final" + Path.GetExtension(outputPath));
+        var rowProgress = new RowProgress(progress);
+
+        // ffmpeg's time= counts the concat's output time, 0 .. End - inpoint: its one run owns the whole row.
+        var run = await _runner.RunAsync(
+            JoinArgsBuilder.ConcatCopy(listPath, finalTemp), end - inpoint, rowProgress.Slice(0d, 1d), ct).ConfigureAwait(false);
+        if (run.ExitCode != 0 || !File.Exists(finalTemp))
+        {
+            throw new SplitException(
+                $"Exact cut failed while cutting the end of '{Path.GetFileName(inputPath)}'.");
+        }
+
+        rowProgress.Reach(1d);
+        MoveIntoPlace(finalTemp, outputPath);
+        rowProgress.Complete();
+
+        return new SmartCutResult(outputPath, plan.Strategy, false, null, TimeSpan.Zero, inpoint);
     }
 
     /// <summary>

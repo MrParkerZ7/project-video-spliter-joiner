@@ -297,6 +297,32 @@ public sealed class CutPrecisionRoutingTests
         finally { Cleanup(dir); }
     }
 
+    // T-224 / SPEC-002#I50 - the one PureCopy fall back that IS worth a note: the start is on a keyframe but the end sits inside a GOP
+    // and Exact could not cut it, so the lossless cut ends at a keyframe, not where the user set the outro.
+    [Trait("serves-spec", "SPEC-002")]
+    [Fact]
+    public async Task AStartOnAKeyframe_WhoseEndSnaps_FallsBackWithTheReasonInItsWarning()
+    {
+        var dir = NewDir();
+        try
+        {
+            var split = new FakeSplitEngine();
+            var smart = new FakeSmartCutEngine
+            {
+                ResultFactory = _ => new SmartCutResult(
+                    null, SmartCutStrategy.PureCopy, FellBack: true, "unsupported codec", TimeSpan.Zero, EndSnapped: true),
+            };
+
+            var result = await RunAsync(
+                dir, new BulkTrimOptions(Precision: CutPrecision.Exact), split, smart, "a.mp4");
+
+            split.CallCount.Should().Be(1, "the row is cut losslessly");
+            result.Items.Single().Warnings.Should().ContainSingle().Which.Should().Be(
+                $"{BulkTrimEngine.ExactFallbackPrefix} (unsupported codec) - cut snapped to the nearest keyframe");
+        }
+        finally { Cleanup(dir); }
+    }
+
     // ---- The rest of the batch contract applies identically to an Exact row (I52) --------------
 
     // SPEC-002#I52 (progress clause) - an exact row is reported through the SAME per-row reporter the

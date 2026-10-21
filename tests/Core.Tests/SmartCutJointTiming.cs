@@ -176,6 +176,9 @@ internal static class SmartCutJointTiming
     /// <summary>The stream's own <c>start_time</c> (seconds), as ffprobe reports it.</summary>
     public static Task<double> StreamStartAsync(string path, string selector) => EntryAsync(path, selector, "stream", "start_time");
 
+    /// <summary>The stream's own <c>duration</c> (seconds), as ffprobe reports it (T-224).</summary>
+    public static Task<double> StreamDurationAsync(string path, string selector) => EntryAsync(path, selector, "stream", "duration");
+
     /// <summary>The video stream's <c>has_b_frames</c>: how many frames the decoder reorders.</summary>
     public static async Task<int> HasBFramesAsync(string path)
     {

@@ -96,6 +96,7 @@ public sealed class ExactBatchWeightTests : IDisposable
     [InlineData(5.0, 30.0, 1.0, 24.0)]      // the same with an outro: copy [6, 30)
     [InlineData(6.0, null, 0.0, 54.0)]      // on a keyframe: the lossless cut is exact, all copy
     [InlineData(6.005, null, 0.0, 53.995)]  // 5 ms past a keyframe: within the planner's tolerance, still a pure copy
+    [InlineData(6.0, 31.0, 0.0, 25.0)]      // on a keyframe, the outro inside a GOP: the engine copies [6, 31) exactly since T-224
     [InlineData(5.0, 5.5, 0.5, 0.0)]        // no keyframe inside [5, 5.5): re-encode the whole range
     public async Task AnExactRow_WeighsTheCostOfThePlannersPlan(double intro, double? outro, double reencoded, double copied)
     {
@@ -108,6 +109,26 @@ public sealed class ExactBatchWeightTests : IDisposable
         weight.Should().BeApproximately((reencoded * K) + copied, 1e-3, "h·k + c (a TimeSpan is whole ticks, times the factor)");
         weight.Should().BeApproximately(Expected(row, outro), 1e-9, "the Core cost function of SmartCutPlanner.Plan on the row's keyframes");
         row.ExactCutCost.Should().BeApproximately(weight, 1e-12);
+    }
+
+    // serves-spec: SPEC-011#I158 / SPEC-011#I164 / SPEC-011#I165 - T-224: a row Exact cuts whose intro is on a keyframe (or at 0) and whose
+    // outro is inside a GOP shows, judges and weighs the outro as REQUESTED, and the engine now makes exactly that cut (an end trim, a
+    // copy of [intro, outro)) - the row, the batch weight and the result agree.
+    [Trait("serves-spec", "SPEC-011")]
+    [Theory]
+    [InlineData(6.0, 31.0)]
+    [InlineData(0.0, 31.0)]
+    public async Task AnExactRow_WithAnIntroOnAKeyframeAndAnOutroInsideAGop_ShowsAndWeighsTheOutroAsRequested(double intro, double outro)
+    {
+        var (vm, probe, _) = Build(exact: true);
+        var row = await AddAsync(vm, probe, "a.mp4", 60, intro, outro);
+
+        row.ExactCutApplies.Should().BeTrue();
+        row.OutroStart!.Requested.Should().Be(S(outro));
+        row.KeptDuration.Should().Be(S(outro - intro), "judged on the outro as requested");
+        row.ExactCutCost.Should().BeApproximately(outro - intro, 1e-9, "a copy of the requested range: h = 0");
+        BulkCutViewModel.RowWeight(row).Should().BeApproximately(outro - intro, 1e-9);
+        row.IsValidCut.Should().BeTrue();
     }
 
     // serves-spec: SPEC-011#I165 - a Lossless row weighs its kept duration, as before: the snapped cut's length in seconds.

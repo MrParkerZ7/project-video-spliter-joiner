@@ -635,6 +635,67 @@ public sealed class VideoFrameProbeTests : IDisposable
         mpeg4.IdrAsked.Should().BeEmpty("IDR is an H.264 notion");
     }
 
+    // ---- T-224: an end trim asks no frame question -------------------------------------------------------------------------
+
+    // serves-spec: SPEC-001#I71 - a start on a keyframe with an end inside a GOP has no head and no joint: the frame snap, the IDR
+    // question and the head's frame count are never asked, whatever the probe would answer (the kept part is the source's own packets
+    // from the keyframe, as the lossless cut's is).
+    [Trait("serves-spec", "SPEC-001")]
+    [Fact]
+    public async Task SmartCutEngine_AnEndTrim_AsksNoFrameQuestion()
+    {
+        var input = Placeholder("clip.mp4");
+        var probe = new FrameProbe(H264Aac(), Grid2s(), firstFrame: S(8.02)) { IdrAnswer = false };
+        var runner = new ListCapturingRunner();
+
+        var result = await new SmartCutEngine(runner, probe).CutAsync(input, S(8), S(13), Path.Combine(_dir, "cut.mp4"));
+
+        result.FellBack.Should().BeFalse(result.FallbackReason);
+        runner.Commands.Should().ContainSingle();
+        probe.SnapAsked.Should().BeEmpty("the keyframe is a frame already");
+        probe.IdrAsked.Should().BeEmpty("no head, no joint, nothing to be an IDR for");
+        probe.CountAsked.Should().Be(0);
+        probe.SourceAsked.Should().BeEmpty();
+    }
+
+    // serves-spec: SPEC-001#I71 / SPEC-001#I43 - a request a hair BEFORE a keyframe (11.975, the keyframe at 12) is snapped onto it by
+    // the frame snap, which turns the plan into PureCopy; with an end inside a GOP that is an end trim from 12 s, not the lossless cut.
+    [Trait("serves-spec", "SPEC-001")]
+    [Fact]
+    public async Task SmartCutEngine_ASnappedStartOnAKeyframe_WithAnEndInsideAGop_IsAnEndTrim()
+    {
+        var input = Placeholder("clip.mp4");
+        var probe = new FrameProbe(H264Aac(), Grid2s(), firstFrame: S(12)) { IdrAnswer = false };
+        var runner = new ListCapturingRunner();
+
+        var result = await new SmartCutEngine(runner, probe).CutAsync(input, S(11.975), S(17.1), Path.Combine(_dir, "cut.mp4"));
+
+        result.FellBack.Should().BeFalse(result.FallbackReason);
+        result.Strategy.Should().Be(SmartCutStrategy.PureCopy);
+        result.EffectiveStart.Should().Be(S(12));
+        probe.SnapAsked.Should().Equal(new[] { S(11.975) });
+        probe.IdrAsked.Should().BeEmpty();
+        runner.Commands.Should().ContainSingle();
+        runner.Lists.Should().ContainSingle().Which.Should().EndWith("inpoint 12\noutpoint 17.1\n");
+    }
+
+    // serves-spec: SPEC-001#I71 - the same snapped start with an end that is itself on a keyframe stays the quiet lossless fall back.
+    [Trait("serves-spec", "SPEC-001")]
+    [Fact]
+    public async Task SmartCutEngine_ASnappedStartOnAKeyframe_WithAnEndOnAKeyframe_StaysTheLosslessFallBack()
+    {
+        var input = Placeholder("clip.mp4");
+        var probe = new FrameProbe(H264Aac(), Grid2s(), firstFrame: S(12));
+        var runner = new RecordingFakeRunner();
+
+        var result = await new SmartCutEngine(runner, probe).CutAsync(input, S(11.975), S(18), Path.Combine(_dir, "cut.mp4"));
+
+        result.FellBack.Should().BeTrue();
+        result.EndSnapped.Should().BeFalse();
+        result.FallbackReason.Should().Contain("keyframe");
+        runner.Commands.Should().BeEmpty();
+    }
+
     // serves-spec: SPEC-001#I46 - a head that holds no video frame is a fall back with a reason, not a Done: the concat takes
     // its streams from the head, so the final would have no picture. Nothing is left at the destination or in the temp dir.
     [Trait("serves-spec", "SPEC-001")]

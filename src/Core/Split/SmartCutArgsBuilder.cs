@@ -343,4 +343,30 @@ public static class SmartCutArgsBuilder
 
         return string.Join("\n", lines) + "\n";
     }
+
+    /// <summary>
+    /// The concat list of a cut that only trims the end (T-224): the joint list without its head - the SOURCE ITSELF from the
+    /// keyframe the cut starts on to the requested end.
+    ///
+    /// <code>
+    /// file '&lt;source&gt;'
+    /// inpoint &lt;keyframe&gt;
+    /// outpoint &lt;End&gt;
+    /// </code>
+    ///
+    /// <para>Seconds and quoting are the joint list's (<see cref="SplitPlanner.ToFfmpegSeconds"/>,
+    /// <see cref="JoinArgsBuilder.QuoteConcatPath"/>), and the command that reads it is the same
+    /// <see cref="JoinArgsBuilder.ConcatCopy"/>. <paramref name="inpoint"/> is a keyframe by construction (the planner found the
+    /// start on one), so nothing before it is copied.</para>
+    /// </summary>
+    public static string RenderEndTrimList(string sourcePath, TimeSpan inpoint, TimeSpan outpoint)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(sourcePath);
+
+        return string.Join(
+            "\n",
+            $"file {JoinArgsBuilder.QuoteConcatPath(Path.GetFullPath(sourcePath))}",
+            $"inpoint {SplitPlanner.ToFfmpegSeconds(inpoint)}",
+            $"outpoint {SplitPlanner.ToFfmpegSeconds(outpoint)}") + "\n";
+    }
 }
