@@ -91,6 +91,46 @@ public class KeptSegmentSelectorTests
         act.Should().Throw<SplitException>();
     }
 
+    // serves-spec: SPEC-001#I7 - T-233: on a TS the first keyframe is a source pts above 0 (here 1.47 s, a 1 s GOP). An intro that snaps to it
+    // is the start of the file, so the planner drops it and the kept part is [0..outro], index 1. The nearest-start search alone would
+    // pick index 2 here (the outro's own start, 1.0 s away, is nearer than 0, 1.47 s away).
+    [Trait("serves-spec", "SPEC-001")]
+    [Fact]
+    public void ResolveKeptIndex_TsIntroSnapsToTheFirstKeyframe_WithOutro_ReturnsIndex1()
+    {
+        var keyframes = Enumerable.Range(0, 9).Select(i => TimeSpan.FromSeconds(1.466667 + i)).ToList();
+        var probe = new FakeProbe(Duration, keyframes);
+
+        KeptSegmentSelector.ResolveKeptIndex(
+                Duration,
+                keyframes,
+                probe.SnapToNearestKeyframe,
+                probe.AverageGop(keyframes),
+                TimeSpan.FromSeconds(1.0),
+                TimeSpan.FromSeconds(2.0))
+            .Should().Be(1);
+    }
+
+    // serves-spec: SPEC-001#I11 - T-233: a TS intro that snaps to the first keyframe with no outro leaves no cut: the planner's error
+    // propagates, which Bulk Cut maps to a skipped no-op row (KeptMiddleRequestBuilder) instead of a copy of the whole file.
+    [Trait("serves-spec", "SPEC-001")]
+    [Fact]
+    public void ResolveKeptIndex_TsIntroSnapsToTheFirstKeyframe_NoOutro_Throws()
+    {
+        var keyframes = Enumerable.Range(0, 9).Select(i => TimeSpan.FromSeconds(1.466667 + (2 * i))).ToList();
+        var probe = new FakeProbe(Duration, keyframes);
+
+        var act = () => KeptSegmentSelector.ResolveKeptIndex(
+            Duration,
+            keyframes,
+            probe.SnapToNearestKeyframe,
+            probe.AverageGop(keyframes),
+            TimeSpan.FromSeconds(1.0),
+            null);
+
+        act.Should().Throw<SplitException>();
+    }
+
     // ---- BuildKeptMiddleRequest: request shape ---------------------------------------------
 
     [Fact]

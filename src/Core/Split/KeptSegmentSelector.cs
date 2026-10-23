@@ -74,11 +74,12 @@ public static class KeptSegmentSelector
             static _ => "unused");
 
         // The kept middle begins at the SNAPPED intro-end. Mirror the planner's own drop rule: an
-        // intro cut that snaps to ~0 (or out of bounds) is dropped, so the kept part begins at file
-        // start (0). Guard the empty-keyframes case where snapping is a no-op (SnapToNearestKeyframe
-        // throws on an empty list, so use the raw time).
+        // intro cut that snaps to ~0 (or out of bounds), or onto the FIRST keyframe (the start of the
+        // file on a source whose video starts after 0, such as a TS: T-233), is dropped, so the kept
+        // part begins at file start (0). Guard the empty-keyframes case where snapping is a no-op
+        // (SnapToNearestKeyframe throws on an empty list, so use the raw time).
         var introSnap = keyframes.Count == 0 ? introEnd : snap(keyframes, introEnd).Snapped;
-        if (introSnap <= TimeSpan.Zero || introSnap >= duration)
+        if (introSnap <= TimeSpan.Zero || introSnap >= duration || (keyframes.Count > 0 && introSnap <= keyframes[0]))
         {
             introSnap = TimeSpan.Zero;
         }

@@ -233,4 +233,68 @@ public class SplitPlannerTests
 
         act.Should().Throw<SplitException>().WithMessage("*after keyframe snapping*");
     }
+
+    // ---- T-233: a snap onto the FIRST keyframe is a snap onto the start of the file ----
+
+    // The synthetic TS of the lossless-boundary tests: keyframes 1.466667 + 2k s (its video starts 1.47 s in, a source pts).
+    private static readonly IReadOnlyList<TimeSpan> TsKeyframes =
+        Enumerable.Range(0, 5).Select(i => TimeSpan.FromSeconds(1.466667 + (2 * i))).ToList();
+
+    private static SplitPlan PlanTs(params double[] cutSeconds) =>
+        PlanWith(cutSeconds.Select(TimeSpan.FromSeconds).ToList(), TsKeyframes);
+
+    // serves-spec: SPEC-001#I7 - a cut that snaps to the first keyframe of a source whose video starts after 0 is dropped with the
+    // "the first keyframe - the start of the file - dropped" warning, so the plan has one segment fewer and no empty part 1.
+    [Trait("serves-spec", "SPEC-001")]
+    [Fact]
+    public void Plan_CutSnapsToTheFirstKeyframeOfATs_IsDropped_WithOneSegmentFewer()
+    {
+        var plan = PlanTs(1.0, 5.5);
+
+        plan.InteriorSnappedCuts.Should().Equal(TimeSpan.FromSeconds(5.466667));
+        plan.Segments.Should().HaveCount(2, "the cut on the file's start is dropped: one cut remains, two parts");
+        plan.Segments[0].SnappedStart.Should().Be(TimeSpan.Zero);
+        plan.Segments[0].SnappedEnd.Should().Be(TimeSpan.FromSeconds(5.466667));
+        plan.Segments[1].SnappedStart.Should().Be(TimeSpan.FromSeconds(5.466667));
+        plan.Warnings.Should().ContainSingle(w => w.Contains("start of the file") && w.Contains("dropped") && w.Contains("1.467"));
+    }
+
+    // serves-spec: SPEC-001#I7 - the cut at the first keyframe itself, and a cut past the midpoint to the second keyframe that still
+    // snaps back to the first (2.4 s: 0.93 s from 1.47, 1.07 s from 3.47), are dropped alike; a cut that snaps to the SECOND keyframe stays.
+    [Trait("serves-spec", "SPEC-001")]
+    [Theory]
+    [InlineData(1.466667, false)]   // exactly the first keyframe
+    [InlineData(2.4, false)]        // nearer the first keyframe than the second
+    [InlineData(2.6, true)]         // nearer the second (3.4667): an interior boundary
+    public void Plan_TsCutNearTheStart_IsDroppedOnlyWhenItSnapsToTheFirstKeyframe(double cut, bool kept)
+    {
+        var act = () => PlanTs(cut, 5.5);
+
+        var plan = act.Should().NotThrow().Subject;
+        plan.InteriorSnappedCuts.Count.Should().Be(kept ? 2 : 1);
+        plan.Segments.Should().HaveCount(kept ? 3 : 2);
+    }
+
+    // serves-spec: SPEC-001#I7 - keyframes that start at 0 (an ordinary MP4) change nothing: a cut near the start still snaps to 0 and is
+    // dropped by the old guard with its old "outside the file bounds" warning, never the new one.
+    [Trait("serves-spec", "SPEC-001")]
+    [Fact]
+    public void Plan_KeyframesFromZero_AreUnchanged_TheOldGuardDropsTheCutAtZero()
+    {
+        var plan = PlanWith(new[] { TimeSpan.FromSeconds(0.3), TimeSpan.FromSeconds(5) });
+
+        plan.InteriorSnappedCuts.Should().Equal(TimeSpan.FromSeconds(5));
+        plan.Warnings.Should().Contain(w => w.Contains("outside the file bounds") && w.Contains("dropped"));
+        plan.Warnings.Should().NotContain(w => w.Contains("start of the file"));
+    }
+
+    // serves-spec: SPEC-001#I11 - when every cut snaps to the first keyframe the plan collapses: the same "after keyframe snapping" error.
+    [Trait("serves-spec", "SPEC-001")]
+    [Fact]
+    public void Plan_EveryCutSnapsToTheFirstKeyframeOfATs_ThrowsAfterKeyframeSnapping()
+    {
+        var act = () => PlanTs(1.0, 2.0);
+
+        act.Should().Throw<SplitException>().WithMessage("*after keyframe snapping*");
+    }
 }

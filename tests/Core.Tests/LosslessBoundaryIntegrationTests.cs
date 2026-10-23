@@ -269,6 +269,37 @@ public sealed class LosslessBoundaryIntegrationTests : IClassFixture<LosslessBou
         AssertEveryPartExact(checks);
     }
 
+    // serves-spec: SPEC-001#I7 - T-233 repro: a cut near the very start of a TS snaps to the file's FIRST keyframe (1.47 s, a source pts;
+    // nothing is before it). Shipped code kept it as an interior boundary, so the plan had an empty part 1 and the segment muxer, which never
+    // cuts before its first packet, ignored the boundary and shifted every later part (60/60/180 frames against the plan's empty/120/180).
+    // The snap to the file's start is the file's start: that cut is dropped, and the remaining parts match the plan.
+    [Trait("serves-spec", "SPEC-001")]
+    [SkippableFact]
+    public async Task FullSplit_Ts_ACutThatSnapsToTheFirstKeyframe_IsDropped_AndTheOtherPartsMatchThePlan()
+    {
+        RequireBinaries();
+        var src = await _fx.GetAsync("ts");
+        var probe = Probe();
+        var keyframes = await probe.GetKeyframesAsync(src);
+        keyframes[0].Should().BeGreaterThan(S(1), "precondition: the first keyframe of a TS is a source pts above 0");
+        probe.SnapToNearestKeyframe(keyframes, S(1.0)).Snapped.Should().Be(keyframes[0], "precondition: a cut at 1.0 s snaps to the first keyframe");
+        var second = probe.SnapToNearestKeyframe(keyframes, S(5.5)).Snapped;
+        second.Should().BeGreaterThan(keyframes[0], "precondition: the second cut snaps to an interior keyframe");
+
+        var cutTimes = new[] { S(1.0), S(5.5) };
+        var sourceFrames = await LosslessBoundary.FramesAsync(src, _dir);
+        var outDir = Path.Combine(_dir, "first-kf-ts");
+        var result = await Engine(probe).SplitAsync(new SplitRequest(src, cutTimes, outDir));
+
+        result.Segments.Should().HaveCount(2, "the cut on the file's start is dropped: one cut remains, two parts");
+        result.Warnings.Should().Contain(w => w.Contains("start of the file") && w.Contains("dropped"));
+        var checks = await CheckPartsAsync(
+            src,
+            sourceFrames,
+            new[] { (1, TimeSpan.Zero, (TimeSpan?)second, result.Segments[0].Path), (2, second, (TimeSpan?)null, result.Segments[1].Path) });
+        AssertEveryPartExact(checks);
+    }
+
     // ---- (b) the per-segment path on a source whose start_time is not zero -------------------------------------
 
     private async Task<(PartCheck Check, string Path)> SubsetAsync(string shape, int part, params double[] cuts)

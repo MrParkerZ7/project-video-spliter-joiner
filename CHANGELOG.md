@@ -21,6 +21,11 @@ goal; `0.1.0` is the first end-to-end, shippable cut.
   batch bar and *~Ns left* weigh the piece accordingly.
 
 ### Fixed
+- **A split near the very start of a transport stream (.ts, .m2ts, .mts) no longer shifts every part.** A cut placed in the
+  first couple of seconds snaps to the first keyframe, which is the start of the file; it was kept as a boundary, so the first
+  part came out empty in the plan and the files that were written did not match their rows (parts of 60, 60 and 180 frames
+  against 0, 120 and 180 planned, on a 10-second test stream). Such a cut is now dropped, with a warning, and the other
+  parts are written as planned. In Bulk Cut an intro that snaps there with no outro is a skipped no-op row.
 - **An Exact cut that trims only the end now keeps the end you set.** When the intro sat on a keyframe (or at 0) and the outro
   inside a group of pictures, the cut quietly fell back to the keyframe-snapped lossless cut and the outro moved to a
   keyframe, while the Bulk Cut row still showed the outro you set (measured on a 12-second test video with a keyframe every

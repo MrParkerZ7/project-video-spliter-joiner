@@ -65,6 +65,40 @@ public class SplitEngineSpecGapTests
         finally { Cleanup(dir); }
     }
 
+    // SPEC-001#I7, I27 - T-233: on a TS (keyframes 1.47 + 2k s) a cut at 1.0 s snaps to the first keyframe and is dropped, so cuts {1.0, 5.5}
+    // plan TWO parts, not three. The segment muxer is handed ONE boundary; the old third part is out of range (I27); the real first part
+    // [0, 5.47) is selectable.
+    [Trait("serves-spec", "SPEC-001")]
+    [Fact]
+    public async Task SplitAsync_TsCutOnTheFirstKeyframe_PlansTwoParts_AndTheOldThirdIsOutOfRange()
+    {
+        var dir = NewDir();
+        try
+        {
+            var input = NewInput(dir);
+            var outDir = Path.Combine(dir, "out");
+            Directory.CreateDirectory(outDir);
+            var tsKeyframes = Enumerable.Range(0, 5).Select(i => TimeSpan.FromSeconds(1.466667 + (2 * i))).ToList();
+            var cuts = new[] { TimeSpan.FromSeconds(1.0), TimeSpan.FromSeconds(5.5) };
+
+            var fullRunner = new RecordingFakeRunner();
+            var full = await new SplitEngine(fullRunner, new FakeProbe(TimeSpan.FromSeconds(10), tsKeyframes))
+                .SplitAsync(new SplitRequest(input, cuts, outDir));
+
+            full.Segments.Should().HaveCount(2);
+            full.Warnings.Should().Contain(w => w.Contains("start of the file") && w.Contains("dropped"));
+            var muxer = fullRunner.Commands.Should().ContainSingle().Subject;
+            muxer[muxer.ToList().IndexOf("-segment_times") + 1].Split(',').Should().HaveCount(1, "one boundary remains for the segment muxer");
+
+            var subsetRunner = new RecordingFakeRunner();
+            var act = () => new SplitEngine(subsetRunner, new FakeProbe(TimeSpan.FromSeconds(10), tsKeyframes))
+                .SplitAsync(new SplitRequest(input, cuts, outDir, SelectedSegmentIndices: new[] { 3 }));
+            await act.Should().ThrowAsync<SplitException>().WithMessage("*None of the selected segment indices*");
+            subsetRunner.Commands.Should().BeEmpty("the old third part no longer exists");
+        }
+        finally { Cleanup(dir); }
+    }
+
     // SPEC-001#I32 — ValidateRequestShape rejects an empty InputPath before probing.
     [Trait("serves-spec", "SPEC-001")]
     [Fact]

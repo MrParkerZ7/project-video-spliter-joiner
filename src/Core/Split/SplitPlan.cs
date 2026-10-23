@@ -152,6 +152,17 @@ public static class SplitPlanner
                 continue;
             }
 
+            // A snap onto the FIRST keyframe is a snap onto the start of the file: no frame lies before it. On a source whose video does
+            // not start at 0 (every .ts/.m2ts/.mts: about 1.47 s) that keyframe is a source pts above 0, so the (0, duration) guard
+            // above misses it and the boundary would be kept: part 1 empty, and the segment muxer, which never cuts before its first
+            // packet, would shift every later part by one (T-233).
+            if (snapped <= keyframes[0])
+            {
+                warnings.Add(
+                    $"Cut at {Fmt(cut)} snapped to {Fmt(snapped)}, the first keyframe — the start of the file — dropped.");
+                continue;
+            }
+
             snappedCuts.Add(snapped);
             snapDeltas.Add(s.Delta);
 
