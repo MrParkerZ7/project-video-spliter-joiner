@@ -254,6 +254,61 @@ public sealed class ThumbnailStreamInfoSkipTests : IDisposable
         calls.Should().Be(1, "the cancelled run is not run again without the flag");
     }
 
+    // serves-spec: SPEC-005#I33 - the retry is judged on its own output: a file the flagged run left behind is deleted before it, so a
+    // retry that writes nothing is null (the leftover is never handed back as the picture).
+    [Trait("serves-spec", "SPEC-005")]
+    [Fact]
+    public async Task ARetryThatWritesNothing_IsNull_EvenWhenTheFlaggedRunLeftAFile()
+    {
+        var input = MakeInput("clip.mp4");
+        var runner = new ScriptedRunner((flagged, _) => flagged ? (1, "left-by-the-flagged-run") : (0, null));
+        var svc = NewService(runner, StartOf(0));
+
+        var path = await svc.GetThumbnailAsync(input, S(3), 160, CancellationToken.None);
+
+        path.Should().BeNull("the flagged run's leftover is not the retry's picture");
+        runner.Commands.Should().HaveCount(2);
+        Directory.Exists(_cacheRoot).Should().BeTrue();
+        Directory.GetFiles(_cacheRoot, "*", SearchOption.AllDirectories).Should().BeEmpty("the leftover was deleted before the retry");
+    }
+
+    // serves-spec: SPEC-005#I33 - a grab cancelled after its flagged run returned (a run that reports failure, not a throw) is not retried.
+    [Trait("serves-spec", "SPEC-005")]
+    [Fact]
+    public async Task AGrabCancelledAfterItsFlaggedRunReturned_IsNotRetried()
+    {
+        var input = MakeInput("clip.mp4");
+        using var cts = new CancellationTokenSource();
+        var calls = 0;
+        var runner = new CancellingAfterFirstRunRunner(cts, () => calls++);
+
+        var path = await NewService(runner, StartOf(0)).GetThumbnailAsync(input, S(3), 160, cts.Token);
+
+        path.Should().BeNull();
+        calls.Should().Be(1, "the token was cancelled before the retry gate: no second process");
+    }
+
+    /// <summary>Cancels its token during the first run, then reports a plain failure (exit 1) instead of throwing, as a real run may.</summary>
+    private sealed class CancellingAfterFirstRunRunner : IFfmpegRunner
+    {
+        private readonly CancellationTokenSource _cts;
+        private readonly Action _count;
+
+        public CancellingAfterFirstRunRunner(CancellationTokenSource cts, Action count)
+        {
+            _cts = cts;
+            _count = count;
+        }
+
+        public Task<FfmpegResult> RunAsync(
+            FfmpegArgs args, TimeSpan? totalDuration = null, IProgress<double>? progress = null, CancellationToken ct = default)
+        {
+            _count();
+            _cts.Cancel();
+            return Task.FromResult(new FfmpegResult(1, new List<string>().AsReadOnly()));
+        }
+    }
+
     private sealed class CancellingOnFirstRunRunner : IFfmpegRunner
     {
         private readonly CancellationTokenSource _cts;
