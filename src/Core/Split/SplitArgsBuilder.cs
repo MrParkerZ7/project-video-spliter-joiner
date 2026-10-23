@@ -28,7 +28,8 @@ public static class SplitArgsBuilder
     /// Build the SEGMENT-MUXER single-pass command for a contiguous full-file split:
     /// <c>-i in -map 0 -c copy -f segment -segment_times t1,t2,… [-segment_time_delta d] -reset_timestamps 1 outpattern</c>.
     /// Because every boundary is a keyframe, copy is clean. <paramref name="outputPattern"/> is
-    /// an ffmpeg numbered pattern (e.g. <c>…/part%03d.mp4</c>).
+    /// an ffmpeg numbered pattern (e.g. <c>…/part%03d.mp4</c>), built by <see cref="SegmentPattern"/> so that a
+    /// percent sign in the folder is not read as part of it (T-222).
     ///
     /// <para><b>The muxer's time base (T-219).</b> ffmpeg's segment muxer counts <c>-segment_times</c> from the first
     /// packet of its reference (video) stream and starts a segment at the first keyframe whose pts is at or after
@@ -71,6 +72,34 @@ public static class SplitArgsBuilder
         return args
             .Raw("-reset_timestamps", "1")
             .Output(outputPattern);
+    }
+
+    /// <summary>
+    /// T-222: the segment muxer's output pattern for the temp folder <paramref name="dir"/> and the output extension
+    /// <paramref name="extension"/> (with its dot): <c>&lt;dir&gt;/part%03d&lt;ext&gt;</c>, where the one placeholder
+    /// is the only percent sign left unescaped. ffmpeg expands EVERY percent sign of the pattern it is given
+    /// (<c>%03d</c> is the part number, <c>%%</c> a literal percent, anything else an invalid template), so an output
+    /// folder such as <c>D:\Videos\100% done</c> used to fail the whole Split with "Invalid segment filename template".
+    /// The temp files then land in the real folder, and the engine reads them back by their real names.
+    /// </summary>
+    internal static string SegmentPattern(string dir, string extension)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(dir);
+        ArgumentNullException.ThrowIfNull(extension);
+
+        return Path.Combine(EscapeSegmentPatternLiteral(dir), "part%03d" + EscapeSegmentPatternLiteral(extension));
+    }
+
+    /// <summary>
+    /// T-222: <paramref name="literal"/> with each percent sign doubled, so ffmpeg's filename-template expansion
+    /// (<c>%%</c> becomes <c>%</c>) gives the text back unchanged. A folder named <c>%03d</c> is escaped like any other,
+    /// so it cannot be taken for the placeholder.
+    /// </summary>
+    internal static string EscapeSegmentPatternLiteral(string literal)
+    {
+        ArgumentNullException.ThrowIfNull(literal);
+
+        return literal.Replace("%", "%%", StringComparison.Ordinal);
     }
 
     /// <summary>

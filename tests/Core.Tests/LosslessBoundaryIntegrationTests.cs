@@ -300,6 +300,36 @@ public sealed class LosslessBoundaryIntegrationTests : IClassFixture<LosslessBou
         AssertEveryPartExact(checks);
     }
 
+    // serves-spec: SPEC-001#I73 - T-222 repro: the segment muxer's output is an ffmpeg numbered pattern, and ffmpeg expands every
+    // percent sign in it, not only the part%03d. Shipped code put the output folder into that pattern as it was, so a folder such as
+    // "out 100% done" made the pattern invalid and the whole Split failed. The folder part of the pattern is now escaped; the parts
+    // land in the real folder, each on its planned keyframe, and the temp folder is gone afterwards. The folder named %03d would be
+    // taken for the pattern itself if it were not escaped; the last one checks that a Unicode name beside the sign is unaffected.
+    [Trait("serves-spec", "SPEC-001")]
+    [SkippableTheory]
+    [InlineData("out 100% done")]
+    [InlineData("%03d")]
+    [InlineData("100%% sure")]
+    [InlineData("\u0e44\u0e17\u0e22 50%")]
+    public async Task FullSplit_OutputFolderWithAPercentSign_WritesEveryPart_AndLeavesNoTempFolder(string folderName)
+    {
+        RequireBinaries();
+        var src = await _fx.GetAsync("bframes");
+        var probe = Probe();
+        var cutTimes = new[] { S(3), S(6) };
+        var plan = await PlanAsync(probe, src, cutTimes);
+        var sourceFrames = await LosslessBoundary.FramesAsync(src, _dir);
+        var outDir = Path.Combine(_dir, folderName);
+
+        var result = await Engine(probe).SplitAsync(new SplitRequest(src, cutTimes, outDir));
+
+        result.Segments.Should().HaveCount(plan.Count);
+        result.Segments.Should().AllSatisfy(s => Path.GetDirectoryName(s.Path).Should().Be(outDir, "the parts land in the real folder, not an escaped one"));
+        var parts = result.Segments.Select((s, i) => (i + 1, plan[i].Start, plan[i].End, s.Path)).ToList();
+        AssertEveryPartExact(await CheckPartsAsync(src, sourceFrames, parts));
+        Directory.GetDirectories(outDir, ".vsj-split-*").Should().BeEmpty("the temp folder is removed once the parts are in place");
+    }
+
     // ---- (b) the per-segment path on a source whose start_time is not zero -------------------------------------
 
     private async Task<(PartCheck Check, string Path)> SubsetAsync(string shape, int part, params double[] cuts)

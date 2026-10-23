@@ -291,7 +291,9 @@ public sealed class SplitEngine : ISplitEngine
         CancellationToken ct)
     {
         var ext = GetOutputExtension(req);
-        var tempPattern = Path.Combine(tempDir, "part%03d" + ext);
+        // T-222: ffmpeg expands every percent sign of this pattern, so the folder's own are escaped; the parts are still
+        // read back below by their real names in the real folder.
+        var tempPattern = SplitArgsBuilder.SegmentPattern(tempDir, ext);
 
         // ONE converted list feeds both the muxer's -segment_times and the per-part progress boundaries below: the
         // runner's time= counts output time from 0, which is the muxer's time base too (on a TS the unconverted list

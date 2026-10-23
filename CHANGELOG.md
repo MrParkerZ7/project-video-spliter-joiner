@@ -21,6 +21,9 @@ goal; `0.1.0` is the first end-to-end, shippable cut.
   batch bar and *~Ns left* weigh the piece accordingly.
 
 ### Fixed
+- **Splitting into a folder whose name contains a percent sign works.** A folder such as `100% done` made the single-pass split
+  fail with an ffmpeg "Invalid segment filename template" error before any part was written. The percent sign is now kept literal,
+  and the parts are written into that folder as usual.
 - **A split near the very start of a transport stream (.ts, .m2ts, .mts) no longer shifts every part.** A cut placed in the
   first couple of seconds snaps to the first keyframe, which is the start of the file; it was kept as a boundary, so the first
   part came out empty in the plan and the files that were written did not match their rows (parts of 60, 60 and 180 frames

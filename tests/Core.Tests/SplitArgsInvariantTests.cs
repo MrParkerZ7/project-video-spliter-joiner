@@ -188,4 +188,85 @@ public class SplitArgsInvariantTests
         tokens.Should().Contain("copy");
         SplitArgsBuilder.SatisfiesCopyInvariant(tokens).Should().BeTrue();
     }
+
+    // ---- T-222: the segment muxer's output pattern -------------------------------------------------------------
+
+    // serves-spec: SPEC-001#I73 - ffmpeg expands every percent sign of the pattern; the folder and the extension are literal text.
+    [Trait("serves-spec", "SPEC-001")]
+    [Theory]
+    [InlineData(@"D:\Videos\100% done", @"D:\Videos\100%% done")]
+    [InlineData(@"D:\Videos\plain folder", @"D:\Videos\plain folder")]
+    [InlineData(@"D:\out\%03d", @"D:\out\%%03d")]
+    [InlineData(@"D:\out\100%%", @"D:\out\100%%%%")]
+    [InlineData(@"\\server\share\50% off", @"\\server\share\50%% off")]
+    [InlineData(".mp4", ".mp4")]
+    [InlineData(".m%p4", ".m%%p4")]
+    [InlineData("", "")]
+    public void EscapeSegmentPatternLiteral_DoublesEveryPercentSign(string literal, string expected)
+    {
+        SplitArgsBuilder.EscapeSegmentPatternLiteral(literal).Should().Be(expected);
+    }
+
+    // serves-spec: SPEC-001#I73 - the pattern keeps exactly one live placeholder, the part number, and gives the real folder back.
+    [Trait("serves-spec", "SPEC-001")]
+    [Theory]
+    [InlineData(@"D:\Videos\out", ".mp4")]
+    [InlineData(@"D:\Videos\100% done\.vsj-split-abc", ".mp4")]
+    [InlineData(@"D:\Videos\%03d\.vsj-split-abc", ".ts")]
+    [InlineData(@"D:\Videos\100%%\.vsj-split-abc", ".mkv")]
+    [InlineData(@"D:\Videos\out", ".m%p4")]
+    public void SegmentPattern_HasOneLivePlaceholder_AndExpandsToTheRealFolder(string dir, string extension)
+    {
+        var pattern = SplitArgsBuilder.SegmentPattern(dir, extension);
+
+        pattern.Should().EndWith(@"\part%03d" + extension.Replace("%", "%%", StringComparison.Ordinal),
+            "the placeholder itself is never escaped, or ffmpeg would write a file literally named part%03d");
+        ExpandLikeFfmpeg(pattern, 7).Should().Be(Path.Combine(dir, "part007" + extension),
+            "ffmpeg's expansion of the pattern is the real folder and the real file name");
+    }
+
+    // serves-spec: SPEC-001#I73 - the whole command carries the escaped pattern as its last token, the copy invariant intact.
+    [Trait("serves-spec", "SPEC-001")]
+    [Fact]
+    public void SegmentMuxer_WithAPercentFolder_PassesTheEscapedPattern_AndStaysPureCopy()
+    {
+        var pattern = SplitArgsBuilder.SegmentPattern(@"D:\Videos\100% done\.vsj-split-abc", ".mp4");
+        var tokens = SplitArgsBuilder.SegmentMuxer(@"C:\in.mp4", Cuts, pattern, TimeSpan.FromSeconds(1.0 / 60)).ToList();
+
+        tokens[^1].Should().Be(@"D:\Videos\100%% done\.vsj-split-abc\part%03d.mp4");
+        SplitArgsBuilder.SatisfiesCopyInvariant(tokens).Should().BeTrue();
+    }
+
+    /// <summary>
+    /// A model of the template expansion ffmpeg's segment muxer applies to its output name (libavformat
+    /// <c>av_get_frame_filename</c>): <c>%%</c> is a percent sign, <c>%03d</c> the zero-padded number, any other
+    /// percent sign an invalid template.
+    /// </summary>
+    private static string ExpandLikeFfmpeg(string pattern, int number)
+    {
+        var sb = new System.Text.StringBuilder();
+        for (var i = 0; i < pattern.Length; i++)
+        {
+            if (pattern[i] != '%')
+            {
+                sb.Append(pattern[i]);
+            }
+            else if (i + 1 < pattern.Length && pattern[i + 1] == '%')
+            {
+                sb.Append('%');
+                i++;
+            }
+            else if (string.CompareOrdinal(pattern, i, "%03d", 0, 4) == 0)
+            {
+                sb.Append(number.ToString("000", System.Globalization.CultureInfo.InvariantCulture));
+                i += 3;
+            }
+            else
+            {
+                throw new InvalidOperationException($"Invalid segment filename template '{pattern}' (a stray percent sign at {i})");
+            }
+        }
+
+        return sb.ToString();
+    }
 }
