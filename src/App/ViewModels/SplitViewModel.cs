@@ -1701,10 +1701,13 @@ public sealed class SplitViewModel : ObservableObject
             return;
         }
 
-        // Interior boundaries = distinct snapped marker times strictly inside (0, duration), ascending.
+        // Interior boundaries = distinct snapped marker times strictly inside (0, duration), ascending - and past the file's first
+        // keyframe, which is the start of the file the engine's plan drops a cut on (SplitPlanner.SnapsToFileStart, T-233: on a TS it is
+        // a source pts of about 1.47 s). Otherwise the list would show a part the engine never writes, and a subset run would number
+        // its parts differently from the plan.
         var boundaries = Markers
             .Select(m => m.Snapped)
-            .Where(t => t > TimeSpan.Zero && t < duration)
+            .Where(t => !SplitPlanner.SnapsToFileStart(t, Keyframes) && t < duration)
             .Distinct()
             .OrderBy(t => t)
             .ToList();

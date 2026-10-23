@@ -55,6 +55,19 @@ public static class SplitPlanner
     public static readonly TimeSpan Epsilon = TimeSpan.FromMilliseconds(10);
 
     /// <summary>
+    /// True when a keyframe-snapped time is the START of the file: at or before 0, or at or before the file's first keyframe
+    /// (T-233). No frame lies before the first keyframe, and on a source whose video does not start at 0 - every
+    /// <c>.ts</c>/<c>.m2ts</c>/<c>.mts</c>, about 1.47 s - that keyframe is a source pts above 0. The one definition the planner,
+    /// <see cref="KeptSegmentSelector"/> and the Split screen's parts list share, so the screen shows the parts the engine writes.
+    /// <paramref name="keyframes"/> is ascending (every producer sorts it); empty means "not known" and only the 0 test applies.
+    /// </summary>
+    public static bool SnapsToFileStart(TimeSpan snapped, IReadOnlyList<TimeSpan> keyframes)
+    {
+        ArgumentNullException.ThrowIfNull(keyframes);
+        return snapped <= TimeSpan.Zero || (keyframes.Count > 0 && snapped <= keyframes[0]);
+    }
+
+    /// <summary>
     /// Build the split plan. <paramref name="snap"/> is the T-003 nearest-keyframe snapper
     /// (pass <c>probe.SnapToNearestKeyframe</c>) so this stays free of ffmpeg while reusing
     /// the real snapping logic. When <paramref name="keyframes"/> is empty, cuts are left
@@ -156,7 +169,7 @@ public static class SplitPlanner
             // not start at 0 (every .ts/.m2ts/.mts: about 1.47 s) that keyframe is a source pts above 0, so the (0, duration) guard
             // above misses it and the boundary would be kept: part 1 empty, and the segment muxer, which never cuts before its first
             // packet, would shift every later part by one (T-233).
-            if (snapped <= keyframes[0])
+            if (SnapsToFileStart(snapped, keyframes))
             {
                 warnings.Add(
                     $"Cut at {Fmt(cut)} snapped to {Fmt(snapped)}, the first keyframe — the start of the file — dropped.");

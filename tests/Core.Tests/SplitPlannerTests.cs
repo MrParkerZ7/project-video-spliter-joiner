@@ -288,6 +288,29 @@ public class SplitPlannerTests
         plan.Warnings.Should().NotContain(w => w.Contains("start of the file"));
     }
 
+    // serves-spec: SPEC-001#I7 - the one rule the planner, the kept-middle selector and the Split screen's parts list share (T-233).
+    [Trait("serves-spec", "SPEC-001")]
+    [Theory]
+    [InlineData(0.0, true)]          // the start itself
+    [InlineData(-0.1, true)]         // before it
+    [InlineData(1.0, true)]          // before the first keyframe (1.47 s)
+    [InlineData(1.466667, true)]     // on the first keyframe
+    [InlineData(1.5, false)]         // past it
+    [InlineData(3.466667, false)]    // the second keyframe
+    public void SnapsToFileStart_IsTrueUpToTheFirstKeyframe(double seconds, bool expected) =>
+        SplitPlanner.SnapsToFileStart(TimeSpan.FromSeconds(seconds), TsKeyframes).Should().Be(expected);
+
+    // serves-spec: SPEC-001#I7 - with no keyframes known only the 0 test applies (I8 leaves cuts unsnapped); keyframes from 0 change nothing.
+    [Trait("serves-spec", "SPEC-001")]
+    [Fact]
+    public void SnapsToFileStart_WithoutKeyframesOrWithKeyframesFromZero_IsTheZeroTest()
+    {
+        SplitPlanner.SnapsToFileStart(TimeSpan.FromSeconds(0.2), Array.Empty<TimeSpan>()).Should().BeFalse();
+        SplitPlanner.SnapsToFileStart(TimeSpan.Zero, Array.Empty<TimeSpan>()).Should().BeTrue();
+        SplitPlanner.SnapsToFileStart(TimeSpan.FromSeconds(0.2), KeyframesEverySecond).Should().BeFalse();
+        SplitPlanner.SnapsToFileStart(TimeSpan.Zero, KeyframesEverySecond).Should().BeTrue();
+    }
+
     // serves-spec: SPEC-001#I11 - when every cut snaps to the first keyframe the plan collapses: the same "after keyframe snapping" error.
     [Trait("serves-spec", "SPEC-001")]
     [Fact]

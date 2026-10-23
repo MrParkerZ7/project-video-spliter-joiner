@@ -79,7 +79,7 @@ public static class KeptSegmentSelector
         // part begins at file start (0). Guard the empty-keyframes case where snapping is a no-op
         // (SnapToNearestKeyframe throws on an empty list, so use the raw time).
         var introSnap = keyframes.Count == 0 ? introEnd : snap(keyframes, introEnd).Snapped;
-        if (introSnap <= TimeSpan.Zero || introSnap >= duration || (keyframes.Count > 0 && introSnap <= keyframes[0]))
+        if (SplitPlanner.SnapsToFileStart(introSnap, keyframes) || introSnap >= duration)
         {
             introSnap = TimeSpan.Zero;
         }

@@ -276,9 +276,9 @@ public sealed class SplitEngine : ISplitEngine
     /// <paramref name="tempDir"/> as part000, part001, … which are then mapped in plan order onto the planned
     /// destinations. T-219: the boundaries are handed to the muxer in its own time base
     /// (<see cref="ToMuxerSegmentTimes"/>) with a half-frame tolerance (<see cref="HalfFrameDelta"/>), so on a
-    /// B-frame source or one whose video does not start at 0 every part starts on its planned keyframe. The one
-    /// exception (SPEC-001 I66): a cut the planner kept on the first keyframe of a source whose video starts after 0
-    /// converts to 0, which the muxer does not cut at, so it cuts at the next keyframe.
+    /// B-frame source or one whose video does not start at 0 every part starts on its planned keyframe. (A cut on
+    /// the first keyframe of a source whose video starts after 0 would convert to 0, which the muxer does not cut at; the planner
+    /// drops such a cut, SPEC-001 I7, so no boundary at 0 reaches the muxer: T-233.)
     /// </summary>
     private async Task<IReadOnlyList<(PlannedSegment Planned, string TempFile)>> ExtractAllViaSegmentMuxer(
         SplitRequest req,

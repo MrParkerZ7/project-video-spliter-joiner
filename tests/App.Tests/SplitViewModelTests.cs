@@ -452,6 +452,35 @@ public sealed class SplitViewModelTests
         return (vm, probe);
     }
 
+    // serves-spec: SPEC-001#I7 / SPEC-010 - T-233: on a TS the first keyframe is a source pts above 0 (1.47 s here), and the engine drops a
+    // cut that snaps onto it (the start of the file). The parts list must show the parts the engine writes: with markers at 1.0 s and
+    // 5.5 s that is TWO parts, [0, 5.47] and [5.47, end] - not three - or a "Part 2 only" run would hand the engine index 2 for a
+    // range that is its part 2 only by accident of the old numbering, and "Part 3" would throw.
+    [Trait("serves-spec", "SPEC-001")]
+    [Fact]
+    public async Task Segments_MarkerSnappingToTheFirstKeyframeOfATs_IsNotAPartBoundary()
+    {
+        var probe = new FakeProbe
+        {
+            ProbeResultToReturn = ProbeResult.Success(new MediaInfo(
+                TimeSpan.FromSeconds(10), "mpegts", Array.Empty<StreamInfo>(), Array.Empty<StreamInfo>())),
+            KeyframesToReturn = Enumerable.Range(0, 5).Select(i => TimeSpan.FromSeconds(1.466667 + (2 * i))).ToArray(),
+        };
+        var engine = new FakeSplitEngine();
+        var vm = new SplitViewModel(probe, engine);
+        await vm.LoadAsync(@"C:\videos\clip.ts");
+        vm.OutputDir = @"C:\out";
+
+        vm.AddMarker(TimeSpan.FromSeconds(1.0));   // snaps to 1.466667: the file's first keyframe
+        vm.AddMarker(TimeSpan.FromSeconds(5.5));   // snaps to 5.466667
+
+        vm.Segments.Should().HaveCount(2, "the marker on the first keyframe is the start of the file, as the engine's plan has it");
+        vm.Segments[0].Start.Should().Be(TimeSpan.Zero);
+        vm.Segments[0].End.Should().Be(TimeSpan.FromSeconds(5.466667));
+        vm.Segments[1].Start.Should().Be(TimeSpan.FromSeconds(5.466667));
+        vm.Segments[1].End.Should().Be(TimeSpan.FromSeconds(10));
+    }
+
     [Fact]
     public async Task Segments_MarkersAt5And10On15mClip_ProjectsThreeParts_AllSelected()
     {
