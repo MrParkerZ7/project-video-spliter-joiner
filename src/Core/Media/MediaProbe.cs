@@ -65,9 +65,11 @@ public sealed class MediaProbe : IMediaProbe, IVideoFrameProbe
     // registers its running Task here so a SECOND concurrent caller for the same key awaits the
     // SAME scan instead of launching a duplicate ffprobe pass. The shared scan runs on an
     // INDEPENDENT token (not any one caller's CT), so a caller that cancels its own await can never
-    // cancel the shared scan for the other awaiters (cancellation-safety). The entry is removed on
-    // completion — success OR failure — and only SUCCESSFUL results are promoted to _keyframeCache,
-    // so a failed/cancelled shared scan leaves nothing behind and a later retry re-scans cleanly.
+    // cancel the shared scan for the other awaiters (cancellation-safety). T-239: the entry is stored
+    // BEFORE the scan starts (GetOrStartSharedScan: TryAdd) and removed by INSTANCE before the shared task
+    // settles (RunSharedScanAsync), whether the scan succeeded or failed; only SUCCESSFUL results are promoted
+    // to _keyframeCache. So a settled scan is never left registered, a failed/cancelled shared scan is never
+    // served to a later call, and a later retry re-scans cleanly.
     private readonly ConcurrentDictionary<string, Task<IReadOnlyList<TimeSpan>>> _inFlightScans = new();
 
     /// <summary>
@@ -226,7 +228,7 @@ public sealed class MediaProbe : IMediaProbe, IVideoFrameProbe
             return cached;
         }
 
-        // T-093: in-flight dedup. Get (or start) the ONE shared scan for this key. GetOrAdd's factory
+        // T-093: in-flight dedup. Get (or start) the ONE shared scan for this key. GetOrStartSharedScan
         // starts the scan on an INDEPENDENT token so no single caller's CT can tear it down for the
         // others; this caller then awaits it through its OWN CT via WaitAsync, so cancelling here
         // throws for THIS caller only and leaves the shared scan running for the rest.
