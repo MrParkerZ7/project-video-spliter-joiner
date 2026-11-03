@@ -59,7 +59,7 @@ namespace VideoSplitJoiner.Core.Thumbnails;
 /// <para><b>The cache is versioned (T-243, SPEC-005 I36):</b> the key above carries no version of the code that wrote a picture, so the
 /// version is the folder: <see cref="CacheVersion"/> is bumped by any fix that changes what a grab returns, and a build then never
 /// reads a folder an older one wrote. The first grab of a service made by the default constructors (or <see cref="ForCacheBase"/>)
-/// sweeps the older version folders once, with truncated pictures and stale work files of the current one; see
+/// sweeps the older version folders once, with the stale work files of the current one; see
 /// <see cref="SweepStaleCache"/>. An explicit cache root is used as given and never swept.</para>
 ///
 /// <para><b>A picture is published whole (T-228, SPEC-005 I35):</b> ffmpeg writes each grab to a work file of its own beside the final one
@@ -123,6 +123,9 @@ public sealed class FfmpegThumbnailService : IThumbnailService
     // T-243: the one-time sweep of the older cache versions (null for an explicit root, which the caller owns). Every grab awaits it, so
     // the sweep never runs beside a grab and cannot remove a work file or picture this process is writing.
     private readonly Lazy<Task>? _sweep;
+
+    /// <summary>True when the first grab sweeps the cache base (the default constructors and ForCacheBase), false for an explicit cache root. Test seam.</summary>
+    internal bool SweepsOnFirstGrab => _sweep is not null;
 
     // LRU: key → temp path, in access order. Guarded by _gate. LinkedList = O(1) move-to-front + evict-tail.
     private readonly object _gate = new();
@@ -585,11 +588,12 @@ public sealed class FfmpegThumbnailService : IThumbnailService
     /// and in every pre-version per-input folder (32 hex characters, straight in the base): the files whose names this service writes
     /// (<c>&lt;bucketMs&gt;_w&lt;width&gt;.jpg</c>, <c>x&lt;µs&gt;_w&lt;width&gt;.jpg</c>, the width-less names of builds before T-179, and
     /// their work files), then the folder only if that left it empty, so a foreign file keeps its folder; and, in the 32-hex input
-    /// folders of the current version folder, (2) a final-name picture that does not start with FF D8 and end with FF D9 (zero padding
-    /// allowed) - an older build wrote in place, so a killed run could leave one under its final name - and (3) a work file at least
-    /// <see cref="StaleWorkFileAge"/> old, which a hard kill left. A newer version's folder and anything else in the base is left alone.
-    /// A file is deleted through an exclusive open, so one another process holds open stays. Returns how many items it removed, so a
-    /// second start finds 0.
+    /// folders of the current version folder, (2) a work file at least <see cref="StaleWorkFileAge"/> old, which a hard kill left. A
+    /// picture under a final name in the current version is never opened or touched: it was published whole by a rename (T-228), so it
+    /// cannot be cut short, and every older-layout picture, where a cut-short one could be, goes in (1). Reading each cached picture at
+    /// every start measured about 100 times the cost of deleting it, and the first grab waits for the sweep. A file is deleted with a plain
+    /// delete, not an open, so one another process holds open without sharing delete stays. A newer version's folder and anything else in
+    /// the base is left alone. Returns how many items it removed, so a second start finds 0.
     /// </summary>
     internal static int SweepStaleCache(string cacheBase)
     {
@@ -646,7 +650,7 @@ public sealed class FfmpegThumbnailService : IThumbnailService
         foreach (var file in SafeList(() => Directory.EnumerateFiles(inputDir)))
         {
             var name = Path.GetFileName(file);
-            if ((IsFinalPictureName(name) || IsWorkFileName(name)) && !IsReparsePoint(file) && TryDeleteIfUnheld(file))
+            if ((IsFinalPictureName(name) || IsWorkFileName(name)) && !IsReparsePoint(file) && TryDeleteSweptFile(file))
             {
                 removed++;
             }
@@ -675,10 +679,9 @@ public sealed class FfmpegThumbnailService : IThumbnailService
                         continue;
                     }
 
-                    var stale = IsWorkFileName(name)
-                        ? DateTime.UtcNow - File.GetLastWriteTimeUtc(file) >= StaleWorkFileAge
-                        : IsFinalPictureName(name) && !IsWholeJpeg(file);
-                    if (stale && TryDeleteIfUnheld(file))
+                    if (IsWorkFileName(name)
+                        && DateTime.UtcNow - File.GetLastWriteTimeUtc(file) >= StaleWorkFileAge
+                        && TryDeleteSweptFile(file))
                     {
                         removed++;
                     }
@@ -730,68 +733,24 @@ public sealed class FfmpegThumbnailService : IThumbnailService
     // The names this service (and the builds before it) wrote: <bucketMs>_w<width>.jpg, x<µs>_w<width>.jpg, the width-less
     // <bucketMs>.jpg of builds before T-179, and the work files <name>_w<width>.<guid>.tmp.jpg.
     private static readonly System.Text.RegularExpressions.Regex FinalPictureName = new(
-        @"^x?\d+(_w\d+)?\.jpg$", System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+        @"^x?[0-9]+(_w[0-9]+)?\.jpg\z", System.Text.RegularExpressions.RegexOptions.CultureInvariant);
 
     private static readonly System.Text.RegularExpressions.Regex WorkFileName = new(
-        @"^x?\d+_w\d+\.[0-9a-f]{32}\.tmp\.jpg$", System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+        @"^x?[0-9]+_w[0-9]+\.[0-9a-f]{32}\.tmp\.jpg\z", System.Text.RegularExpressions.RegexOptions.CultureInvariant);
 
     private static bool IsFinalPictureName(string name) => FinalPictureName.IsMatch(name);
 
     private static bool IsWorkFileName(string name) => WorkFileName.IsMatch(name);
 
     /// <summary>
-    /// True when the file starts with the JPEG start marker (FF D8) and ends with the end marker (FF D9), ignoring zero padding after it.
-    /// A picture cut short by a killed run has no end marker. Unreadable (for instance held open elsewhere) is treated as whole: the sweep
-    /// never deletes on a doubt.
+    /// Delete a file with a plain delete: no open, so nothing reads its content (an open of each old picture measured about 100 times slower
+    /// than the delete), and a file another process holds open without sharing delete is refused by the system and stays. False on any failure.
     /// </summary>
-    private static bool IsWholeJpeg(string path)
+    private static bool TryDeleteSweptFile(string path)
     {
         try
         {
-            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
-            if (stream.Length < 4)
-            {
-                return false;
-            }
-
-            var head = new byte[2];
-            stream.ReadExactly(head);
-            if (head[0] != 0xFF || head[1] != 0xD8)
-            {
-                return false;
-            }
-
-            var tailLength = (int)Math.Min(stream.Length, 16);
-            var tail = new byte[tailLength];
-            stream.Seek(-tailLength, SeekOrigin.End);
-            stream.ReadExactly(tail);
-
-            var end = tail.Length;
-            while (end > 0 && tail[end - 1] == 0)
-            {
-                end--;
-            }
-
-            return end >= 2 && tail[end - 2] == 0xFF && tail[end - 1] == 0xD9;
-        }
-        catch
-        {
-            return true;
-        }
-    }
-
-    /// <summary>
-    /// Delete a file only if nobody else has it open: the delete is an exclusive open with delete-on-close, so a refused open (the file is
-    /// held by another process or handle, on Windows and, through the advisory lock, on Linux) leaves the file where it is.
-    /// </summary>
-    private static bool TryDeleteIfUnheld(string path)
-    {
-        try
-        {
-            using (new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.None, 1, FileOptions.DeleteOnClose))
-            {
-            }
-
+            File.Delete(path);
             return !File.Exists(path);
         }
         catch

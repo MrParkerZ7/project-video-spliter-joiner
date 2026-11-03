@@ -7,7 +7,7 @@ namespace VideoSplitJoiner.Core.Tests;
 
 /// <summary>
 /// T-243 (SPEC-005): the thumbnail cache is versioned. A picture an older build wrote is never served by a build that changed
-/// what a grab returns, and the older version folders (plus truncated pictures and work files a hard kill left) are swept once,
+/// what a grab returns, and the older version folders (plus work files a hard kill left) are swept once,
 /// best-effort. A fake runner stands in for ffmpeg; the cache base is a temp folder, so nothing touches the per-user folder.
 /// </summary>
 public class ThumbnailCacheVersionTests : IDisposable
@@ -133,29 +133,35 @@ public class ThumbnailCacheVersionTests : IDisposable
     }
 
     [Fact]
-    public async Task TheFirstGrab_StaysPendingUntilTheSweepIsDone()
+    public async Task TheFirstGrab_StaysPendingUntilTheSweepIsDone_AndEveryGrabWaitsForTheSameOneSweep()
     {
         var input = MakeInput();
         using var release = new ManualResetEventSlim(false);
         using var entered = new ManualResetEventSlim(false);
+        var sweeps = 0;
         var runner = new JpegWritingRunner();
         var svc = FfmpegThumbnailService.ForCacheBase(runner, _cacheBase, null, _ =>
         {
+            Interlocked.Increment(ref sweeps);
             entered.Set();
             release.Wait(TimeSpan.FromSeconds(30));
             return 0;
         });
 
-        var grab = svc.GetThumbnailAsync(input, TimeSpan.FromSeconds(1), 160, CancellationToken.None);
+        var first = svc.GetThumbnailAsync(input, TimeSpan.FromSeconds(1), 160, CancellationToken.None);
         entered.Wait(TimeSpan.FromSeconds(10)).Should().BeTrue("the first grab starts the sweep");
+        var second = svc.GetThumbnailAsync(input, TimeSpan.FromSeconds(2), 160, CancellationToken.None);
         await Task.Delay(200);
 
-        grab.IsCompleted.Should().BeFalse("a grab never runs beside the sweep");
+        first.IsCompleted.Should().BeFalse("a grab never runs beside the sweep");
+        second.IsCompleted.Should().BeFalse("a later grab waits for the same sweep");
         runner.CallCount.Should().Be(0);
 
         release.Set();
-        (await grab).Should().NotBeNull();
-        runner.CallCount.Should().Be(1);
+        (await first).Should().NotBeNull();
+        (await second).Should().NotBeNull();
+        runner.CallCount.Should().Be(2);
+        sweeps.Should().Be(1, "one sweep for the process, however many grabs waited for it");
     }
 
     [Fact]
@@ -184,9 +190,11 @@ public class ThumbnailCacheVersionTests : IDisposable
         var input = MakeInput();
         using var release = new ManualResetEventSlim(false);
         using var entered = new ManualResetEventSlim(false);
+        var sweeps = 0;
         var runner = new JpegWritingRunner();
         var svc = FfmpegThumbnailService.ForCacheBase(runner, _cacheBase, null, _ =>
         {
+            Interlocked.Increment(ref sweeps);
             entered.Set();
             release.Wait(TimeSpan.FromSeconds(30));
             return 0;
@@ -205,7 +213,8 @@ public class ThumbnailCacheVersionTests : IDisposable
 
         release.Set();
         var later = await svc.GetThumbnailAsync(input, TimeSpan.FromSeconds(2), 160, CancellationToken.None);
-        later.Should().NotBeNull("the sweep was not restarted or lost; the next grab goes on");
+        later.Should().NotBeNull("the sweep was not lost; the next grab goes on");
+        sweeps.Should().Be(1, "the cancelled grab did not restart the sweep and the next grab did not start another");
     }
 
     [Fact]
@@ -218,32 +227,35 @@ public class ThumbnailCacheVersionTests : IDisposable
         Directory.Exists(_cacheBase).Should().BeFalse("the sweep creates nothing");
     }
 
-    // ---- (a) a truncated picture under a final name ----
+    // ---- (a) a picture under a final name in the current version is left alone ----
 
     [Trait("serves-spec", "SPEC-005")]
     [Fact]
-    public void Sweep_RemovesATruncatedOrEmptyPicture_KeepsAWholeOne()
+    public void Sweep_NeverOpensOrDeletesAPictureOfTheCurrentVersion()
     {
-        var dir = Path.Combine(CurrentRoot, "0123456789abcdef0123456789abcdef");
+        // A final name in the current version is published whole by a rename (T-228), so it is never cut short; the pictures of the older
+        // layouts, where a cut-short one could be, are removed wholesale. Reading every cached picture at every start was measured at about
+        // 100 times the cost of deleting it, for a guard nothing can trigger.
+        var dir = Path.Combine(CurrentRoot, HashA);
         Directory.CreateDirectory(dir);
-        var whole = Path.Combine(dir, "1000_w160.jpg");
-        var wholePadded = Path.Combine(dir, "2000_w160.jpg");
-        var truncated = Path.Combine(dir, "3000_w160.jpg");
-        var empty = Path.Combine(dir, "4000_w160.jpg");
-        var tiny = Path.Combine(dir, "5000_w160.jpg");
-        File.WriteAllBytes(whole, WholeJpeg);
-        File.WriteAllBytes(wholePadded, WholeJpeg.Concat(new byte[] { 0, 0, 0 }).ToArray());
-        File.WriteAllBytes(truncated, TruncatedJpeg);
-        File.WriteAllBytes(empty, Array.Empty<byte>());
-        File.WriteAllBytes(tiny, new byte[] { 0xFF });
+        var files = new[]
+        {
+            (Name: "1000_w160.jpg", Bytes: WholeJpeg),
+            (Name: "2000_w160.jpg", Bytes: TruncatedJpeg),
+            (Name: "3000_w160.jpg", Bytes: Array.Empty<byte>()),
+            (Name: "4000_w160.jpg", Bytes: new byte[] { 0xFF }),
+        };
+        foreach (var (name, bytes) in files)
+        {
+            File.WriteAllBytes(Path.Combine(dir, name), bytes);
+        }
 
-        FfmpegThumbnailService.SweepStaleCache(_cacheBase).Should().Be(3);
+        FfmpegThumbnailService.SweepStaleCache(_cacheBase).Should().Be(0);
 
-        File.Exists(whole).Should().BeTrue();
-        File.Exists(wholePadded).Should().BeTrue("zero padding after the end marker is still a whole JPEG");
-        File.Exists(truncated).Should().BeFalse("no FF D9 end marker: cut short");
-        File.Exists(empty).Should().BeFalse();
-        File.Exists(tiny).Should().BeFalse();
+        foreach (var (name, _) in files)
+        {
+            File.Exists(Path.Combine(dir, name)).Should().BeTrue(name + " is left as it is");
+        }
     }
 
     // ---- (b) work files a hard kill left ----
@@ -321,34 +333,81 @@ public class ThumbnailCacheVersionTests : IDisposable
     }
 
     [Fact]
-    public void Sweep_InTheCurrentVersion_TouchesOnlyInputFoldersAndFinalNamePictures()
+    public void Sweep_InTheCurrentVersion_TouchesOnlyStaleWorkFilesInInputFolders()
     {
+        var old = DateTime.UtcNow - FfmpegThumbnailService.StaleWorkFileAge - TimeSpan.FromMinutes(1);
         var notInput = Path.Combine(CurrentRoot, "my-photos");
         var input = Path.Combine(CurrentRoot, HashA);
         Directory.CreateDirectory(notInput);
         Directory.CreateDirectory(input);
-        File.WriteAllBytes(Path.Combine(notInput, "1000_w160.jpg"), TruncatedJpeg);
-        File.WriteAllBytes(Path.Combine(input, "cover.jpg"), TruncatedJpeg);
-        File.WriteAllBytes(Path.Combine(input, "1000_w160.jpg"), TruncatedJpeg);
+        var workInForeignFolder = Path.Combine(notInput, "1000_w160.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.tmp.jpg");
+        var foreignName = Path.Combine(input, "cover.tmp.jpg");
+        var finalPicture = Path.Combine(input, "1000_w160.jpg");
+        var staleWork = Path.Combine(input, "1000_w160.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.tmp.jpg");
+        foreach (var file in new[] { workInForeignFolder, foreignName, finalPicture, staleWork })
+        {
+            File.WriteAllBytes(file, TruncatedJpeg);
+            File.SetLastWriteTimeUtc(file, old);
+        }
 
         FfmpegThumbnailService.SweepStaleCache(_cacheBase).Should().Be(1);
 
-        File.Exists(Path.Combine(notInput, "1000_w160.jpg")).Should().BeTrue("not a 32-hex input folder");
-        File.Exists(Path.Combine(input, "cover.jpg")).Should().BeTrue("not a name the service writes");
-        File.Exists(Path.Combine(input, "1000_w160.jpg")).Should().BeFalse();
+        File.Exists(workInForeignFolder).Should().BeTrue("not a 32-hex input folder");
+        File.Exists(foreignName).Should().BeTrue("not a name the service writes");
+        File.Exists(finalPicture).Should().BeTrue("a final-name picture is never touched in the current version");
+        File.Exists(staleWork).Should().BeFalse();
+    }
+
+    [Trait("serves-spec", "SPEC-005")]
+    [Fact]
+    public void Sweep_RemovesAStaleWorkFile_UnderTheNamesWorkPathForReallyGives()
+    {
+        // The sweep knows a work file by its name and WorkPathFor makes the name: a change to one that is not made to the other would turn
+        // the stale-work-file sweep into a silent no-op, so the names are taken from the generator here, not typed.
+        var dir = Path.Combine(CurrentRoot, HashA);
+        Directory.CreateDirectory(dir);
+        var works = new[]
+        {
+            FfmpegThumbnailService.WorkPathFor(Path.Combine(dir, "1000_w160.jpg")),
+            FfmpegThumbnailService.WorkPathFor(Path.Combine(dir, "x1234567_w1920.jpg")),
+        };
+        foreach (var work in works)
+        {
+            File.WriteAllBytes(work, TruncatedJpeg);
+            File.SetLastWriteTimeUtc(work, DateTime.UtcNow - FfmpegThumbnailService.StaleWorkFileAge - TimeSpan.FromMinutes(1));
+        }
+
+        FfmpegThumbnailService.SweepStaleCache(_cacheBase).Should().Be(2);
+
+        foreach (var work in works)
+        {
+            File.Exists(work).Should().BeFalse(Path.GetFileName(work));
+        }
+    }
+
+    [Fact]
+    public void TheDefaultConstructorsAndForCacheBase_SweepOnTheFirstGrab_AnExplicitRootDoesNot()
+    {
+        // Nothing is swept here (the sweep starts on the first grab); the wiring is what is checked.
+        var runner = new JpegWritingRunner();
+        new FfmpegThumbnailService(runner).SweepsOnFirstGrab.Should().BeTrue("the one-argument constructor is the app's");
+        new FfmpegThumbnailService(runner, (Func<string, CancellationToken, Task<TimeSpan?>>?)null).SweepsOnFirstGrab.Should().BeTrue();
+        FfmpegThumbnailService.ForCacheBase(runner, _cacheBase).SweepsOnFirstGrab.Should().BeTrue();
+        new FfmpegThumbnailService(runner, Path.Combine(_cacheBase, "mine")).SweepsOnFirstGrab.Should().BeFalse("an explicit root is the caller's");
     }
 
     [Fact]
     public void Sweep_NeverFollowsALinkedFolder()
     {
         var outside = Path.Combine(_inputDir, "outside");
-        var photo = Path.Combine(outside, HashA, "1000_w160.jpg");
+        var photo = Path.Combine(outside, HashA, "1000_w160.dddddddddddddddddddddddddddddddd.tmp.jpg");
         var legacyTarget = Path.Combine(_inputDir, "outside-legacy");
         var legacyPhoto = Path.Combine(legacyTarget, "1000_w160.jpg");
         Directory.CreateDirectory(Path.GetDirectoryName(photo)!);
         Directory.CreateDirectory(legacyTarget);
-        // A photo with bytes after the FF D9 marker would read as "truncated" to the check.
-        File.WriteAllBytes(photo, new byte[] { 0xFF, 0xD8, 0xFF, 0xD9, 0x01, 0x02, 0x03, 0x04 });
+        // A stale work file: the one thing the sweep deletes in a current-version input folder, so it would go if the link were followed.
+        File.WriteAllBytes(photo, TruncatedJpeg);
+        File.SetLastWriteTimeUtc(photo, DateTime.UtcNow - FfmpegThumbnailService.StaleWorkFileAge - TimeSpan.FromMinutes(1));
         File.WriteAllBytes(legacyPhoto, WholeJpeg);
         Directory.CreateDirectory(_cacheBase);
         try
@@ -373,6 +432,11 @@ public class ThumbnailCacheVersionTests : IDisposable
     [Fact]
     public async Task FilesHeldOpen_AreNotDeleted_AndTheGrabStillReturnsAPicture()
     {
+        if (!OperatingSystem.IsWindows())
+        {
+            return; // the hold is a Windows sharing mode; on Linux a delete ignores a lock
+        }
+
         var input = MakeInput();
         var legacyDir = PreviousLayoutDir(input);
         Directory.CreateDirectory(legacyDir);
@@ -381,18 +445,19 @@ public class ThumbnailCacheVersionTests : IDisposable
 
         var currentDir = Path.Combine(CurrentRoot, new DirectoryInfo(legacyDir).Name);
         Directory.CreateDirectory(currentDir);
-        var truncated = Path.Combine(currentDir, "9000_w160.jpg");
-        await File.WriteAllBytesAsync(truncated, TruncatedJpeg);
+        var staleWork = Path.Combine(currentDir, "9000_w160.cccccccccccccccccccccccccccccccc.tmp.jpg");
+        await File.WriteAllBytesAsync(staleWork, TruncatedJpeg);
+        File.SetLastWriteTimeUtc(staleWork, DateTime.UtcNow - FfmpegThumbnailService.StaleWorkFileAge - TimeSpan.FromMinutes(1));
 
         using var holdLegacy = new FileStream(legacyFile, FileMode.Open, FileAccess.Read, FileShare.None);
-        using var holdTruncated = new FileStream(truncated, FileMode.Open, FileAccess.Read, FileShare.None);
+        using var holdWork = new FileStream(staleWork, FileMode.Open, FileAccess.Read, FileShare.None);
 
         var svc = NewVersionedService(new JpegWritingRunner());
         var picture = await svc.GetThumbnailAsync(input, TimeSpan.FromSeconds(1), 160, CancellationToken.None);
 
         picture.Should().NotBeNull("a held file must not stop the grab");
         File.Exists(legacyFile).Should().BeTrue("a file held open is left alone");
-        File.Exists(truncated).Should().BeTrue("a file held open is left alone");
+        File.Exists(staleWork).Should().BeTrue("a file held open is left alone");
         Directory.Exists(legacyDir).Should().BeTrue("a folder that still holds a file stays");
     }
 }
