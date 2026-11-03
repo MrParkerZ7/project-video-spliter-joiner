@@ -1,3 +1,4 @@
+using System.Globalization;
 using FluentAssertions;
 using VideoSplitJoiner.Core.Ffmpeg;
 using VideoSplitJoiner.Core.Thumbnails;
@@ -337,6 +338,28 @@ public sealed class ThumbnailTransportStreamSeekTests : IDisposable
             "-ss", "5", "-nofind_stream_info", "-i", "in.mp4", "-frames:v", "1", "-vf", "scale=160:-1", "-y", "out.jpg");
         early.Skip(early.IndexOf("-copyts")).Should().Equal(
             "-copyts", "-ss", "2", "-i", "in.ts", "-ss", "6.443444", "-frames:v", "1", "-vf", "scale=160:-1", "-y", "out.jpg");
+    }
+
+    // serves-spec: SPEC-005#I34 - the seconds on the new tokens are culture-invariant: a comma-decimal machine writes 1.443444, never 1,443444
+    // (found by the independent review: no test covered it, and the formatter's culture could be swapped without a failure on an en-US machine).
+    [Trait("serves-spec", "SPEC-005")]
+    [Fact]
+    public void TheSeconds_AreWrittenWithAPoint_OnACommaDecimalMachine()
+    {
+        var previous = CultureInfo.CurrentCulture;
+        try
+        {
+            CultureInfo.CurrentCulture = new CultureInfo("de-DE");
+            ((1.5).ToString(CultureInfo.CurrentCulture)).Should().Be("1,5", "precondition: this culture writes a comma");
+
+            var tokens = FfmpegThumbnailService.BuildArgs("in.ts", S(5), 160, "out.jpg", transportStreamStart: S(Start)).ToList().ToList();
+
+            tokens.Should().ContainInConsecutiveOrder("-copyts", "-ss", "2", "-i", "in.ts", "-ss", "6.443444");
+        }
+        finally
+        {
+            CultureInfo.CurrentCulture = previous;
+        }
     }
 
     // serves-spec: SPEC-005#I34 - the lead is 3 s: it covers a 2 s GOP (a GOP longer than the lead keeps the late frame, as before the fix).
