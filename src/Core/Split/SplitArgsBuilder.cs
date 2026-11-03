@@ -125,10 +125,11 @@ public static class SplitArgsBuilder
     /// <param name="seekAnchor">
     /// <b>Matroska only (T-234).</b> A source timestamp inside the part's first GOP, after <paramref name="start"/> and
     /// before the next keyframe (<see cref="MatroskaSeekAnchor"/>), that the input seek is aimed at instead of the
-    /// keyframe itself: ffmpeg's Matroska demuxer lands on the last cue at or before the target, and the cue of a keyframe
-    /// on a B-frame stream is later than its pts (about 0.13 s with x264's defaults), so a seek to the keyframe lands one
-    /// GOP early. Every other container passes null and seeks to the keyframe. <c>-to</c> is measured from the anchor,
-    /// the same way it is from the keyframe.
+    /// keyframe itself: measured with ffmpeg n7.1, an input <c>-ss</c> on a Matroska file whose video has B-frames lands on
+    /// the keyframe BEFORE the one it is aimed at, and needs a target about 0.131 s after the keyframe to land on it (none
+    /// with no B-frames). The cause inside ffmpeg is not pinned down; the file's cues hold the keyframe's exact pts. Every
+    /// other container passes null and seeks to the keyframe. <c>-to</c> is measured from the anchor, the same way it is
+    /// from the keyframe.
     /// </param>
     public static FfmpegArgs PerSegment(
         string inputPath,
@@ -184,13 +185,15 @@ public static class SplitArgsBuilder
     /// <summary>
     /// The <c>seekAnchor</c> of <see cref="PerSegment"/> for a Matroska source (T-234): a point inside the GOP that starts
     /// at <paramref name="start"/>, <see cref="MatroskaSeekMargin"/> before the next keyframe (before
-    /// <paramref name="fileEnd"/> when <paramref name="start"/> is the last keyframe). ffmpeg's Matroska demuxer lands on
-    /// the last cue at or before its seek target, and a keyframe's cue sits after its pts on a B-frame stream, so only a
-    /// target that has passed that cue and not yet reached the next keyframe's lands on <paramref name="start"/>; a
-    /// target just under the next keyframe does, whatever the reorder delay (up to a whole GOP). Null when no anchor is
-    /// needed or possible: <paramref name="start"/> is at or before the first keyframe (the seek clamps to the first cue,
-    /// which is the part's start), or the next keyframe is within the margin. <paramref name="keyframes"/> are source
-    /// timestamps, ascending.
+    /// <paramref name="fileEnd"/> when <paramref name="start"/> is the last keyframe). With B-frames an input seek lands
+    /// on <paramref name="start"/> for a target from about 0.131 s after it to about 0.131 s after the next keyframe, and
+    /// with none for a target from <paramref name="start"/> to the next keyframe; a target just under the next keyframe is
+    /// in both windows when the keyframes are at least about 0.131 s apart. <b>Known limits:</b> on a B-frame stream a
+    /// keyframe gap under about 0.131 s, and a last GOP of one to three frames, still land one GOP early; a file whose
+    /// cues are earlier than its keyframes' pts could land on the next keyframe (T-245). Null when no anchor is needed or
+    /// possible: <paramref name="start"/> is at or before the first keyframe (the seek clamps to the first cue, which is
+    /// the part's start), or the next keyframe is within the margin. <paramref name="keyframes"/> are source timestamps,
+    /// ascending.
     /// </summary>
     internal static TimeSpan? MatroskaSeekAnchor(TimeSpan start, IReadOnlyList<TimeSpan> keyframes, TimeSpan fileEnd)
     {

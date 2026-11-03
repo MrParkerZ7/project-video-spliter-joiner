@@ -79,8 +79,9 @@ public sealed class LosslessBoundaryFixtures : IDisposable
             case "mkvlate":
                 return await RemuxAsync(await GetAsync("bframes"), "late.mkv", "-output_ts_offset", "1.5");
 
-            // The same without B-frames: a keyframe's cue is then its own pts, so a seek aimed AT the next keyframe would land
-            // on it. The control that pins the margin before the next keyframe.
+            // The same without B-frames: a seek aimed AT the next keyframe lands on it (with B-frames ffmpeg's seek lands about
+            // 0.13 s earlier than its target, so the same target still lands before it). The control that pins the margin
+            // before the next keyframe.
             case "mkvbf0":
                 return await SmartCutJointIntegrityTests.MakeFixtureAsync(
                     Dir, "nativebf0.mkv", 10, 30, "-c:v", "libx264", "-bf", "0", "-g", "30", "-keyint_min", "30", "-sc_threshold", "0");
@@ -472,9 +473,9 @@ public sealed class LosslessBoundaryIntegrationTests : IClassFixture<LosslessBou
     // Controls: the per-segment path on sources whose format start_time is 0 — unchanged tokens, right before and after.
     // T-234 adds Matroska: the remux of the B-frame MP4 has a video that starts 0.023 s in while the format starts at 0
     // (like the MP4 remux of the TS), and the natively encoded .mkv starts its audio at -0.023 s, so its format start is
-    // negative. Shipped code started the Matroska parts one GOP early (150 frames against the planned 120): ffmpeg's
-    // Matroska seek lands on the last cue at or before the target, and a keyframe's cue is later than its pts on a
-    // B-frame stream. The QuickTime remux starts both streams at 0 and was always right.
+    // negative. Shipped code started the Matroska parts one GOP early (150 frames against the planned 120): on a B-frame
+    // stream ffmpeg's Matroska input seek lands about 0.13 s before its target, so a seek to the keyframe lands on the one
+    // before it. The no-B-frame file was right. The QuickTime remux starts both streams at 0 and was always right.
     [Trait("serves-spec", "SPEC-001")]
     [SkippableTheory]
     [InlineData("bframes", 3.0, 6.0)]
