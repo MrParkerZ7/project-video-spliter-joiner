@@ -360,6 +360,31 @@ public class ThumbnailPartialFileTests : IDisposable
         File.ReadAllText(after!).Should().Be(Whole);
     }
 
+    // SPEC-005#I35 — a scanner or indexer can hold a freshly written file for a moment; the rename that is refused then is tried again,
+    // and the picture is published once the hold is gone (the old code had no rename, so it could not miss a picture this way).
+    [Trait("serves-spec", "SPEC-005")]
+    [Fact]
+    public async Task APublishRefusedForAMoment_IsRetried_AndThePictureIsPublished()
+    {
+        var input = MakeInput();
+        var runner = new ScriptedRunner((output, token) =>
+        {
+            var held = new FileStream(output, FileMode.Create, FileAccess.Write, FileShare.None);
+            held.Write(System.Text.Encoding.ASCII.GetBytes(Whole));
+            held.Flush();
+            _ = Task.Delay(60).ContinueWith(done => held.Dispose(), TaskScheduler.Default);
+            return Ok();
+        });
+        var svc = NewService(runner);
+
+        var path = await svc.GetThumbnailAsync(input, TimeSpan.FromSeconds(2), 160, CancellationToken.None);
+
+        path.Should().NotBeNull("the rename was refused only for a moment");
+        runner.CallCount.Should().Be(1, "the picture was published, not asked for again");
+        File.ReadAllText(path!).Should().Be(Whole);
+        FilesUnderCache().Should().ContainSingle();
+    }
+
     // Boundaries — Clear during a grab removes the folder, work file included: the grab resolves to no thumbnail (never throws), is
     // not remembered, and the next request runs ffmpeg again.
     [Trait("serves-spec", "SPEC-005")]

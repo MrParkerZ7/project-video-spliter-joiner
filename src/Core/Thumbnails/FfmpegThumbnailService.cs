@@ -243,7 +243,7 @@ public sealed class FfmpegThumbnailService : IThumbnailService
                 }
 
                 // ffmpeg failed, or produced nothing (or an empty file) → best-effort null (do NOT cache a missing file).
-                if (!result.Success || !HasPicture(workPath) || !TryPublish(workPath, tempPath))
+                if (!result.Success || !HasPicture(workPath) || !await TryPublishAsync(workPath, tempPath).ConfigureAwait(false))
                 {
                     return null;
                 }
@@ -425,28 +425,52 @@ public sealed class FfmpegThumbnailService : IThumbnailService
     internal static string WorkPathFor(string finalPath) =>
         Path.ChangeExtension(finalPath, null) + "." + Guid.NewGuid().ToString("N") + ".tmp.jpg";
 
+    /// <summary>How many times a refused publish is tried in all (the first at once, the rest 20 ms apart).</summary>
+    private const int PublishAttempts = 6;
+
     /// <summary>
     /// Move a whole picture onto its final name (T-228). The first grab to finish wins: a picture already there came from a grab of the same
-    /// key and may be open in the app, so it is kept and this one is dropped (the caller deletes the work file); an empty or missing file there is
-    /// replaced. False when the picture could not be put in place and none is there.
+    /// key and may be open in the app, so it is kept and never renamed over, and this one is dropped (the caller deletes the work file); an empty
+    /// file there (an older build wrote in place) is removed first. A refused move (a scanner or indexer holding the new file for a moment, or a
+    /// racing grab publishing between the check and the move) is looked at again a few times, 20 ms apart. False when the picture could not be
+    /// put in place and none is there.
     /// </summary>
-    private static bool TryPublish(string workPath, string finalPath)
+    private static async Task<bool> TryPublishAsync(string workPath, string finalPath)
     {
-        if (HasPicture(finalPath))
+        for (var attempt = 0; attempt < PublishAttempts; attempt++)
         {
-            return true;
+            if (HasPicture(finalPath))
+            {
+                return true;
+            }
+
+            if (!File.Exists(workPath))
+            {
+                break; // the folder was cleared meanwhile: nothing left to publish
+            }
+
+            try
+            {
+                if (File.Exists(finalPath))
+                {
+                    File.Delete(finalPath);
+                }
+
+                File.Move(workPath, finalPath);
+                return true;
+            }
+            catch
+            {
+                // Refused: look again after a moment.
+            }
+
+            if (attempt < PublishAttempts - 1)
+            {
+                await Task.Delay(20).ConfigureAwait(false);
+            }
         }
 
-        try
-        {
-            File.Move(workPath, finalPath, overwrite: true);
-            return true;
-        }
-        catch
-        {
-            // A racing grab published between the check and the move, or the folder was cleared meanwhile.
-            return HasPicture(finalPath);
-        }
+        return HasPicture(finalPath);
     }
 
     /// <summary>

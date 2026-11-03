@@ -11,6 +11,12 @@ namespace VideoSplitJoiner.Core.Tests;
 /// hover cancels a grab. The picture the next request is served must be a whole JPEG (start and end markers present) whatever the kill
 /// left behind, and no work file may stay in the cache folder. Before the fix the service wrote straight to the final name and handed
 /// back whatever a killed run had left there.
+///
+/// <para>This is a regression guard, not the reproduction: it passes on the code before the fix too, because the poll sees the file only
+/// after ffmpeg has written it. The review reproduced the defect with a kill spin-timed to the instant the file is created (the file is
+/// 0 bytes for a few microseconds): 4 of 600 raw kills left an empty file, and through the old service 2 of 500 fresh requests were served
+/// that empty file; on the fixed service 0 of 500 left an empty or partial final file and 500 of 500 next requests were whole. That timing
+/// is too rare to be a test, so the scripted-runner tests in <see cref="ThumbnailPartialFileTests"/> carry the proof.</para>
 /// </summary>
 [Collection(MediaFixturesCollection.Name)]
 public sealed class ThumbnailPartialFileIntegrationTests : IDisposable
