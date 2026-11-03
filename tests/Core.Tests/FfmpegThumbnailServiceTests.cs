@@ -415,11 +415,15 @@ public class FfmpegThumbnailServiceTests : IDisposable
             root = Path.GetTempPath();
         }
 
-        var expected = Path.Combine(root, FfmpegThumbnailService.AppFolderName, FfmpegThumbnailService.CacheFolderName);
+        // T-243: the pictures live in the version folder under the thumb-cache base.
+        var expectedBase = Path.Combine(root, FfmpegThumbnailService.AppFolderName, FfmpegThumbnailService.CacheFolderName);
+        var expected = Path.Combine(expectedBase, FfmpegThumbnailService.CacheVersionFolderName);
         var actual = FfmpegThumbnailService.DefaultCacheRoot();
 
         actual.Should().Be(expected);
-        actual.Should().EndWith(Path.Combine(FfmpegThumbnailService.AppFolderName, FfmpegThumbnailService.CacheFolderName));
+        FfmpegThumbnailService.DefaultCacheBase().Should().Be(expectedBase);
+        actual.Should().EndWith(Path.Combine(
+            FfmpegThumbnailService.AppFolderName, FfmpegThumbnailService.CacheFolderName, FfmpegThumbnailService.CacheVersionFolderName));
     }
 
     // SPEC-005#I9 — the thumbnail cache is TRUE-LRU (recency-on-hit / move-to-front), NOT FIFO: re-accessing

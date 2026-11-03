@@ -53,8 +53,14 @@ namespace VideoSplitJoiner.Core.Thumbnails;
 /// beyond the cache; the caller (the T-078 VM) enforces latest-wins by cancelling stale requests and
 /// using only the returned path for the time it asked about.</para>
 ///
-/// <para><b>Temp location:</b> <c>%LOCALAPPDATA%/VideoSplitJoiner/thumb-cache/&lt;hash-of-input&gt;/&lt;bucketMs&gt;_w&lt;width&gt;.jpg</c>.
+/// <para><b>Temp location:</b> <c>%LOCALAPPDATA%/VideoSplitJoiner/thumb-cache/v&lt;CacheVersion&gt;/&lt;hash-of-input&gt;/&lt;bucketMs&gt;_w&lt;width&gt;.jpg</c>.
 /// The temp root is injectable so tests never touch the real per-user folder.</para>
+///
+/// <para><b>The cache is versioned (T-243, SPEC-005 I36):</b> the key above carries no version of the code that wrote a picture, so the
+/// version is the folder: <see cref="CacheVersion"/> is bumped by any fix that changes what a grab returns, and a build then never
+/// reads a folder an older one wrote. The first grab of a service made by the default constructors (or <see cref="ForCacheBase"/>)
+/// sweeps the older version folders once, with the stale work files of the current one; see
+/// <see cref="SweepStaleCache"/>. An explicit cache root is used as given and never swept.</para>
 ///
 /// <para><b>A picture is published whole (T-228, SPEC-005 I35):</b> ffmpeg writes each grab to a work file of its own beside the final one
 /// (<c>&lt;name&gt;_w&lt;width&gt;.&lt;guid&gt;.tmp.jpg</c>), and the final name is taken by a rename only after a run that succeeded and wrote a
@@ -73,6 +79,24 @@ public sealed class FfmpegThumbnailService : IThumbnailService
 
     /// <summary>Sub-folder under the app-data root that holds all thumbnail caches.</summary>
     public const string CacheFolderName = "thumb-cache";
+
+    /// <summary>
+    /// The version of the cache layout and of the pictures it holds (T-243, SPEC-005 I36). Bump it in the SAME change as any fix that
+    /// changes what a grab returns (the frame, the scale, the seek): a picture an older build cached is then never served, because the
+    /// pictures live under <c>thumb-cache/v&lt;CacheVersion&gt;/</c> and the first use sweeps the older version folders away.
+    /// 1 is the layout without a version folder (<c>thumb-cache/&lt;hash&gt;/</c>), which every build before T-243 wrote; 2 is the
+    /// first versioned one, and also the one that carries the T-227 MPEG-TS frame fix.
+    /// </summary>
+    public const int CacheVersion = 2;
+
+    /// <summary>The version folder under <see cref="CacheFolderName"/>: <c>v2</c> for <see cref="CacheVersion"/> 2.</summary>
+    public static readonly string CacheVersionFolderName = "v" + CacheVersion.ToString(CultureInfo.InvariantCulture);
+
+    /// <summary>
+    /// How old a <c>*.tmp.jpg</c> work file must be before the sweep takes it for one a hard kill left (T-243). A live grab's file is
+    /// seconds old; the margin keeps the sweep off a grab of another running instance of the app.
+    /// </summary>
+    internal static readonly TimeSpan StaleWorkFileAge = TimeSpan.FromHours(1);
 
     /// <summary>Default bucket granularity — hover times are floored to whole seconds.</summary>
     public static readonly TimeSpan DefaultBucketGranularity = TimeSpan.FromSeconds(1);
@@ -96,6 +120,13 @@ public sealed class FfmpegThumbnailService : IThumbnailService
     private readonly TimeSpan _bucketGranularity;
     private readonly int _maxEntries;
 
+    // T-243: the one-time sweep of the older cache versions (null for an explicit root, which the caller owns). Every grab awaits it, so
+    // the sweep never runs beside a grab and cannot remove a work file or picture this process is writing.
+    private readonly Lazy<Task>? _sweep;
+
+    /// <summary>True when the first grab sweeps the cache base (the default constructors and ForCacheBase), false for an explicit cache root. Test seam.</summary>
+    internal bool SweepsOnFirstGrab => _sweep is not null;
+
     // LRU: key → temp path, in access order. Guarded by _gate. LinkedList = O(1) move-to-front + evict-tail.
     private readonly object _gate = new();
     private readonly LinkedList<CacheEntry> _lru = new();
@@ -103,7 +134,7 @@ public sealed class FfmpegThumbnailService : IThumbnailService
 
     /// <summary>Create the service over the T-002 runner, using the default per-user cache root + 1s buckets.</summary>
     public FfmpegThumbnailService(IFfmpegRunner runner)
-        : this(runner, DefaultCacheRoot(), DefaultBucketGranularity, DefaultMaxEntries)
+        : this(runner, DefaultCacheRoot(), DefaultBucketGranularity, DefaultMaxEntries, null, DefaultCacheBase())
     {
     }
 
@@ -112,8 +143,29 @@ public sealed class FfmpegThumbnailService : IThumbnailService
     /// (T-226, SPEC-005 I27). The app passes the shared probe's cached <c>MediaInfo.StartTime</c>; a null result means "unknown".
     /// </summary>
     public FfmpegThumbnailService(IFfmpegRunner runner, Func<string, CancellationToken, Task<TimeSpan?>>? startTimeOf)
-        : this(runner, DefaultCacheRoot(), DefaultBucketGranularity, DefaultMaxEntries, startTimeOf)
+        : this(runner, DefaultCacheRoot(), DefaultBucketGranularity, DefaultMaxEntries, startTimeOf, DefaultCacheBase())
     {
+    }
+
+    /// <summary>
+    /// A service whose pictures live under <paramref name="cacheBase"/>'s current version folder (<c>&lt;cacheBase&gt;/v&lt;CacheVersion&gt;</c>)
+    /// and whose first grab sweeps what older versions left in <paramref name="cacheBase"/> (T-243, SPEC-005 I36). The default constructors
+    /// are this over <see cref="DefaultCacheBase"/>; tests pass a temp base.
+    /// </summary>
+    public static FfmpegThumbnailService ForCacheBase(
+        IFfmpegRunner runner, string cacheBase, Func<string, CancellationToken, Task<TimeSpan?>>? startTimeOf = null) =>
+        ForCacheBase(runner, cacheBase, startTimeOf, sweep: null);
+
+    /// <summary>Test seam: as above, with the sweep replaced by <paramref name="sweep"/> (null = <see cref="SweepStaleCache"/>).</summary>
+    internal static FfmpegThumbnailService ForCacheBase(
+        IFfmpegRunner runner,
+        string cacheBase,
+        Func<string, CancellationToken, Task<TimeSpan?>>? startTimeOf,
+        Func<string, int>? sweep)
+    {
+        ArgumentNullException.ThrowIfNull(cacheBase);
+        return new FfmpegThumbnailService(
+            runner, Path.Combine(cacheBase, CacheVersionFolderName), DefaultBucketGranularity, DefaultMaxEntries, startTimeOf, cacheBase, sweep);
     }
 
     /// <summary>
@@ -126,6 +178,18 @@ public sealed class FfmpegThumbnailService : IThumbnailService
         TimeSpan? bucketGranularity = null,
         int maxEntries = DefaultMaxEntries,
         Func<string, CancellationToken, Task<TimeSpan?>>? startTimeOf = null)
+        : this(runner, cacheRoot, bucketGranularity, maxEntries, startTimeOf, sweepBase: null)
+    {
+    }
+
+    private FfmpegThumbnailService(
+        IFfmpegRunner runner,
+        string cacheRoot,
+        TimeSpan? bucketGranularity,
+        int maxEntries,
+        Func<string, CancellationToken, Task<TimeSpan?>>? startTimeOf,
+        string? sweepBase,
+        Func<string, int>? sweep = null)
     {
         _runner = runner ?? throw new ArgumentNullException(nameof(runner));
         _startTimeOf = startTimeOf;
@@ -134,16 +198,27 @@ public sealed class FfmpegThumbnailService : IThumbnailService
         var g = bucketGranularity ?? DefaultBucketGranularity;
         _bucketGranularity = g > TimeSpan.Zero ? g : DefaultBucketGranularity;
         _maxEntries = maxEntries > 0 ? maxEntries : DefaultMaxEntries;
+
+        if (sweepBase is not null)
+        {
+            _sweep = new Lazy<Task>(() => Task.Run(() => (sweep ?? SweepStaleCache)(sweepBase)), LazyThreadSafetyMode.ExecutionAndPublication);
+        }
     }
 
     /// <summary>The resolved cache root this service targets.</summary>
     public string CacheRoot => _cacheRoot;
 
     /// <summary>
-    /// The default per-user cache root: <c>%LOCALAPPDATA%/VideoSplitJoiner/thumb-cache</c>. Falls back to
+    /// The default per-user cache root: <c>%LOCALAPPDATA%/VideoSplitJoiner/thumb-cache/v&lt;CacheVersion&gt;</c> (T-243), the version
+    /// folder under <see cref="DefaultCacheBase"/>.
+    /// </summary>
+    public static string DefaultCacheRoot() => Path.Combine(DefaultCacheBase(), CacheVersionFolderName);
+
+    /// <summary>
+    /// The folder every cache version lives in: <c>%LOCALAPPDATA%/VideoSplitJoiner/thumb-cache</c>. Falls back to
     /// the OS temp folder when local-app-data cannot be resolved (headless / restricted environments).
     /// </summary>
-    public static string DefaultCacheRoot()
+    public static string DefaultCacheBase()
     {
         var root = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
         if (string.IsNullOrEmpty(root))
@@ -186,6 +261,13 @@ public sealed class FfmpegThumbnailService : IThumbnailService
             }
 
             ct.ThrowIfCancellationRequested();
+
+            // T-243: the first grab of the process waits for the one-time sweep of the older versions (the rest wait with it).
+            if (_sweep is not null)
+            {
+                // WaitAsync: a cancelled grab returns at once; the sweep itself keeps running and is not restarted.
+                await _sweep.Value.WaitAsync(ct).ConfigureAwait(false);
+            }
 
             var cacheKey = BuildCacheKey(inputPath, name, width);
 
@@ -496,6 +578,198 @@ public sealed class FfmpegThumbnailService : IThumbnailService
             {
                 await Task.Delay(20).ConfigureAwait(false);
             }
+        }
+    }
+
+    /// <summary>
+    /// The one-time sweep of <paramref name="cacheBase"/> (T-243, SPEC-005 I36), best-effort (a locked or missing file is skipped, never
+    /// thrown) and narrow: it only ever deletes what this service writes. Folders and files that are reparse points (junctions, links)
+    /// are never entered or deleted. It removes (1) in every older version folder (<c>v&lt;n&gt;</c>, n below <see cref="CacheVersion"/>)
+    /// and in every pre-version per-input folder (32 hex characters, straight in the base): the files whose names this service writes
+    /// (<c>&lt;bucketMs&gt;_w&lt;width&gt;.jpg</c>, <c>x&lt;µs&gt;_w&lt;width&gt;.jpg</c>, the width-less names of builds before T-179, and
+    /// their work files), then the folder only if that left it empty, so a foreign file keeps its folder; and, in the 32-hex input
+    /// folders of the current version folder, (2) a work file at least <see cref="StaleWorkFileAge"/> old, which a hard kill left. A
+    /// picture under a final name in the current version is never opened or touched: it was published whole by a rename (T-228), so it
+    /// cannot be cut short, and every older-layout picture, where a cut-short one could be, goes in (1). Reading each cached picture at
+    /// every start measured about 100 times the cost of deleting it, and the first grab waits for the sweep. A file is deleted with a plain
+    /// delete, not an open, so one another process holds open without sharing delete stays. A newer version's folder and anything else in
+    /// the base is left alone. Returns how many items it removed, so a second start finds 0.
+    /// </summary>
+    internal static int SweepStaleCache(string cacheBase)
+    {
+        var removed = 0;
+        try
+        {
+            if (string.IsNullOrWhiteSpace(cacheBase) || !Directory.Exists(cacheBase) || IsReparsePoint(cacheBase))
+            {
+                return 0;
+            }
+
+            foreach (var dir in SafeList(() => Directory.EnumerateDirectories(cacheBase)))
+            {
+                var name = Path.GetFileName(dir);
+                if (IsReparsePoint(dir))
+                {
+                    continue;
+                }
+
+                if (string.Equals(name, CacheVersionFolderName, StringComparison.Ordinal))
+                {
+                    removed += SweepCurrentVersion(dir);
+                }
+                else if (IsInputFolderName(name))
+                {
+                    removed += SweepLegacyInputFolder(dir);
+                }
+                else if (IsOlderVersionFolderName(name))
+                {
+                    foreach (var inputDir in SafeList(() => Directory.EnumerateDirectories(dir)))
+                    {
+                        if (IsInputFolderName(Path.GetFileName(inputDir)) && !IsReparsePoint(inputDir))
+                        {
+                            removed += SweepLegacyInputFolder(inputDir);
+                        }
+                    }
+
+                    removed += TryDeleteEmptyDirectory(dir) ? 1 : 0;
+                }
+            }
+        }
+        catch
+        {
+            // Best-effort: whatever stays is swept by the next start.
+        }
+
+        return removed;
+    }
+
+    /// <summary>An older layout's per-input folder: delete the files this service wrote, then the folder if it is empty.</summary>
+    private static int SweepLegacyInputFolder(string inputDir)
+    {
+        var removed = 0;
+        foreach (var file in SafeList(() => Directory.EnumerateFiles(inputDir)))
+        {
+            var name = Path.GetFileName(file);
+            if ((IsFinalPictureName(name) || IsWorkFileName(name)) && !IsReparsePoint(file) && TryDeleteSweptFile(file))
+            {
+                removed++;
+            }
+        }
+
+        return removed + (TryDeleteEmptyDirectory(inputDir) ? 1 : 0);
+    }
+
+    private static int SweepCurrentVersion(string versionRoot)
+    {
+        var removed = 0;
+        foreach (var inputDir in SafeList(() => Directory.EnumerateDirectories(versionRoot)))
+        {
+            if (!IsInputFolderName(Path.GetFileName(inputDir)) || IsReparsePoint(inputDir))
+            {
+                continue;
+            }
+
+            foreach (var file in SafeList(() => Directory.EnumerateFiles(inputDir)))
+            {
+                try
+                {
+                    var name = Path.GetFileName(file);
+                    if (IsReparsePoint(file))
+                    {
+                        continue;
+                    }
+
+                    if (IsWorkFileName(name)
+                        && DateTime.UtcNow - File.GetLastWriteTimeUtc(file) >= StaleWorkFileAge
+                        && TryDeleteSweptFile(file))
+                    {
+                        removed++;
+                    }
+                }
+                catch
+                {
+                    // A locked file stays until the next start.
+                }
+            }
+        }
+
+        return removed;
+    }
+
+    private static List<string> SafeList(Func<IEnumerable<string>> list)
+    {
+        try
+        {
+            return list().ToList();
+        }
+        catch
+        {
+            return new List<string>();
+        }
+    }
+
+    private static bool IsReparsePoint(string path)
+    {
+        try
+        {
+            return (File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0;
+        }
+        catch
+        {
+            return true; // cannot tell: do not touch it
+        }
+    }
+
+    /// <summary>A per-input folder name: 32 lowercase hex characters (<see cref="HashInput"/>).</summary>
+    private static bool IsInputFolderName(string name) =>
+        name.Length == 32 && name.All(c => c is (>= '0' and <= '9') or (>= 'a' and <= 'f'));
+
+    /// <summary><c>v&lt;n&gt;</c> with n below the current version.</summary>
+    private static bool IsOlderVersionFolderName(string name) =>
+        name.Length > 1 && name[0] == 'v'
+        && int.TryParse(name.AsSpan(1), NumberStyles.None, CultureInfo.InvariantCulture, out var version)
+        && version < CacheVersion;
+
+    // The names this service (and the builds before it) wrote: <bucketMs>_w<width>.jpg, x<µs>_w<width>.jpg, the width-less
+    // <bucketMs>.jpg of builds before T-179, and the work files <name>_w<width>.<guid>.tmp.jpg.
+    private static readonly System.Text.RegularExpressions.Regex FinalPictureName = new(
+        @"^x?[0-9]+(_w[0-9]+)?\.jpg\z", System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
+    private static readonly System.Text.RegularExpressions.Regex WorkFileName = new(
+        @"^x?[0-9]+_w[0-9]+\.[0-9a-f]{32}\.tmp\.jpg\z", System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
+    private static bool IsFinalPictureName(string name) => FinalPictureName.IsMatch(name);
+
+    private static bool IsWorkFileName(string name) => WorkFileName.IsMatch(name);
+
+    /// <summary>
+    /// Delete a file with a plain delete: no open, so nothing reads its content (an open of each old picture measured about 100 times slower
+    /// than the delete), and a file another process holds open without sharing delete is refused by the system and stays. False on any failure.
+    /// </summary>
+    private static bool TryDeleteSweptFile(string path)
+    {
+        try
+        {
+            File.Delete(path);
+            return !File.Exists(path);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>Remove a folder only when it is empty (a foreign file keeps its folder); false when it is not, or on any failure.</summary>
+    private static bool TryDeleteEmptyDirectory(string dir)
+    {
+        try
+        {
+            Directory.Delete(dir, recursive: false);
+            return true;
+        }
+        catch
+        {
+            return false;
         }
     }
 
