@@ -21,6 +21,10 @@ goal; `0.1.0` is the first end-to-end, shippable cut.
   batch bar and *~Ns left* weigh the piece accordingly.
 
 ### Fixed
+- **Splitting chosen parts of an MKV (or WebM) file starts each part on its keyframe.** When you select only some of the parts
+  (or a Bulk Cut row keeps the middle) of a lossless split, a part of an MKV began one keyframe interval early: 150 frames were written
+  where 120 were planned, on a test video with a keyframe every second. Splitting every part at once, and MP4, MOV and
+  transport-stream files, were already right. The part now starts exactly where the cut marker shows.
 - **The hover picture on a transport stream (.ts, .m2ts, .mts) shows the frame under the pointer.** It showed the next keyframe,
   up to a whole GOP late (frame 60 for a hover at 1 s on a clip with a keyframe every 2 s, where frame 30 is right). The hover
   now starts its seek a few seconds early and trims to the hovered time. It costs about 0.3 s more per grab on a 4K stream,

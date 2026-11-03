@@ -55,14 +55,29 @@ public sealed class LosslessBoundaryFixtures : IDisposable
             // That TS remuxed to MP4 with -c copy: format.start_time 0, but its video starts at 0.023 s (the AAC
             // priming carried over), keyframes at 0.023 + 2k s.
             case "tsremux":
-            {
-                var ts = await GetAsync("ts");
-                var path = Path.Combine(Dir, "tsremux.mp4");
-                var run = await Runner().RunAsync(FfmpegArgs.ForFfmpeg()
-                    .Raw("-y", "-loglevel", "error").Input(ts).Raw("-map", "0", "-c", "copy").Output(path));
-                run.ExitCode.Should().Be(0, run.StdErrText);
-                return path;
-            }
+                return await RemuxAsync(await GetAsync("ts"), "tsremux.mp4");
+
+            // The B-frame MP4 remuxed to Matroska with -c copy (T-234): format.start_time 0 and the audio at 0, but the
+            // video starts 0.023 s in (the AAC priming, the shape of the bench's mkv fixture: 0.021 s), so the engine's
+            // muxer conversion relies on StreamInfo.StartTime here too. Keyframes at 0.023 + k s.
+            case "mkv":
+                return await RemuxAsync(await GetAsync("bframes"), "bframes.mkv");
+
+            // The same remux to QuickTime: the mov muxer writes an edit list, so both streams start at 0 as in the MP4.
+            case "mov":
+                return await RemuxAsync(await GetAsync("bframes"), "bframes.mov");
+
+            // A Matroska file encoded straight to .mkv (what a recorder writes): the video starts at 0 and the AAC audio
+            // at -0.023 s, so the format start_time is negative; keyframes at k s. B-frames, 1 s GOP.
+            case "mkvnative":
+                return await SmartCutJointIntegrityTests.MakeFixtureAsync(
+                    Dir, "native.mkv", 10, 30, "-c:v", "libx264", "-g", "30", "-keyint_min", "30", "-sc_threshold", "0");
+
+            // The same without B-frames: a keyframe's cue is then its own pts, so a seek aimed AT the next keyframe would land
+            // on it. The control that pins the margin before the next keyframe.
+            case "mkvbf0":
+                return await SmartCutJointIntegrityTests.MakeFixtureAsync(
+                    Dir, "nativebf0.mkv", 10, 30, "-c:v", "libx264", "-bf", "0", "-g", "30", "-keyint_min", "30", "-sc_threshold", "0");
 
             // HEVC with B-frames (libx265 defaults), closed 2 s GOP.
             case "hevc":
@@ -84,6 +99,16 @@ public sealed class LosslessBoundaryFixtures : IDisposable
             default:
                 throw new ArgumentOutOfRangeException(nameof(shape), shape, "unknown fixture shape");
         }
+    }
+
+    /// <summary>Every stream of <paramref name="source"/> copied (<c>-c copy</c>) into <paramref name="name"/>, whose extension picks the muxer.</summary>
+    private async Task<string> RemuxAsync(string source, string name)
+    {
+        var path = Path.Combine(Dir, name);
+        var run = await Runner().RunAsync(FfmpegArgs.ForFfmpeg()
+            .Raw("-y", "-loglevel", "error").Input(source).Raw("-map", "0", "-c", "copy").Output(path));
+        run.ExitCode.Should().Be(0, run.StdErrText);
+        return path;
     }
 
     internal static FfmpegRunner Runner() => new(new FfmpegBinaryLocator(
@@ -212,6 +237,16 @@ public sealed class LosslessBoundaryIntegrationTests : IClassFixture<LosslessBou
         return (await CheckPartsAsync(source, sourceFrames, parts), sourceFrames);
     }
 
+    /// <summary>Precondition of the Matroska shape: the format starts at 0 but its video stream starts after it (the bench's mkv: 0.021 s).</summary>
+    private async Task AssertVideoStartsAfterTheFormatAsync(string source)
+    {
+        (await LosslessBoundary.FormatStartTimeAsync(source)).Should().Be(0, "precondition: the format starts at 0");
+        var info = (await Probe().ProbeAsync(source)).Should().BeOfType<ProbeResult.ProbeSucceeded>().Which.Info;
+        info.VideoStreams[0].StartTime.Should().NotBeNull();
+        info.VideoStreams[0].StartTime!.Value.TotalSeconds.Should().BeInRange(0.020, 0.024,
+            "precondition: the video starts after the audio, so the muxer conversion depends on StreamInfo.StartTime");
+    }
+
     private static void AssertEveryPartExact(IReadOnlyList<PartCheck> checks)
     {
         checks.Should().AllSatisfy(c =>
@@ -240,8 +275,9 @@ public sealed class LosslessBoundaryIntegrationTests : IClassFixture<LosslessBou
 
     // serves-spec: SPEC-001#I66 — the same check on the other shapes the drain named (T-188's bench): HEVC, a 10 s GOP,
     // the tiny clip whose last cut snaps to its final keyframe (shipped Split threw "got fewer segments than planned"),
-    // a TS (its video starts 1.47 s in), that TS remuxed to MP4 (its video starts 0.023 s in, format start 0), and the
-    // -bf 0 control.
+    // a TS (its video starts 1.47 s in), that TS remuxed to MP4 (its video starts 0.023 s in, format start 0), the
+    // -bf 0 control, and (T-234) the B-frame source remuxed to Matroska (video 0.023 s in, audio and format at 0) and to
+    // QuickTime (both streams at 0).
     [Trait("serves-spec", "SPEC-001")]
     [SkippableTheory]
     [InlineData("bf0", 3.0, 6.0)]
@@ -250,6 +286,10 @@ public sealed class LosslessBoundaryIntegrationTests : IClassFixture<LosslessBou
     [InlineData("tiny", 1.0, 2.0)]
     [InlineData("ts", 3.5, 5.5)]
     [InlineData("tsremux", 2.0, 4.0)]
+    [InlineData("mkv", 3.0, 6.0)]
+    [InlineData("mov", 3.0, 6.0)]
+    [InlineData("mkvnative", 3.0, 6.0)]
+    [InlineData("mkvbf0", 3.0, 6.0)]
     public async Task FullSplit_EveryShape_EachPartStartsOnItsKeyframe_AndHoldsItsPlannedFrames(string shape, double cut1, double cut2)
     {
         RequireBinaries();
@@ -262,6 +302,11 @@ public sealed class LosslessBoundaryIntegrationTests : IClassFixture<LosslessBou
         if (shape == "ts")
         {
             (await LosslessBoundary.FormatStartTimeAsync(src)).Should().BeGreaterThan(0.001, "precondition: a TS starts after 0");
+        }
+
+        if (shape == "mkv")
+        {
+            await AssertVideoStartsAfterTheFormatAsync(src);
         }
 
         var (checks, _) = await FullSplitAsync(src, cut1, cut2);
@@ -395,10 +440,19 @@ public sealed class LosslessBoundaryIntegrationTests : IClassFixture<LosslessBou
     }
 
     // Controls: the per-segment path on sources whose format start_time is 0 — unchanged tokens, right before and after.
+    // T-234 adds Matroska: the remux of the B-frame MP4 has a video that starts 0.023 s in while the format starts at 0
+    // (like the MP4 remux of the TS), and the natively encoded .mkv starts its audio at -0.023 s, so its format start is
+    // negative. Shipped code started the Matroska parts one GOP early (150 frames against the planned 120): ffmpeg's
+    // Matroska seek lands on the last cue at or before the target, and a keyframe's cue is later than its pts on a
+    // B-frame stream. The QuickTime remux starts both streams at 0 and was always right.
     [Trait("serves-spec", "SPEC-001")]
     [SkippableTheory]
     [InlineData("bframes", 3.0, 6.0)]
     [InlineData("tsremux", 2.0, 4.0)]
+    [InlineData("mkv", 3.0, 6.0)]
+    [InlineData("mov", 3.0, 6.0)]
+    [InlineData("mkvnative", 3.0, 6.0)]
+    [InlineData("mkvbf0", 3.0, 6.0)]
     public async Task SubsetFinalPart_ZeroStartControls_StartOnTheirKeyframe_AndHoldEveryFrame(string shape, double cut1, double cut2)
     {
         RequireBinaries();
@@ -409,17 +463,63 @@ public sealed class LosslessBoundaryIntegrationTests : IClassFixture<LosslessBou
         check.CountRight.Should().BeTrue(check.Describe());
     }
 
+    // serves-spec: SPEC-001#I74 - T-234: the other parts of a Matroska file. The first part (from the file's start) and an
+    // interior part (with an end) start on their planned keyframes, on the remux (video 0.023 s in) and on the natively
+    // encoded file (format start -0.023 s); the QuickTime remux is the control. An interior part keeps stream copy's end
+    // overrun (T-220), so only its start is asserted.
+    [Trait("serves-spec", "SPEC-001")]
+    [SkippableTheory]
+    [InlineData("mkv", 1)]
+    [InlineData("mkv", 2)]
+    [InlineData("mkvnative", 1)]
+    [InlineData("mkvnative", 2)]
+    [InlineData("mkvbf0", 2)]
+    [InlineData("mov", 2)]
+    public async Task SubsetFirstAndInteriorParts_OnMatroskaAndQuickTime_StartOnTheirKeyframe(string shape, int part)
+    {
+        RequireBinaries();
+
+        var (check, _) = await SubsetAsync(shape, part, 3.0, 6.0);
+
+        check.StartsRight.Should().BeTrue(check.Describe());
+        (check.Frames - check.PlannedFrames).Should().BeInRange(0, 3, "an end overrun of stream copy (T-220) at most: " + check.Describe());
+    }
+
+    // serves-spec: SPEC-001#I74 - T-234 (boundary): a final part that starts on the LAST keyframe has no next keyframe to
+    // aim before, so it aims before the end of the file: it holds the last GOP, 30 frames, and not the one before it.
+    [Trait("serves-spec", "SPEC-001")]
+    [SkippableTheory]
+    [InlineData("mkv")]
+    [InlineData("mkvnative")]
+    [InlineData("mkvbf0")]
+    public async Task SubsetFinalPart_OnMatroska_ThatStartsOnTheLastKeyframe_HoldsOnlyTheLastGop(string shape)
+    {
+        RequireBinaries();
+
+        var (check, _) = await SubsetAsync(shape, 2, 8.8);
+
+        check.PlannedFrames.Should().Be(30, "precondition: the cut at 8.8 s snaps to the last keyframe, 1 s before the end");
+        check.StartsRight.Should().BeTrue(check.Describe());
+        check.CountRight.Should().BeTrue(check.Describe());
+    }
+
     // ---- The probe fields the engine converts by (SPEC-004 I37-I39), on the real files -------------------------
 
     // serves-spec: SPEC-004#I37/I38/I39 — on the real TS the probe reads the format start (the audio's, about 1.44 s),
     // the later video start (1.466667 s) and the frame rate; on the MP4 remux the format starts at 0 and the video
-    // 0.023 s in. The format start is checked against ffprobe read directly, not through the code under test.
+    // 0.023 s in; the Matroska remux of the B-frame MP4 (T-234) does the same (the bench's mkv: 0.021 s) and the QuickTime
+    // remux starts both at 0. The format start is checked against ffprobe read directly, not through the code under test,
+    // and against the value each shape is known to have.
     [Trait("serves-spec", "SPEC-004")]
     [SkippableTheory]
-    [InlineData("ts", 1.466667)]
-    [InlineData("tsremux", 0.023)]
-    [InlineData("bframes", 0.0)]
-    public async Task Probe_MapsTheFormatStart_TheVideoStart_AndTheFrameRate(string shape, double videoStart)
+    [InlineData("ts", 1.466667, 1.443444)]
+    [InlineData("tsremux", 0.023, 0.0)]
+    [InlineData("bframes", 0.0, 0.0)]
+    [InlineData("mkv", 0.023, 0.0)]
+    [InlineData("mov", 0.0, 0.0)]
+    [InlineData("mkvnative", 0.0, -0.023)]
+    [InlineData("mkvbf0", 0.0, -0.023)]
+    public async Task Probe_MapsTheFormatStart_TheVideoStart_AndTheFrameRate(string shape, double videoStart, double formatStart)
     {
         RequireBinaries();
         var src = await _fx.GetAsync(shape);
@@ -428,6 +528,7 @@ public sealed class LosslessBoundaryIntegrationTests : IClassFixture<LosslessBou
 
         var info = result.Should().BeOfType<ProbeResult.ProbeSucceeded>().Which.Info;
         info.StartTime.TotalSeconds.Should().BeApproximately(await LosslessBoundary.FormatStartTimeAsync(src), 1e-6);
+        info.StartTime.TotalSeconds.Should().BeApproximately(formatStart, 0.0005);
         var video = info.VideoStreams[0];
         video.StartTime.Should().NotBeNull();
         video.StartTime!.Value.TotalSeconds.Should().BeApproximately(videoStart, 0.0005);
@@ -442,12 +543,15 @@ public sealed class LosslessBoundaryIntegrationTests : IClassFixture<LosslessBou
     // serves-spec: SPEC-001#I66 — a Bulk Cut lossless row on the TS (intro and outro set) writes a kept middle whose
     // first frame is the source's frame at the snapped intro (BulkTrimEngine → KeptMiddleRequestBuilder → SplitEngine's
     // per-segment path).
+    // T-234 runs the same row on the Matroska remux: before the fix its kept middle started a GOP before the intro.
     [Trait("serves-spec", "SPEC-001")]
-    [SkippableFact]
-    public async Task BulkLosslessRow_OnTs_KeptMiddleStartsAtTheSnappedIntro()
+    [SkippableTheory]
+    [InlineData("ts", ".ts")]
+    [InlineData("mkv", ".mkv")]
+    public async Task BulkLosslessRow_KeptMiddleStartsAtTheSnappedIntro(string shape, string extension)
     {
         RequireBinaries();
-        var src = await _fx.GetAsync("ts");
+        var src = await _fx.GetAsync(shape);
         var probe = Probe();
         var runner = new FfmpegRunner(Locator());
         var disposer = new KeepOriginalBackupDisposer();
@@ -458,7 +562,7 @@ public sealed class LosslessBoundaryIntegrationTests : IClassFixture<LosslessBou
         var keyframes = await probe.GetKeyframesAsync(src);
         var intro = probe.SnapToNearestKeyframe(keyframes, S(3.5)).Snapped;
         var outro = probe.SnapToNearestKeyframe(keyframes, S(7.5)).Snapped;
-        var desired = Path.Combine(_dir, "src_trimmed.ts");
+        var desired = Path.Combine(_dir, "src_trimmed" + extension);
 
         var result = await batch.RunAsync(
             new[] { new BulkTrimItem(src, S(3.5), S(7.5), desired) },

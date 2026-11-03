@@ -122,18 +122,28 @@ public static class SplitArgsBuilder
     /// decoding timestamps, so on a B-frame source a part that has an end still keeps the next keyframe and the frame
     /// coded after it (T-220).</para>
     /// </summary>
+    /// <param name="seekAnchor">
+    /// <b>Matroska only (T-234).</b> A source timestamp inside the part's first GOP, after <paramref name="start"/> and
+    /// before the next keyframe (<see cref="MatroskaSeekAnchor"/>), that the input seek is aimed at instead of the
+    /// keyframe itself: ffmpeg's Matroska demuxer lands on the last cue at or before the target, and the cue of a keyframe
+    /// on a B-frame stream is later than its pts (about 0.13 s with x264's defaults), so a seek to the keyframe lands one
+    /// GOP early. Every other container passes null and seeks to the keyframe. <c>-to</c> is measured from the anchor,
+    /// the same way it is from the keyframe.
+    /// </param>
     public static FfmpegArgs PerSegment(
         string inputPath,
         TimeSpan start,
         TimeSpan? end,
         TimeSpan sourceStartTime,
-        string outputPath)
+        string outputPath,
+        TimeSpan? seekAnchor = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(inputPath);
         ArgumentException.ThrowIfNullOrWhiteSpace(outputPath);
 
         // The seek offset from the format's start, clamped to the file's start.
-        var seekOffset = start - sourceStartTime;
+        var seekTarget = seekAnchor is { } anchor && anchor > start ? anchor : start;
+        var seekOffset = seekTarget - sourceStartTime;
         if (seekOffset < TimeSpan.Zero)
         {
             seekOffset = TimeSpan.Zero;
@@ -162,6 +172,54 @@ public static class SplitArgsBuilder
             .Raw("-c", "copy")
             .Raw("-avoid_negative_ts", "make_zero")
             .Output(outputPath);
+    }
+
+    /// <summary>How far before the next keyframe the Matroska seek anchor sits (<see cref="MatroskaSeekAnchor"/>); Matroska counts in milliseconds.</summary>
+    internal static readonly TimeSpan MatroskaSeekMargin = TimeSpan.FromMilliseconds(1);
+
+    /// <summary>True for ffprobe's <c>format_name</c> of a Matroska or WebM file (<c>matroska,webm</c>); null or blank is false.</summary>
+    internal static bool IsMatroskaContainer(string? container) =>
+        !string.IsNullOrWhiteSpace(container) && container.Contains("matroska", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// The <c>seekAnchor</c> of <see cref="PerSegment"/> for a Matroska source (T-234): a point inside the GOP that starts
+    /// at <paramref name="start"/>, <see cref="MatroskaSeekMargin"/> before the next keyframe (before
+    /// <paramref name="fileEnd"/> when <paramref name="start"/> is the last keyframe). ffmpeg's Matroska demuxer lands on
+    /// the last cue at or before its seek target, and a keyframe's cue sits after its pts on a B-frame stream, so only a
+    /// target that has passed that cue and not yet reached the next keyframe's lands on <paramref name="start"/>; a
+    /// target just under the next keyframe does, whatever the reorder delay (up to a whole GOP). Null when no anchor is
+    /// needed or possible: <paramref name="start"/> is at or before the first keyframe (the seek clamps to the first cue,
+    /// which is the part's start), or the next keyframe is within the margin. <paramref name="keyframes"/> are source
+    /// timestamps, ascending.
+    /// </summary>
+    internal static TimeSpan? MatroskaSeekAnchor(TimeSpan start, IReadOnlyList<TimeSpan> keyframes, TimeSpan fileEnd)
+    {
+        ArgumentNullException.ThrowIfNull(keyframes);
+
+        if (keyframes.Count == 0 || start <= keyframes[0])
+        {
+            return null;
+        }
+
+        // The first keyframe after the start.
+        var lo = 0;
+        var hi = keyframes.Count;
+        while (lo < hi)
+        {
+            var mid = lo + ((hi - lo) / 2);
+            if (keyframes[mid] > start)
+            {
+                hi = mid;
+            }
+            else
+            {
+                lo = mid + 1;
+            }
+        }
+
+        var limit = lo < keyframes.Count ? keyframes[lo] : fileEnd;
+        var anchor = limit - MatroskaSeekMargin;
+        return anchor > start ? anchor : null;
     }
 
     /// <summary>
