@@ -71,6 +71,12 @@ public sealed class MediaProbe : IMediaProbe, IVideoFrameProbe
     private readonly ConcurrentDictionary<string, Task<IReadOnlyList<TimeSpan>>> _inFlightScans = new();
 
     /// <summary>
+    /// Test-only seam (T-239): called with the shared scan's Task right after the scan has been started and before
+    /// the registering call returns, so a test can hold that call until the scan has finished.
+    /// </summary>
+    internal Action<Task>? AfterScanStartedForTest { get; set; }
+
+    /// <summary>
     /// Which scan path the LAST <see cref="GetKeyframesAsync"/> call actually used. Internal —
     /// exposed only so tests can assert the sample-table path ran, then the fast packet path (and
     /// that each fallback fires when the one before it yields nothing). Not part of the public
@@ -224,7 +230,12 @@ public sealed class MediaProbe : IMediaProbe, IVideoFrameProbe
         // starts the scan on an INDEPENDENT token so no single caller's CT can tear it down for the
         // others; this caller then awaits it through its OWN CT via WaitAsync, so cancelling here
         // throws for THIS caller only and leaves the shared scan running for the rest.
-        var scan = _inFlightScans.GetOrAdd(cacheKey, key => RunSharedScanAsync(path, key));
+        var scan = _inFlightScans.GetOrAdd(cacheKey, key =>
+        {
+            var started = RunSharedScanAsync(path, key);
+            AfterScanStartedForTest?.Invoke(started);
+            return started;
+        });
 
         // WaitAsync observes the shared task through this caller's CT: a cancellation here throws an
         // OperationCanceledException for THIS awaiter without cancelling `scan` itself. When the CT is
