@@ -21,6 +21,10 @@ goal; `0.1.0` is the first end-to-end, shippable cut.
   batch bar and *~Ns left* weigh the piece accordingly.
 
 ### Fixed
+- **The hover picture on a transport stream (.ts, .m2ts, .mts) shows the frame under the pointer.** It showed the next keyframe,
+  up to a whole GOP late (frame 60 for a hover at 1 s on a clip with a keyframe every 2 s, where frame 30 is right). The hover
+  now starts its seek a few seconds early and trims to the hovered time. It costs about 0.3 s more per grab on a 4K stream,
+  and a keyframe interval longer than 3 s still shows the next keyframe. MP4, MOV and MKV are unchanged.
 - **Splitting into a folder whose name contains a percent sign works.** A folder such as `100% done` made the single-pass split
   fail with an ffmpeg "Invalid segment filename template" error before any part was written. The percent sign is now kept literal,
   and the parts are written into that folder as usual.

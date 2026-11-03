@@ -12,7 +12,17 @@ namespace VideoSplitJoiner.Core.Thumbnails;
 /// <para><b>ffmpeg args (fast, frame-accurate seek):</b> <c>-ss &lt;t&gt;</c> BEFORE <c>-i &lt;input&gt;</c>,
 /// then <c>-frames:v 1 -vf scale=&lt;width&gt;:-1 -y &lt;temp.jpg&gt;</c>. The input seek jumps to the keyframe
 /// before <c>t</c> and decodes from there to <c>t</c> itself, so the picture is the frame at the (bucketed) time,
-/// not the keyframe (measured on MP4, MOV and MKV; an MPEG-TS source can land on the next keyframe instead).</para>
+/// not the keyframe (measured on MP4, MOV and MKV).</para>
+///
+/// <para><b>An MPEG-TS hover seeks early and trims by absolute time (T-227, SPEC-005 I34):</b> the mpegts demuxer's seek lands on the
+/// first keyframe AFTER the target, so the grab above showed the next keyframe, up to one GOP late (frame 60 for a hover at 1 s on a 2 s
+/// GOP clip, which should show frame 30). For a <c>.ts</c>, <c>.m2ts</c> or <c>.mts</c> bucketed request whose probed format start time is
+/// known, the input <c>-ss</c> is <see cref="TransportStreamSeekLead"/> early (so the demuxer lands on a keyframe at or before the time) and a
+/// second, output <c>-ss</c> of <c>start + time</c> trims to the frame; <c>-copyts</c> keeps the timestamps absolute, which is what lets the
+/// output <c>-ss</c> be a plain timestamp (measured: without it the same two seeks showed other frames, 60, 91 and 133 for the targets 90,
+/// 135 and 177 of a 30 fps clip with a keyframe every 2 s). No
+/// start-time source, an unknown start or a GOP longer than the lead keeps today's args and today's (late) frame; a run that yields no picture
+/// is run once more with them.</para>
 ///
 /// <para><b>The stream-info pass is skipped only for an MP4/MOV whose probed start time is exactly 0 (T-195, T-226, SPEC-005
 /// I27):</b> skipping it (<see cref="StreamInfoSkip.Flag"/>, 0.05-0.09 s per 4K H.264 grab) also leaves ffmpeg without the format
@@ -62,6 +72,16 @@ public sealed class FfmpegThumbnailService : IThumbnailService
 
     /// <summary>Default LRU cap on live cache entries (each maps to one temp jpg).</summary>
     public const int DefaultMaxEntries = 128;
+
+    /// <summary>
+    /// How far before the hovered time an MPEG-TS grab starts its input seek (T-227, SPEC-005 I34). The mpegts demuxer lands on the first
+    /// keyframe at or AFTER the seek point, so the point must be at least one GOP early for the landing to be at or before the time. 3 s
+    /// covers the 0.5-2 s GOPs of broadcast, camera and AVCHD streams; a longer GOP shows the next keyframe, as before the fix. The decode
+    /// cost is the frames between the landing and the time, at most this much video.
+    /// </summary>
+    internal static readonly TimeSpan TransportStreamSeekLead = TimeSpan.FromSeconds(3);
+
+    private static readonly string[] TransportStreamExtensions = { ".ts", ".m2ts", ".mts" };
 
     private readonly IFfmpegRunner _runner;
     private readonly Func<string, CancellationToken, Task<TimeSpan?>>? _startTimeOf;
@@ -131,7 +151,7 @@ public sealed class FfmpegThumbnailService : IThumbnailService
     public Task<string?> GetThumbnailAsync(string inputPath, TimeSpan time, int width, CancellationToken ct)
     {
         var bucket = FloorToBucket(time);
-        return GrabAsync(inputPath, bucket, BucketName(bucket), width, ct);
+        return GrabAsync(inputPath, bucket, BucketName(bucket), width, hover: true, ct);
     }
 
     /// <inheritdoc />
@@ -139,15 +159,17 @@ public sealed class FfmpegThumbnailService : IThumbnailService
     {
         // T-196: the exact time (never floored, never rounded to milliseconds), zero when it is not positive; its own name.
         var exact = time > TimeSpan.Zero ? time : TimeSpan.Zero;
-        return GrabAsync(inputPath, exact, ExactName(exact), width, ct);
+        return GrabAsync(inputPath, exact, ExactName(exact), width, hover: false, ct);
     }
 
     /// <summary>
     /// The one grab both requests share: look up <paramref name="name"/> (a bucket's milliseconds, or an exact time's
     /// <c>x&lt;µs&gt;</c>) at <paramref name="width"/>, reuse a file on disk under that name, or run ffmpeg once for
-    /// <paramref name="seek"/> and remember the result. Best-effort: any failure is null.
+    /// <paramref name="seek"/> and remember the result. Best-effort: any failure is null. <paramref name="hover"/> is the bucketed
+    /// request, the only one that takes the MPEG-TS early seek: an exact request on a TS is at a keyframe's own time minus the start,
+    /// where the plain seek already lands on the frame (T-196, SPEC-005 I32).
     /// </summary>
-    private async Task<string?> GrabAsync(string inputPath, TimeSpan seek, string name, int width, CancellationToken ct)
+    private async Task<string?> GrabAsync(string inputPath, TimeSpan seek, string name, int width, bool hover, CancellationToken ct)
     {
         try
         {
@@ -185,16 +207,19 @@ public sealed class FfmpegThumbnailService : IThumbnailService
 
             // T-226: an MP4/MOV whose probed start time is exactly 0 skips the stream-info decode; any doubt is today's args.
             var skipStreamInfo = await CanSkipStreamInfoAsync(inputPath, ct).ConfigureAwait(false);
-            var args = BuildArgs(inputPath, seek, width, tempPath, skipStreamInfo);
+
+            // T-227: a bucketed hover on an MPEG-TS whose start time is known seeks early and trims by absolute time; any doubt is today's args.
+            var transportStreamStart = hover ? await TransportStreamStartAsync(inputPath, ct).ConfigureAwait(false) : null;
+            var args = BuildArgs(inputPath, seek, width, tempPath, skipStreamInfo, transportStreamStart);
 
             ct.ThrowIfCancellationRequested();
             var result = await _runner.RunAsync(args, totalDuration: null, progress: null, ct: ct)
                 .ConfigureAwait(false);
 
-            // A flagged run that failed, wrote no file or an empty one is run once more without the flag: the extension and the
-            // start time are hints, and a wrong one must cost a second run, never a missing picture. A cancelled grab is never retried
-            // (it threw above); the retry is judged on its own output, never on a file the failed run left behind.
-            if (skipStreamInfo && !(result.Success && HasPicture(tempPath)))
+            // A flagged run (or an MPEG-TS early-seek run) that failed, wrote no file or an empty one is run once more with today's args:
+            // the extension and the start time are hints, and a wrong one must cost a second run, never a missing picture. A cancelled
+            // grab is never retried (it threw above); the retry is judged on its own output, never on a file the failed run left behind.
+            if ((skipStreamInfo || transportStreamStart is not null) && !(result.Success && HasPicture(tempPath)))
             {
                 ct.ThrowIfCancellationRequested();
                 TryDeleteFile(tempPath);
@@ -266,20 +291,83 @@ public sealed class FfmpegThumbnailService : IThumbnailService
     /// Build the frame-grab args: fast seek (<c>-ss</c> BEFORE <c>-i</c>), single frame, scale to width.
     /// Exposed <c>internal</c> so a unit test can assert the exact token order/values with no ffmpeg run.
     /// </summary>
-    internal static FfmpegArgs BuildArgs(string inputPath, TimeSpan bucket, int width, string tempPath, bool skipStreamInfo = false)
+    internal static FfmpegArgs BuildArgs(
+        string inputPath, TimeSpan bucket, int width, string tempPath, bool skipStreamInfo = false, TimeSpan? transportStreamStart = null)
     {
-        var args = FfmpegArgs.ForFfmpeg().Raw("-ss", FormatSeconds(bucket));
-        if (skipStreamInfo)
+        FfmpegArgs args;
+        if (transportStreamStart is { } start)
         {
-            args.Raw(StreamInfoSkip.Flag); // an input option: immediately before -i
+            // T-227, SPEC-005 I34: an MPEG-TS input seek lands on the first keyframe AFTER the point, so seek one lead early and let
+            // the output -ss trim to the frame. -copyts keeps the timestamps absolute (start time included), so that output -ss is
+            // the plain timestamp start + bucket; without it the same two seeks showed other frames (measured, SPEC-005 I34).
+            var early = bucket - TransportStreamSeekLead;
+            args = FfmpegArgs.ForFfmpeg()
+                .Raw("-copyts")
+                .Raw("-ss", FormatSeconds(early > TimeSpan.Zero ? early : TimeSpan.Zero))
+                .Input(inputPath)
+                .Raw("-ss", FormatSeconds(start + bucket));
+        }
+        else
+        {
+            args = FfmpegArgs.ForFfmpeg().Raw("-ss", FormatSeconds(bucket));
+            if (skipStreamInfo)
+            {
+                args.Raw(StreamInfoSkip.Flag); // an input option: immediately before -i
+            }
+
+            args.Input(inputPath);
         }
 
         return args
-            .Input(inputPath)
             .Raw("-frames:v", "1")
             .Raw("-vf", $"scale={width.ToString(CultureInfo.InvariantCulture)}:-1")
             .Raw("-y")
             .Output(tempPath);
+    }
+
+    /// <summary>True when <paramref name="path"/> ends in <c>.ts</c>, <c>.m2ts</c> or <c>.mts</c>, in any case: the MPEG-TS family (T-227).</summary>
+    internal static bool IsTransportStreamExtension(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return false;
+        }
+
+        var extension = Path.GetExtension(path);
+        foreach (var candidate in TransportStreamExtensions)
+        {
+            if (string.Equals(extension, candidate, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// The probed format start time of an MPEG-TS input (T-227, SPEC-005 I34), or null when the early-seek args do not apply: the extension is
+    /// not .ts/.m2ts/.mts, no start-time source was given, it does not know the start, or it threw. A cancellation propagates.
+    /// </summary>
+    private async Task<TimeSpan?> TransportStreamStartAsync(string inputPath, CancellationToken ct)
+    {
+        if (_startTimeOf is null || !IsTransportStreamExtension(inputPath))
+        {
+            return null;
+        }
+
+        try
+        {
+            return await _startTimeOf(inputPath, ct).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     /// <summary>
