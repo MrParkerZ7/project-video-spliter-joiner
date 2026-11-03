@@ -21,6 +21,11 @@ goal; `0.1.0` is the first end-to-end, shippable cut.
   batch bar and *~Ns left* weigh the piece accordingly.
 
 ### Fixed
+- **A video whose keyframes could not be read once can be opened again without restarting the app.** The keyframe list of a
+  file is read once and shared by every screen that asks for it at the same moment. When that read failed at once (for example a
+  file on a network share that was unreachable, then came back), the failure could stay remembered, and every later request for that
+  file got it back until the app was closed. The next request now reads the file again. Found by a test that failed on 2 of 3 full
+  runs rather than reported; the window is a few milliseconds, so most failures were never affected.
 - **A picture that was cut off while it was being saved is never shown.** The hover picture, a Bulk Cut chip and a profile picture are
   now saved under a temporary name and given their real name only when complete. A picture whose saving was stopped (the pointer moved on
   and the grab was cancelled), or failed after writing part of it, or left an empty file, used to be handed back at the next request for
