@@ -221,14 +221,14 @@ public sealed class SmartCutEndTrimIntegrationTests : IDisposable
         var runner = new SmartCutJointTiming.RecordingRealRunner(new FfmpegRunner(Locator()), Path.Combine(_dir, "kept"));
         var result = await new SmartCutEngine(runner, Probe()).CutAsync(src, S(4), S(9.1), Path.Combine(_dir, "out", "cut" + Path.GetExtension(src)));
         result.FellBack.Should().BeTrue();
-        result.FallbackReason.Should().Be(SmartCutEngine.EndTrimExtraStreamsReason);
+        result.FallbackReason.Should().Be(SmartCutArgsBuilder.ExtraStreamsReason);
         result.EndSnapped.Should().BeTrue();
         runner.Commands.Should().BeEmpty();
 
         var (row, dest) = await RunExactRowAsync(src, 4.0, 9.1, "extra_trimmed" + Path.GetExtension(src));
         row.Outcome.Should().Be(ItemOutcome.Done, row.Error?.Message);
         row.Warnings.Should().Contain(w =>
-            w.StartsWith(BulkTrimEngine.ExactFallbackPrefix) && w.Contains(SmartCutEngine.EndTrimExtraStreamsReason));
+            w.StartsWith(BulkTrimEngine.ExactFallbackPrefix) && w.Contains(SmartCutArgsBuilder.ExtraStreamsReason));
         File.Exists(dest).Should().BeTrue("the lossless cut produced the file");
     }
 

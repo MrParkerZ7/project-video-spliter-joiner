@@ -38,6 +38,12 @@ public sealed class ExactFallbackRowTests : IDisposable
     private static readonly string StartTimeNote =
         $"{BulkTrimEngine.ExactFallbackPrefix} ({StartTimeReason}) - cut snapped to the nearest keyframe";
 
+    private const string ExtraStreamsReason =
+        "frame-exact cutting is not supported yet for videos with subtitle, cover picture or data tracks";
+
+    private static readonly string ExtraStreamsNote =
+        $"{BulkTrimEngine.ExactFallbackPrefix} ({ExtraStreamsReason}) - cut snapped to the nearest keyframe";
+
     private readonly string _dir = Path.Combine(Path.GetTempPath(), "vsj-t189-" + Guid.NewGuid().ToString("N"));
 
     public void Dispose()
@@ -608,6 +614,53 @@ public sealed class ExactFallbackRowTests : IDisposable
         RequestedTimes(thumbs, path).Last().Should().Be(S(10) - S(1.445), "the chip shows the frame the run cuts at, in ffmpeg's base");
         RequestedTimes(thumbs, path).Should().NotContain(S(11), "the row never shows a Requested cut it will not make");
         row.Warning.Should().Contain(StartTimeNote, "the reason is stated before Run, in the run's own words");
+    }
+
+    // serves-spec: SPEC-011#I164 / SPEC-001#I71 — a row whose source holds a subtitle, a data stream or a cover picture (T-238) in
+    // Exact behaves as Lossless and says why BEFORE Run, in the run's own words. The shipped Exact run on such a file ended Failed
+    // (the head maps every stream and cannot encode a subtitle), so a row that showed the cut as requested promised a cut the run
+    // could not make. The gate is the engine's (SmartCutArgsBuilder.TryResolveEncoders): the row and the run never disagree.
+    [Trait("serves-spec", "SPEC-011")]
+    [Theory]
+    [InlineData(1)]
+    [InlineData(3)]
+    public async Task ARowWhoseSourceHasExtraStreams_InExact_ShowsTheSnappedCut_AndTheReason_BeforeRun(int extraStreams)
+    {
+        var (vm, probe, thumbs, _) = Build();
+        vm.ExactCut = true;
+        var path = MakeVideo("phone.mp4");
+        probe.SetExtraStreams(path, extraStreams);
+        var row = await AddAsync(vm, probe, path, "h264");
+
+        row.IntroEnd.Requested = S(11); // a 10/12 tie on the 2 s grid → snaps to the earlier 10 s
+        Settle(row);
+
+        row.ExactUnavailableReason.Should().Be(ExtraStreamsReason);
+        row.ExactCutApplies.Should().BeFalse();
+        row.IntroEnd.Snapped.Should().Be(S(10));
+        row.IntroEnd.HasSnapNote.Should().BeTrue("the run cuts at the keyframe, so the row says so");
+        RequestedTimes(thumbs, path).Should().NotContain(S(11), "the row never shows a Requested cut it will not make");
+        row.Warning.Should().Contain(ExtraStreamsNote, "the reason is stated before Run, in the run's own words");
+    }
+
+    // serves-spec: SPEC-011#I164 — the same row without an extra stream is a real Exact row, and the Lossless tab is untouched.
+    [Trait("serves-spec", "SPEC-011")]
+    [Fact]
+    public async Task ARowWhoseSourceHasNoExtraStreams_IsUnchanged_AndLosslessCarriesNoExactNote()
+    {
+        var (vm, probe, _, _) = Build();
+        vm.ExactCut = true;
+        var plain = MakeVideo("plain.mp4");
+        var row = await AddAsync(vm, probe, plain, "h264");
+        row.ExactUnavailableReason.Should().BeNull();
+        row.ExactCutApplies.Should().BeTrue();
+
+        var (lossless, losslessProbe, _, _) = Build();
+        var phone = MakeVideo("phone-lossless.mp4");
+        losslessProbe.SetExtraStreams(phone, 1);
+        var losslessRow = await AddAsync(lossless, losslessProbe, phone, "h264");
+        losslessRow.IntroEnd.Requested = S(11);
+        (losslessRow.Warning ?? string.Empty).Should().NotContain(BulkTrimEngine.ExactFallbackPrefix);
     }
 
     // serves-spec: SPEC-011#I164 — a file that starts within 1 ms of zero (an ordinary MP4/MKV, 0.5 ms of rounding either way)

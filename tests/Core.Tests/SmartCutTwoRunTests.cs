@@ -446,17 +446,17 @@ public sealed class SmartCutTwoRunTests : IDisposable
         result.FellBack.Should().BeTrue();
         result.Strategy.Should().Be(SmartCutStrategy.PureCopy);
         result.EndSnapped.Should().BeTrue();
-        result.FallbackReason.Should().Be(SmartCutEngine.EndTrimExtraStreamsReason);
+        result.FallbackReason.Should().Be(SmartCutArgsBuilder.ExtraStreamsReason);
         result.FallbackReason.Should().NotContainAny(new[] { "(", ")" }, "the row warning wraps the reason in parentheses already");
         runner.Commands.Should().BeEmpty();
         Directory.Exists(Path.Combine(_dir, "sub")).Should().BeFalse("nothing is created before the question is answered");
     }
 
-    // serves-spec: SPEC-001#I71 - the extra-streams rule is the end trim's alone: an end on a keyframe is still the quiet lossless
-    // fall back (nothing snaps), and a start inside a GOP is the head and copy it always was (T-238 owns that leg's answer).
+    // serves-spec: SPEC-001#I71 - an end on a keyframe is still the quiet lossless fall back with extra streams (nothing snaps, the
+    // lossless cut is exact and carries every stream), whatever the extra streams are.
     [Trait("serves-spec", "SPEC-001")]
     [Fact]
-    public async Task SmartCutEngine_ExtraStreams_DoNotChangeTheLosslessFallBack_NorTheHeadAndCopyCut()
+    public async Task SmartCutEngine_ExtraStreams_DoNotChangeTheQuietLosslessFallBack()
     {
         var input = Placeholder("phone.mov");
 
@@ -464,12 +464,31 @@ public sealed class SmartCutTwoRunTests : IDisposable
             .CutAsync(input, S(8), S(12), Path.Combine(_dir, "a.mov"));
         quiet.EndSnapped.Should().BeFalse();
         quiet.FallbackReason.Should().Contain("already on a keyframe");
+    }
 
-        var runner = new ListCapturingRunner();
-        var head = await new SmartCutEngine(runner, new FixedProbe(Info(0, extraStreams: 2), Grid2s()))
-            .CutAsync(input, S(7.5), S(13), Path.Combine(_dir, "b.mov"));
-        head.FellBack.Should().BeFalse();
-        runner.Commands.Should().HaveCount(2, "the head and the concat, as before");
+    // serves-spec: SPEC-001#I71 / SPEC-011 - T-238 (a recorded contract change: this test used to expect the head and the concat, two
+    // runs, "as before", and named T-238 as the owner of that leg's answer). A start inside a GOP on a source with a subtitle, data
+    // or cover-picture stream is not an Exact cut either: ffmpeg's head maps every stream and cannot encode a subtitle, a cover
+    // picture or a timecode track, so the real run ended Failed (measured). The engine hands it to the lossless cut with the same
+    // reason as the end trim, before any run, and the end is not snapped by it (the end is a keyframe, or the cut has a head).
+    [Trait("serves-spec", "SPEC-001")]
+    [Theory]
+    [InlineData(1)]
+    [InlineData(2)]
+    public async Task SmartCutEngine_AHeadCutOnASourceWithExtraStreams_FallsBackWithTheReason_BeforeAnyRun(int extraStreams)
+    {
+        var input = Placeholder("phone.mov");
+        var runner = new RecordingFakeRunner();
+
+        var result = await new SmartCutEngine(runner, new FixedProbe(Info(0, extraStreams: extraStreams), Grid2s()))
+            .CutAsync(input, S(7.5), S(13), Path.Combine(_dir, "sub", "b.mov"));
+
+        result.FellBack.Should().BeTrue();
+        result.Strategy.Should().Be(SmartCutStrategy.HeadReencode);
+        result.FallbackReason.Should().Be(SmartCutArgsBuilder.ExtraStreamsReason);
+        result.EndSnapped.Should().BeFalse("only an end trim snaps the end: here the start is the part that moves, and the row says so");
+        runner.Commands.Should().BeEmpty();
+        Directory.Exists(Path.Combine(_dir, "sub")).Should().BeFalse("nothing is created before the question is answered");
     }
 
     // serves-spec: SPEC-001#I71 / SPEC-001#I40 - a start up to 10 ms past a keyframe is PureCopy (the planner's tolerance): the copy

@@ -163,7 +163,8 @@ public sealed class SmartCutEngine : ISmartCutEngine
 
         // Only re-encode when we can genuinely reproduce the source's streams. The end trim re-encodes nothing, but it asks the
         // same question: the Bulk Cut row decides from this one predicate whether it shows the end as requested, so the row and
-        // the run must not disagree (SPEC-001 I71).
+        // the run must not disagree (SPEC-001 I71). A source with a subtitle, data or cover-picture stream is refused here too, for
+        // the head leg and the end trim alike (T-224, T-238): the lossless cut carries every stream and the reason says so.
         if (!SmartCutArgsBuilder.TryResolveEncoders(ok.Info, out var vEnc, out var aEnc, out var why, inputPath, outputPath))
         {
             return new SmartCutResult(null, plan.Strategy, FellBack: true, why, TimeSpan.Zero, EndSnapped: endTrim);
@@ -203,15 +204,6 @@ public sealed class SmartCutEngine : ISmartCutEngine
                         TimeSpan.Zero);
                 }
             }
-        }
-
-        // T-224: the end trim copies the source through the concat demuxer, which gives a cover picture the time 0 of its own (the
-        // file then starts at the cut time with that much empty before it), fails on a data track (timecode, camera telemetry) and
-        // times a subtitle track by its own rules. A source with any of them keeps the lossless cut - which carries every stream -
-        // and the end it snaps is announced. T-238 owns the same question for the head leg and the row.
-        if (endTrim && ok.Info.ExtraStreams > 0)
-        {
-            return new SmartCutResult(null, plan.Strategy, FellBack: true, EndTrimExtraStreamsReason, TimeSpan.Zero, EndSnapped: true);
         }
 
         // T-223: the copied part starts at HeadEnd, and behind a keyframe that is not an IDR (an open GOP: x264 open-gop=1, some
@@ -393,12 +385,6 @@ public sealed class SmartCutEngine : ISmartCutEngine
     /// parentheses and no internal terms (the row warning wraps the reason in its own parentheses and the user reads it).
     /// </summary>
     public const string NotAnIdrKeyframeReason = "frame-exact cutting is not supported yet for this video's keyframe type";
-
-    /// <summary>
-    /// Why an end trim is not used on a source that holds a subtitle, data or cover-picture stream (T-224, SPEC-001 I71). No
-    /// parentheses and no internal terms (the row warning wraps the reason in its own parentheses and the user reads it).
-    /// </summary>
-    public const string EndTrimExtraStreamsReason = "frame-exact end cutting is not supported yet for videos with subtitle, cover picture or data tracks";
 
     /// <summary>
     /// The probe's answer to "is the keyframe an IDR?"; a probe that throws (anything but a cancellation) cannot say, which is the

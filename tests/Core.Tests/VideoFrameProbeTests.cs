@@ -679,11 +679,15 @@ public sealed class VideoFrameProbeTests : IDisposable
         runner.Lists.Should().ContainSingle().Which.Should().EndWith("inpoint 12\noutpoint 17.1\n");
     }
 
-    // serves-spec: SPEC-001#I71 - the snapped start reaches the same extra-streams rule as a start on a keyframe: a source with a
-    // cover picture, a data track or a subtitle keeps the lossless cut and says the end snaps.
+    // serves-spec: SPEC-001#I71 - a source with a cover picture, a data track or a subtitle keeps the lossless cut with the one reason
+    // when the start is a frame before a keyframe too. T-238 (a recorded contract change: this test used to expect EndSnapped, because
+    // the extra-streams rule was asked AFTER the frame snap had turned the plan into an end trim): the rule is now part of the one
+    // predicate that is asked BEFORE the snap (a refused source costs no ffprobe, as for every other reason), so the plan is still the
+    // head cut and EndSnapped is false. The Bulk engine writes the same Exact-unavailable warning either way (its condition is a
+    // strategy other than PureCopy, or EndSnapped), so what the user reads is unchanged. Nothing is asked of the frame probe.
     [Trait("serves-spec", "SPEC-001")]
     [Fact]
-    public async Task SmartCutEngine_ASnappedStartEndTrimOnASourceWithExtraStreams_FallsBackAndSaysTheEndSnaps()
+    public async Task SmartCutEngine_ASnappedStartOnASourceWithExtraStreams_FallsBackBeforeTheSnapIsAsked()
     {
         var input = Placeholder("clip.mp4");
         var probe = new FrameProbe(H264Aac() with { ExtraStreams = 1 }, Grid2s(), firstFrame: S(12));
@@ -692,8 +696,9 @@ public sealed class VideoFrameProbeTests : IDisposable
         var result = await new SmartCutEngine(runner, probe).CutAsync(input, S(11.975), S(17.1), Path.Combine(_dir, "cut.mp4"));
 
         result.FellBack.Should().BeTrue();
-        result.EndSnapped.Should().BeTrue();
-        result.FallbackReason.Should().Be(SmartCutEngine.EndTrimExtraStreamsReason);
+        result.Strategy.Should().Be(SmartCutStrategy.HeadReencode);
+        result.FallbackReason.Should().Be(SmartCutArgsBuilder.ExtraStreamsReason);
+        probe.SnapAsked.Should().BeEmpty("the refusal comes before the first-frame question");
         runner.Commands.Should().BeEmpty();
     }
 

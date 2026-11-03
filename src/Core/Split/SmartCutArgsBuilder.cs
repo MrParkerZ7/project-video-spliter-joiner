@@ -107,6 +107,20 @@ public static class SmartCutArgsBuilder
     /// </summary>
     internal const string MatroskaUnsupportedReason = "frame-exact cutting is not supported yet for .mkv and .webm files";
 
+    /// <summary>
+    /// Why Exact refuses a source that holds a subtitle, a data stream (timecode, camera telemetry) or a cover picture
+    /// (<see cref="MediaInfo.ExtraStreams"/>, T-238, SPEC-001 I71). Measured on a 12 s source with a stream of each kind and an intro
+    /// inside a GOP, on the shipped code: a <c>mov_text</c> subtitle ends the row Failed ("Error selecting an encoder": the head maps
+    /// every stream and names no subtitle codec), a cover picture ends it Failed in the head too, and a timecode track ends it
+    /// Failed in the join ("Cannot map stream #0:2 - unsupported type"). Mapping only picture and sound in the head was tried with
+    /// the ffmpeg CLI: the concat takes the head's stream layout, so the final has video and audio and the subtitle is gone, with
+    /// exit code 0. Giving the head <c>-c:s mov_text</c> keeps a <c>mov_text</c> track for that one kind, but the cover picture and
+    /// the timecode track fail in the head or the join whatever it is given, and T-224 measured that the concat demuxer times a
+    /// copied subtitle by its own rules. The lossless cut carries every stream, so this file keeps it, and says why. No
+    /// parentheses (the row warning wraps the reason in its own).
+    /// </summary>
+    internal const string ExtraStreamsReason = "frame-exact cutting is not supported yet for videos with subtitle, cover picture or data tracks";
+
     /// <summary>The Matroska/WebM file extensions (<c>.mka</c> is Matroska audio): ffmpeg picks the muxer from them.</summary>
     private static readonly string[] MatroskaExtensions = { ".mkv", ".webm", ".mka" };
 
@@ -238,6 +252,17 @@ public static class SmartCutArgsBuilder
             videoEncoder = null;
             audioEncoder = null;
             reason = containerReason;
+            return false;
+        }
+
+        // T-238: a stream that is neither picture nor sound (a subtitle, a data track, a cover picture) is not reproduced by the head
+        // and not carried by the concat. Last, so every other reason (the time base, a codec, the file type) is still reported as
+        // itself, and the head leg, the end trim and the Bulk Cut row all answer from this one predicate.
+        if (info.ExtraStreams > 0)
+        {
+            videoEncoder = null;
+            audioEncoder = null;
+            reason = ExtraStreamsReason;
             return false;
         }
 
