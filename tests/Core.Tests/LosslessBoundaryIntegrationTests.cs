@@ -73,6 +73,12 @@ public sealed class LosslessBoundaryFixtures : IDisposable
                 return await SmartCutJointIntegrityTests.MakeFixtureAsync(
                     Dir, "native.mkv", 10, 30, "-c:v", "libx264", "-g", "30", "-keyint_min", "30", "-sc_threshold", "0");
 
+            // The B-frame MP4 remuxed to Matroska with its timestamps shifted by 1.5 s (-output_ts_offset, what a capture muxed
+            // with a sync offset looks like): the format starts at 1.477 s (the audio), the video at 1.5 s, the first keyframe is
+            // at 1.5 s and the others at 1.5 + k s. The Matroska counterpart of the TS (a first keyframe above 0, T-233).
+            case "mkvlate":
+                return await RemuxAsync(await GetAsync("bframes"), "late.mkv", "-output_ts_offset", "1.5");
+
             // The same without B-frames: a keyframe's cue is then its own pts, so a seek aimed AT the next keyframe would land
             // on it. The control that pins the margin before the next keyframe.
             case "mkvbf0":
@@ -101,12 +107,15 @@ public sealed class LosslessBoundaryFixtures : IDisposable
         }
     }
 
-    /// <summary>Every stream of <paramref name="source"/> copied (<c>-c copy</c>) into <paramref name="name"/>, whose extension picks the muxer.</summary>
-    private async Task<string> RemuxAsync(string source, string name)
+    /// <summary>
+    /// Every stream of <paramref name="source"/> copied (<c>-c copy</c>) into <paramref name="name"/>, whose extension picks the
+    /// muxer, with <paramref name="outputOptions"/> before the output.
+    /// </summary>
+    private async Task<string> RemuxAsync(string source, string name, params string[] outputOptions)
     {
         var path = Path.Combine(Dir, name);
         var run = await Runner().RunAsync(FfmpegArgs.ForFfmpeg()
-            .Raw("-y", "-loglevel", "error").Input(source).Raw("-map", "0", "-c", "copy").Output(path));
+            .Raw("-y", "-loglevel", "error").Input(source).Raw("-map", "0", "-c", "copy").Raw(outputOptions).Output(path));
         run.ExitCode.Should().Be(0, run.StdErrText);
         return path;
     }
@@ -290,6 +299,7 @@ public sealed class LosslessBoundaryIntegrationTests : IClassFixture<LosslessBou
     [InlineData("mov", 3.0, 6.0)]
     [InlineData("mkvnative", 3.0, 6.0)]
     [InlineData("mkvbf0", 3.0, 6.0)]
+    [InlineData("mkvlate", 3.5, 5.5)]
     public async Task FullSplit_EveryShape_EachPartStartsOnItsKeyframe_AndHoldsItsPlannedFrames(string shape, double cut1, double cut2)
     {
         RequireBinaries();
@@ -309,6 +319,11 @@ public sealed class LosslessBoundaryIntegrationTests : IClassFixture<LosslessBou
             await AssertVideoStartsAfterTheFormatAsync(src);
         }
 
+        if (shape == "mkvlate")
+        {
+            (await LosslessBoundary.FormatStartTimeAsync(src)).Should().BeGreaterThan(1, "precondition: the file starts after 0");
+        }
+
         var (checks, _) = await FullSplitAsync(src, cut1, cut2);
 
         AssertEveryPartExact(checks);
@@ -323,17 +338,32 @@ public sealed class LosslessBoundaryIntegrationTests : IClassFixture<LosslessBou
     public async Task FullSplit_Ts_ACutThatSnapsToTheFirstKeyframe_IsDropped_AndTheOtherPartsMatchThePlan()
     {
         RequireBinaries();
-        var src = await _fx.GetAsync("ts");
+        await AssertACutOnTheFirstKeyframeIsDroppedAsync("ts");
+    }
+
+    // serves-spec: SPEC-001#I7 - T-234 (the shape T-233's note asked for): the same on a Matroska file whose first keyframe is
+    // above 0 (1.5 s): the cut at 1.0 s snaps to it and is dropped, and the other two parts match the plan.
+    [Trait("serves-spec", "SPEC-001")]
+    [SkippableFact]
+    public async Task FullSplit_Mkv_StartingAfterZero_ACutThatSnapsToTheFirstKeyframe_IsDropped_AndTheOtherPartsMatchThePlan()
+    {
+        RequireBinaries();
+        await AssertACutOnTheFirstKeyframeIsDroppedAsync("mkvlate");
+    }
+
+    private async Task AssertACutOnTheFirstKeyframeIsDroppedAsync(string shape)
+    {
+        var src = await _fx.GetAsync(shape);
         var probe = Probe();
         var keyframes = await probe.GetKeyframesAsync(src);
-        keyframes[0].Should().BeGreaterThan(S(1), "precondition: the first keyframe of a TS is a source pts above 0");
+        keyframes[0].Should().BeGreaterThan(S(1), "precondition: the first keyframe is a source pts above 0");
         probe.SnapToNearestKeyframe(keyframes, S(1.0)).Snapped.Should().Be(keyframes[0], "precondition: a cut at 1.0 s snaps to the first keyframe");
         var second = probe.SnapToNearestKeyframe(keyframes, S(5.5)).Snapped;
         second.Should().BeGreaterThan(keyframes[0], "precondition: the second cut snaps to an interior keyframe");
 
         var cutTimes = new[] { S(1.0), S(5.5) };
         var sourceFrames = await LosslessBoundary.FramesAsync(src, _dir);
-        var outDir = Path.Combine(_dir, "first-kf-ts");
+        var outDir = Path.Combine(_dir, "first-kf-" + shape);
         var result = await Engine(probe).SplitAsync(new SplitRequest(src, cutTimes, outDir));
 
         result.Segments.Should().HaveCount(2, "the cut on the file's start is dropped: one cut remains, two parts");
@@ -485,6 +515,31 @@ public sealed class LosslessBoundaryIntegrationTests : IClassFixture<LosslessBou
         (check.Frames - check.PlannedFrames).Should().BeInRange(0, 3, "an end overrun of stream copy (T-220) at most: " + check.Describe());
     }
 
+    // serves-spec: SPEC-001#I74 - T-234: a Matroska file whose timestamps start after 0 (video 1.5 s, format start 1.477 s, keyframes at
+    // 1.5 + k s): the first, an interior and the final part of a selection start on their keyframe, and the final part holds every frame
+    // to the end. The seek is converted by the positive format start (I16) and the anchor aims inside the GOP.
+    [Trait("serves-spec", "SPEC-001")]
+    [SkippableTheory]
+    [InlineData(1)]
+    [InlineData(2)]
+    [InlineData(3)]
+    public async Task SubsetParts_OnAMatroskaFileThatStartsAfterZero_StartOnTheirKeyframe(int part)
+    {
+        RequireBinaries();
+
+        var (check, _) = await SubsetAsync("mkvlate", part, 3.5, 5.5);
+
+        check.StartsRight.Should().BeTrue(check.Describe());
+        if (part == 3)
+        {
+            check.CountRight.Should().BeTrue("a part that runs to the end of the file is exact: " + check.Describe());
+        }
+        else
+        {
+            (check.Frames - check.PlannedFrames).Should().BeInRange(0, 3, "an end overrun of stream copy (T-220) at most: " + check.Describe());
+        }
+    }
+
     // serves-spec: SPEC-001#I74 - T-234 (boundary): a final part that starts on the LAST keyframe has no next keyframe to
     // aim before, so it aims before the end of the file: it holds the last GOP, 30 frames, and not the one before it.
     [Trait("serves-spec", "SPEC-001")]
@@ -519,6 +574,7 @@ public sealed class LosslessBoundaryIntegrationTests : IClassFixture<LosslessBou
     [InlineData("mov", 0.0, 0.0)]
     [InlineData("mkvnative", 0.0, -0.023)]
     [InlineData("mkvbf0", 0.0, -0.023)]
+    [InlineData("mkvlate", 1.5, 1.477)]
     public async Task Probe_MapsTheFormatStart_TheVideoStart_AndTheFrameRate(string shape, double videoStart, double formatStart)
     {
         RequireBinaries();
