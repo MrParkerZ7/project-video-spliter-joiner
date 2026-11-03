@@ -69,8 +69,10 @@ public class FfmpegThumbnailServiceTests : IDisposable
         // The seek value is the bucketed timestamp in invariant seconds (5s → "5").
         tokens[ssIndex + 1].Should().Be("5");
 
-        // The output token (last) is the temp jpg path the service returned.
-        tokens[^1].Should().Be(path);
+        // The output token (last) is a work file beside the temp jpg path the service returned (T-228, SPEC-005 I35): the picture
+        // is published onto that path when whole.
+        Path.GetDirectoryName(tokens[^1]).Should().Be(Path.GetDirectoryName(path));
+        tokens[^1].Should().StartWith(path![..^".jpg".Length] + ".").And.EndWith(".tmp.jpg");
         path!.Should().EndWith(".jpg");
     }
 

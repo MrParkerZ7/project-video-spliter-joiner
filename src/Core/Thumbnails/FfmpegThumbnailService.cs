@@ -56,6 +56,13 @@ namespace VideoSplitJoiner.Core.Thumbnails;
 /// <para><b>Temp location:</b> <c>%LOCALAPPDATA%/VideoSplitJoiner/thumb-cache/&lt;hash-of-input&gt;/&lt;bucketMs&gt;_w&lt;width&gt;.jpg</c>.
 /// The temp root is injectable so tests never touch the real per-user folder.</para>
 ///
+/// <para><b>A picture is published whole (T-228, SPEC-005 I35):</b> ffmpeg writes each grab to a work file of its own beside the final one
+/// (<c>&lt;name&gt;_w&lt;width&gt;.&lt;guid&gt;.tmp.jpg</c>), and the final name is taken by a rename only after a run that succeeded and wrote a
+/// non-empty file. So the final name only ever holds a whole picture: a run killed in the middle of its write (a superseded hover), one that
+/// exits non-zero after writing bytes, or one that exits 0 with an empty file leaves nothing the next request, in this process or the next, can
+/// be handed or cache. The work file is removed whatever the outcome, and the first of two grabs of one key to finish keeps the final name. An
+/// empty file under the final name (an older build wrote in place) is not reused.</para>
+///
 /// <para><b>Best-effort:</b> every public method wraps its work in try/catch and returns <c>null</c> /
 /// no-ops on any failure — matching the codebase's best-effort discipline (e.g. <c>ErrorLogWriter</c>).</para>
 /// </summary>
@@ -191,8 +198,9 @@ public sealed class FfmpegThumbnailService : IThumbnailService
             var tempPath = ResolveTempPath(inputPath, name, width);
 
             // A prior run may have left the file on disk though it's not tracked (fresh process). Reuse it —
-            // the width is in the file name, so only a file of the requested width can match.
-            if (File.Exists(tempPath))
+            // the width is in the file name, so only a file of the requested width can match. T-228: a picture is published under this
+            // name only when whole (below), so what is here is a picture; an empty file (an older build wrote in place) is not one.
+            if (HasPicture(tempPath))
             {
                 Remember(cacheKey, tempPath);
                 return tempPath;
@@ -210,27 +218,39 @@ public sealed class FfmpegThumbnailService : IThumbnailService
 
             // T-227: a bucketed hover on an MPEG-TS whose start time is known seeks early and trims by absolute time; any doubt is today's args.
             var transportStreamStart = hover ? await TransportStreamStartAsync(inputPath, ct).ConfigureAwait(false) : null;
-            var args = BuildArgs(inputPath, seek, width, tempPath, skipStreamInfo, transportStreamStart);
 
-            ct.ThrowIfCancellationRequested();
-            var result = await _runner.RunAsync(args, totalDuration: null, progress: null, ct: ct)
-                .ConfigureAwait(false);
-
-            // A flagged run (or an MPEG-TS early-seek run) that failed, wrote no file or an empty one is run once more with today's args:
-            // the extension and the start time are hints, and a wrong one must cost a second run, never a missing picture. A cancelled
-            // grab is never retried (it threw above); the retry is judged on its own output, never on a file the failed run left behind.
-            if ((skipStreamInfo || transportStreamStart is not null) && !(result.Success && HasPicture(tempPath)))
+            // T-228, SPEC-005 I35: ffmpeg writes under a work name of its own beside the final one; the final name is taken only by a
+            // rename of a whole picture. A run that is killed (a superseded hover), fails or writes nothing leaves no file at the final name,
+            // and the work file is removed whatever the outcome.
+            var workPath = WorkPathFor(tempPath);
+            try
             {
+                var args = BuildArgs(inputPath, seek, width, workPath, skipStreamInfo, transportStreamStart);
+
                 ct.ThrowIfCancellationRequested();
-                TryDeleteFile(tempPath);
-                result = await _runner.RunAsync(BuildArgs(inputPath, seek, width, tempPath), totalDuration: null, progress: null, ct: ct)
+                var result = await _runner.RunAsync(args, totalDuration: null, progress: null, ct: ct)
                     .ConfigureAwait(false);
-            }
 
-            // ffmpeg failed, or produced nothing → best-effort null (do NOT cache a missing file).
-            if (!result.Success || !File.Exists(tempPath))
+                // A flagged run (or an MPEG-TS early-seek run) that failed, wrote no file or an empty one is run once more with today's args:
+                // the extension and the start time are hints, and a wrong one must cost a second run, never a missing picture. A cancelled
+                // grab is never retried (it threw above); the retry is judged on its own output, never on a file the failed run left behind.
+                if ((skipStreamInfo || transportStreamStart is not null) && !(result.Success && HasPicture(workPath)))
+                {
+                    ct.ThrowIfCancellationRequested();
+                    TryDeleteFile(workPath);
+                    result = await _runner.RunAsync(BuildArgs(inputPath, seek, width, workPath), totalDuration: null, progress: null, ct: ct)
+                        .ConfigureAwait(false);
+                }
+
+                // ffmpeg failed, or produced nothing (or an empty file) → best-effort null (do NOT cache a missing file).
+                if (!result.Success || !HasPicture(workPath) || !TryPublish(workPath, tempPath))
+                {
+                    return null;
+                }
+            }
+            finally
             {
-                return null;
+                await DeleteWorkFileAsync(workPath).ConfigureAwait(false);
             }
 
             Remember(cacheKey, tempPath);
@@ -393,6 +413,65 @@ public sealed class FfmpegThumbnailService : IThumbnailService
         catch
         {
             return false;
+        }
+    }
+
+    /// <summary>
+    /// The work file one grab writes (T-228, SPEC-005 I35): <c>&lt;name&gt;_w&lt;width&gt;.&lt;guid&gt;.tmp.jpg</c> beside the final file, in the
+    /// same folder so publishing it is a rename. A guid makes every grab's file its own, so two grabs of one key in flight together never write
+    /// the same file and a file a killed run left is never mistaken for a later run's. It ends in <c>.jpg</c>, which is what ffmpeg picks the
+    /// still-image muxer by, and it never equals a final name (those end in <c>_w&lt;width&gt;.jpg</c>).
+    /// </summary>
+    internal static string WorkPathFor(string finalPath) =>
+        Path.ChangeExtension(finalPath, null) + "." + Guid.NewGuid().ToString("N") + ".tmp.jpg";
+
+    /// <summary>
+    /// Move a whole picture onto its final name (T-228). The first grab to finish wins: a picture already there came from a grab of the same
+    /// key and may be open in the app, so it is kept and this one is dropped (the caller deletes the work file); an empty or missing file there is
+    /// replaced. False when the picture could not be put in place and none is there.
+    /// </summary>
+    private static bool TryPublish(string workPath, string finalPath)
+    {
+        if (HasPicture(finalPath))
+        {
+            return true;
+        }
+
+        try
+        {
+            File.Move(workPath, finalPath, overwrite: true);
+            return true;
+        }
+        catch
+        {
+            // A racing grab published between the check and the move, or the folder was cleared meanwhile.
+            return HasPicture(finalPath);
+        }
+    }
+
+    /// <summary>
+    /// Remove a grab's work file, whatever the outcome. A killed ffmpeg may still hold the file for a moment after the cancel (the runner kills
+    /// the process tree without waiting for it), so a refused delete is tried again a few times, 20 ms apart; the first try is immediate.
+    /// Best-effort: a file that stays is only an unused name in the per-input folder, which <see cref="Clear"/> removes.
+    /// </summary>
+    private static async Task DeleteWorkFileAsync(string path)
+    {
+        for (var attempt = 0; attempt < 15; attempt++)
+        {
+            try
+            {
+                if (!File.Exists(path))
+                {
+                    return;
+                }
+
+                File.Delete(path);
+                return;
+            }
+            catch
+            {
+                await Task.Delay(20).ConfigureAwait(false);
+            }
         }
     }
 

@@ -21,6 +21,11 @@ goal; `0.1.0` is the first end-to-end, shippable cut.
   batch bar and *~Ns left* weigh the piece accordingly.
 
 ### Fixed
+- **A picture that was cut off while it was being saved is never shown.** The hover picture, a Bulk Cut chip and a profile picture are
+  now saved under a temporary name and given their real name only when complete. A picture whose saving was stopped (the pointer moved on
+  and the grab was cancelled), or failed after writing part of it, or left an empty file, used to be handed back at the next request for
+  that second and kept until the file was cleared, as a blank or half-drawn frame. It is now taken again. This was found in a review and
+  not seen in use: with the real ffmpeg, stopping a grab at the moment its file appeared always left a whole picture.
 - **Splitting chosen parts of an MKV file starts each part on its keyframe.** When you select only some of the parts
   (or a Bulk Cut row keeps the middle) of a lossless split, a part of an MKV recorded with B-frames (what most recorders write)
   began one keyframe interval early: 150 frames were written where 120 were planned, on a test video with a keyframe every second.

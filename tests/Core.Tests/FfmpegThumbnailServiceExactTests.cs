@@ -82,7 +82,8 @@ public sealed class FfmpegThumbnailServiceExactTests : IDisposable
         tokens.Should().ContainInConsecutiveOrder("-frames:v", "1");
         tokens.Should().ContainInConsecutiveOrder("-vf", "scale=640:-1");
         tokens.Should().Contain("-y");
-        tokens[^1].Should().Be(path);
+        // T-228, SPEC-005 I35: ffmpeg writes a work file beside the returned path, which is published when whole.
+        tokens[^1].Should().StartWith(path![..^".jpg".Length] + ".").And.EndWith(".tmp.jpg");
     }
 
     // serves-spec: SPEC-005#I28 - an exact time is never rounded to milliseconds: six decimals reach -ss unchanged. A keyframe at
