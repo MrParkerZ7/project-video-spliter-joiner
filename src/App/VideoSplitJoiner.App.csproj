@@ -73,7 +73,8 @@
     <ItemGroup>
       <FfmpegSharedFiles Include="$(MSBuildProjectDirectory)\..\..\ffmpeg-shared\*.exe;$(MSBuildProjectDirectory)\..\..\ffmpeg-shared\*.dll" />
     </ItemGroup>
-    <Warning Condition="'@(FfmpegSharedFiles)' == ''"
+    <!-- VSJ0001 is exempt from warnings-as-errors (Directory.Build.props, T-230): this warning must stay a warning. -->
+    <Warning Code="VSJ0001" Condition="'@(FfmpegSharedFiles)' == ''"
              Text="ffmpeg-shared/ not found at repo root — app-local ffmpeg/ was NOT bundled. Run packaging/fetch-ffmpeg-shared.ps1; otherwise split/join needs ffmpeg on PATH." />
     <Copy Condition="'@(FfmpegSharedFiles)' != ''"
           SourceFiles="@(FfmpegSharedFiles)"

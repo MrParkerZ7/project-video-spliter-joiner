@@ -288,6 +288,12 @@ goal; `0.1.0` is the first end-to-end, shippable cut.
   answer in that case. This was previously documented as something the message covered; it never was.
 
 ### Internal
+- A warning in any project now fails the build. Until now only Core (and the dev-only bench) built with warnings as errors, so the App
+  and the two test projects could drift without anyone seeing it, and did: to 5 warnings, then to 6. Every project does now, set once
+  in `Directory.Build.props`. The one warning that stays a warning is the App's "ffmpeg-shared/ not found" notice (numbered
+  `VSJ0001` now), so a fresh clone that has not fetched ffmpeg still builds. Checked: a full Release and Debug rebuild and a
+  single-file publish build with 0 warnings; a blocking `.Wait()` added to a test stops the build (xUnit1031); a clean checkout without
+  ffmpeg builds green and shows the notice as a warning.
 - A thumbnail-gate test failed at random — it waited on two wall-clock deadlines for work another thread
   had queued, so it lost whenever the machine was busy and reported the concurrency bound as broken when
   the grabs had simply not arrived yet. Both waits are now signalled from inside the lock that counts

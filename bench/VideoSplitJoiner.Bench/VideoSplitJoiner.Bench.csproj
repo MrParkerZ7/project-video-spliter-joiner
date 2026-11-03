@@ -11,7 +11,6 @@
     <TargetFramework>net8.0</TargetFramework>
     <RootNamespace>VideoSplitJoiner.Bench</RootNamespace>
     <AssemblyName>VideoSplitJoiner.Bench</AssemblyName>
-    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <!-- Io.ColdCopy writes through an aligned native buffer (FILE_FLAG_NO_BUFFERING needs sector alignment). -->
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <IsPackable>false</IsPackable>

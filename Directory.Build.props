@@ -5,6 +5,12 @@
     <LangVersion>latest</LangVersion>
     <Version>1.2.0</Version>
     <ImplicitUsings>enable</ImplicitUsings>
+    <!-- T-230: a warning is a build error in EVERY project (Core, App, both test projects, the bench), so the
+         0-warning bar cannot slip out of sight. VSJ0001 is the one warning that stays a warning: the App's
+         CopyBundledFfmpeg target raises it when the git-ignored ffmpeg-shared/ folder is absent, and a clean
+         clone that has not fetched ffmpeg must still build. -->
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <WarningsNotAsErrors>$(WarningsNotAsErrors);VSJ0001</WarningsNotAsErrors>
   </PropertyGroup>
 
 </Project>
