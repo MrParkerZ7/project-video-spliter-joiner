@@ -72,16 +72,76 @@ public sealed class MovSeekAnchorTests
     public void Anchor_AtOrBeforeTheFirstKeyframe_IsNull(double start) =>
         SplitArgsBuilder.MovSeekAnchor(S(start), Keyframes, S(10)).Should().BeNull();
 
-    // serves-spec: SPEC-001#I75 (boundary) - a keyframe gap under half a second, and a list with no keyframes, get none: the aim
-    // stays at the keyframe, as before. Exactly half a second is anchored.
+    // serves-spec: SPEC-001#I75 (boundary) - a GOP with a later keyframe after it that is under half a second, and a list with no
+    // keyframes, get none: the aim stays at the keyframe, as before. Exactly half a second is anchored.
     [Trait("serves-spec", "SPEC-001")]
     [Fact]
-    public void Anchor_AGapUnderHalfASecond_OrNoKeyframes_IsNull_AndExactlyHalfASecondIsAnchored()
+    public void Anchor_AGopUnderHalfASecond_OrNoKeyframes_IsNull_AndExactlyHalfASecondIsAnchored()
     {
         SplitArgsBuilder.MovSeekAnchor(S(3), Array.Empty<TimeSpan>(), S(10)).Should().BeNull();
         SplitArgsBuilder.MovSeekAnchor(S(3), new[] { S(1), S(3), S(3.4) }, S(10)).Should().BeNull("a 0.4 s GOP");
-        SplitArgsBuilder.MovSeekAnchor(S(9.7), new[] { S(1), S(9.7) }, S(10)).Should().BeNull("the last GOP is 0.3 s");
         SplitArgsBuilder.MovSeekAnchor(S(3), new[] { S(1), S(3), S(3.5) }, S(10))!.Value.TotalSeconds.Should().BeApproximately(3.25, 1e-9);
+    }
+
+    // serves-spec: SPEC-001#I75 - T-237 review: the last GOP has no later keyframe to overshoot onto, so a quarter of a second is
+    // enough (it is the stretch that is past the index gap that matters); shorter keeps the aim at the keyframe. Shipped first
+    // version wrote nothing for a tail under half a second and the last part of a file with a 0.17-0.37 s tail began one GOP early.
+    [Trait("serves-spec", "SPEC-001")]
+    [Fact]
+    public void Anchor_TheLastGop_NeedsAQuarterOfASecond()
+    {
+        SplitArgsBuilder.MovSeekAnchor(S(9.7), new[] { S(1), S(9.7) }, S(10))!.Value.TotalSeconds.Should().BeApproximately(9.85, 1e-9, "a 0.3 s tail");
+        SplitArgsBuilder.MovSeekAnchor(S(9.75), new[] { S(1), S(9.75) }, S(10))!.Value.TotalSeconds.Should().BeApproximately(9.875, 1e-9, "exactly 0.25 s");
+        SplitArgsBuilder.MovSeekAnchor(S(9.8), new[] { S(1), S(9.8) }, S(10)).Should().BeNull("a 0.2 s tail");
+    }
+
+    // serves-spec: SPEC-001#I75 - T-237 review: a GOP with a later keyframe after it must also be 16 frame periods long. At 10 fps
+    // with three B-frames the next keyframe's index time can be 0.8 s before its presentation time, and the middle of a 1.2 s GOP
+    // then lands one GOP LATE (measured on a 10 fps file, 30 % of its frames dropped). At 30 fps 16 frames are 0.53 s.
+    [Trait("serves-spec", "SPEC-001")]
+    [Fact]
+    public void Anchor_AGopWithALaterKeyframe_MustBeSixteenFramePeriodsLong()
+    {
+        var keyframes = new[] { S(1), S(3), S(4.2) };
+
+        SplitArgsBuilder.MovSeekAnchor(S(3), keyframes, S(10), frameRate: 10).Should().BeNull("1.2 s is 12 frames at 10 fps");
+        SplitArgsBuilder.MovSeekAnchor(S(3), keyframes, S(10), frameRate: 7).Should().BeNull("1.2 s is 8 frames at 7 fps");
+        SplitArgsBuilder.MovSeekAnchor(S(3), keyframes, S(10), frameRate: 30)!.Value.TotalSeconds.Should().BeApproximately(3.6, 1e-9);
+        SplitArgsBuilder.MovSeekAnchor(S(3), keyframes, S(10), frameRate: 0)!.Value.TotalSeconds.Should().BeApproximately(3.6, 1e-9, "an unknown rate counts times only");
+        SplitArgsBuilder.MovSeekAnchor(S(3), keyframes, S(10), frameRate: null)!.Value.TotalSeconds.Should().BeApproximately(3.6, 1e-9);
+        SplitArgsBuilder.MovSeekAnchor(S(3), new[] { S(1), S(3), S(5) }, S(10), frameRate: 10)!.Value.TotalSeconds
+            .Should().BeApproximately(4, 1e-9, "a 2 s GOP is 20 frames at 10 fps");
+    }
+
+    // serves-spec: SPEC-001#I75 - the last GOP and a span the cut's end stops need only 6 frame periods: 0.6 s at 10 fps.
+    [Trait("serves-spec", "SPEC-001")]
+    [Fact]
+    public void Anchor_AStretchWithNoLaterKeyframe_MustBeSixFramePeriodsLong()
+    {
+        SplitArgsBuilder.MovSeekAnchor(S(9.5), new[] { S(1), S(9.5) }, S(10), frameRate: 10).Should().BeNull("0.5 s is 5 frames at 10 fps");
+        SplitArgsBuilder.MovSeekAnchor(S(9.4), new[] { S(1), S(9.4) }, S(10), frameRate: 10)!.Value.TotalSeconds.Should().BeApproximately(9.7, 1e-9);
+    }
+
+    // serves-spec: SPEC-001#I75 - T-237 review (BLOCKER on the first version): the end trim's anchor never passes the cut's end. A
+    // concat list whose inpoint is after its outpoint is an error, and the first version wrote inpoint 6.25 for an end at 5.3 on
+    // a plain constant-frame-rate MP4 and failed the row. The span the end stops is the stretch measured, with no keyframe to
+    // overshoot onto, and a span under a quarter of a second keeps the keyframe.
+    [Trait("serves-spec", "SPEC-001")]
+    [Fact]
+    public void Anchor_WithACutEnd_NeverPassesIt()
+    {
+        var keyframes = new[] { S(0), S(2.5), S(5), S(7.5) };
+
+        SplitArgsBuilder.MovSeekAnchor(S(5), keyframes, S(10), upTo: S(5.3))!.Value.TotalSeconds.Should().BeApproximately(5.15, 1e-9);
+        SplitArgsBuilder.MovSeekAnchor(S(5), keyframes, S(10), upTo: S(6.2))!.Value.TotalSeconds.Should().BeApproximately(5.6, 1e-9);
+        SplitArgsBuilder.MovSeekAnchor(S(5), keyframes, S(10), upTo: S(6.3))!.Value.TotalSeconds.Should().BeApproximately(5.65, 1e-9);
+        SplitArgsBuilder.MovSeekAnchor(S(5), keyframes, S(10), upTo: S(5.2)).Should().BeNull("a span under a quarter of a second");
+        SplitArgsBuilder.MovSeekAnchor(S(5), keyframes, S(10), upTo: S(9))!.Value.TotalSeconds.Should().BeApproximately(6.25, 1e-9, "an end past the next keyframe changes nothing");
+        foreach (var cut in new[] { 5.26, 5.3, 5.6, 6.1, 6.2, 6.3, 7.4 })
+        {
+            var anchor = SplitArgsBuilder.MovSeekAnchor(S(5), keyframes, S(10), upTo: S(cut));
+            (anchor is null || anchor.Value < S(cut)).Should().BeTrue($"the anchor for an end at {cut} s is {anchor}");
+        }
     }
 
     // serves-spec: SPEC-001#I75 - a start between two keyframes (not itself one) uses the first keyframe after it, and a start that

@@ -131,6 +131,25 @@ public sealed class LosslessBoundaryFixtures : IDisposable
                     Dir, "vfr2x.mp4", 24, 30, "-vf", "select='lt(n,300)+gte(n,300)*eq(mod(n,6),0)'", "-fps_mode", "vfr",
                     "-c:v", "libx264", "-g", "60", "-keyint_min", "60", "-sc_threshold", "0");
 
+            // The random-drop file cut short so that its last GOP is a tail of under half a second (T-237 review: the last keyframe of a
+            // file has no later keyframe to overshoot onto, and its short tail started one GOP early with the first version).
+            case "vfrtail":
+                return await SmartCutJointIntegrityTests.MakeFixtureAsync(
+                    Dir, "vfrtail.mp4", 18.8, 30, "-vf", "select='gt(random(7),0.25)'", "-fps_mode", "vfr",
+                    "-c:v", "libx264", "-g", "60", "-keyint_min", "60", "-sc_threshold", "0");
+
+            // A low-frame-rate file with three B-frames and 30 % of its frames dropped, GOP 6 frames (T-237 review): the next keyframe's
+            // index time can be 0.8 s before its presentation time, so the middle of a 1.2 s GOP lands one GOP LATE (the first version).
+            case "vfrlowfps":
+                return await SmartCutJointIntegrityTests.MakeFixtureAsync(
+                    Dir, "vfrlowfps.mp4", 30, 10, "-vf", "select='gt(mod(abs(sin(n*12.9898+105))*43758.5453,1),0.3)+eq(n,0)'", "-fps_mode", "vfr",
+                    "-c:v", "libx264", "-g", "6", "-keyint_min", "6", "-sc_threshold", "0", "-bf", "3");
+
+            // A constant-frame-rate MP4 with a 2.5 s GOP and B-frames (T-237 review: an end trim whose end is before the middle of the GOP).
+            case "cfr25":
+                return await SmartCutJointIntegrityTests.MakeFixtureAsync(
+                    Dir, "cfr25.mp4", 20, 30, "-c:v", "libx264", "-g", "75", "-keyint_min", "75", "-sc_threshold", "0");
+
             default:
                 throw new ArgumentOutOfRangeException(nameof(shape), shape, "unknown fixture shape");
         }
@@ -791,6 +810,15 @@ public sealed class LosslessBoundaryIntegrationTests : IClassFixture<LosslessBou
     [InlineData("vfr2x", 6.0, 14.2)]
     [InlineData("bframes", 3.0, 6.3)]
     [InlineData("mov", 3.0, 6.5)]
+    // T-237 review: an end BEFORE the middle of the GOP. The first version wrote inpoint 6.25 for the end 5.3 on this plain 2.5 s GOP
+    // MP4 and ffmpeg stopped on the list (inpoint after outpoint): the row failed. The anchor never passes the end now.
+    [InlineData("cfr25", 5.0, 5.3)]
+    [InlineData("cfr25", 5.0, 6.2)]
+    [InlineData("cfr25", 5.0, 6.3)]
+    [InlineData("cfr25", 2.5, 2.6)]
+    [InlineData("bframes", 3.0, 3.4)]
+    [InlineData("vfrrandom", 5.233008, 5.6)]
+    [InlineData("vfrrandom", 5.233008, 6.0)]
     public async Task Vfr_ExactEndTrim_StartsOnItsKeyframe_AndHoldsTheSourcesFramesFromThere(string shape, double keyframe, double end)
     {
         RequireBinaries();
@@ -859,5 +887,57 @@ public sealed class LosslessBoundaryIntegrationTests : IClassFixture<LosslessBou
         tailLength.Should().BeGreaterThan(5, "precondition: there is a copied part to compare");
         outFrames.Skip(headFrames).Take(tailLength).Select(f => f.Hash).Should().Equal(
             range.Skip(tailStart).Take(tailLength).Select(f => f.Hash), "the copied part is the source's frames from the boundary keyframe");
+    }
+
+    // serves-spec: SPEC-001#I75 - every keyframe of the file, one after the other, as the start of the final selected part (a cut ON the
+    // keyframe, part 2 of 2): it starts on that keyframe and holds every frame to the end. This is the sweep that finds a keyframe
+    // the anchor misses, in either direction: the first version of the anchor, reviewed (T-237), started the LAST keyframe's part one GOP
+    // early when its tail was under half a second (vfrtail) and one GOP LATE on a 10 fps file with three B-frames (vfrlowfps), where
+    // the aim at the keyframe had been right.
+    [Trait("serves-spec", "SPEC-001")]
+    [SkippableTheory]
+    [InlineData("vfr")]
+    [InlineData("vfrrandom")]
+    [InlineData("vfrrandommov")]
+    [InlineData("vfrtail")]
+    [InlineData("vfrlowfps")]
+    [InlineData("cfr25")]
+    public async Task Vfr_EveryKeyframeAsAPartStart_LandsOnItself(string shape)
+    {
+        RequireBinaries();
+        var src = await _fx.GetAsync(shape);
+        var probe = Probe();
+        IReadOnlyList<LosslessBoundary.Frame> sourceFrames;
+        if (shape == "cfr25")
+        {
+            sourceFrames = await LosslessBoundary.FramesAsync(src, _dir);
+            sourceFrames.Zip(sourceFrames.Skip(1), (a, b) => Math.Round(b.Seconds - a.Seconds, 3)).Distinct().Count()
+                .Should().BeLessThan(4, "precondition: the control is constant-frame-rate");
+        }
+        else
+        {
+            sourceFrames = await AssertVfrPreconditionAsync(src);
+        }
+
+        var keyframes = await probe.GetKeyframesAsync(src);
+        if (shape == "vfrtail")
+        {
+            var info = ((ProbeResult.ProbeSucceeded)await probe.ProbeAsync(src)).Info;
+            (info.Duration - keyframes[^1]).Should().BeLessThan(S(0.5), "precondition: the last GOP is a tail of under half a second");
+        }
+
+        var wrong = new List<string>();
+        foreach (var keyframe in keyframes.Skip(1))
+        {
+            var outDir = Path.Combine(_dir, $"sweep-{shape}-{keyframe.TotalSeconds:0.###}");
+            var result = await Engine(probe).SplitAsync(new SplitRequest(src, new[] { keyframe }, outDir, SelectedSegmentIndices: new[] { 2 }));
+            var check = (await CheckPartsAsync(src, sourceFrames, new[] { (2, keyframe, (TimeSpan?)null, result.Segments.Single().Path) }))[0];
+            if (!check.StartsRight || !check.CountRight)
+            {
+                wrong.Add($"keyframe {keyframe.TotalSeconds:0.###} s: {check.Describe()}");
+            }
+        }
+
+        wrong.Should().BeEmpty($"{keyframes.Count - 1} keyframes of {shape} were tried, each as the start of the final part");
     }
 }

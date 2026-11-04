@@ -197,7 +197,7 @@ public sealed class SplitEngine : ISplitEngine
                 ? await ExtractAllViaSegmentMuxer(req, plan, ok.Info, duration, tempDir, progress, partProgress, ct).ConfigureAwait(false)
                 : await ExtractSelectedPerSegment(
                     req, selected, plan.Segments.Count, fileDuration, ok.Info.StartTime,
-                    ok.Info.Container, keyframes,
+                    ok.Info.Container, ok.Info.VideoStreams.FirstOrDefault()?.FrameRate, keyframes,
                     tempDir, progress, partProgress, ct).ConfigureAwait(false);
 
             // T-044: ffmpeg finished — entering the finalize phase (temp→move + verify each segment).
@@ -389,7 +389,8 @@ public sealed class SplitEngine : ISplitEngine
     /// file; interior parts pass an explicit <c>-to == SnappedEnd</c>. Progress is reported coarsely
     /// across the selected parts. The copy invariant is asserted on every command. T-219: each seek is converted from
     /// the plan's source timestamps by <paramref name="sourceStartTime"/> (the probe's format <c>start_time</c>), the
-    /// time base of ffmpeg's input <c>-ss</c>. T-234, T-237: <paramref name="keyframes"/> is the source's keyframe list, from
+    /// time base of ffmpeg's input <c>-ss</c>. T-234, T-237: <paramref name="keyframes"/> is the source's keyframe list (with the video's
+    /// <paramref name="frameRate"/>), from
     /// which a Matroska, MP4 or QuickTime source (by <paramref name="container"/>) gets each part's seek aimed inside its first
     /// GOP instead of at the keyframe (<see cref="SplitArgsBuilder.SeekAnchor"/>).
     /// </summary>
@@ -400,6 +401,7 @@ public sealed class SplitEngine : ISplitEngine
         TimeSpan fileDuration,
         TimeSpan sourceStartTime,
         string? container,
+        double? frameRate,
         IReadOnlyList<TimeSpan> keyframes,
         string tempDir,
         IProgress<double>? progress,
@@ -429,7 +431,7 @@ public sealed class SplitEngine : ISplitEngine
             var seekPoint = planned.SnappedStart < sourceStartTime ? sourceStartTime : planned.SnappedStart;
             var reportedDuration = (end ?? sourceStartTime + fileDuration) - seekPoint;
 
-            var anchor = SplitArgsBuilder.SeekAnchor(container, planned.SnappedStart, keyframes, sourceStartTime + fileDuration);
+            var anchor = SplitArgsBuilder.SeekAnchor(container, planned.SnappedStart, keyframes, sourceStartTime + fileDuration, frameRate);
             var args = SplitArgsBuilder.PerSegment(req.InputPath, planned.SnappedStart, end, sourceStartTime, tempFile, anchor);
             AssertCopyInvariant(args);
 

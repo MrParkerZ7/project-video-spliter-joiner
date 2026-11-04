@@ -508,6 +508,28 @@ public sealed class SmartCutTwoRunTests : IDisposable
         runner.Lists.Should().ContainSingle().Which.Should().Contain("inpoint 9\n").And.Contain("outpoint 13\n"); // 9: the middle of the 8-10 s GOP (T-237)
     }
 
+    // serves-spec: SPEC-001#I75 - T-237 review (BLOCKER on the first version): the list's inpoint never passes its outpoint. The keyframe at
+    // 8 s, the GOP 8-10 s, an end at 8.6 s: the middle of the GOP (9 s) is after the end and ffmpeg stops on such a list, so the
+    // anchor is the middle of the span the end stops, 8.3 s. An end 0.2 s past the keyframe is a span too short to anchor: the keyframe.
+    [Trait("serves-spec", "SPEC-001")]
+    [Theory]
+    [InlineData(8.6, "8.3", "8.6")]
+    [InlineData(8.3, "8.15", "8.3")]
+    [InlineData(8.2, "8", "8.2")]
+    [InlineData(9.5, "8.75", "9.5")]
+    public async Task SmartCutEngine_AnEndTrimWhoseEndIsBeforeTheMiddleOfTheGop_NeverWritesAnInpointPastTheEnd(double end, string inpoint, string outpoint)
+    {
+        var input = Placeholder("clip.mp4");
+        var runner = new ListCapturingRunner();
+        var engine = new SmartCutEngine(runner, new FixedProbe(Info(0), Grid2s()));
+
+        var result = await engine.CutAsync(input, S(8), S(end), Path.Combine(_dir, "cut.mp4"));
+
+        result.FellBack.Should().BeFalse(result.FallbackReason);
+        result.EffectiveStart.Should().Be(S(8));
+        runner.Lists.Should().ContainSingle().Which.Should().EndWith($"inpoint {inpoint}\noutpoint {outpoint}\n");
+    }
+
     // serves-spec: SPEC-001#I75 (boundary) - a keyframe gap under half a second keeps the end trim's inpoint on the keyframe itself,
     // as it was before T-237: the MP4 anchor needs a GOP of about twice the demuxer's index gap to be inside the window that lands
     // on the keyframe.
@@ -520,11 +542,11 @@ public sealed class SmartCutTwoRunTests : IDisposable
         var shortGops = Enumerable.Range(0, 151).Select(i => S(i * 0.4)).ToList();
         var engine = new SmartCutEngine(runner, new FixedProbe(Info(0), shortGops));
 
-        var result = await engine.CutAsync(input, S(8), S(8.3), Path.Combine(_dir, "cut.mp4"));
+        var result = await engine.CutAsync(input, S(8), S(9), Path.Combine(_dir, "cut.mp4"));
 
         result.FellBack.Should().BeFalse(result.FallbackReason);
         result.EffectiveStart.Should().Be(S(8));
-        runner.Lists.Should().ContainSingle().Which.Should().EndWith("inpoint 8\noutpoint 8.3\n");
+        runner.Lists.Should().ContainSingle().Which.Should().EndWith("inpoint 8\noutpoint 9\n", "the GOP 8-8.4 s is under half a second, and the end is past its next keyframe");
     }
 
     // serves-spec: SPEC-001#I71 / SPEC-001#I46 - a source Exact does not cut keeps the lossless cut with an end inside a GOP too, and

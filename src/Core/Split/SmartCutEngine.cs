@@ -357,10 +357,11 @@ public sealed class SmartCutEngine : ISmartCutEngine
         // T-237: on an MP4 or QuickTime file the demuxer's seek to an inpoint AT the keyframe can land on the one before it (a
         // variable-frame-rate file with B-frames: the output then began a whole GOP early and was reported Done), so the list's
         // inpoint is the middle of the keyframe's GOP, which lands on the keyframe in either case (SplitArgsBuilder.MovSeekAnchor).
-        // Nothing follows this entry, so the shift it makes to the file's timestamps moves nothing else. The progress total and the
+        // Nothing follows this entry, so the shift it makes to the file's timestamps moves nothing else. The anchor never passes the
+        // cut's end (an inpoint after the outpoint is an error ffmpeg stops on), so a short trim keeps the keyframe. The progress total and the
         // reported start stay the keyframe's.
         var listInpoint = SplitArgsBuilder.IsMovContainer(info.Container)
-            ? SplitArgsBuilder.MovSeekAnchor(inpoint, keyframes, info.StartTime + info.Duration) ?? inpoint
+            ? SplitArgsBuilder.MovSeekAnchor(inpoint, keyframes, info.StartTime + info.Duration, info.VideoStreams.FirstOrDefault()?.FrameRate, end) ?? inpoint
             : inpoint;
 
         var listPath = Path.Combine(tempDir, "concat.txt");
