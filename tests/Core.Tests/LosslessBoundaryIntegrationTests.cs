@@ -159,6 +159,18 @@ public sealed class LosslessBoundaryFixtures : IDisposable
                 return await SmartCutJointIntegrityTests.MakeFixtureAsync(
                     Dir, "cfr25.mp4", 20, 30, "-c:v", "libx264", "-g", "75", "-keyint_min", "75", "-sc_threshold", "0");
 
+            // The 2.5 s GOP file re-cut with the options a trimming tool uses (ffmpeg -ss 3.3 -c copy -avoid_negative_ts disabled), T-237
+            // review 3: the first keyframe is at -0.8 s, the others at 1.7, 4.2, 6.7 ... s, and the first part starts at 0, which is no keyframe.
+            case "negkf":
+                {
+                    var path = Path.Combine(Dir, "negkf.mp4");
+                    var run = await Runner().RunAsync(FfmpegArgs.ForFfmpeg()
+                        .Raw("-y", "-loglevel", "error", "-ss", "3.3").Input(await GetAsync("cfr25"))
+                        .Raw("-map", "0", "-c", "copy", "-avoid_negative_ts", "disabled").Output(path));
+                    run.ExitCode.Should().Be(0, run.StdErrText);
+                    return path;
+                }
+
             default:
                 throw new ArgumentOutOfRangeException(nameof(shape), shape, "unknown fixture shape");
         }
@@ -494,6 +506,26 @@ public sealed class LosslessBoundaryIntegrationTests : IClassFixture<LosslessBou
 
         check.StartsRight.Should().BeTrue(check.Describe());
         check.CountRight.Should().BeTrue("a part that runs to the end of the file is exact: " + check.Describe());
+    }
+
+    // serves-spec: SPEC-001#I75 - T-237 review 3: the first part of an MP4 whose first keyframe is before zero starts at 0, which is no
+    // keyframe, so no seek could "land on" it; the first version asked anyway and warned that the part "may start before its keyframe"
+    // (a made-up finding: the part is written as before). Part 2 starts on a keyframe and is asked as usual, and is right.
+    [Trait("serves-spec", "SPEC-001")]
+    [SkippableFact]
+    public async Task SubsetFirstPart_WhenTheFirstKeyframeIsBeforeZero_HasNoSeekWarning()
+    {
+        RequireBinaries();
+        var src = await _fx.GetAsync("negkf");
+        var probe = Probe();
+        (await probe.GetKeyframesAsync(src))[0].Should().BeLessThan(TimeSpan.Zero, "precondition: the file's first keyframe is before zero");
+        var cuts = new[] { 1.7, 4.2, 6.7 }.Select(S).ToList();
+
+        var first = await Engine(probe).SplitAsync(new SplitRequest(src, cuts, Path.Combine(_dir, "neg1"), SelectedSegmentIndices: new[] { 1 }));
+        first.Warnings.Should().NotContain(w => w.StartsWith("Part ", StringComparison.Ordinal));
+
+        var (check, _) = await SubsetAsync("negkf", 2, 1.7, 4.2, 6.7);
+        check.StartsRight.Should().BeTrue(check.Describe());
     }
 
     // serves-spec: SPEC-001#I66 — repro (b): an interior TS part (it has an end) starts on its planned keyframe. Its
@@ -851,6 +883,34 @@ public sealed class LosslessBoundaryIntegrationTests : IClassFixture<LosslessBou
         outFrames.Count.Should().BeInRange(planned, planned + 3, "the planned frames, and stream copy's end overrun (T-220) at most");
         outFrames.Take(planned).Select(f => f.Hash).Should().Equal(
             sourceFrames.Skip(first).Take(planned).Select(f => f.Hash), "the source's frames from the keyframe, in order");
+    }
+
+    // serves-spec: SPEC-001#I75 - T-237 review 3: a real file in which no aim fits. The cut ends 17 ms past its keyframe, so the last aim in
+    // reach (12 ms past it) still lands on the keyframe before; the engine says so and writes nothing, where the shipped code wrote the
+    // previous GOP too and reported Done. (Until now only a fake demuxer reached this path.)
+    [Trait("serves-spec", "SPEC-001")]
+    [SkippableFact]
+    public async Task Vfr_ExactEndTrim_WhereNoAimFits_FallsBackBeforeAnythingIsWritten()
+    {
+        RequireBinaries();
+        var src = await _fx.GetAsync("vfrrandom");
+        var probe = Probe();
+        const double keyframe = 5.233008;
+        var atKeyframe = await probe.GetSeekLandingAsync(src, S(keyframe));
+        var atLastAim = await probe.GetSeekLandingAsync(src, S(keyframe + 0.012));
+        atKeyframe.Should().NotBeNull();
+        atLastAim.Should().NotBeNull();
+        atKeyframe!.Value.TotalSeconds.Should().BeLessThan(keyframe - 0.002, "precondition: a seek aimed at this keyframe lands on the one before it");
+        atLastAim!.Value.TotalSeconds.Should().BeLessThan(keyframe - 0.002, "precondition: so does the last aim in reach");
+        var dest = Path.Combine(_dir, "endtrim-nofit.mp4");
+
+        var result = await new SmartCutEngine(new FfmpegRunner(Locator()), probe).CutAsync(src, S(keyframe), S(keyframe + 0.017), dest);
+
+        result.FellBack.Should().BeTrue();
+        result.FallbackReason.Should().Be(SmartCutEngine.SeekNotExactReason);
+        result.OutputPath.Should().BeNull();
+        File.Exists(dest).Should().BeFalse("nothing is written when the seek cannot be made exact");
+        Directory.GetDirectories(Path.GetDirectoryName(dest)!, ".vsj-*").Should().BeEmpty("no temp folder is left");
     }
 
     // serves-spec: SPEC-001#I70 / I75 - an Exact cut with a head on a variable-frame-rate source either is refused (the lossless cut

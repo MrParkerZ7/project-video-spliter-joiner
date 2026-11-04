@@ -28,22 +28,24 @@ goal; `0.1.0` is the first end-to-end, shippable cut.
   and an end-only Exact cut planned for about 140 frames held 202 and was reported done. ffmpeg's seek to a keyframe's own time lands
   on the keyframe before it in such a file, and what a seek lands on depends on the file, so the cut now asks ffmpeg's own reader
   (one short read of a few packets, about a tenth of a second per part): it keeps the keyframe's time when a seek there lands on the
-  keyframe, and otherwise tries a slightly later time (0.04 to 1.2 s past the keyframe, never past the next keyframe or the end of
-  the cut) until one does. A first version aimed at the middle of the keyframe's group of pictures by a rule on the times; a review
-  found it landing a whole group late on a screen-recording-style video with long idle stretches, so nothing is assumed from the
-  times any more. On 46 test videos (10, 24 and 30 fps, 0.2 to 6 s between keyframes, no B-frames, the default number of them,
-  three and five, some with 15 or 40 % of the frames dropped at random, some not, four of them bursts of frames with long idle
-  stretches) the old aim landed early on 119 of 288 keyframes; the new one on none, and every keyframe found an aim. Of 816
-  end-only cuts the old aim gave the wrong number of frames on 343; 745 are right now, 70 end so soon after the keyframe (mostly
-  under half a second) that no later aim fits before the end, and 1 is a different fault (below). When no aim fits, a part of a
-  selection of parts says so (*Part N may start before its keyframe at T s*) and an end-only Exact cut takes the lossless cut
-  (*frame-exact cutting is not supported yet for this video's timestamps*). A full split, Matroska and transport-stream files were
-  right before and are unchanged. An Exact cut that re-encodes the start of such an MP4 or MOV video is
-  still refused (*frame-exact cutting is not supported yet for this video's keyframe type*) and takes the lossless cut: of 228
-  Exact cuts on random and jittery frame-drop test videos 204 were refused and wrote nothing, and the 24 that were cut hold the
-  source's own frames. Not fixed here: an end-only cut of a video of short bursts of frames and ten-second idle stretches that ends
-  in the idle stretch can lose the last frames of the burst (11 of 30 on one test video); that is the end of the cut, not its start.
-  Not measured: recordings from real phones, HEVC video, and a build for Linux.
+  keyframe, and otherwise looks for a slightly later time that does (a few steps from 0.04 s past the keyframe, then the last time
+  before the next keyframe or the end of the cut, then halving between the last time that lands early and the first that lands late).
+  A first version aimed at the middle of the keyframe's group of pictures by a rule on the times; a review found it landing a whole
+  group late on a screen-recording-style video with long idle stretches, so nothing is assumed from the times any more. On 46 test
+  videos (10, 24 and 30 fps, 0.2 to 6 s between keyframes, no B-frames, the default number of them, three and five, some with 15 or
+  40 % of the frames dropped at random, some not, four of them bursts of frames with long idle stretches) the old aim landed early
+  on 119 of 288 keyframes; the new one on none, and every keyframe found an aim, after 2.3 questions on average. Of 816 end-only
+  cuts the old aim gave the wrong number of frames on 343; 767 are right now, 48 end so soon after the keyframe (0.05 to 0.4 s,
+  40 of them under 0.2 s) that the first time that lands is after the end, and 1 is a different fault (below). When no aim fits, a
+  part of a selection of parts says so (*Part N may not start on its keyframe at T s*) and an end-only Exact cut takes the lossless
+  cut (*frame-exact cutting is not supported yet for this video's timestamps*). A full split, Matroska and transport-stream files
+  were right before and are unchanged. An Exact cut that re-encodes the start of such an MP4 or MOV video is still refused
+  (*frame-exact cutting is not supported yet for this video's keyframe type*) and takes the lossless cut: of 228 Exact cuts on
+  random and jittery frame-drop test videos 204 were refused and wrote nothing, and the 24 that were cut hold the source's own
+  frames. Not fixed here: an end-only cut of a video of short bursts of frames and long idle stretches that ends in the idle stretch
+  can lose frames of the burst or carry stray frames of the next one (a cut planned for 30 frames of a burst wrote 19 on one test video,
+  one planned for 8 wrote 3 on another); that is the end of the cut, not its start, and it was so before. Not measured: recordings
+  from real phones, HEVC video other than one test file, and a build for Linux.
 - **An Exact cut of a video with a subtitle, a cover picture or a timecode track no longer fails.** A phone or screen recording
   with a text track, a music video with cover art, or a camera file with a timecode track ended its Bulk Cut row *Failed* whenever
   the cut did not start on a keyframe (*Exact cut failed while re-encoding the leading fragment*, or *while joining the fragments*),

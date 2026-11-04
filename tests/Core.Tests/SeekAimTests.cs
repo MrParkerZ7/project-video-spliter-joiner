@@ -135,7 +135,8 @@ public sealed class SeekAimTests : IDisposable
         probe.Asked.Should().Equal(S(5), S(5.04));
     }
 
-    // serves-spec: SPEC-001#I75 - no aim in reach lands: Unresolved, the aim is the keyframe's own, and the ladder was walked to its end.
+    // serves-spec: SPEC-001#I75 - no aim in reach lands: Unresolved, the aim is the keyframe's own. The ladder is walked to its end and
+    // the last aim in reach (the bound minus the margin) is tried too: when that still lands early, no aim does (the landing never moves back).
     [Trait("serves-spec", "SPEC-001")]
     [Fact]
     public async Task Choose_WhenNoAimLands_IsUnresolved_AndTheAimIsTheKeyframe()
@@ -146,21 +147,123 @@ public sealed class SeekAimTests : IDisposable
 
         choice.Aim.Should().Be(S(5));
         choice.Outcome.Should().Be(SeekAim.Outcome.Unresolved);
-        probe.Asked.Should().Equal(S(5), S(5.04), S(5.08), S(5.15), S(5.3), S(5.6), S(6.2));
+        probe.Asked.Should().Equal(S(5), S(5.04), S(5.08), S(5.15), S(5.3), S(5.6), S(6.2), S(9) - SeekAim.Margin);
     }
 
-    // serves-spec: SPEC-001#I75 - an aim never reaches what bounds it (the next keyframe, the file's end, the cut's end), within 5 ms.
+    // serves-spec: SPEC-001#I75 - an aim never goes past what bounds it (the next keyframe, the file's end, the cut's end), within 5 ms.
     [Trait("serves-spec", "SPEC-001")]
     [Fact]
-    public async Task Choose_NeverAimsAtOrPastTheUpperBound()
+    public async Task Choose_NeverAimsPastTheUpperBoundMinusTheMargin()
     {
         var probe = new FakeLanding(_ => S(2.5));
 
         var choice = await SeekAim.ChooseAsync(probe, "x.mp4", S(5), S(5.1), default);
 
         choice.Outcome.Should().Be(SeekAim.Outcome.Unresolved);
-        probe.Asked.Should().Equal(new[] { S(5), S(5.04), S(5.08) }, "5.15 is past 5.095, the bound minus its margin");
-        probe.Asked.Skip(1).Should().OnlyContain(a => a < S(5.1) - SeekAim.Margin);
+        probe.Asked.Should().Equal(new[] { S(5), S(5.04), S(5.08), S(5.1) - SeekAim.Margin }, "5.15 is past the bound; its last aim in reach is tried");
+        probe.Asked.Skip(1).Should().OnlyContain(a => a <= S(5.1) - SeekAim.Margin);
+    }
+
+    // serves-spec: SPEC-001#I75 - an upper bound with no room (the margin and then some) is not probed at all.
+    [Trait("serves-spec", "SPEC-001")]
+    [Fact]
+    public async Task Choose_WhenTheBoundLeavesNoRoom_AsksOnlyAboutTheKeyframe()
+    {
+        var probe = new FakeLanding(_ => S(2.5));
+
+        var choice = await SeekAim.ChooseAsync(probe, "x.mp4", S(5), S(5.008), default);
+
+        choice.Outcome.Should().Be(SeekAim.Outcome.Unresolved);
+        probe.Asked.Should().Equal(S(5));
+    }
+
+    /// <summary>The landing of a file in which an aim lands on <paramref name="keyframe"/> from <paramref name="from"/> to before <paramref name="until"/> seconds past it, on <paramref name="previous"/> before and on <paramref name="next"/> after.</summary>
+    private static Func<TimeSpan, TimeSpan?> Window(TimeSpan keyframe, TimeSpan previous, TimeSpan next, double from, double until) =>
+        aim => aim < keyframe + S(from) ? previous : aim < keyframe + S(until) ? keyframe : next;
+
+    // serves-spec: SPEC-001#I75 - T-237 review 3: the stretch of aims that land can sit between two ladder steps (0.15 and 0.3 here); the
+    // ladder alone called that unresolved. The first late answer and the last early one bound a bisection.
+    [Trait("serves-spec", "SPEC-001")]
+    [Fact]
+    public async Task Choose_AStretchBetweenTwoLadderSteps_IsFoundByBisection()
+    {
+        var probe = new FakeLanding(Window(S(5), S(2.5), S(7.5), 0.2, 0.28));
+
+        var choice = await SeekAim.ChooseAsync(probe, "x.mp4", S(5), S(7.5), default);
+
+        choice.Outcome.Should().Be(SeekAim.Outcome.Anchored);
+        choice.Aim.TotalSeconds.Should().BeApproximately(5.225, 1e-6, "halfway between 5.15, which lands early, and 5.3, which lands late");
+        probe.Asked.Should().HaveCount(6);
+        probe.Asked.Take(5).Should().Equal(S(5), S(5.04), S(5.08), S(5.15), S(5.3));
+    }
+
+    // serves-spec: SPEC-001#I75 - a cut that ends soon after its keyframe leaves no ladder step in reach; the last aim in reach is tried.
+    [Trait("serves-spec", "SPEC-001")]
+    [Fact]
+    public async Task Choose_WhenTheLadderRunsOutOfRoom_TheLastAimInReachIsTried()
+    {
+        var probe = new FakeLanding(Window(S(5), S(2.5), S(7.5), 0.19, 0.5));
+
+        var choice = await SeekAim.ChooseAsync(probe, "x.mp4", S(5), S(5.2), default);
+
+        choice.Outcome.Should().Be(SeekAim.Outcome.Anchored);
+        choice.Aim.Should().Be(S(5.2) - SeekAim.Margin);
+        probe.Asked.Should().Equal(S(5), S(5.04), S(5.08), S(5.15), S(5.2) - SeekAim.Margin);
+    }
+
+    // serves-spec: SPEC-001#I75 - and when that last aim lands late, the stretch is between it and the last early aim.
+    [Trait("serves-spec", "SPEC-001")]
+    [Fact]
+    public async Task Choose_WhenTheLastAimInReachLandsLate_TheStretchIsBisected()
+    {
+        var probe = new FakeLanding(Window(S(5), S(2.5), S(7.5), 0.16, 0.18));
+
+        var choice = await SeekAim.ChooseAsync(probe, "x.mp4", S(5), S(5.2), default);
+
+        choice.Outcome.Should().Be(SeekAim.Outcome.Anchored);
+        choice.Aim.TotalSeconds.Should().BeApproximately(5.1725, 1e-6);
+        probe.Asked.Should().HaveCount(6);
+    }
+
+    // serves-spec: SPEC-001#I75 - no stretch at all (early, then late): the search ends within MaxBisections questions, Unresolved.
+    [Trait("serves-spec", "SPEC-001")]
+    [Fact]
+    public async Task Choose_WhenThereIsNoStretch_TheBisectionEndsAndItIsUnresolved()
+    {
+        var probe = new FakeLanding(Window(S(5), S(2.5), S(7.5), 0.2, 0.2));
+
+        var choice = await SeekAim.ChooseAsync(probe, "x.mp4", S(5), S(9), default);
+
+        choice.Outcome.Should().Be(SeekAim.Outcome.Unresolved);
+        choice.Aim.Should().Be(S(5));
+        probe.Asked.Count.Should().BeLessThanOrEqualTo(1 + SeekAim.LadderSeconds.Count + 1 + SeekAim.MaxBisections);
+        probe.Asked.Skip(1).Should().OnlyContain(a => a > S(5) && a <= S(9) - SeekAim.Margin);
+    }
+
+    // serves-spec: SPEC-001#I75 - an aim at the keyframe that already lands on a LATER keyframe cannot be fixed by a later aim.
+    [Trait("serves-spec", "SPEC-001")]
+    [Fact]
+    public async Task Choose_WhenTheKeyframesOwnAimLandsOnALaterKeyframe_IsUnresolvedAtOnce()
+    {
+        var probe = new FakeLanding(_ => S(7.5));
+
+        var choice = await SeekAim.ChooseAsync(probe, "x.mp4", S(5), S(9), default);
+
+        choice.Outcome.Should().Be(SeekAim.Outcome.Unresolved);
+        probe.Asked.Should().Equal(S(5));
+    }
+
+    // serves-spec: SPEC-001#I75 - an answer that is missing in the middle of the search is no answer at all.
+    [Trait("serves-spec", "SPEC-001")]
+    [Fact]
+    public async Task Choose_WhenTheProbeCannotSayDuringTheBisection_IsUnverified()
+    {
+        var probe = new FakeLanding(aim => aim >= S(5.29) ? S(7.5) : aim > S(5.16) ? null : S(2.5));
+
+        var choice = await SeekAim.ChooseAsync(probe, "x.mp4", S(5), S(9), default);
+
+        choice.Outcome.Should().Be(SeekAim.Outcome.Unverified);
+        choice.Aim.Should().Be(S(5));
     }
 
     // serves-spec: SPEC-001#I75 - a probe that cannot say (null), at the keyframe or on the way, is no answer: today's aim, unverified.
@@ -327,6 +430,26 @@ public sealed class SeekAimTests : IDisposable
 
         ValueAfter(runner.Runs.Single().Tokens, "-ss").Should().Be("0");
         probe.Asked.Should().BeEmpty();
+    }
+
+    // serves-spec: SPEC-001#I75 - T-237 review 3: a file whose first keyframe is before zero (a re-cut made without shifting its timestamps)
+    // starts its first part at 0, which is no keyframe and which no seek could land on: nothing is asked and no warning is made up. A part
+    // that does start on a keyframe is asked as before.
+    [Trait("serves-spec", "SPEC-001")]
+    [Fact]
+    public async Task Subset_OnMp4_WhereTheFirstKeyframeIsBeforeZero_TheFirstPartIsNotAskedAbout()
+    {
+        var keyframes = new[] { S(-0.8), S(2.2), S(5.2), S(8.2) };
+        var alwaysEarly = new LandingInfoProbe(Info(MovName), keyframes, _ => S(-0.8));
+
+        var (_, result) = await SubsetAsync(alwaysEarly, ".mp4", new[] { 1 }, 3, 6);
+
+        alwaysEarly.Asked.Should().BeEmpty("0 s is not a keyframe of this file");
+        result.Warnings.Should().NotContain(w => w.StartsWith("Part "), "the coarse-GOP notes are the plan's, not a seek finding");
+
+        var second = new LandingInfoProbe(Info(MovName), keyframes, _ => S(-0.8));
+        await SubsetAsync(second, ".mp4", new[] { 2 }, 3, 6);
+        second.Asked.Should().StartWith(new[] { S(2.2) }, "the second part starts on the keyframe at 2.2");
     }
 
     // serves-spec: SPEC-001#I75 - a probe that cannot say leaves the seek at the keyframe; so does a probe that cannot be asked at all.

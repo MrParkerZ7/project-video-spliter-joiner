@@ -474,8 +474,8 @@ public sealed class SplitEngine : ISplitEngine
     /// The seek anchor of one selected part (<see cref="SplitArgsBuilder.PerSegment"/>'s <c>seekAnchor</c>), or null for a seek at the
     /// keyframe itself. Matroska: T-234's, by a rule on times. MP4 and QuickTime (T-237): the keyframe's own time when a seek aimed there lands
     /// on it, else the first later aim that does, asked of the demuxer (<see cref="SeekAim"/>); when none does, the part is written from
-    /// the keyframe's own aim and says so in the result's warnings. Every other container, a probe that cannot be asked, and a part that
-    /// starts at or before the first keyframe (the seek clamps to the file's start): null.
+    /// the keyframe's own aim and says so in the result's warnings. Every other container, a probe that cannot be asked, a part that
+    /// starts at or before the first keyframe (the seek clamps to the file's start) and a start that is no keyframe at all: null.
     /// </summary>
     private async Task<TimeSpan?> AnchorAsync(
         string inputPath,
@@ -497,6 +497,13 @@ public sealed class SplitEngine : ISplitEngine
             return null;
         }
 
+        // A part starts on a keyframe, except the first, which starts at the file's start; when the file's first keyframe is before
+        // zero (a re-cut made without shifting its timestamps) that start is not a keyframe, and no seek could "land on" it.
+        if (!keyframes.Any(k => (k - start).Duration() <= SeekAim.LandingTolerance))
+        {
+            return null;
+        }
+
         var after = start + TimeSpan.FromMilliseconds(1);
         var next = keyframes.FirstOrDefault(k => k > after);
         var choice = await SeekAim.ChooseAsync(_landing, inputPath, start, next > TimeSpan.Zero ? next : fileEnd, ct).ConfigureAwait(false);
@@ -504,7 +511,7 @@ public sealed class SplitEngine : ISplitEngine
         {
             warnings.Add(string.Create(
                 CultureInfo.InvariantCulture,
-                $"Part {oneBasedIndex} may start before its keyframe at {start.TotalSeconds:0.###} s: a seek to it lands on an earlier keyframe in this video, and no later aim fixed that."));
+                $"Part {oneBasedIndex} may not start on its keyframe at {start.TotalSeconds:0.###} s: a seek to it lands on another keyframe in this video, and no other aim fixed that."));
         }
 
         return choice.Outcome == SeekAim.Outcome.Anchored ? choice.Aim : null;
