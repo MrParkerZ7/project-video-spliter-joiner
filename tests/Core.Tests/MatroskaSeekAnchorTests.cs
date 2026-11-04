@@ -272,10 +272,10 @@ public sealed class MatroskaSeekAnchorTests
         ValueAfter(runner.Runs.Single().Tokens, "-ss").Should().Be("10.022");
     }
 
-    // serves-spec: SPEC-001#I74 - the controls: MP4/MOV, MPEG-TS and an unnamed container keep seeking to the keyframe.
+    // serves-spec: SPEC-001#I74 - the controls: MPEG-TS, AVI and an unnamed container keep seeking to the keyframe. (MP4 and
+    // QuickTime left this list with T-237: they aim inside the GOP too, MovSeekAnchorTests.)
     [Trait("serves-spec", "SPEC-001")]
     [Theory]
-    [InlineData("mov,mp4,m4a,3gp,3g2,mj2", ".mp4")]
     [InlineData("mpegts", ".ts")]
     [InlineData("avi", ".avi")]
     [InlineData("", ".bin")]

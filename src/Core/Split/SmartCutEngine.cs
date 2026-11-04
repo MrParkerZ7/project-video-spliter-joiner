@@ -234,7 +234,7 @@ public sealed class SmartCutEngine : ISmartCutEngine
 
             if (endTrim)
             {
-                return await TrimEndAsync(inputPath, plan, keyframes, outputPath, tempDir, progress, ct).ConfigureAwait(false);
+                return await TrimEndAsync(inputPath, plan, keyframes, ok.Info, outputPath, tempDir, progress, ct).ConfigureAwait(false);
             }
 
             var headPath = Path.Combine(tempDir, "head" + ext);
@@ -342,6 +342,7 @@ public sealed class SmartCutEngine : ISmartCutEngine
         string inputPath,
         SmartCutPlan plan,
         IReadOnlyList<TimeSpan> keyframes,
+        MediaInfo info,
         string outputPath,
         string tempDir,
         IProgress<double>? progress,
@@ -353,8 +354,17 @@ public sealed class SmartCutEngine : ISmartCutEngine
         var inpoint = keyframes.OrderBy(k => (k - plan.Start).Duration()).First();
         var end = plan.End!.Value;
 
+        // T-237: on an MP4 or QuickTime file the demuxer's seek to an inpoint AT the keyframe can land on the one before it (a
+        // variable-frame-rate file with B-frames: the output then began a whole GOP early and was reported Done), so the list's
+        // inpoint is the middle of the keyframe's GOP, which lands on the keyframe in either case (SplitArgsBuilder.MovSeekAnchor).
+        // Nothing follows this entry, so the shift it makes to the file's timestamps moves nothing else. The progress total and the
+        // reported start stay the keyframe's.
+        var listInpoint = SplitArgsBuilder.IsMovContainer(info.Container)
+            ? SplitArgsBuilder.MovSeekAnchor(inpoint, keyframes, info.StartTime + info.Duration) ?? inpoint
+            : inpoint;
+
         var listPath = Path.Combine(tempDir, "concat.txt");
-        await File.WriteAllTextAsync(listPath, SmartCutArgsBuilder.RenderEndTrimList(inputPath, inpoint, end), ct).ConfigureAwait(false);
+        await File.WriteAllTextAsync(listPath, SmartCutArgsBuilder.RenderEndTrimList(inputPath, listInpoint, end), ct).ConfigureAwait(false);
 
         var finalTemp = Path.Combine(tempDir, "final" + Path.GetExtension(outputPath));
         var rowProgress = new RowProgress(progress);

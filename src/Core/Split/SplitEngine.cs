@@ -197,7 +197,7 @@ public sealed class SplitEngine : ISplitEngine
                 ? await ExtractAllViaSegmentMuxer(req, plan, ok.Info, duration, tempDir, progress, partProgress, ct).ConfigureAwait(false)
                 : await ExtractSelectedPerSegment(
                     req, selected, plan.Segments.Count, fileDuration, ok.Info.StartTime,
-                    SplitArgsBuilder.IsMatroskaContainer(ok.Info.Container) ? keyframes : null,
+                    ok.Info.Container, keyframes,
                     tempDir, progress, partProgress, ct).ConfigureAwait(false);
 
             // T-044: ffmpeg finished — entering the finalize phase (temp→move + verify each segment).
@@ -389,9 +389,9 @@ public sealed class SplitEngine : ISplitEngine
     /// file; interior parts pass an explicit <c>-to == SnappedEnd</c>. Progress is reported coarsely
     /// across the selected parts. The copy invariant is asserted on every command. T-219: each seek is converted from
     /// the plan's source timestamps by <paramref name="sourceStartTime"/> (the probe's format <c>start_time</c>), the
-    /// time base of ffmpeg's input <c>-ss</c>. T-234: <paramref name="matroskaKeyframes"/> is the keyframe list of a Matroska
-    /// source (null for every other container), from which each part's seek is aimed inside its first GOP instead of at
-    /// the keyframe (<see cref="SplitArgsBuilder.MatroskaSeekAnchor"/>).
+    /// time base of ffmpeg's input <c>-ss</c>. T-234, T-237: <paramref name="keyframes"/> is the source's keyframe list, from
+    /// which a Matroska, MP4 or QuickTime source (by <paramref name="container"/>) gets each part's seek aimed inside its first
+    /// GOP instead of at the keyframe (<see cref="SplitArgsBuilder.SeekAnchor"/>).
     /// </summary>
     private async Task<IReadOnlyList<(PlannedSegment Planned, string TempFile)>> ExtractSelectedPerSegment(
         SplitRequest req,
@@ -399,7 +399,8 @@ public sealed class SplitEngine : ISplitEngine
         int planPartCount,
         TimeSpan fileDuration,
         TimeSpan sourceStartTime,
-        IReadOnlyList<TimeSpan>? matroskaKeyframes,
+        string? container,
+        IReadOnlyList<TimeSpan> keyframes,
         string tempDir,
         IProgress<double>? progress,
         IProgress<PartProgress>? partProgress,
@@ -428,9 +429,7 @@ public sealed class SplitEngine : ISplitEngine
             var seekPoint = planned.SnappedStart < sourceStartTime ? sourceStartTime : planned.SnappedStart;
             var reportedDuration = (end ?? sourceStartTime + fileDuration) - seekPoint;
 
-            var anchor = matroskaKeyframes is null
-                ? (TimeSpan?)null
-                : SplitArgsBuilder.MatroskaSeekAnchor(planned.SnappedStart, matroskaKeyframes, sourceStartTime + fileDuration);
+            var anchor = SplitArgsBuilder.SeekAnchor(container, planned.SnappedStart, keyframes, sourceStartTime + fileDuration);
             var args = SplitArgsBuilder.PerSegment(req.InputPath, planned.SnappedStart, end, sourceStartTime, tempFile, anchor);
             AssertCopyInvariant(args);
 

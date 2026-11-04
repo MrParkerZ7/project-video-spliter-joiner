@@ -333,8 +333,8 @@ public sealed class SmartCutTwoRunTests : IDisposable
     }
 
     // serves-spec: SPEC-001#I71 - the keyframe at 8 s, an end at 13 s inside the GOP of 12-14 s: ONE run, the concat of the source
-    // itself (no head, no encoder, no tail file), the list says inpoint 8 / outpoint 13, the result is a produced file that
-    // re-encoded nothing and started on the keyframe.
+    // itself (no head, no encoder, no tail file), the list says inpoint 9 (the middle of the keyframe's 8-10 s GOP, T-237) /
+    // outpoint 13, the result is a produced file that re-encoded nothing and started on the keyframe.
     [Trait("serves-spec", "SPEC-001")]
     [Fact]
     public async Task SmartCutEngine_AStartOnAKeyframeWithAnEndInsideAGop_IsOneConcatOfTheSourceItself()
@@ -355,7 +355,7 @@ public sealed class SmartCutTwoRunTests : IDisposable
         runner.Commands.Should().ContainSingle("no head encode");
         JoinArgsBuilder.SatisfiesCopyInvariant(runner.Commands[0]).Should().BeTrue("a stream copy through the unchanged ConcatCopy");
         runner.Lists.Should().ContainSingle().Which.Should().Be(
-            "file '" + Path.GetFullPath(input).Replace("'", "'\\''", StringComparison.Ordinal) + "'\ninpoint 8\noutpoint 13\n");
+            "file '" + Path.GetFullPath(input).Replace("'", "'\\''", StringComparison.Ordinal) + "'\ninpoint 9\noutpoint 13\n");
         File.Exists(output).Should().BeTrue();
         Directory.GetDirectories(_dir, ".vsj-smartcut-*").Should().BeEmpty("the temp dir is swept in a finally");
     }
@@ -424,7 +424,7 @@ public sealed class SmartCutTwoRunTests : IDisposable
 
         result.FellBack.Should().BeFalse(result.FallbackReason);
         runner.Commands.Should().ContainSingle();
-        runner.Lists.Should().ContainSingle().Which.Should().EndWith($"inpoint 8\noutpoint {written}\n");
+        runner.Lists.Should().ContainSingle().Which.Should().EndWith($"inpoint 9\noutpoint {written}\n"); // 9: the middle of the 8-10 s GOP (T-237)
     }
 
     // serves-spec: SPEC-001#I71 - a source with a subtitle, a data stream or a cover picture (ExtraStreams) keeps the lossless cut,
@@ -505,7 +505,26 @@ public sealed class SmartCutTwoRunTests : IDisposable
 
         result.FellBack.Should().BeFalse(result.FallbackReason);
         result.EffectiveStart.Should().Be(S(8), "the file starts on the keyframe, up to 10 ms before the request");
-        runner.Lists.Should().ContainSingle().Which.Should().Contain("inpoint 8\n").And.Contain("outpoint 13\n");
+        runner.Lists.Should().ContainSingle().Which.Should().Contain("inpoint 9\n").And.Contain("outpoint 13\n"); // 9: the middle of the 8-10 s GOP (T-237)
+    }
+
+    // serves-spec: SPEC-001#I75 (boundary) - a keyframe gap under half a second keeps the end trim's inpoint on the keyframe itself,
+    // as it was before T-237: the MP4 anchor needs a GOP of about twice the demuxer's index gap to be inside the window that lands
+    // on the keyframe.
+    [Trait("serves-spec", "SPEC-001")]
+    [Fact]
+    public async Task SmartCutEngine_AnEndTrimOnShortGops_KeepsTheInpointOnTheKeyframe()
+    {
+        var input = Placeholder("clip.mp4");
+        var runner = new ListCapturingRunner();
+        var shortGops = Enumerable.Range(0, 151).Select(i => S(i * 0.4)).ToList();
+        var engine = new SmartCutEngine(runner, new FixedProbe(Info(0), shortGops));
+
+        var result = await engine.CutAsync(input, S(8), S(8.3), Path.Combine(_dir, "cut.mp4"));
+
+        result.FellBack.Should().BeFalse(result.FallbackReason);
+        result.EffectiveStart.Should().Be(S(8));
+        runner.Lists.Should().ContainSingle().Which.Should().EndWith("inpoint 8\noutpoint 8.3\n");
     }
 
     // serves-spec: SPEC-001#I71 / SPEC-001#I46 - a source Exact does not cut keeps the lossless cut with an end inside a GOP too, and

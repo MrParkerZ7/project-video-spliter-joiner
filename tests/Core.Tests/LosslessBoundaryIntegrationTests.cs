@@ -103,6 +103,34 @@ public sealed class LosslessBoundaryFixtures : IDisposable
                 return await SmartCutJointIntegrityTests.MakeFixtureAsync(
                     Dir, "tiny.mp4", 3, 30, "-c:v", "libx264", "-g", "30", "-keyint_min", "30", "-sc_threshold", "0");
 
+            // A variable-frame-rate source (T-237, SPEC-001 I68's known limit): the MediaFixtures B-frame recipe, 20 s at 30 fps, 2 s GOP
+            // in source frames, with every fifth frame dropped before the encoder (what a phone or screen recording does when it
+            // skips frames): 24 frames per second on average, 60 frames (2.5 s) per GOP, a 1/30 s gap and a 2/30 s gap alternating.
+            case "vfr":
+                return await SmartCutJointIntegrityTests.MakeFixtureAsync(
+                    Dir, "vfr.mp4", 20, 30, "-vf", "select='not(eq(mod(n,5),4))'", "-fps_mode", "vfr",
+                    "-c:v", "libx264", "-g", "60", "-keyint_min", "60", "-sc_threshold", "0");
+
+            // Frames dropped at random (a quarter of them, a fixed seed): the gaps are 1/30, 2/30, 3/30 ... s with no pattern.
+            case "vfrrandom":
+                return await SmartCutJointIntegrityTests.MakeFixtureAsync(
+                    Dir, "vfrrandom.mp4", 20, 30, "-vf", "select='gt(random(7),0.25)'", "-fps_mode", "vfr",
+                    "-c:v", "libx264", "-g", "60", "-keyint_min", "60", "-sc_threshold", "0");
+
+            // The random-drop file remuxed (-c copy) to the other containers a VFR recording comes in.
+            case "vfrrandommov":
+                return await RemuxAsync(await GetAsync("vfrrandom"), "vfrrandom.mov");
+            case "vfrrandommkv":
+                return await RemuxAsync(await GetAsync("vfrrandom"), "vfrrandom.mkv");
+            case "vfrrandomts":
+                return await RemuxAsync(await GetAsync("vfrrandom"), "vfrrandom.ts");
+
+            // Two regimes: 10 s at 30 fps, then 14 s at 5 fps (one frame in six): the rate varies by 6x, the GOP is 2 s, then 12 s.
+            case "vfr2x":
+                return await SmartCutJointIntegrityTests.MakeFixtureAsync(
+                    Dir, "vfr2x.mp4", 24, 30, "-vf", "select='lt(n,300)+gte(n,300)*eq(mod(n,6),0)'", "-fps_mode", "vfr",
+                    "-c:v", "libx264", "-g", "60", "-keyint_min", "60", "-sc_threshold", "0");
+
             default:
                 throw new ArgumentOutOfRangeException(nameof(shape), shape, "unknown fixture shape");
         }
@@ -632,5 +660,204 @@ public sealed class LosslessBoundaryIntegrationTests : IClassFixture<LosslessBou
 
         check.StartsRight.Should().BeTrue("the kept middle starts at the snapped intro: " + check.Describe());
         _output.WriteLine($"kept middle end overrun (T-220): {check.Frames - check.PlannedFrames} frame(s)");
+    }
+
+    // ---- T-237: a variable-frame-rate source -------------------------------------------------------------------
+    //
+    // The shipped code, on a phone-style file (B-frames, a quarter of the frames dropped at random, 2.5 s GOP): a per-segment
+    // lossless part began a whole GOP early (242 frames against 180 planned, its first frame the previous keyframe's) in MP4 and
+    // QuickTime, because ffmpeg's seek to a keyframe's own time landed on the keyframe before it; an Exact cut that only trims the
+    // end (T-224) did the same through the concat demuxer's inpoint (202 frames against 140) and was reported Done. The segment
+    // muxer (a full split), Matroska (T-234's anchor) and MPEG-TS were right. An Exact cut with a head is refused for such a file
+    // before it writes anything (its keyframe cannot be read where the seek lands, SPEC-001 I70).
+
+    private async Task<IReadOnlyList<LosslessBoundary.Frame>> AssertVfrPreconditionAsync(string src)
+    {
+        var sourceFrames = await LosslessBoundary.FramesAsync(src, _dir);
+        var gaps = sourceFrames.Zip(sourceFrames.Skip(1), (a, b) => Math.Round(b.Seconds - a.Seconds, 3)).Distinct().Order().ToList();
+        gaps.Count.Should().BeGreaterThan(1, "precondition: the frame gaps differ, the source is variable-frame-rate: " + string.Join(", ", gaps));
+        var keyframes = await Probe().GetKeyframesAsync(src);
+        _output.WriteLine("keyframes: " + string.Join(", ", keyframes.Select(k => k.TotalSeconds.ToString("0.######", CultureInfo.InvariantCulture))));
+        keyframes.Count.Should().BeGreaterThan(4, "precondition: several keyframes");
+        return sourceFrames;
+    }
+
+    // serves-spec: SPEC-001#I66 - the full split (segment muxer) on a variable-frame-rate source: every part starts on its planned
+    // keyframe and holds its planned frames. (Right before T-237 too: the control the per-segment path is held to.)
+    [Trait("serves-spec", "SPEC-001")]
+    [SkippableTheory]
+    [InlineData("vfr", 6.0, 13.0)]
+    [InlineData("vfrrandom", 6.0, 13.0)]
+    [InlineData("vfr2x", 6.0, 15.0)]
+    [InlineData("vfr2x", 9.0, 11.0)]
+    public async Task Vfr_FullSplit_EachPartStartsOnItsKeyframe_AndHoldsItsPlannedFrames(string shape, double cut1, double cut2)
+    {
+        RequireBinaries();
+        var src = await _fx.GetAsync(shape);
+        await AssertVfrPreconditionAsync(src);
+
+        var (checks, _) = await FullSplitAsync(src, cut1, cut2);
+
+        AssertEveryPartExact(checks);
+    }
+
+    // serves-spec: SPEC-001#I75 - T-237 repro: the per-segment path (selected parts) on a variable-frame-rate source. Shipped code
+    // wrote parts 2 and 3 of the random-drop MP4 and QuickTime one GOP early (242/180 and 212/152 frames, the first frame the
+    // previous keyframe's); Matroska and MPEG-TS were right. Parts 1 and 2 keep stream copy's end overrun (T-220), which is
+    // bounded here, not asserted equal.
+    [Trait("serves-spec", "SPEC-001")]
+    [SkippableTheory]
+    [InlineData("vfr", 1)]
+    [InlineData("vfr", 2)]
+    [InlineData("vfr", 3)]
+    [InlineData("vfrrandom", 1)]
+    [InlineData("vfrrandom", 2)]
+    [InlineData("vfrrandom", 3)]
+    [InlineData("vfrrandommov", 2)]
+    [InlineData("vfrrandommov", 3)]
+    [InlineData("vfrrandommkv", 2)]
+    [InlineData("vfrrandommkv", 3)]
+    [InlineData("vfrrandomts", 2)]
+    [InlineData("vfrrandomts", 3)]
+    [InlineData("vfr2x", 1)]
+    [InlineData("vfr2x", 2)]
+    [InlineData("vfr2x", 3)]
+    public async Task Vfr_SubsetParts_StartOnTheirKeyframe(string shape, int part)
+    {
+        RequireBinaries();
+        await AssertVfrPreconditionAsync(await _fx.GetAsync(shape));
+
+        var (check, _) = await SubsetAsync(shape, part, 6.0, shape == "vfr2x" ? 15.0 : 13.0);
+
+        check.StartsRight.Should().BeTrue(check.Describe());
+        if (part == 3)
+        {
+            check.CountRight.Should().BeTrue("a part that runs to the end of the file is exact: " + check.Describe());
+        }
+        else
+        {
+            (check.Frames - check.PlannedFrames).Should().BeInRange(0, 3, "an end overrun of stream copy (T-220) at most: " + check.Describe());
+        }
+    }
+
+    // serves-spec: SPEC-001#I75 - the Bulk Cut lossless row (BulkTrimEngine -> KeptMiddleRequestBuilder -> the per-segment path) on
+    // the random-drop MP4 and QuickTime: the kept middle starts at the snapped intro (shipped code: a GOP before it).
+    [Trait("serves-spec", "SPEC-001")]
+    [SkippableTheory]
+    [InlineData("vfrrandom", ".mp4")]
+    [InlineData("vfrrandommov", ".mov")]
+    public async Task Vfr_BulkLosslessRow_KeptMiddleStartsAtTheSnappedIntro(string shape, string extension)
+    {
+        RequireBinaries();
+        var src = await _fx.GetAsync(shape);
+        await AssertVfrPreconditionAsync(src);
+        var probe = Probe();
+        var runner = new FfmpegRunner(Locator());
+        var disposer = new KeepOriginalBackupDisposer();
+        var split = new SplitEngine(runner, probe, new ErrorLogWriter(Path.Combine(_dir, "logs")), new FakeDiskSpaceProbe(long.MaxValue), disposer);
+        var batch = new BulkTrimEngine(
+            split, new KeptMiddleRequestBuilder(probe), new FakeDiskSpaceProbe(long.MaxValue), new SmartCutEngine(runner, probe), disposer);
+
+        var keyframes = await probe.GetKeyframesAsync(src);
+        var intro = probe.SnapToNearestKeyframe(keyframes, S(5.5)).Snapped;
+        var outro = probe.SnapToNearestKeyframe(keyframes, S(12.0)).Snapped;
+        intro.Should().BeGreaterThan(S(2.8), "precondition: the intro is an interior keyframe, not the first");
+        var desired = Path.Combine(_dir, "vfr_trimmed" + extension);
+
+        var result = await batch.RunAsync(
+            new[] { new BulkTrimItem(src, S(5.5), S(12.0), desired) },
+            new BulkTrimOptions(Precision: CutPrecision.Lossless));
+
+        result.Items.Single().Outcome.Should().Be(ItemOutcome.Done);
+        var written = result.Items.Single().OutputPath!;
+        var sourceFrames = await LosslessBoundary.FramesAsync(src, _dir);
+        var check = (await CheckPartsAsync(src, sourceFrames, new[] { (2, intro, (TimeSpan?)outro, written) }))[0];
+
+        check.StartsRight.Should().BeTrue("the kept middle starts at the snapped intro: " + check.Describe());
+        (check.Frames - check.PlannedFrames).Should().BeInRange(0, 3, "an end overrun of stream copy (T-220) at most: " + check.Describe());
+    }
+
+    // serves-spec: SPEC-001#I75 - T-237 repro: an Exact cut that only trims the end (the start is a keyframe, the end is inside a
+    // GOP) writes the source's frames from that keyframe on. Shipped code, on the random-drop MP4 and QuickTime, wrote the
+    // previous GOP too (202 frames against 140) and reported Done, the concat demuxer's inpoint having landed on the keyframe
+    // before. The first frame is the keyframe's, the planned frames follow in the source's order, and the file holds at most the
+    // end overrun of the other Exact cuts (T-220) beyond them. The B-frame and QuickTime constant-frame-rate files are the controls.
+    [Trait("serves-spec", "SPEC-001")]
+    [SkippableTheory]
+    [InlineData("vfr", 5.0, 11.3)]
+    [InlineData("vfrrandom", 5.233008, 11.0)]
+    [InlineData("vfrrandom", 7.699674, 14.0)]
+    [InlineData("vfrrandommov", 5.233008, 11.0)]
+    [InlineData("vfr2x", 6.0, 14.2)]
+    [InlineData("bframes", 3.0, 6.3)]
+    [InlineData("mov", 3.0, 6.5)]
+    public async Task Vfr_ExactEndTrim_StartsOnItsKeyframe_AndHoldsTheSourcesFramesFromThere(string shape, double keyframe, double end)
+    {
+        RequireBinaries();
+        var src = await _fx.GetAsync(shape);
+        var dest = Path.Combine(_dir, $"endtrim-{shape}-{keyframe}.mp4");
+        var sourceFrames = await LosslessBoundary.FramesAsync(src, _dir);
+        var first = LosslessBoundary.IndexAt(sourceFrames, S(keyframe));
+        var planned = sourceFrames.Skip(first).Count(f => f.Seconds < end - LosslessBoundary.HalfFrame(sourceFrames));
+
+        var result = await new SmartCutEngine(new FfmpegRunner(Locator()), Probe()).CutAsync(src, S(keyframe), S(end), dest);
+
+        result.FellBack.Should().BeFalse(result.FallbackReason);
+        result.Strategy.Should().Be(SmartCutStrategy.PureCopy, "the start is a keyframe: an end trim, nothing re-encoded");
+        var outFrames = await LosslessBoundary.FramesAsync(dest, _dir);
+        _output.WriteLine($"{shape}: {outFrames.Count} frames, planned {planned}, first frame = {LosslessBoundary.Describe(sourceFrames, outFrames[0].Hash)}");
+        outFrames[0].Hash.Should().Be(sourceFrames[first].Hash, "the file starts on the keyframe the cut was asked to start on");
+        outFrames.Count.Should().BeInRange(planned, planned + 3, "the planned frames, and stream copy's end overrun (T-220) at most");
+        outFrames.Take(planned).Select(f => f.Hash).Should().Equal(
+            sourceFrames.Skip(first).Take(planned).Select(f => f.Hash), "the source's frames from the keyframe, in order");
+    }
+
+    // serves-spec: SPEC-001#I70 / I75 - an Exact cut with a head on a variable-frame-rate source either is refused (the lossless cut
+    // is then what the caller runs) or is the source's frames: the copied part from the boundary keyframe is the source's, in
+    // number and in picture, and the whole file holds one frame per source frame of the range. Never a Done with a GOP too many.
+    // The random-drop MP4 and QuickTime are refused (the keyframe the copy would start from cannot be read where the seek lands);
+    // the periodic and two-rate files are cut.
+    [Trait("serves-spec", "SPEC-001")]
+    [SkippableTheory]
+    [InlineData("vfr", 6.3, null)]
+    [InlineData("vfr", 6.3, 14.2)]
+    [InlineData("vfr2x", 6.3, null)]
+    [InlineData("vfr2x", 6.3, 14.2)]
+    [InlineData("vfr2x", 11.3, null)]
+    [InlineData("vfrrandom", 6.3, null)]
+    [InlineData("vfrrandom", 6.3, 14.2)]
+    [InlineData("vfrrandommov", 8.9, null)]
+    public async Task Vfr_ExactCutWithAHead_IsRefusedOrIsTheSourcesFrames(string shape, double start, double? end)
+    {
+        RequireBinaries();
+        var src = await _fx.GetAsync(shape);
+        var probe = Probe();
+        var dest = Path.Combine(_dir, $"exact-{shape}-{start}-{end}.mp4");
+
+        var result = await new SmartCutEngine(new FfmpegRunner(Locator()), probe).CutAsync(src, S(start), end is null ? null : S(end.Value), dest);
+
+        _output.WriteLine($"{shape} {start}->{end}: fellBack={result.FellBack} ({result.FallbackReason}), strategy {result.Strategy}");
+        if (result.FellBack)
+        {
+            File.Exists(dest).Should().BeFalse("a refused cut writes nothing");
+            return;
+        }
+
+        var sourceFrames = await LosslessBoundary.FramesAsync(src, _dir);
+        var outFrames = await LosslessBoundary.FramesAsync(dest, _dir);
+        var effective = result.EffectiveStart!.Value;
+        var half = LosslessBoundary.HalfFrame(sourceFrames);
+        var range = sourceFrames.Where(f => f.Seconds >= effective.TotalSeconds - half && (end is null || f.Seconds < end.Value - half)).ToList();
+        outFrames.Count.Should().BeInRange(range.Count, range.Count + (end is null ? 0 : 3), "one frame per source frame of the range (T-220's overrun with an end)");
+
+        // From the boundary keyframe on the file is the source's pictures, byte for byte, in order.
+        var keyframes = await probe.GetKeyframesAsync(src);
+        var boundary = keyframes.First(k => k > effective).TotalSeconds;
+        var headFrames = range.Count(f => f.Seconds < boundary - half);
+        var tailStart = range.FindIndex(f => f.Seconds >= boundary - half);
+        var tailLength = Math.Min(range.Count - tailStart, outFrames.Count - headFrames);
+        tailLength.Should().BeGreaterThan(5, "precondition: there is a copied part to compare");
+        outFrames.Skip(headFrames).Take(tailLength).Select(f => f.Hash).Should().Equal(
+            range.Skip(tailStart).Take(tailLength).Select(f => f.Hash), "the copied part is the source's frames from the boundary keyframe");
     }
 }
