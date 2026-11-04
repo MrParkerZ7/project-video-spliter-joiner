@@ -676,7 +676,7 @@ public sealed class VideoFrameProbeTests : IDisposable
         probe.SnapAsked.Should().Equal(new[] { S(11.975) });
         probe.IdrAsked.Should().BeEmpty();
         runner.Commands.Should().ContainSingle();
-        runner.Lists.Should().ContainSingle().Which.Should().EndWith("inpoint 13\noutpoint 17.1\n"); // 13: the middle of the keyframe's 12-14 s GOP (T-237)
+        runner.Lists.Should().ContainSingle().Which.Should().EndWith("inpoint 12\noutpoint 17.1\n");
     }
 
     // serves-spec: SPEC-001#I71 - a source with a cover picture, a data track or a subtitle keeps the lossless cut with the one reason

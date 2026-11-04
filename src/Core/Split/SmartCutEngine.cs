@@ -106,12 +106,14 @@ public sealed class SmartCutEngine : ISmartCutEngine
     private readonly IFfmpegRunner _runner;
     private readonly IMediaProbe _probe;
     private readonly IVideoFrameProbe? _frames;
+    private readonly ISeekLandingProbe? _landing;
 
     public SmartCutEngine(IFfmpegRunner runner, IMediaProbe probe)
     {
         _runner = runner ?? throw new ArgumentNullException(nameof(runner));
         _probe = probe ?? throw new ArgumentNullException(nameof(probe));
         _frames = probe as IVideoFrameProbe; // MediaProbe is one; a probe that is not leaves the frame snap and the head check off
+        _landing = probe as ISeekLandingProbe; // T-237: and the end trim's inpoint at the keyframe, unverified, as before
     }
 
     /// <summary>
@@ -121,6 +123,9 @@ public sealed class SmartCutEngine : ISmartCutEngine
     /// tests): swapping the shared <c>MediaProbe</c> for a probe without the interface would switch both off with every test green.
     /// </summary>
     internal bool FrameQuestionsActive => _frames is not null;
+
+    /// <summary>True when the probe can say where a seek lands (<see cref="ISeekLandingProbe"/>), so an end trim on an MP4 aims its inpoint where it lands on the keyframe (T-237); pinned for the production graph like <see cref="FrameQuestionsActive"/>.</summary>
+    internal bool SeekLandingActive => _landing is not null;
 
     /// <inheritdoc />
     public async Task<SmartCutResult> CutAsync(
@@ -221,6 +226,21 @@ public sealed class SmartCutEngine : ISmartCutEngine
             return new SmartCutResult(null, plan.Strategy, FellBack: true, NotAnIdrKeyframeReason, TimeSpan.Zero);
         }
 
+        // T-237: an end trim on an MP4 or QuickTime file seeks to its start with the list's inpoint, and where that lands is the demuxer's
+        // to say (SeekAim). When no aim lands on the keyframe the cut would begin earlier and be reported Done, so it is a fall back, before
+        // anything is written, with the end snapped like every refusal of an end trim.
+        var trimInpoint = TimeSpan.Zero;
+        if (endTrim)
+        {
+            var (resolved, unresolved) = await ResolveEndTrimInpointAsync(inputPath, plan, keyframes, ok.Info, ct).ConfigureAwait(false);
+            if (unresolved)
+            {
+                return new SmartCutResult(null, plan.Strategy, FellBack: true, SeekNotExactReason, TimeSpan.Zero, EndSnapped: true);
+            }
+
+            trimInpoint = resolved;
+        }
+
         var outDir = Path.GetDirectoryName(Path.GetFullPath(outputPath))
             ?? throw new SplitException($"Cannot resolve an output directory for '{outputPath}'.");
         Directory.CreateDirectory(outDir);
@@ -234,7 +254,7 @@ public sealed class SmartCutEngine : ISmartCutEngine
 
             if (endTrim)
             {
-                return await TrimEndAsync(inputPath, plan, keyframes, ok.Info, outputPath, tempDir, progress, ct).ConfigureAwait(false);
+                return await TrimEndAsync(inputPath, plan, keyframes, trimInpoint, outputPath, tempDir, progress, ct).ConfigureAwait(false);
             }
 
             var headPath = Path.Combine(tempDir, "head" + ext);
@@ -342,7 +362,7 @@ public sealed class SmartCutEngine : ISmartCutEngine
         string inputPath,
         SmartCutPlan plan,
         IReadOnlyList<TimeSpan> keyframes,
-        MediaInfo info,
+        TimeSpan listInpoint,
         string outputPath,
         string tempDir,
         IProgress<double>? progress,
@@ -351,18 +371,12 @@ public sealed class SmartCutEngine : ISmartCutEngine
         // The lossless cut starts on the keyframe the request sits on (within the planner's 10 ms): so does this one. The keyframe's
         // own time, not the request, because the demuxer's seek to an inpoint a few ms past it still lands on the keyframe and the
         // list should say what happens.
-        var inpoint = keyframes.OrderBy(k => (k - plan.Start).Duration()).First();
+        var inpoint = NearestKeyframe(plan, keyframes);
         var end = plan.End!.Value;
 
-        // T-237: on an MP4 or QuickTime file the demuxer's seek to an inpoint AT the keyframe can land on the one before it (a
-        // variable-frame-rate file with B-frames: the output then began a whole GOP early and was reported Done), so the list's
-        // inpoint is the middle of the keyframe's GOP, which lands on the keyframe in either case (SplitArgsBuilder.MovSeekAnchor).
-        // Nothing follows this entry, so the shift it makes to the file's timestamps moves nothing else. The anchor never passes the
-        // cut's end (an inpoint after the outpoint is an error ffmpeg stops on), so a short trim keeps the keyframe. The progress total and the
-        // reported start stay the keyframe's.
-        var listInpoint = SplitArgsBuilder.IsMovContainer(info.Container)
-            ? SplitArgsBuilder.MovSeekAnchor(inpoint, keyframes, info.StartTime + info.Duration, info.VideoStreams.FirstOrDefault()?.FrameRate, end) ?? inpoint
-            : inpoint;
+        // T-237: the list's inpoint is where a seek lands on the keyframe, asked of the demuxer before (ResolveEndTrimInpointAsync): the
+        // keyframe's own time unless a seek aimed there lands on the keyframe before it. Nothing follows this entry, so the shift a later
+        // inpoint makes to the file's timestamps moves nothing else. The progress total and the reported start stay the keyframe's.
 
         var listPath = Path.Combine(tempDir, "concat.txt");
         await File.WriteAllTextAsync(listPath, SmartCutArgsBuilder.RenderEndTrimList(inputPath, listInpoint, end), ct).ConfigureAwait(false);
@@ -385,6 +399,35 @@ public sealed class SmartCutEngine : ISmartCutEngine
 
         return new SmartCutResult(outputPath, plan.Strategy, false, null, TimeSpan.Zero, inpoint);
     }
+
+    /// <summary>The keyframe an end trim starts on: the nearest one in the plan's list (within the planner's 10 ms of the request).</summary>
+    private static TimeSpan NearestKeyframe(SmartCutPlan plan, IReadOnlyList<TimeSpan> keyframes) =>
+        keyframes.OrderBy(k => (k - plan.Start).Duration()).First();
+
+    /// <summary>
+    /// The inpoint of an end trim's list (T-237): the keyframe's own time, or the first later aim the demuxer lands on the keyframe with
+    /// when a seek aimed at the keyframe lands earlier (an MP4 or QuickTime file with B-frames and irregular frame times: the output
+    /// began a whole GOP early and was reported Done). The aim stays before the next keyframe and before the cut's end, because an
+    /// inpoint after the outpoint is an error ffmpeg stops on. <c>Unresolved</c> when the probe said and no aim lands on the keyframe.
+    /// </summary>
+    private async Task<(TimeSpan Inpoint, bool Unresolved)> ResolveEndTrimInpointAsync(
+        string inputPath, SmartCutPlan plan, IReadOnlyList<TimeSpan> keyframes, MediaInfo info, CancellationToken ct)
+    {
+        var keyframe = NearestKeyframe(plan, keyframes);
+        if (!SplitArgsBuilder.IsMovContainer(info.Container) || _landing is null || keyframes.Count == 0 || keyframe <= keyframes[0])
+        {
+            return (keyframe, false);
+        }
+
+        var after = keyframe + TimeSpan.FromMilliseconds(1);
+        var next = keyframes.FirstOrDefault(k => k > after);
+        var upper = next > TimeSpan.Zero ? next : info.StartTime + info.Duration;
+        var choice = await SeekAim.ChooseAsync(_landing, inputPath, keyframe, plan.End!.Value < upper ? plan.End!.Value : upper, ct).ConfigureAwait(false);
+        return choice.Outcome == SeekAim.Outcome.Unresolved ? (keyframe, true) : (choice.Aim, false);
+    }
+
+    /// <summary>The reason an end trim is not used when no seek aim lands on its keyframe (T-237, SPEC-001 I75). No parentheses and no internal terms.</summary>
+    public const string SeekNotExactReason = "frame-exact cutting is not supported yet for this video's timestamps";
 
     /// <summary>
     /// Why a head with no video frame is not used (T-190): the concat would take its streams from an audio-only file and drop

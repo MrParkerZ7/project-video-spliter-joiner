@@ -147,8 +147,8 @@ public sealed class SmartCutEndTrimIntegrationTests : IDisposable
         runner.Commands.Should().ContainSingle("one concat, no head encode");
         JoinArgsBuilder.SatisfiesCopyInvariant(runner.Commands.Single()).Should().BeTrue("a stream copy: no encoder token");
         runner.ConcatLists.Should().ContainSingle().Which.Should().Be(
-            "file '" + Path.GetFullPath(src) + "'\ninpoint 5\noutpoint 9.1\n",
-            "the source itself, from the middle of its keyframe's GOP (the 4-6 s one, T-237) to the requested end");
+            "file '" + Path.GetFullPath(src) + "'\ninpoint 4\noutpoint 9.1\n",
+            "the source itself, from its keyframe to the requested end");
         File.Exists(dest).Should().BeTrue();
         Directory.GetDirectories(Path.GetDirectoryName(dest)!, ".vsj-smartcut-*").Should().BeEmpty("the temp dir is swept");
     }

@@ -359,8 +359,7 @@ public class SplitEngineUnitTests
 
             var ss = tokens.IndexOf("-ss");
             ss.Should().BeGreaterThanOrEqualTo(0);
-            // T-237: the source is MP4, whose seek is aimed in the middle of the part's first GOP (6-7 s), not at the keyframe.
-            tokens[ss + 1].Should().Be("6.5", "the final part starts at the LAST snapped cut, 6 s; the seek is aimed 0.5 s into its GOP");
+            tokens[ss + 1].Should().Be("6", "the final part starts at the LAST snapped cut");
 
             SplitArgsBuilder.SatisfiesCopyInvariant(tokens).Should().BeTrue();
 

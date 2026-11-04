@@ -124,7 +124,8 @@ public static class SplitArgsBuilder
     /// </summary>
     /// <param name="seekAnchor">
     /// <b>Matroska (T-234), MP4 and QuickTime (T-237).</b> A source timestamp inside the part's first GOP, after
-    /// <paramref name="start"/> and before the next keyframe (<see cref="SeekAnchor"/>), that the input seek is aimed at instead of the
+    /// <paramref name="start"/> and before the next keyframe (<see cref="MatroskaSeekAnchor"/> for Matroska; for MP4 and QuickTime the
+    /// engine's <c>SeekAim</c>, which asks the demuxer where a seek lands), that the input seek is aimed at instead of the
     /// keyframe itself: measured with ffmpeg n7.1, an input <c>-ss</c> on a Matroska file whose video has B-frames lands on
     /// the keyframe BEFORE the one it is aimed at, and needs a target about 0.131 s after the keyframe to land on it (none
     /// with no B-frames). The cause inside ffmpeg is not pinned down; the file's cues hold the keyframe's exact pts. Every
@@ -225,103 +226,10 @@ public static class SplitArgsBuilder
         return anchor > start ? anchor : null;
     }
 
-    /// <summary>The shortest GOP, with a later keyframe after it, that gets a MP4/QuickTime seek anchor (<see cref="MovSeekAnchor"/>).</summary>
-    internal static readonly TimeSpan MovSeekMinGap = TimeSpan.FromMilliseconds(500);
-
-    /// <summary>The same, in frames: the GOP must be this many frame periods too, the keyframe's B-frame delay being counted in frames.</summary>
-    internal const int MovSeekMinFrames = 16;
-
-    /// <summary>The shortest stretch with no later keyframe after it (the file's last GOP, or a span the end of the cut stops) that gets an anchor.</summary>
-    internal static readonly TimeSpan MovSeekMinTail = TimeSpan.FromMilliseconds(250);
-
-    /// <summary>The same, in frames.</summary>
-    internal const int MovSeekMinTailFrames = 6;
-
     /// <summary>True for ffprobe's <c>format_name</c> of an MP4 or QuickTime file (<c>mov,mp4,m4a,3gp,3g2,mj2</c>); null or blank is false.</summary>
     internal static bool IsMovContainer(string? container) =>
         !string.IsNullOrWhiteSpace(container)
         && (container.Contains("mp4", StringComparison.OrdinalIgnoreCase) || container.Contains("mov", StringComparison.OrdinalIgnoreCase));
-
-    /// <summary>
-    /// The seek anchor of a MP4 or QuickTime source (T-237): the middle of the GOP that starts at <paramref name="start"/>.
-    ///
-    /// <para><b>Why.</b> The demuxer finds the keyframe to land on by its index time, which is a decoding time of the file's
-    /// own, not the presentation time the keyframe list holds. On a constant-frame-rate file the two agree closely enough that a
-    /// seek aimed AT the keyframe lands on it. On a variable-frame-rate file with B-frames the gap between them differs from
-    /// keyframe to keyframe: measured with ffmpeg n7.1 on a phone-style file (a quarter of the frames dropped at random, 2.5 s
-    /// GOP), a seek aimed at a keyframe's presentation time landed on the keyframe BEFORE it for every keyframe of that file, and
-    /// needed an aim 0.035 to 0.1 s later; the lossless part then began a whole GOP early (242 frames against 180 planned). The
-    /// middle of the GOP is inside the window that lands on the keyframe: later than the keyframe's index gap and earlier than the
-    /// next keyframe's index time. That time can precede the next keyframe's presentation time by its B-frame delay, which is
-    /// counted in frames (0.8 s at 10 fps with three B-frames, 0.1 s at 30 fps), so a GOP with a later keyframe after it must be
-    /// <see cref="MovSeekMinGap"/> and <see cref="MovSeekMinFrames"/> frame periods long, or the middle can fall past that
-    /// keyframe's index time and land one GOP LATE (a regression the aim at the keyframe never had). A stretch with no later
-    /// keyframe after it (the last GOP, or the span a cut's end stops) has nothing to overshoot onto and needs only to be
-    /// <see cref="MovSeekMinTail"/> and <see cref="MovSeekMinTailFrames"/> frame periods long, so that its middle is past the
-    /// index gap. Anything shorter gets no anchor and keeps the aim at the keyframe.</para>
-    ///
-    /// <para>The anchor is used where the keyframe was used: as the input <c>-ss</c> (<see cref="PerSegment"/>, which measures
-    /// <c>-to</c> from it) and as the <c>inpoint</c> of the end trim's single-file list. <paramref name="upTo"/> is where the
-    /// cut ends, for the end trim: the anchor never passes it, because a concat list whose <c>inpoint</c> is after its
-    /// <c>outpoint</c> is an error. Null when none is needed or possible: <paramref name="start"/> is at or before the first
-    /// keyframe (the seek clamps to the file's start), or the stretch is short. <paramref name="keyframes"/> are source
-    /// timestamps, ascending; <paramref name="fileEnd"/> bounds the last GOP; <paramref name="frameRate"/> is the video's,
-    /// in frames per second, null when unknown (only the times then count).</para>
-    /// </summary>
-    internal static TimeSpan? MovSeekAnchor(
-        TimeSpan start, IReadOnlyList<TimeSpan> keyframes, TimeSpan fileEnd, double? frameRate = null, TimeSpan? upTo = null)
-    {
-        ArgumentNullException.ThrowIfNull(keyframes);
-
-        if (keyframes.Count == 0 || start <= keyframes[0])
-        {
-            return null;
-        }
-
-        // The first keyframe after the start (a millisecond of slack: the start is a keyframe of this list, not a time near one).
-        var after = start + TimeSpan.FromMilliseconds(1);
-        var lo = 0;
-        var hi = keyframes.Count;
-        while (lo < hi)
-        {
-            var mid = lo + ((hi - lo) / 2);
-            if (keyframes[mid] > after)
-            {
-                hi = mid;
-            }
-            else
-            {
-                lo = mid + 1;
-            }
-        }
-
-        // What the aim may not pass: the next keyframe (then it must keep clear of that keyframe's index time), the end of the
-        // file, or the cut's end, whichever is first; the last two have no keyframe to overshoot onto.
-        var limit = lo < keyframes.Count ? keyframes[lo] : fileEnd;
-        var bounded = lo < keyframes.Count;
-        if (upTo is { } cap && cap < limit)
-        {
-            limit = cap;
-            bounded = false;
-        }
-
-        var gap = limit - start;
-        var period = frameRate is > 0 ? TimeSpan.FromSeconds(1 / frameRate.Value) : TimeSpan.Zero;
-        var need = bounded
-            ? TimeSpan.FromTicks(Math.Max(MovSeekMinGap.Ticks, period.Ticks * MovSeekMinFrames))
-            : TimeSpan.FromTicks(Math.Max(MovSeekMinTail.Ticks, period.Ticks * MovSeekMinTailFrames));
-        return gap >= need ? start + TimeSpan.FromTicks(gap.Ticks / 2) : null;
-    }
-
-    /// <summary>
-    /// The seek anchor for <paramref name="container"/>: Matroska's (<see cref="MatroskaSeekAnchor"/>, T-234), MP4's and
-    /// QuickTime's (<see cref="MovSeekAnchor"/>, T-237), none for any other container (they land on the keyframe the plan names).
-    /// </summary>
-    internal static TimeSpan? SeekAnchor(
-        string? container, TimeSpan start, IReadOnlyList<TimeSpan> keyframes, TimeSpan fileEnd, double? frameRate = null, TimeSpan? upTo = null) =>
-        IsMatroskaContainer(container)
-            ? MatroskaSeekAnchor(start, keyframes, fileEnd)
-            : IsMovContainer(container) ? MovSeekAnchor(start, keyframes, fileEnd, frameRate, upTo) : null;
 
     /// <summary>
     /// True if the token list satisfies the split invariant: it contains a bare <c>copy</c>

@@ -145,6 +145,15 @@ public sealed class LosslessBoundaryFixtures : IDisposable
                     Dir, "vfrlowfps.mp4", 30, 10, "-vf", "select='gt(mod(abs(sin(n*12.9898+105))*43758.5453,1),0.3)+eq(n,0)'", "-fps_mode", "vfr",
                     "-c:v", "libx264", "-g", "6", "-keyint_min", "6", "-sc_threshold", "0", "-bf", "3");
 
+            // A screen-recording-style file (T-237 review): 20 frames of every 120 are kept, so each GOP is a burst of 0.67 s and 3.3 s of
+            // nothing, with three B-frames. The next keyframe's index time sits right after the last frame of the burst, so a seek aimed
+            // 2 s past a keyframe (the middle of the GOP) lands one GOP LATE while the keyframe's own aim is right: no rule on times
+            // is safe here, the demuxer has to be asked.
+            case "vfrburst":
+                return await SmartCutJointIntegrityTests.MakeFixtureAsync(
+                    Dir, "vfrburst.mp4", 60, 30, "-vf", "select='lt(mod(n,120),20)'", "-fps_mode", "vfr",
+                    "-c:v", "libx264", "-g", "20", "-keyint_min", "20", "-sc_threshold", "0", "-bf", "3");
+
             // A constant-frame-rate MP4 with a 2.5 s GOP and B-frames (T-237 review: an end trim whose end is before the middle of the GOP).
             case "cfr25":
                 return await SmartCutJointIntegrityTests.MakeFixtureAsync(
@@ -819,6 +828,10 @@ public sealed class LosslessBoundaryIntegrationTests : IClassFixture<LosslessBou
     [InlineData("bframes", 3.0, 3.4)]
     [InlineData("vfrrandom", 5.233008, 5.6)]
     [InlineData("vfrrandom", 5.233008, 6.0)]
+    // T-237 review (N1): the idle-burst file, where the keyframe's own aim is right and the middle of the GOP lands one GOP late.
+    [InlineData("vfrburst", 8.0, 10.0)]
+    [InlineData("vfrburst", 8.0, 8.4)]
+    [InlineData("vfrburst", 20.0, 23.9)]
     public async Task Vfr_ExactEndTrim_StartsOnItsKeyframe_AndHoldsTheSourcesFramesFromThere(string shape, double keyframe, double end)
     {
         RequireBinaries();
@@ -901,6 +914,7 @@ public sealed class LosslessBoundaryIntegrationTests : IClassFixture<LosslessBou
     [InlineData("vfrrandommov")]
     [InlineData("vfrtail")]
     [InlineData("vfrlowfps")]
+    [InlineData("vfrburst")]
     [InlineData("cfr25")]
     public async Task Vfr_EveryKeyframeAsAPartStart_LandsOnItself(string shape)
     {

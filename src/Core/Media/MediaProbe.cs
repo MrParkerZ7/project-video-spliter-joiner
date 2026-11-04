@@ -44,7 +44,7 @@ public interface IMediaProbe
 }
 
 /// <inheritdoc cref="IMediaProbe" />
-public sealed class MediaProbe : IMediaProbe, IVideoFrameProbe
+public sealed class MediaProbe : IMediaProbe, IVideoFrameProbe, ISeekLandingProbe
 {
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -716,6 +716,55 @@ public sealed class MediaProbe : IMediaProbe, IVideoFrameProbe
             H264PictureKind.NonIdr => false,
             _ => null,
         };
+    }
+
+    /// <inheritdoc />
+    public async Task<TimeSpan?> GetSeekLandingAsync(string path, TimeSpan aim, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(path) || !File.Exists(path) || aim < TimeSpan.Zero)
+        {
+            return null;
+        }
+
+        // -read_intervals AIM%+#1: ffprobe seeks the way ffmpeg's input -ss and the concat demuxer's inpoint do (avformat_seek_file to the
+        // aim, landing on the last keyframe whose index time is not after it) and prints the first video packet it reads there.
+        var interval = string.Create(CultureInfo.InvariantCulture, $"{aim.TotalSeconds:0.######}%+#1");
+        var args = FfmpegArgs.ForFfprobe()
+            .Raw(
+                "-v", "error",
+                "-select_streams", "v:0",
+                "-read_intervals", interval,
+                "-show_entries", "packet=pts_time,dts_time,flags",
+                "-print_format", "json")
+            .Input(path);
+
+        string json;
+        try
+        {
+            json = await _ffprobe.RunJsonAsync(args, ct).ConfigureAwait(false);
+        }
+        catch (FfprobeException)
+        {
+            return null;
+        }
+
+        FfprobePacketsRoot? root;
+        try
+        {
+            root = JsonDeserialize<FfprobePacketsRoot>(json);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+
+        if (root?.Packets is not { Count: > 0 } packets)
+        {
+            return null;
+        }
+
+        var packet = packets[0];
+        return IsKeyframeFlag(packet.Flags) && TryParseSeconds(packet.PtsTime ?? packet.DtsTime, out var time) ? time : null;
     }
 
     /// <summary>How far the packet <see cref="IsIdrKeyframeAsync"/> reads may be from the keyframe time it was asked about.</summary>

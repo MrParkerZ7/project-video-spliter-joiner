@@ -41,6 +41,7 @@ public sealed class SplitEngine : ISplitEngine
 {
     private readonly IFfmpegRunner _runner;
     private readonly IMediaProbe _probe;
+    private readonly ISeekLandingProbe? _landing; // T-237: MediaProbe is one; a probe that is not leaves an MP4 seek at the keyframe, as before
     private readonly ErrorLogWriter _logWriter;
     private readonly IDiskSpaceProbe _diskProbe;
     private readonly IOriginalDisposer _originalDisposer;
@@ -93,10 +94,14 @@ public sealed class SplitEngine : ISplitEngine
     {
         _runner = runner ?? throw new ArgumentNullException(nameof(runner));
         _probe = probe ?? throw new ArgumentNullException(nameof(probe));
+        _landing = probe as ISeekLandingProbe;
         _logWriter = logWriter ?? throw new ArgumentNullException(nameof(logWriter));
         _diskProbe = diskProbe ?? throw new ArgumentNullException(nameof(diskProbe));
         _originalDisposer = originalDisposer ?? throw new ArgumentNullException(nameof(originalDisposer));
     }
+
+    /// <summary>True when the probe this engine was built over can say where a seek lands (<see cref="ISeekLandingProbe"/>), so an MP4 or QuickTime part's seek is aimed where it lands on its keyframe (T-237); pinned for the production graph, because false is silent.</summary>
+    internal bool SeekLandingActive => _landing is not null;
 
     /// <inheritdoc />
     public async Task<SplitResult> SplitAsync(
@@ -193,11 +198,12 @@ public sealed class SplitEngine : ISplitEngine
             // part, so ONLY the chosen ranges are written.
             // T-219: both paths convert the plan's source timestamps to ffmpeg's time base from the probe made above
             // (the muxer by the video stream's start, the per-segment seek by the format's start_time).
+            var warnings = new List<string>(plan.Warnings);
             var produced = isFullSet
                 ? await ExtractAllViaSegmentMuxer(req, plan, ok.Info, duration, tempDir, progress, partProgress, ct).ConfigureAwait(false)
                 : await ExtractSelectedPerSegment(
                     req, selected, plan.Segments.Count, fileDuration, ok.Info.StartTime,
-                    ok.Info.Container, ok.Info.VideoStreams.FirstOrDefault()?.FrameRate, keyframes,
+                    ok.Info.Container, keyframes, warnings,
                     tempDir, progress, partProgress, ct).ConfigureAwait(false);
 
             // T-044: ffmpeg finished — entering the finalize phase (temp→move + verify each segment).
@@ -207,7 +213,7 @@ public sealed class SplitEngine : ISplitEngine
 
             progress?.Report(1.0);
             status?.Report(new OperationStatus("Done", null, 1.0));
-            return new SplitResult(moved, plan.Warnings);
+            return new SplitResult(moved, warnings);
         }
         finally
         {
@@ -389,10 +395,10 @@ public sealed class SplitEngine : ISplitEngine
     /// file; interior parts pass an explicit <c>-to == SnappedEnd</c>. Progress is reported coarsely
     /// across the selected parts. The copy invariant is asserted on every command. T-219: each seek is converted from
     /// the plan's source timestamps by <paramref name="sourceStartTime"/> (the probe's format <c>start_time</c>), the
-    /// time base of ffmpeg's input <c>-ss</c>. T-234, T-237: <paramref name="keyframes"/> is the source's keyframe list (with the video's
-    /// <paramref name="frameRate"/>), from
-    /// which a Matroska, MP4 or QuickTime source (by <paramref name="container"/>) gets each part's seek aimed inside its first
-    /// GOP instead of at the keyframe (<see cref="SplitArgsBuilder.SeekAnchor"/>).
+    /// time base of ffmpeg's input <c>-ss</c>. T-234, T-237: <paramref name="keyframes"/> is the source's keyframe list, from which a
+    /// Matroska source (by <paramref name="container"/>) gets each part's seek aimed inside its first GOP instead of at the keyframe
+    /// (<see cref="SplitArgsBuilder.MatroskaSeekAnchor"/>) and an MP4 or QuickTime source gets the aim its demuxer lands on the keyframe with
+    /// (<c>AnchorAsync</c>); <paramref name="warnings"/> collects the notes for the result.
     /// </summary>
     private async Task<IReadOnlyList<(PlannedSegment Planned, string TempFile)>> ExtractSelectedPerSegment(
         SplitRequest req,
@@ -401,8 +407,8 @@ public sealed class SplitEngine : ISplitEngine
         TimeSpan fileDuration,
         TimeSpan sourceStartTime,
         string? container,
-        double? frameRate,
         IReadOnlyList<TimeSpan> keyframes,
+        List<string> warnings,
         string tempDir,
         IProgress<double>? progress,
         IProgress<PartProgress>? partProgress,
@@ -431,7 +437,9 @@ public sealed class SplitEngine : ISplitEngine
             var seekPoint = planned.SnappedStart < sourceStartTime ? sourceStartTime : planned.SnappedStart;
             var reportedDuration = (end ?? sourceStartTime + fileDuration) - seekPoint;
 
-            var anchor = SplitArgsBuilder.SeekAnchor(container, planned.SnappedStart, keyframes, sourceStartTime + fileDuration, frameRate);
+            var anchor = await AnchorAsync(
+                req.InputPath, container, planned.SnappedStart, sel.OneBasedIndex, keyframes, sourceStartTime + fileDuration, warnings, ct)
+                .ConfigureAwait(false);
             var args = SplitArgsBuilder.PerSegment(req.InputPath, planned.SnappedStart, end, sourceStartTime, tempFile, anchor);
             AssertCopyInvariant(args);
 
@@ -460,6 +468,46 @@ public sealed class SplitEngine : ISplitEngine
         }
 
         return produced;
+    }
+
+    /// <summary>
+    /// The seek anchor of one selected part (<see cref="SplitArgsBuilder.PerSegment"/>'s <c>seekAnchor</c>), or null for a seek at the
+    /// keyframe itself. Matroska: T-234's, by a rule on times. MP4 and QuickTime (T-237): the keyframe's own time when a seek aimed there lands
+    /// on it, else the first later aim that does, asked of the demuxer (<see cref="SeekAim"/>); when none does, the part is written from
+    /// the keyframe's own aim and says so in the result's warnings. Every other container, a probe that cannot be asked, and a part that
+    /// starts at or before the first keyframe (the seek clamps to the file's start): null.
+    /// </summary>
+    private async Task<TimeSpan?> AnchorAsync(
+        string inputPath,
+        string? container,
+        TimeSpan start,
+        int oneBasedIndex,
+        IReadOnlyList<TimeSpan> keyframes,
+        TimeSpan fileEnd,
+        List<string> warnings,
+        CancellationToken ct)
+    {
+        if (SplitArgsBuilder.IsMatroskaContainer(container))
+        {
+            return SplitArgsBuilder.MatroskaSeekAnchor(start, keyframes, fileEnd);
+        }
+
+        if (!SplitArgsBuilder.IsMovContainer(container) || _landing is null || keyframes.Count == 0 || start <= keyframes[0])
+        {
+            return null;
+        }
+
+        var after = start + TimeSpan.FromMilliseconds(1);
+        var next = keyframes.FirstOrDefault(k => k > after);
+        var choice = await SeekAim.ChooseAsync(_landing, inputPath, start, next > TimeSpan.Zero ? next : fileEnd, ct).ConfigureAwait(false);
+        if (choice.Outcome == SeekAim.Outcome.Unresolved)
+        {
+            warnings.Add(string.Create(
+                CultureInfo.InvariantCulture,
+                $"Part {oneBasedIndex} may start before its keyframe at {start.TotalSeconds:0.###} s: a seek to it lands on an earlier keyframe in this video, and no later aim fixed that."));
+        }
+
+        return choice.Outcome == SeekAim.Outcome.Anchored ? choice.Aim : null;
     }
 
     /// <summary>Assert the stream-copy invariant at runtime (not just in tests) before launching ffmpeg.</summary>
