@@ -22,9 +22,9 @@ goal; `0.1.0` is the first end-to-end, shippable cut.
 
 ### Fixed
 - **An Exact cut of a video with a subtitle, a cover picture or a timecode track no longer fails.** A phone or screen recording
-  with a text track, a music video with cover art, or a camera file with a timecode or telemetry track ended its Bulk Cut row *Failed*
-  (*Exact cut failed while re-encoding the leading fragment*, or *while joining the fragments*), while the lossless cut of the same file
-  worked. Such a file now takes the lossless cut and the row says why, before Run and after it: *exact cut unavailable (frame-exact cutting
+  with a text track, a music video with cover art, or a camera file with a timecode track ended its Bulk Cut row *Failed* whenever
+  the cut did not start on a keyframe (*Exact cut failed while re-encoding the leading fragment*, or *while joining the fragments*),
+  while the lossless cut of the same file worked. Such a file now takes the lossless cut and the row says why, before Run and after it: *exact cut unavailable (frame-exact cutting
   is not supported yet for videos with subtitle, cover picture or data tracks) - cut snapped to the nearest keyframe*. Every track is
   still in the cut file. A frame-exact cut of such a file is not done yet; a video with a second audio track is not affected.
 - **A video whose keyframes could not be read once can be opened again without restarting the app.** The keyframe list of a

@@ -93,8 +93,9 @@ public interface ISmartCutEngine
 /// on a keyframe a <c>PureCopy</c> whatever the end is, and the lossless cut ends at a keyframe, so that request used to come back
 /// with its outro snapped. It is now the joint without its head: one concat of the source itself, <c>inpoint</c> the keyframe and
 /// <c>outpoint</c> the end (<see cref="SmartCutArgsBuilder.RenderEndTrimList"/>), a stream copy. It asks the same encoder gate as
-/// every Exact cut, and a source with a subtitle, data or cover-picture stream keeps the lossless cut with the end's snap
-/// announced (<see cref="SmartCutResult.EndSnapped"/>).</para>
+/// every Exact cut, and a source with a subtitle, data or cover-picture stream keeps the lossless cut: for the end trim with the
+/// end's snap announced (<see cref="SmartCutResult.EndSnapped"/>), and for the head leg too (T-238) - the gate is asked before
+/// the frame snap and answers both with the one <see cref="SmartCutArgsBuilder.ExtraStreamsReason"/>.</para>
 ///
 /// <para>Every intermediate lands in a temp dir that is swept in a <c>finally</c>, and the final file is
 /// only moved into place once it exists — the same cancel-safety contract <see cref="SplitEngine"/>

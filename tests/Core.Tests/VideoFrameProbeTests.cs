@@ -684,7 +684,8 @@ public sealed class VideoFrameProbeTests : IDisposable
     // the extra-streams rule was asked AFTER the frame snap had turned the plan into an end trim): the rule is now part of the one
     // predicate that is asked BEFORE the snap (a refused source costs no ffprobe, as for every other reason), so the plan is still the
     // head cut and EndSnapped is false. The Bulk engine writes the same Exact-unavailable warning either way (its condition is a
-    // strategy other than PureCopy, or EndSnapped), so what the user reads is unchanged. Nothing is asked of the frame probe.
+    // strategy other than PureCopy, or EndSnapped), so the user still gets the warning; its reason is now the general sentence
+    // (SmartCutArgsBuilder.ExtraStreamsReason) in place of T-224's "frame-exact end cutting ...". Nothing is asked of the frame probe.
     [Trait("serves-spec", "SPEC-001")]
     [Fact]
     public async Task SmartCutEngine_ASnappedStartOnASourceWithExtraStreams_FallsBackBeforeTheSnapIsAsked()

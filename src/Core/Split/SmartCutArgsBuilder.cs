@@ -170,6 +170,10 @@ public static class SmartCutArgsBuilder
     /// on it, and the Bulk Cut row evaluates it on its own probed <see cref="MediaInfo"/> to decide, before Run, whether
     /// it shows the snapped cut and the reason (T-189) — so the row and the run never disagree.</para>
     ///
+    /// <para>A source with a subtitle, a data track or a cover picture (<see cref="MediaInfo.ExtraStreams"/>) is refused here too,
+    /// LAST (T-238): the head leg and the end trim (T-224) both get <see cref="ExtraStreamsReason"/>, and every older reason is still
+    /// reported as itself.</para>
+    ///
     /// <para><paramref name="sourcePath"/> and <paramref name="outputPath"/> (T-190, third pass) are the names the cut will
     /// read and write: the container the head and the final get comes from the OUTPUT extension, which the probed
     /// <paramref name="info"/> cannot see (<see cref="UnsupportedFileNameReason"/>). The engine passes both; the Bulk row
